@@ -1,0 +1,54 @@
+{
+  "_comment": "TEMPLATE — copy to your PROJECT (not the skill), e.g. <project>/schema/families.<corpus>.json, and edit. Paths in `glob` are relative to build_marts.py --root. One block per metric family; the generic loader applies it.",
+  "conform_titlecase": ["branch", "region"],
+  "dimension_map": {
+    "division": {"north east": "Northeast", "n.e.": "Northeast"}
+  },
+  "rollups": [
+    {"_note": "weighted aggregate region->division; weight a rate metric by a count metric",
+     "family": "example_tolerant", "from": "region", "to": "division", "weight": "n_records",
+     "map_prefix": {"NW": "Northwest", "NE": "Northeast"}}
+  ],
+  "families": [
+    {
+      "name": "example_long",
+      "glob": "SomeFolder/*Monthly*.xlsx",
+      "month_from": "filename",
+      "layout": "long",
+      "grains": {
+        "division": {"sheet": "Division", "dim_header": "Division"},
+        "branch":   {"sheet": "Branch",   "dim_header": "Branch"}
+      },
+      "measures": {
+        "some_ratio": "Per Customer",
+        "some_count": ["Total Calls", "Calls"]
+      }
+    },
+    {
+      "name": "example_wide_month",
+      "glob": "Adjustments/*by Branch*.xlsx",
+      "month_from": "wide_banner", "banner_row": 0, "header_row": 1,
+      "layout": "wide_month",
+      "allow_zero": ["January 2026", "February 2026"],
+      "grains": {"division": {"sheet": "Adj by Division", "dim_header": "Division"}},
+      "measures": {"per_customer": "Adj. per Customer"}
+    },
+    {
+      "name": "example_matrix",
+      "glob": "Workforce/*Daily*.xlsm",
+      "month_from": "matrix_header", "layout": "matrix_month_cols",
+      "sheet": "MOM", "month_header_row": 1, "metric_col": 0,
+      "grains": {"overall": {"entity": "OVERALL"}},
+      "measures": {"calls_offered": "Calls Offered (post IVR)", "aht_seconds": "AHT"}
+    },
+    {
+      "name": "example_tolerant",
+      "_note": "template-less exports: no fixed sheet/header; grain inferred from matched dim; entity_regex cleans codes like 'SE1: Name' -> 'SE1'",
+      "glob": "NPS/*Ranker*.xlsx",
+      "month_from": "filename", "layout": "tolerant_long",
+      "dim_candidates": {"region": ["Region"], "branch": ["Branch Name", "Branch"]},
+      "entity_regex": "^([A-Z]{2}[0-9])",
+      "measures": {"overall_nps": "Overall NPS", "relationship_nps": "Relationship NPS", "n_records": "# of records"}
+    }
+  ]
+}

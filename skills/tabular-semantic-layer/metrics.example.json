@@ -1,0 +1,7 @@
+{
+  "_comment": "TEMPLATE — copy to your PROJECT (not the skill), e.g. <project>/schema/metrics.<corpus>.json. The governed layer: friendly metric -> (family, metric) in the facts mart, consumed by the hybrid-retrieval skill's query.py.",
+  "metrics": {
+    "some_ratio": {"family": "example_long", "metric": "some_ratio", "unit": "ratio", "desc": "what it means"},
+    "calls_offered": {"family": "example_matrix", "metric": "calls_offered", "unit": "count", "grain": "overall"}
+  }
+}
