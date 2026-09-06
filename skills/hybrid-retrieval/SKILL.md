@@ -10,7 +10,7 @@ description: Use at ANSWER time to answer a question over a Cognee knowledge bra
 Answer a question by **routing each part to the lane that can answer it truthfully**, then composing one cited answer:
 
 - **Numbers / aggregates / drill-downs / trends → deterministic SQL** over the marts (`query.py` on DuckDB). The value is computed from real cells and cites its `source_file`. A model never asserts a figure.
-- **What happened / why / definitions / narrative → RAG** over the Cognee brain (via the project's Cognee-access skill / `/api/v1/search`).
+- **What happened / why / definitions / narrative → RAG** over the Cognee brain. **Prefer the MCP `recall` tool** (`mcp__cognee__recall`) when the runtime has the Cognee MCP server wired; fall back to REST `/api/v1/search` otherwise (see the `cognee` skill).
 - **Both (a figure that is quoted *and* table-backed) → compute the authoritative value, then reconcile** against the stated one and flag any discrepancy.
 
 This is the *retrieval* half. The marts, metric catalog, and taxonomy are produced by the **build** skills (`tabular-semantic-layer`, `corpus-taxonomy-extraction`); this skill only consumes them.
@@ -28,7 +28,7 @@ This is the *retrieval* half. The marts, metric catalog, and taxonomy are produc
    - `computable` → marts. `stated` → Cognee. `both` → marts + reconcile. Pure narrative → Cognee.
 3. **Retrieve**:
    - Marts: `python query.py --db <project>/marts/marts.duckdb --catalog <project>/schema/metrics.<corpus>.json --metric <m> [--grain --entity|--entity-like --month|--months]`. The db + catalog are project artifacts from the build skill, not shipped here. Use `--list` to see governed metrics; `--sql` for aggregates/joins the catalog doesn't cover.
-   - Cognee: search the project's Cognee brain (via the project's Cognee-access skill) with `GRAPH_COMPLETION`/`HYBRID_COMPLETION`.
+   - Cognee: **first choice — `mcp__cognee__recall`** (auto-routing, session-aware) if the MCP server is wired. **Fallback — REST `/api/v1/search`** with an explicit `searchType` (`GRAPH_COMPLETION`/`HYBRID_COMPLETION`); use REST specifically when you need to pin the search type, page results, or the MCP server isn't available. See the `cognee` skill for both.
 4. **Reconcile** `both`-class: report the computed value as authoritative; note the stated value and any gap.
 5. **Compose** one answer: tag each fact `[MART: file]`, `[NARRATIVE]`, or `[STATED: doc]`.
 
@@ -60,4 +60,4 @@ For a mixed question, structure the answer as: the computed figures (each cited)
 
 ## Dependencies
 
-`duckdb` (query.py). The Cognee lane needs a running Cognee server (see `cognee-primo`). Reads artifacts produced by the build skills; produces nothing persistent itself.
+`duckdb` (query.py). The Cognee lane needs a running Cognee server reached via its MCP tools (`mcp__cognee__*`) or REST — see the `cognee` skill. Reads artifacts produced by the build skills; produces nothing persistent itself.
