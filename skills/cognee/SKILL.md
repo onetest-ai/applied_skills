@@ -1,13 +1,31 @@
 ---
 name: cognee
-description: Use to access a Cognee knowledge-graph server over its REST API — authenticate, then search/recall (RAG over the graph), inspect datasets ("brains"), and ingest (add + cognify) or update/forget data. Connection is per-deployment via COGNEE_URL / credentials (no hardcoded host). For narrative/qualitative retrieval; pair with a deterministic numeric lane for exact figures.
+description: Use to access a Cognee knowledge-graph server — search/recall (RAG over the graph), inspect datasets ("brains"), ingest (remember / add + cognify), update/forget. Prefer its MCP server when the runtime has it wired; fall back to the REST API for the full surface, scripting, and CI. Connection is per-deployment (no hardcoded host). For narrative/qualitative retrieval; pair with a deterministic numeric lane for exact figures.
 ---
 
 # Cognee (generic access)
 
-Work with any Cognee server (v1.5.x) over its REST API. Cognee calls a dataset a **"brain."** This skill is connection-agnostic — supply the deployment's URL and credentials; nothing is hardcoded.
+Work with any Cognee server. Cognee calls a dataset a **"brain."** This skill is connection-agnostic — supply the deployment's endpoint(s); nothing is hardcoded.
 
-Full endpoint catalog: [api-reference.md](api-reference.md).
+## Access path: MCP (preferred) vs REST (full surface)
+
+Cognee ships **both** an MCP server and a REST API. Choose by task:
+
+| | MCP server | REST API |
+|---|---|---|
+| Best for | interactive agent use — one `recall`/`remember` call | full control, scripting, CI, exact `searchType` |
+| Surface | ~11 tools (memory + dataset ops) | ~80 endpoints (status, graph export, ontologies, permissions…) |
+| Wiring | runtime MCP config (per client) | plain HTTP anywhere |
+
+**MCP tools (v1.29.x):** `recall` (search, auto-routing + session-aware), `remember` (add+cognify), `forget`, `cognify_file` (base64 ingest), `list_datasets_json`, `list_dataset_data_json`, `create_dataset_json`, `get_client_info_json`, and 3 UI openers (`visualize_graph_ui`, `upload_file_ui`, `open_cognee_workspace`). When these are available in the runtime (as `mcp__cognee__*`), **prefer `recall` for narrative retrieval and `remember` for ingest** — no curl, no token handling.
+
+**Wire the MCP server** (transport is SSE or stdio depending on the deployment), e.g. Claude Code:
+```bash
+claude mcp add --transport sse --scope user cognee <COGNEE_MCP_URL>   # e.g. http://<host>:8001/sse
+```
+MCP servers load at client startup — after adding, restart the session for the tools to appear. An SSE endpoint answers `GET /sse` with an `event: endpoint` handshake.
+
+**Use REST when** you need a specific `searchType` (GRAPH_COMPLETION / CHUNKS / TEMPORAL…), processing-status polling, graph JSON export, ontologies/permissions/settings, deterministic scripted calls, or CI — none of which the MCP tool set exposes. The rest of this doc + the full endpoint catalog cover REST: [api-reference.md](api-reference.md).
 
 ## Connection (per-deployment — never hardcode)
 
@@ -16,7 +34,7 @@ Set these for the target instance (env vars, a project config, or a secrets stor
 - Credentials — email + password, or an API key. Local dev images often ship `default_user@example.com` / `default_password`; **treat any real deployment's credentials as secrets.**
 - The **dataset (brain) name or id** you intend to query — a project detail, kept with the project, not this skill.
 
-`GET /health` needs no auth; everything under `/api/v1/*` needs a Bearer token.
+`GET /health` needs no auth. On a standard deployment everything under `/api/v1/*` needs a Bearer token; some deployments **run the API without auth** (e.g. a trusted LAN box) — then calls work directly with no login/token. Probe once: an unauthenticated `GET /api/v1/datasets` returning `200` (not `401`) means auth is off.
 
 ## Get a token
 
