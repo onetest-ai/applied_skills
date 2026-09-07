@@ -35,7 +35,7 @@ A discovered metric is tagged by how it should later be answered — **format do
 
 ## Portability & dependencies
 
-Self-contained and corpus-agnostic — everything is driven by args + the goal string; no paths are hardcoded. Ships four scripts + one prompt template in this skill dir. Requires a Python (3.9+) with **`docling`, `pypdf`, `openpyxl`** (all torch-free for PPTX/PDF/XLSX; PDF uses pypdf so no ML models needed). Run scripts with any such interpreter, e.g. `uv run --with docling,pypdf,openpyxl python <script>` or a venv that has them. The low-tier map/merge/judge steps assume a subagent mechanism with a model override (e.g. Haiku); on a different harness, substitute any cheap model that can read a file and emit JSON. To apply to a new corpus: pick a goal string, point `parse_corpus.py` at the corpus, instantiate the map template, run the pipeline.
+Self-contained and corpus-agnostic — everything is driven by args + the goal string; no paths are hardcoded. Ships five scripts (parse / consolidate / emit_taxonomy / emit_ontology, + the map template) in this skill dir. Requires a Python (3.9+) with **`docling`, `pypdf`, `openpyxl`** (all torch-free for PPTX/PDF/XLSX; PDF uses pypdf so no ML models needed). Run scripts with any such interpreter, e.g. `uv run --with docling,pypdf,openpyxl python <script>` or a venv that has them. The low-tier map/merge/judge steps assume a subagent mechanism with a model override (e.g. Haiku); on a different harness, substitute any cheap model that can read a file and emit JSON. To apply to a new corpus: pick a goal string, point `parse_corpus.py` at the corpus, instantiate the map template, run the pipeline.
 
 ## Pipeline (map → reduce → judge → emit)
 
@@ -67,9 +67,13 @@ Score the draft for coverage (did we miss obvious goal-relevant categories?) and
 ### 5. Emit — `taxonomy_v0.{json,md}`
 Human-reviewable artifact: intent hierarchy + entity/dimension candidates + metric inventory (each tagged computed/stated/both, with provenance), plus a **demoted** list. Versioned — it's a starting point that grows, not ground truth.
 
+### 6. (optional) Emit OWL — `emit_ontology.py`
+`python emit_ontology.py --taxonomy taxonomy_v0.json --out <name>.owl [--base http://you/ns]`
+Turns the ratified taxonomy into an **OWL (RDF/XML) ontology** — intent L1/L2 as an `owl:Class` hierarchy (L2 `rdfs:subClassOf` L1, under `IntentClass`) plus entity-kind classes under `Entity`. Instances (specific branch/region values) are omitted — that's data; the class-level vocabulary is what grounds extraction. Upload it to Cognee (`cognee` skill → `upload-ontology`) and pass its `ontologyKey` at cognify time so the graph is extracted **against your taxonomy** rather than free-form.
+
 ## Downstream wiring
 
-- **Intent classes** → classification scheme + Cognee ontology (OWL) to ground future cognify passes (cuts narrative noise too).
+- **Intent classes** → classification scheme + Cognee **ontology grounding** (OWL via `emit_ontology.py` → `cognee upload-ontology` → `cognify --ontology-key`) — makes the graph consistent with your L1/L2 and cuts narrative noise.
 - **Entities** → conformed dimensions (Region→Division→Branch→RSR) shared by the graph and the marts — this shared vocabulary IS the Cognee↔DB link.
 - **Metrics** → governed semantic-layer definitions; `computable` ones get SQL over the marts, `stated` ones stay citation-backed.
 

@@ -58,6 +58,21 @@ curl -s -X POST "$COGNEE_URL/api/v1/search" "${AUTH[@]}" -H "Content-Type: appli
 
 **searchType:** `HYBRID_COMPLETION` (default), `GRAPH_COMPLETION`, `GRAPH_COMPLETION_COT`, `RAG_COMPLETION`, `CHUNKS`, `SUMMARIES`, `TEMPORAL`, `FEELING_LUCKY`, `AGENTIC_COMPLETION`, `CODE`, `CYPHER`, `NATURAL_LANGUAGE`, and more (see reference). `*_COMPLETION` = synthesized LLM answer; `CHUNKS`/`SUMMARIES` = raw evidence; `AGENTIC_COMPLETION` enables `skills`/`tools`/`maxIter`. Query owned datasets by **name** (`datasets`); use `datasetIds` for shared datasets. `POST /api/v1/recall` is a richer sibling (adds `scope`, streaming, `responseSchema`).
 
+## Client script — `cognee_client.py` (zero-dep REST helper)
+
+For scripted/CI use there's a stdlib-only client (no `requests`): base URL from `--url` or `$COGNEE_URL`; auth optional (`$COGNEE_USER`/`$COGNEE_PASS` → Bearer; omit for a no-auth box). Subcommands: `datasets`, `upload-ontology`, `cognify`, `search`, `status`.
+
+**Ontology grounding (the high-value flow).** Instead of ingesting your taxonomy as just another document, upload it as an OWL ontology and pass its key at cognify time — Cognee then extracts entities **constrained to your vocabulary** (consistent graph, less noise). Build the OWL with `corpus-taxonomy-extraction`'s `emit_ontology.py`, then:
+
+```bash
+export COGNEE_URL=http://<host>:8000          # + COGNEE_USER/PASS if the box has auth
+python cognee_client.py upload-ontology --key <ns> --file <ns>.owl
+python cognee_client.py cognify --dataset <brain> --ontology-key <ns> --background
+python cognee_client.py search  --dataset <brain> --query "…"   # verify
+```
+
+The OWL filename must end `.owl` (RDF/XML). `cognify --ontology-key` accepts the flag repeatably for multiple ontologies. Re-cognify rebuilds the graph grounded on the ontology — run it after the ontology is uploaded and the dataset has data.
+
 ## Data lifecycle
 
 ```
