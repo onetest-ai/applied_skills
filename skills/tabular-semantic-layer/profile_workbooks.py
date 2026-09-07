@@ -6,7 +6,7 @@ never loads the whole 100MB+ book), emits a compact JSON structure map:
 per workbook -> per sheet -> detected header row, column names, row-count estimate,
 and a couple of sample rows. This is the "know the schema" input for designing
 conformed dimensions + a governed metric semantic layer. It reads STRUCTURE, not
-the full data — the numeric source of truth stays openpyxl->Parquet->DuckDB.
+the full data — the numeric source of truth stays openpyxl->Parquet->SQLite.
 
 Usage: profile_workbooks.py --root <dir> --out <file> [--formats xlsx,xlsm]
        [--sample-rows 3] [--scan-rows 25]  (scan-rows = rows searched for a header)

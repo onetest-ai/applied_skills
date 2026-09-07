@@ -4,24 +4,30 @@ A distributable collection of **generic, corpus-agnostic** agent skills for buil
 
 ## The pipeline
 
-These skills compose into a two-lane pattern: **meaning is agentic (RAG/graph); numbers are computed (deterministic SQL).** RAG never produces figures; the mart lane never guesses.
+**Meaning is agentic (RAG/graph); numbers are computed (deterministic SQL).** RAG never produces figures; the mart lane never guesses. Everything lands in **one portable `knowledge.sqlite`** (no server) — narrative chunks (FTS5+vector), numeric marts, and the taxonomy graph — with an **Obsidian vault** as the human-readable canon.
 
 ```
-documents ─▶ corpus-taxonomy-extraction ─▶ taxonomy (intent classes, entities, metric inventory)
-                                              │
-   narrative ──▶ cognee (knowledge graph / RAG) ─────────────┐
-                                              │               ├─▶ hybrid-retrieval ─▶ cited answer
-   reporting xlsx ─▶ tabular-semantic-layer (Parquet/DuckDB) ─┘
+docs ─▶ corpus-taxonomy-extraction ─▶ Markdown + taxonomy_v0 + graph  ─▶ Obsidian vault (human canon)
+                                          │                    │
+          Markdown ─▶ knowledge-index ────┤ chunks+FTS5+vector │
+   reporting xlsx ─▶ tabular-semantic-layer│ facts (marts)     ├─▶  ONE knowledge.sqlite
+                     corpus…/build_graph.py │ graph_nodes/edges │        │
+                                                                └─▶ hybrid-retrieval ─▶ cited answer
+                                            (all orchestrated by knowledge-pipeline)
 ```
+
+Retrieval is **hybrid**: BM25 (FTS5) + vector (sqlite-vec) fused by **Reciprocal Rank Fusion** — pattern from [arozumenko/wikis](https://github.com/arozumenko/wikis). Torch-free, one file, moves anywhere.
 
 ## Skills
 
 | Skill | Role | Key idea |
 |---|---|---|
-| **corpus-taxonomy-extraction** | build | Goal-directed, low-tier-model induction of a starting taxonomy (intent classes + entities + metric inventory) from a heterogeneous corpus (PDF/PPTX/XLSX via Docling/pypdf). Map → reduce → judge → emit, with provenance. |
-| **cognee** | access | Connection-agnostic REST access to a Cognee knowledge-graph server — auth, search/recall (RAG), inspect brains, add/cognify/forget. Full API reference included. |
-| **tabular-semantic-layer** | build | Config-driven ETL of large/heterogeneous Excel reporting → normalized Parquet + DuckDB + a governed metric catalog. Four layouts (long / wide-month / matrix / tolerant), weighted rollups, and a build audit that makes silent gaps loud (`--strict` for CI). |
-| **hybrid-retrieval** | answer | Routes each sub-question to the truthful lane (numbers → DuckDB, narrative → Cognee), reconciles `both`-class figures, composes one cited answer. |
+| **corpus-taxonomy-extraction** | build | Goal-directed taxonomy induction (intent classes + entities + metric inventory) from a mixed corpus (PDF/PPTX/XLSX via Docling/pypdf). Also emits the taxonomy **graph** (`build_graph.py`) and an **Obsidian vault** (`to_obsidian.py`). |
+| **knowledge-index** | build | Local hybrid RAG over Markdown → SQLite **FTS5 + sqlite-vec, RRF-fused**. Torch-free embeddings (fastembed/onnx). The narrative lane. |
+| **tabular-semantic-layer** | build | Config-driven ETL of large/heterogeneous Excel → normalized `facts` in the same SQLite + a governed metric catalog. Four layouts, weighted rollups, build audit (`--strict`). |
+| **hybrid-retrieval** | answer | Routes each sub-question — numbers→marts SQL, narrative→RRF RAG, relations→graph JOINs — over the one SQLite; reconciles `both`; composes one cited answer. |
+| **knowledge-pipeline** | orchestrate | One entry point: build the store (index+marts+graph) then answer, with disk-first workspace/checkpoint discipline for long research. |
+| **cognee** | optional | Connection-agnostic REST/MCP access to a Cognee server — an *alternative* remote knowledge backend. Not part of the default local stack. |
 
 ## Why this exists
 
@@ -73,4 +79,4 @@ Corpus-specific configuration (family definitions, metric catalogs, Cognee conne
 
 ## Dependencies
 
-Python 3.9+. Per-skill: `docling`, `pypdf` (extraction); `openpyxl`, `pandas`, `pyarrow`, `duckdb` (tabular); a running Cognee server (cognee). All pip-installable and torch-free.
+Python 3.9+, stdlib `sqlite3` (with `enable_load_extension`). Per-skill: `docling`, `pypdf` (extraction); `sqlite-vec`, `fastembed` (knowledge-index RAG); `openpyxl`, `pandas`, optional `pyarrow` (tabular). All pip-installable and **torch-free**. The default stack needs no server; `cognee` is an optional remote backend.

@@ -2,18 +2,18 @@
 """Deterministic query helper over the marts (the numeric answering path).
 
 The model selects a governed metric + filters; this returns the exact value(s)
-computed by DuckDB — never asserted by an LLM. Every answer cites source_file.
+computed by SQLite — never asserted by an LLM. Every answer cites source_file.
 
 Examples (db + catalog are project artifacts; names are the project's choice):
-  query.py --db <marts>/marts.duckdb --catalog <schema>/metrics.<corpus>.json --list
-  query.py --db <marts>/marts.duckdb --catalog <schema>/metrics.<corpus>.json \
+  query.py --db <marts>/knowledge.sqlite --catalog <schema>/metrics.<corpus>.json --list
+  query.py --db <marts>/knowledge.sqlite --catalog <schema>/metrics.<corpus>.json \
            --metric <metric> --grain <grain> --entity <NAME> --month 2026-06
-  query.py --db <marts>/marts.duckdb --catalog <schema>/metrics.<corpus>.json \
+  query.py --db <marts>/knowledge.sqlite --catalog <schema>/metrics.<corpus>.json \
            --metric <metric> --grain <grain> --months 2026-06,2026-07
-  query.py --db <marts>/marts.duckdb --sql "SELECT ..."   # raw escape hatch
+  query.py --db <marts>/knowledge.sqlite --sql "SELECT ..."   # raw escape hatch
 """
 import argparse, json, sys
-import duckdb
+import sqlite3
 
 def main():
     ap = argparse.ArgumentParser()
@@ -29,11 +29,12 @@ def main():
     ap.add_argument("--sql")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
-    con = duckdb.connect(a.db, read_only=True)
+    con = sqlite3.connect(a.db)
 
     if a.sql:
-        rows = con.execute(a.sql).fetchall()
-        cols = [d[0] for d in con.description]
+        cur = con.execute(a.sql)
+        rows = cur.fetchall()
+        cols = [d[0] for d in cur.description]
         _print(cols, rows, a.json); return
 
     cat = json.load(open(a.catalog))["metrics"] if a.catalog else {}
