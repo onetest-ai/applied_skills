@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Config-driven ETL: heterogeneous Excel reporting workbooks -> normalized long
-facts (Parquet) -> DuckDB views. The generic loader; all corpus specifics live in
+facts (Parquet) -> SQLite views. The generic loader; all corpus specifics live in
 the families JSON. Never loads a whole workbook into memory (openpyxl read_only).
 
 Output long schema:
@@ -272,7 +272,7 @@ def main():
     ap.add_argument("--root", required=True)
     ap.add_argument("--config", required=True)
     ap.add_argument("--out-dir", required=True)
-    ap.add_argument("--db-name", default="marts.duckdb", help="output DuckDB filename")
+    ap.add_argument("--db", default=None, help="SQLite file to write the `facts` table into (default <out-dir>/knowledge.sqlite); point it at your unified knowledge.sqlite")
     ap.add_argument("--strict", action="store_true",
                     help="exit non-zero if any globbed file produced zero facts (CI/prod guard)")
     a = ap.parse_args()
@@ -345,8 +345,8 @@ def main():
                 record(fam["name"], fn, grain, facts, diag)
             wb.close()
 
-    # write parquet + duckdb
-    import pandas as pd, duckdb
+    # write parquet + sqlite `facts`
+    import pandas as pd, sqlite3
     df = pd.DataFrame(all_facts, columns=["family","metric","grain","entity","month","value","source_file"])
     df = df.drop_duplicates(subset=["family","metric","grain","entity","month"], keep="last").reset_index(drop=True)
 
@@ -374,10 +374,14 @@ def main():
         rows += [(spec["family"], wm, spec["to"], r.coarse, r.month, r.value, "<rollup>") for r in gw.itertuples()]
         df = pd.concat([df, pd.DataFrame(rows, columns=df.columns)], ignore_index=True)
 
-    pq = os.path.join(a.out_dir, "facts.parquet"); df.to_parquet(pq, index=False)
-    db = os.path.join(a.out_dir, a.db_name)
-    if os.path.exists(db): os.remove(db)
-    con = duckdb.connect(db); con.execute(f"CREATE VIEW facts AS SELECT * FROM read_parquet('{pq}')"); con.close()
+    pq = os.path.join(a.out_dir, "facts.parquet")
+    try: df.to_parquet(pq, index=False)
+    except Exception: pq = None       # parquet optional (pyarrow); sqlite is the store
+    db = a.db or os.path.join(a.out_dir, "knowledge.sqlite")
+    con = sqlite3.connect(db)
+    df.to_sql("facts", con, if_exists="replace", index=False)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_facts ON facts(family, metric, grain, entity, month)")
+    con.commit(); con.close()
 
     # audit summary — silent skips are made LOUD here
     zeros = [x for x in audit if x["status"] in ("zero", "error")]
@@ -389,7 +393,7 @@ def main():
                                "partial": len(partials), "benign": len(benigns),
                                "zero_or_error": len(zeros)},
                    "audit": audit}, f, indent=2)
-    print(f"TOTAL {len(df)} facts -> {pq}\nDuckDB: {db} (view: facts)", file=sys.stderr)
+    print(f"TOTAL {len(df)} facts -> SQLite: {db} (table: facts)" + (f"  [+parquet {pq}]" if pq else ""), file=sys.stderr)
     if len(df):
         cov = df.groupby(["family","grain"]).agg(
             facts=("value","size"), months=("month","nunique"), entities=("entity","nunique")).reset_index()

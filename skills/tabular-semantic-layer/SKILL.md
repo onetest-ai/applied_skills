@@ -1,13 +1,13 @@
 ---
 name: tabular-semantic-layer
-description: Use when you need TRUTHFUL numeric answers from large/heterogeneous Excel reporting workbooks (calls, KPIs, financials by branch/region/month) — via a config-driven ETL into a columnar store (Parquet/DuckDB) and a governed metric layer, instead of RAG/LLM reading cells. Pairs with corpus-taxonomy-extraction (which supplies the dimensions & computable-metric inventory).
+description: Use when you need TRUTHFUL numeric answers from large/heterogeneous Excel reporting workbooks (calls, KPIs, financials by branch/region/month) — via a config-driven ETL into a columnar store (Parquet/SQLite) and a governed metric layer, instead of RAG/LLM reading cells. Pairs with corpus-taxonomy-extraction (which supplies the dimensions & computable-metric inventory).
 ---
 
 # Tabular Semantic Layer
 
 ## Overview
 
-Answer numeric questions over big spreadsheet reporting **deterministically**. The model selects a governed metric + filters; **DuckDB computes the value from the real cells** and it cites its source file. No number is ever asserted by an LLM — that is the whole point (vector RAG and "LLM reads the sheet" both hallucinate numbers; benchmarks put governed semantic layers at ~98–100% with honest-refusal failures, vs ~90% silent-wrong for raw text-to-SQL).
+Answer numeric questions over big spreadsheet reporting **deterministically**. The model selects a governed metric + filters; **SQLite computes the value from the real cells** and it cites its source file. No number is ever asserted by an LLM — that is the whole point (vector RAG and "LLM reads the sheet" both hallucinate numbers; benchmarks put governed semantic layers at ~98–100% with honest-refusal failures, vs ~90% silent-wrong for raw text-to-SQL).
 
 **Core split:** *meaning* is agentic; *numbers* are computed. This skill owns the numbers. Narrative/`stated` figures stay in the RAG/graph lane and are used only to cross-check (`both`).
 
@@ -24,7 +24,7 @@ Answer numeric questions over big spreadsheet reporting **deterministically**. T
 profile   profile_workbooks.py  → structure map (sheets, headers, grains) — constant memory, never loads whole book
 design    relation schema: conformed dimensions + fact marts + governed metrics  (human-ratified)
 config    families.<corpus>.json → per-family {glob, grain→sheet, header, dim/measures, layout}
-build     build_marts.py → normalized long facts.parquet + DuckDB view `facts`
+build     build_marts.py → normalized long facts.parquet + SQLite view `facts`
 catalog   metrics.json → governed metric definitions (the contract consumed at answer time)
 ```
 
@@ -40,7 +40,7 @@ One block per metric family: `glob`, `month_from` (`filename`|`wide_banner`|`mat
 
 ### build_marts.py (generic loader)
 `python build_marts.py --root <reporting dir> --config <project>/schema/families.<corpus>.json --out-dir <project>/marts`
-Emits long facts `(family, metric, grain, entity, month, value, source_file)` → `facts.parquet` + `marts.duckdb`, plus **`build_audit.json`**. Handles four layouts:
+Emits long facts `(family, metric, grain, entity, month, value, source_file)` → `facts.parquet` + `knowledge.sqlite`, plus **`build_audit.json`**. Handles four layouts:
 - `long` — grain sheet, dim rows, measures across columns.
 - `wide_month` — unpivots month-banner column blocks (e.g. adjustments); dim label may sit on the banner row or the header row (both are searched).
 - `matrix_month_cols` — metric rows × month columns (e.g. workforce MOM dashboards); time cells like ASA/AHT become seconds; uses the latest snapshot only.
@@ -76,7 +76,7 @@ A config is authored from a sample of a family's files; if other files in that f
 - **Matrix dashboards** (workforce MOM): month headers repeat across several horizontal sections (monthly totals, daily-avg, weekly) — take only the **leftmost** column per month (monthly totals). A monthly snapshot already holds full history, so process only the **latest** file (loader auto-selects max month); values are the latest revision, which can differ from an earlier month's own snapshot (e.g. a prior arithmetic quirk fixed later).
 - **Rollups (weighted aggregation to a coarser grain).** A config `rollups: [{family, from, to, weight, map_prefix}]` block aggregates a fine grain up to a coarse one, **weighting rate metrics by a count metric** (never a naive mean). Example: NPS `region → division`, weighted by `n_records`, with `map_prefix` mapping region-code prefixes (`NW`→`Northwest`, …). Derived rows carry `source_file="<rollup>"` so they're never mistaken for source cells. Include the count metric (e.g. `n_records`) in `measures` so the weight is available.
 - **Always validate a fresh build** against known cells before answering from it.
-- Deps: `openpyxl`, `pandas`, `pyarrow`, `duckdb` (all pip-installable; torch-free). Run with any interpreter that has them (`uv run --with duckdb,pandas,openpyxl,pyarrow python ...`).
+- Deps: `openpyxl`, `pandas` (required); `pyarrow` optional (Parquet side-output). Writes the `facts` table into SQLite via stdlib `sqlite3` (no extra dep) — pass `--db <project>/schema/knowledge.sqlite` to unify with the RAG + graph lanes in one file. Torch-free.
 
 ## Downstream
 

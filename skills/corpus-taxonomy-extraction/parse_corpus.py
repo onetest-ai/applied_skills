@@ -35,7 +35,7 @@ def parse_pdf_pypdf(path):
 def parse_xlsx_structure(path, sample_rows):
     """Large-workbook structure dump: sheet names, header row, a few sample rows.
     Constant-memory via openpyxl read_only. This is a MAP for 'what is in here',
-    not the numeric source of truth (that path is openpyxl->Parquet->DuckDB)."""
+    not the numeric source of truth (that path is openpyxl->Parquet->SQLite)."""
     import openpyxl
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
     out = []

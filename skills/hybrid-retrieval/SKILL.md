@@ -1,19 +1,20 @@
 ---
 name: hybrid-retrieval
-description: Use at ANSWER time to answer a question over a Cognee knowledge brain + a DuckDB metric mart — routing numeric/aggregation claims to deterministic SQL and narrative/qualitative claims to RAG, reconciling where both exist, and composing one cited answer. Use whenever a question mixes "what happened / why" with exact figures, drill-downs, or trends. Pairs with the build skills corpus-taxonomy-extraction and tabular-semantic-layer.
+description: Use at ANSWER time to answer a question over one local SQLite knowledge store — routing numeric/aggregation claims to deterministic SQL (marts), narrative/qualitative claims to hybrid RAG (FTS5+vector RRF), and taxonomy/relations to graph JOINs, then composing one cited answer. Use whenever a question mixes "what happened / why" with exact figures, drill-downs, or trends. Pairs with the build skills knowledge-index, tabular-semantic-layer, corpus-taxonomy-extraction.
 ---
 
 # Hybrid Retrieval
 
 ## Overview
 
-Answer a question by **routing each part to the lane that can answer it truthfully**, then composing one cited answer:
+Everything lives in **one portable `knowledge.sqlite`** (no server): `chunks/chunks_fts/chunks_vec` (RAG), `facts` (marts), `graph_nodes/graph_edges` (taxonomy). Answer by **routing each part to the lane that can answer it truthfully**, then compose one cited answer:
 
-- **Numbers / aggregates / drill-downs / trends → deterministic SQL** over the marts (`query.py` on DuckDB). The value is computed from real cells and cites its `source_file`. A model never asserts a figure.
-- **What happened / why / definitions / narrative → RAG** over the Cognee brain. **Prefer the MCP `recall` tool** (`mcp__cognee__recall`) when the runtime has the Cognee MCP server wired; fall back to REST `/api/v1/search` otherwise (see the `cognee` skill).
-- **Both (a figure that is quoted *and* table-backed) → compute the authoritative value, then reconcile** against the stated one and flag any discrepancy.
+- **Numbers / aggregates / drill-downs / trends → deterministic SQL** over the `facts` table (`query.py`, sqlite3). Computed from real cells, cites `source_file`. A model never asserts a figure.
+- **What happened / why / definitions / narrative → hybrid RAG** over `chunks` — BM25 (FTS5) + vector (sqlite-vec) fused by **RRF** (`knowledge_index.py search`, from the `knowledge-index` skill).
+- **Taxonomy / categories / relations → graph JOINs** on `graph_nodes`/`graph_edges` (L1↔L2, entity kinds) via SQL / recursive CTE.
+- **Both (a figure quoted *and* table-backed) → compute the authoritative value, then reconcile** against the stated one and flag any discrepancy.
 
-This is the *retrieval* half. The marts, metric catalog, and taxonomy are produced by the **build** skills (`tabular-semantic-layer`, `corpus-taxonomy-extraction`); this skill only consumes them.
+This is the *retrieval* half; the store is produced by the **build** skills (`knowledge-index`, `tabular-semantic-layer`, `corpus-taxonomy-extraction`) — all writing into the same `.sqlite`. (Cognee is optional/legacy — see the `cognee` skill; the default stack is local SQLite.)
 
 ## When to use
 
@@ -25,10 +26,11 @@ This is the *retrieval* half. The marts, metric catalog, and taxonomy are produc
 
 1. **Decompose** the question into atomic claims/sub-questions.
 2. **Classify each** by the metric's `source_type` (from the metric catalog / taxonomy):
-   - `computable` → marts. `stated` → Cognee. `both` → marts + reconcile. Pure narrative → Cognee.
-3. **Retrieve**:
-   - Marts: `python query.py --db <project>/marts/marts.duckdb --catalog <project>/schema/metrics.<corpus>.json --metric <m> [--grain --entity|--entity-like --month|--months]`. The db + catalog are project artifacts from the build skill, not shipped here. Use `--list` to see governed metrics; `--sql` for aggregates/joins the catalog doesn't cover.
-   - Cognee: **first choice — `mcp__cognee__recall`** (auto-routing, session-aware) if the MCP server is wired. **Fallback — REST `/api/v1/search`** with an explicit `searchType` (`GRAPH_COMPLETION`/`HYBRID_COMPLETION`); use REST specifically when you need to pin the search type, page results, or the MCP server isn't available. See the `cognee` skill for both.
+   - `computable` → marts. `stated` → RAG. `both` → marts + reconcile. Pure narrative → RAG. Category/relation → graph.
+3. **Retrieve** (all against the one `<project>/schema/knowledge.sqlite`):
+   - Marts: `python query.py --db knowledge.sqlite --catalog <project>/schema/metrics.<corpus>.json --metric <m> [--grain --entity|--entity-like --month|--months]`. `--list` for governed metrics; `--sql` for aggregates/joins.
+   - RAG: `python knowledge_index.py search --db knowledge.sqlite --query "..." [--k 8] [--json]` (BM25+vector RRF; returns cited chunks).
+   - Graph: `--sql "SELECT … FROM graph_nodes JOIN graph_edges …"` (taxonomy L1↔L2, entity kinds; recursive CTE for multi-hop).
 4. **Reconcile** `both`-class: report the computed value as authoritative; note the stated value and any gap.
 5. **Compose** one answer: tag each fact `[MART: file]`, `[NARRATIVE]`, or `[STATED: doc]`.
 
@@ -43,15 +45,15 @@ This is the *retrieval* half. The marts, metric catalog, and taxonomy are produc
 ## Quick reference
 
 ```bash
-DB=<project>/marts/marts.duckdb; CAT=<project>/schema/metrics.<corpus>.json
-# list governed metrics
+DB=<project>/schema/knowledge.sqlite; CAT=<project>/schema/metrics.<corpus>.json
+# numbers — governed metric + filters (marts)
 python query.py --db "$DB" --catalog "$CAT" --list
-# a trend at a grain
-python query.py --db "$DB" --catalog "$CAT" --metric <metric> --grain <grain> --entity <NAME> --months 2026-06,2026-07
-# a named entity, case-insensitive (handles casing variants)
-python query.py --db "$DB" --catalog "$CAT" --metric <metric> --grain <grain> --entity-like <name>
-# aggregate the catalog doesn't name
-python query.py --db "$DB" --sql "SELECT sum(value) FROM facts WHERE family='<family>' AND metric='<metric>' AND grain='<grain>' AND month='2026-06'"
+python query.py --db "$DB" --catalog "$CAT" --metric <metric> --grain <grain> --entity-like <name> --months 2026-06,2026-07
+python query.py --db "$DB" --sql "SELECT sum(value) FROM facts WHERE family='<f>' AND metric='<m>' AND grain='<g>' AND month='2026-06'"
+# narrative — hybrid RRF (BM25+vector)
+python knowledge_index.py search --db "$DB" --query "why did X change" --k 8
+# taxonomy graph — L2 children of an L1
+python query.py --db "$DB" --sql "SELECT n.label FROM graph_nodes n JOIN graph_edges e ON e.source=n.id WHERE e.rel='subclass_of' AND e.target='billing_disputes'"
 ```
 
 ## Output shape
@@ -60,4 +62,4 @@ For a mixed question, structure the answer as: the computed figures (each cited)
 
 ## Dependencies
 
-`duckdb` (query.py). The Cognee lane needs a running Cognee server reached via its MCP tools (`mcp__cognee__*`) or REST — see the `cognee` skill. Reads artifacts produced by the build skills; produces nothing persistent itself.
+Stdlib `sqlite3` (query.py) + `sqlite-vec`, `fastembed` for the RAG lane (via `knowledge-index`). No server. Reads the one `knowledge.sqlite` produced by the build skills; produces nothing persistent itself. (Cognee remains available as an optional remote backend — see the `cognee` skill — but the default stack is local SQLite.)
