@@ -24,10 +24,30 @@ CTE = SKILLS / "corpus-taxonomy-extraction"
 KI  = SKILLS / "knowledge-index"
 TSL = SKILLS / "tabular-semantic-layer"
 
+
+def brain_py():
+    """The interpreter that holds the skills' deps, in priority order:
+      1. $BRAIN_PY (explicit override)
+      2. the venv next to these installed skills (<host>/venv) — per-project or --user
+      3. a shared user-level host venv (~/.claude/venv, ~/.dsh/venv, …)
+      4. the current interpreter."""
+    if os.environ.get("BRAIN_PY"):
+        return os.environ["BRAIN_PY"]
+    cands = [SKILLS.parent / "venv" / "bin" / "python"]          # <root>/.<host>/venv
+    home = Path.home()
+    cands += [home / d / "venv" / "bin" / "python"
+              for d in (".claude", ".dsh", ".codex", ".copilot")]
+    for c in cands:
+        if c.exists():
+            return str(c)
+    return sys.executable
+
 NARRATIVE_EXT = {".pdf", ".pptx", ".ppt", ".docx", ".doc", ".md", ".txt"}
 REPORTING_EXT = {".xlsx", ".xlsm", ".xls", ".csv"}
 
-# module -> pip name (for the preflight message); all torch-free
+# module -> pip name (for the preflight message). fastembed/pypdf/openpyxl need no
+# torch; docling (PPTX/DOCX) pulls torch/transformers (~1.3 GB) — install into the
+# skills' own venv (install.sh --deps [--user]), not the project's env.
 DEPS = [("sqlite_vec", "sqlite-vec"), ("fastembed", "fastembed"),
         ("docling", "docling"), ("pypdf", "pypdf"), ("openpyxl", "openpyxl"),
         ("pandas", "pandas")]
@@ -121,6 +141,7 @@ def cmd_scaffold(a):
 def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal):
     docs_s = str(docs) if docs else "<docs-dir>"
     rep_s = str(reporting) if reporting else "<reporting-dir>"
+    py = brain_py()
     return textwrap.dedent(f"""\
     # Brain build plan — {corpus}
 
@@ -129,37 +150,42 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal):
     **Store:** `{db}` — one portable SQLite file (chunks+FTS+vector · facts · graph).
     Rule: *meaning is agentic, numbers are computed.* Every answer cited or "not modeled".
 
+    **Python:** `$PY` below is the skills' own project-local venv (isolated from your
+    project's deps). Create it once with:
+    `./install.sh --bundle brain --deps` (or `npx … init --bundle brain --deps`).
+
     ## Build sequence
     Steps marked 🤖 are **low-tier agents** (judgment), the rest are deterministic scripts.
 
     ```bash
     DB="{db}"
+    PY="{py}"          # the brain venv interpreter (BRAIN_PY)
 
-    # 1 · parse narrative docs → Markdown (torch-free)
-    python "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats pptx,docx,pdf
+    # 1 · parse narrative docs → Markdown (Docling pulls torch; pypdf does not)
+    "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats pptx,docx,pdf
 
     # 2 · 🤖 induce taxonomy (map→reduce→judge→emit) → taxonomy/taxonomy_v0.json
     #     see corpus-taxonomy-extraction/SKILL.md; goal = above. Dispatch Haiku subagents.
 
     # 3 · narrative index — heading-aware sections → chunks + FTS5 + vector
-    python "{KI/'knowledge_index.py'}" index --db "$DB" --corpus "{proj/'parsed'}" --reset
+    "$PY" "{KI/'knowledge_index.py'}" index --db "$DB" --corpus "{proj/'parsed'}" --reset
 
     # 4 · taxonomy graph (L1/L2 vertices) into the SAME db
-    python "{CTE/'build_graph.py'}" --taxonomy "{proj/'taxonomy'/'taxonomy_v0.json'}" --db "$DB"
+    "$PY" "{CTE/'build_graph.py'}" --taxonomy "{proj/'taxonomy'/'taxonomy_v0.json'}" --db "$DB"
 
     # 5 · 🤖 per-section tags — prep, dispatch Haiku subagents, write
-    python "{CTE/'classify_prep.py'}" --db "$DB" --taxonomy "{proj/'taxonomy'/'taxonomy_v0.json'}" --out "{proj/'classify'}" --batches 5
+    "$PY" "{CTE/'classify_prep.py'}" --db "$DB" --taxonomy "{proj/'taxonomy'/'taxonomy_v0.json'}" --out "{proj/'classify'}" --batches 5
     #     → N Haiku subagents read classify/{{instructions,vocab,batch_k}} → write classify/result_k.json
-    python "{CTE/'classify_write.py'}" --db "$DB" --results "{proj/'classify'}"
+    "$PY" "{CTE/'classify_write.py'}" --db "$DB" --results "{proj/'classify'}"
 
     # 6 · numeric marts (Excel → facts) into the SAME db   [edit {fam.name} first!]
-    python "{TSL/'build_marts.py'}" --root "{rep_s}" --config "{fam}" --out-dir "{proj/'marts'}" --db "$DB" --strict
+    "$PY" "{TSL/'build_marts.py'}" --root "{rep_s}" --config "{fam}" --out-dir "{proj/'marts'}" --db "$DB" --strict
 
     # 7 · Obsidian vault = a VIEW of the store
-    python "{CTE/'to_obsidian.py'}" --db "$DB" --out "{proj/'vault'}"
+    "$PY" "{CTE/'to_obsidian.py'}" --db "$DB" --out "{proj/'vault'}"
 
     # verify the built store
-    python "{Path(__file__).resolve()}" verify --db "$DB"
+    "$PY" "{Path(__file__).resolve()}" verify --db "$DB"
     ```
 
     ## Answer

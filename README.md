@@ -16,7 +16,7 @@ docs ─▶ corpus-taxonomy-extraction ─▶ Markdown + taxonomy_v0 + graph  �
                                             (all orchestrated by knowledge-pipeline)
 ```
 
-Retrieval is **hybrid**: BM25 (FTS5) + vector (sqlite-vec) fused by **Reciprocal Rank Fusion** — pattern from [arozumenko/wikis](https://github.com/arozumenko/wikis). Torch-free, one file, moves anywhere.
+Retrieval is **hybrid**: BM25 (FTS5) + vector (sqlite-vec) fused by **Reciprocal Rank Fusion** — pattern from [arozumenko/wikis](https://github.com/arozumenko/wikis). One file, moves anywhere. The RAG embedder (fastembed/onnx) needs no PyTorch; note the `docling` parser does pull torch (see Dependencies).
 
 ## Skills
 
@@ -92,4 +92,6 @@ Corpus-specific configuration (family definitions, metric catalogs, Cognee conne
 
 ## Dependencies
 
-Python 3.9+, stdlib `sqlite3` (with `enable_load_extension`). Per-skill: `docling`, `pypdf` (extraction); `sqlite-vec`, `fastembed` (knowledge-index RAG); `openpyxl`, `pandas`, optional `pyarrow` (tabular). All pip-installable and **torch-free**. The default stack needs no server; `cognee` is an optional remote backend.
+Python 3.9+, stdlib `sqlite3` (with `enable_load_extension`). Per-skill: `docling`, `pypdf` (extraction); `sqlite-vec`, `fastembed` (knowledge-index RAG); `openpyxl`, `pandas`, optional `pyarrow` (tabular). All pip-installable. The RAG embedder (`fastembed`/onnx) and `pypdf`/`openpyxl` need **no PyTorch**; `docling` (PPTX/DOCX parsing) does pull torch/transformers (~1.3 GB installed).
+
+Install them into an **isolated venv that belongs to the skills, not your project** — `install.sh --bundle brain --deps` (uses `uv`) builds `<project>/.claude/venv`. Because those deps are heavy, add `--user` to build **one shared** `~/.claude/venv` (or `~/.dsh/venv`) reused across all projects instead of copying 1.3 GB into each. Zero-install alternative: `uv run --with-requirements bundles/brain/requirements.txt python <script>`. The default stack needs no server; `cognee` is an optional remote backend.
