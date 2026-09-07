@@ -47,27 +47,47 @@ def call(base, tok, method, path, jbody=None, timeout=600):
     try: return json.loads(raw)
     except ValueError: return raw
 
-def upload_ontology(base, tok, key, path, desc):
-    boundary = "----cognee" + uuid.uuid4().hex
-    fname = os.path.basename(path)
-    fields = {"ontology_key": key}
-    if desc: fields["description"] = desc
+def multipart(fields, files):
+    """fields: {name: value}; files: [(field, filename, bytes, content_type)]."""
+    b = "----cognee" + uuid.uuid4().hex
     body = b""
     for k, v in fields.items():
-        body += (f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n').encode()
-    with open(path, "rb") as f: content = f.read()
-    body += (f'--{boundary}\r\nContent-Disposition: form-data; name="ontology_file"; filename="{fname}"\r\n'
-             f'Content-Type: application/rdf+xml\r\n\r\n').encode() + content + b"\r\n"
-    body += f'--{boundary}--\r\n'.encode()
-    req = urllib.request.Request(base + "/api/v1/ontologies", data=body,
+        body += (f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n').encode()
+    for field, fname, content, ctype in files:
+        body += (f'--{b}\r\nContent-Disposition: form-data; name="{field}"; filename="{fname}"\r\n'
+                 f'Content-Type: {ctype}\r\n\r\n').encode() + content + b"\r\n"
+    body += f'--{b}--\r\n'.encode()
+    return b, body
+
+def multipart_post(base, tok, path, fields, files, timeout=300):
+    boundary, body = multipart(fields, files)
+    req = urllib.request.Request(base + path, data=body,
         headers=hdrs(tok, {"Content-Type": f"multipart/form-data; boundary={boundary}"}), method="POST")
-    with urllib.request.urlopen(req, timeout=120) as r:
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read().decode()
+
+def upload_ontology(base, tok, key, path, desc):
+    fields = {"ontology_key": key}
+    if desc: fields["description"] = desc
+    with open(path, "rb") as f: content = f.read()
+    files = [("ontology_file", os.path.basename(path), content, "application/rdf+xml")]
+    return multipart_post(base, tok, "/api/v1/ontologies", fields, files, timeout=120)
+
+def add_data(base, tok, dataset, paths, node_set, background):
+    fields = {"datasetName": dataset}
+    if node_set: fields["node_set"] = node_set
+    if background: fields["run_in_background"] = "true"
+    files = []
+    for p in paths:
+        with open(p, "rb") as f:
+            files.append(("data", os.path.basename(p), f.read(), "text/markdown"))
+    return multipart_post(base, tok, "/api/v1/add", fields, files)
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["datasets", "upload-ontology", "cognify", "search", "status"])
+    ap.add_argument("cmd", choices=["datasets", "add", "upload-ontology", "cognify", "search", "status"])
     ap.add_argument("--url"); ap.add_argument("--key"); ap.add_argument("--file")
+    ap.add_argument("--files", nargs="+", default=[]); ap.add_argument("--node-set")
     ap.add_argument("--description"); ap.add_argument("--dataset")
     ap.add_argument("--ontology-key", action="append", default=[])
     ap.add_argument("--background", action="store_true")
@@ -78,6 +98,9 @@ def main():
 
     if a.cmd == "datasets":
         print(json.dumps(call(base, tok, "GET", "/api/v1/datasets"), indent=2))
+    elif a.cmd == "add":
+        if not (a.dataset and a.files): sys.exit("need --dataset and --files")
+        print(add_data(base, tok, a.dataset, a.files, a.node_set, a.background))
     elif a.cmd == "upload-ontology":
         if not (a.key and a.file): sys.exit("need --key and --file")
         print(upload_ontology(base, tok, a.key, a.file, a.description))
