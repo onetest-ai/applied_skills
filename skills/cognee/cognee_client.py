@@ -48,11 +48,13 @@ def call(base, tok, method, path, jbody=None, timeout=600):
     except ValueError: return raw
 
 def multipart(fields, files):
-    """fields: {name: value}; files: [(field, filename, bytes, content_type)]."""
+    """fields: {name: value|[values]} (a list emits repeated parts -> array);
+    files: [(field, filename, bytes, content_type)]."""
     b = "----cognee" + uuid.uuid4().hex
     body = b""
     for k, v in fields.items():
-        body += (f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n').encode()
+        for item in (v if isinstance(v, list) else [v]):
+            body += (f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{item}\r\n').encode()
     for field, fname, content, ctype in files:
         body += (f'--{b}\r\nContent-Disposition: form-data; name="{field}"; filename="{fname}"\r\n'
                  f'Content-Type: {ctype}\r\n\r\n').encode() + content + b"\r\n"
@@ -75,7 +77,7 @@ def upload_ontology(base, tok, key, path, desc):
 
 def add_data(base, tok, dataset, paths, node_set, background):
     fields = {"datasetName": dataset}
-    if node_set: fields["node_set"] = node_set
+    if node_set: fields["node_set"] = [s.strip() for s in node_set.split(",") if s.strip()]
     if background: fields["run_in_background"] = "true"
     files = []
     for p in paths:
