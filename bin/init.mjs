@@ -83,7 +83,7 @@ function installDeps(o, bases) {
   for (const venv of venvs) {
     console.log(`→ deps venv (isolated, ${scope}): ${venv}`);
     if (o.dry) { console.log(`   [dry-run] uv venv "${venv}" && uv pip install --python "${venv}" -r "${req}"`); continue; }
-    if (spawnSync("uv", ["venv", venv], { stdio: "inherit" }).status !== 0) process.exit(1);
+    if (spawnSync("uv", ["venv", "--allow-existing", venv], { stdio: "inherit" }).status !== 0) process.exit(1);
     if (spawnSync("uv", ["pip", "install", "--python", venv, "-r", req], { stdio: "inherit" }).status !== 0) process.exit(1);
     console.log(`   ✓ installed requirements.txt into ${venv}`);
     console.log(`   run brain scripts with:  "${join(venv, "bin", "python")}" <script>   (BRAIN_PY)`);

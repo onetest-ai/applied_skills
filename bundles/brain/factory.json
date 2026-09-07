@@ -10,8 +10,16 @@
     "knowledge-index",
     "tabular-semantic-layer",
     "hybrid-retrieval",
-    "knowledge-pipeline"
+    "knowledge-pipeline",
+    "brain-mcp"
   ],
+  "mcp": {
+    "server": "brain",
+    "command": "<venv>/bin/python",
+    "args": ["<skills>/brain-mcp/brain_mcp.py"],
+    "tools": ["which", "search", "sql", "metric", "graph", "verify"],
+    "register_with": "install.sh --deps --mcp (writes .mcp.json for Claude Code)"
+  },
   "optionalSkills": [
     "cognee"
   ],
