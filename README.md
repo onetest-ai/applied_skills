@@ -29,11 +29,26 @@ Vector RAG cannot return correct numbers; raw text-to-SQL returns *confident wro
 
 ## Install
 
-Each project points its agent runtime at these skills. For local use, symlink the ones you want into your skills directory, e.g.:
+All four skills use the standard `SKILL.md` format, so **Claude Code** and **DeepSeek Harness (dsh)** load them from the same files — install is a copy, no translation.
 
 ```bash
-ln -s "$PWD/skills/tabular-semantic-layer" ~/.claude/skills/tabular-semantic-layer
+git clone git@github.com:onetest-ai/applied_skills.git && cd applied_skills
+
+./install.sh                     # all skills → ./.claude/skills + ./.dsh/skills (this project)
+./install.sh --target dsh        # dsh only  → ./.dsh/skills
+./install.sh --target claude --user   # → ~/.claude/skills (all your projects)
+./install.sh --symlink           # link instead of copy (edits reflect live)
+./install.sh --dry-run           # preview
 ```
+
+Targets: `claude` → `<root>/.claude/skills/`, `dsh` → `<root>/.dsh/skills/` (dsh's rank-100 project source; it also reads `.agents/skills`). `<root>` is the current project, or `$HOME` with `--user`. Restart the session after installing so the host loads the skills.
+
+**Claude plugin (alternative):** this repo is also a plugin marketplace —
+```bash
+claude plugin marketplace add onetest-ai/applied_skills
+claude plugin install applied-skills@onetest-ai
+```
+(Don't combine the plugin and the copy/symlink install — pick one, or the skills load twice.)
 
 Corpus-specific configuration (family definitions, metric catalogs, Cognee connection + dataset ids) belongs in the **consuming project's** repo, not here. Each skill's `*.example.*` templates show the shape to copy.
 
