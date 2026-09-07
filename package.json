@@ -1,0 +1,12 @@
+{
+  "name": "applied-skills",
+  "version": "0.1.0",
+  "description": "Generic AI skills for truthful data pipelines over documents, knowledge graphs, and tabular reporting. Installs into Claude Code, DeepSeek Harness (dsh), GitHub Copilot, and Codex — same SKILL.md format everywhere.",
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "bin": { "init": "./bin/init.mjs" },
+  "repository": { "type": "git", "url": "https://github.com/onetest-ai/applied_skills.git" },
+  "author": "onetest-ai",
+  "license": "MIT",
+  "keywords": ["cognee", "duckdb", "rag", "semantic-layer", "skills", "claude", "codex", "copilot", "deepseek-harness"]
+}

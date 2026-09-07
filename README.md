@@ -29,19 +29,38 @@ Vector RAG cannot return correct numbers; raw text-to-SQL returns *confident wro
 
 ## Install
 
-All four skills use the standard `SKILL.md` format, so **Claude Code** and **DeepSeek Harness (dsh)** load them from the same files — install is a copy, no translation.
+Every host reads the standard `SKILL.md` format, so install is a copy (or symlink) — no translation.
+
+**Targets**
+
+| Host | Project dir | User dir (`--user`) |
+|---|---|---|
+| `claude` | `.claude/skills/` | `~/.claude/skills/` |
+| `dsh` (DeepSeek Harness) | `.dsh/skills/` | `~/.dsh/skills/` |
+| `copilot` (GitHub Copilot) | `.github/skills/` | `~/.copilot/skills/` |
+| `codex` | `.codex/skills/` | `~/.codex/skills/` |
+
+### npx one-liner (no clone)
+
+```bash
+npx github:onetest-ai/applied_skills init                      # all skills → all 4 hosts (this project)
+npx github:onetest-ai/applied_skills init --target claude,dsh  # pick hosts
+npx github:onetest-ai/applied_skills init --user               # install under $HOME
+npx github:onetest-ai/applied_skills init --symlink            # link instead of copy
+npx github:onetest-ai/applied_skills init --dry-run            # preview
+```
+(Private repo → needs git access, e.g. `npx git+ssh://git@github.com/onetest-ai/applied_skills.git init`.)
+
+### shell installer (no Node)
 
 ```bash
 git clone git@github.com:onetest-ai/applied_skills.git && cd applied_skills
-
-./install.sh                     # all skills → ./.claude/skills + ./.dsh/skills (this project)
-./install.sh --target dsh        # dsh only  → ./.dsh/skills
-./install.sh --target claude --user   # → ~/.claude/skills (all your projects)
-./install.sh --symlink           # link instead of copy (edits reflect live)
-./install.sh --dry-run           # preview
+./install.sh --target all            # or claude|dsh|copilot|codex
+./install.sh --target codex --user   # → ~/.codex/skills
+./install.sh --symlink --dry-run
 ```
 
-Targets: `claude` → `<root>/.claude/skills/`, `dsh` → `<root>/.dsh/skills/` (dsh's rank-100 project source; it also reads `.agents/skills`). `<root>` is the current project, or `$HOME` with `--user`. Restart the session after installing so the host loads the skills.
+Restart the host session after installing so it loads the skills.
 
 **Claude plugin (alternative):** this repo is also a plugin marketplace —
 ```bash

@@ -3,14 +3,17 @@
 # Harness (dsh). Both hosts read the same SKILL.md format, so this is a copy (or
 # symlink), no translation.
 #
-#   Claude Code : <root>/.claude/skills/<name>/
-#   dsh         : <root>/.dsh/skills/<name>/    (dsh rank-100 project source)
+#   claude  : <root>/.claude/skills/<name>/   (user: ~/.claude/skills)
+#   dsh     : <root>/.dsh/skills/<name>/       (user: ~/.dsh/skills)   [rank-100 project source]
+#   copilot : <root>/.github/skills/<name>/    (user: ~/.copilot/skills)
+#   codex   : <root>/.codex/skills/<name>/     (user: ~/.codex/skills)
 #
 # <root> is the current project (default) or $HOME with --user.
+# (There is also an npx one-liner: npx github:onetest-ai/applied_skills init …)
 #
 # Usage:
-#   ./install.sh [--target claude|dsh|all] [--user] [--symlink] [--dry-run]
-#                [--root <dir>] [--skills a,b,c]
+#   ./install.sh [--target claude|dsh|copilot|codex|all] [--user] [--symlink]
+#                [--dry-run] [--root <dir>] [--skills a,b,c]
 #
 # Examples:
 #   ./install.sh                       # all skills -> ./.claude/skills + ./.dsh/skills
@@ -37,16 +40,25 @@ done
 [ -d "$SRC" ] || { echo "error: skills/ not found next to install.sh (run from a repo checkout)"; exit 1; }
 [ -n "$SCOPE_HOME" ] && ROOT="$HOME"
 
+# resolve one target -> its dest base, honoring project vs --user scope
+dest_for() {
+  case "$1" in
+    claude)  [ -n "$SCOPE_HOME" ] && echo "$HOME/.claude/skills"  || echo "$ROOT/.claude/skills";;
+    dsh)     [ -n "$SCOPE_HOME" ] && echo "$HOME/.dsh/skills"     || echo "$ROOT/.dsh/skills";;
+    copilot) [ -n "$SCOPE_HOME" ] && echo "$HOME/.copilot/skills" || echo "$ROOT/.github/skills";;
+    codex)   [ -n "$SCOPE_HOME" ] && echo "$HOME/.codex/skills"   || echo "$ROOT/.codex/skills";;
+    *) echo "" ;;
+  esac
+}
 case "$TARGET" in
-  claude) DIRS=".claude/skills";;
-  dsh)    DIRS=".dsh/skills";;
-  all)    DIRS=".claude/skills .dsh/skills";;
-  *) echo "error: --target must be claude|dsh|all" >&2; exit 2;;
+  claude|dsh|copilot|codex) TARGETS="$TARGET";;
+  all) TARGETS="claude dsh copilot codex";;
+  *) echo "error: --target must be claude|dsh|copilot|codex|all" >&2; exit 2;;
 esac
 
 count=0
-for rel in $DIRS; do
-  dest_base="$ROOT/$rel"
+for tgt in $TARGETS; do
+  dest_base="$(dest_for "$tgt")"
   echo "→ $dest_base"
   for skill in "$SRC"/*/; do
     name="$(basename "$skill")"
@@ -59,6 +71,5 @@ for rel in $DIRS; do
     echo "   ✓ $name"; count=$((count+1))
   done
 done
-echo "done: $count skill install(s) ($MODE)."
-[ "$TARGET" != claude ] && echo "dsh: skills are discovered from .dsh/skills (rank 100) automatically; restart the dsh session to load."
-[ "$TARGET" != dsh ] && echo "claude: project skills load from .claude/skills; or install the plugin: claude plugin marketplace add onetest-ai/applied_skills && claude plugin install applied-skills@onetest-ai"
+echo "done: $count skill install(s) ($MODE). Restart the host session to load the skills."
+case " $TARGETS " in *" claude "*) echo "claude: or install the plugin — claude plugin marketplace add onetest-ai/applied_skills && claude plugin install applied-skills@onetest-ai";; esac

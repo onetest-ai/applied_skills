@@ -1,0 +1,81 @@
+#!/usr/bin/env node
+/*
+ * applied_skills installer (npx one-liner).
+ *
+ *   npx github:onetest-ai/applied_skills init [options]
+ *
+ * Installs the SKILL.md skills into each host's native skills dir — all hosts
+ * use the same format, so this is a copy (or symlink), no translation.
+ *
+ *   claude   -> <root>/.claude/skills     (user: ~/.claude/skills)
+ *   dsh      -> <root>/.dsh/skills         (user: ~/.dsh/skills)      [rank-100 project source]
+ *   copilot  -> <root>/.github/skills      (user: ~/.copilot/skills)
+ *   codex    -> <root>/.codex/skills       (user: ~/.codex/skills)
+ *
+ * Options:
+ *   --target claude,dsh,copilot,codex   (default: all four)
+ *   --skills a,b,c                       (default: all)
+ *   --user                               install under $HOME instead of the project
+ *   --symlink                            symlink instead of copy (edits reflect live)
+ *   --dry-run                            preview only
+ */
+import { existsSync, mkdirSync, rmSync, cpSync, symlinkSync, readdirSync, statSync } from "node:fs";
+import { join, dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
+
+const HOSTS = {
+  claude:  { project: ".claude/skills",  user: join(homedir(), ".claude/skills") },
+  dsh:     { project: ".dsh/skills",     user: join(homedir(), ".dsh/skills") },
+  copilot: { project: ".github/skills",  user: join(homedir(), ".copilot/skills") },
+  codex:   { project: ".codex/skills",   user: join(homedir(), ".codex/skills") },
+};
+
+const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..", "skills");
+
+function parseArgs(argv) {
+  const o = { targets: Object.keys(HOSTS), skills: null, user: false, symlink: false, dry: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "init") continue;                       // npx passes the bin name as arg0
+    else if (a === "--target") o.targets = argv[++i].split(",").map(s => s.trim()).filter(Boolean);
+    else if (a === "--skills") o.skills = argv[++i].split(",").map(s => s.trim()).filter(Boolean);
+    else if (a === "--user") o.user = true;
+    else if (a === "--symlink") o.symlink = true;
+    else if (a === "--dry-run") o.dry = true;
+    else if (a === "-h" || a === "--help") { help(); process.exit(0); }
+    else { console.error(`unknown arg: ${a}`); process.exit(2); }
+  }
+  return o;
+}
+function help() {
+  console.log("npx github:onetest-ai/applied_skills init [--target claude,dsh,copilot,codex]");
+  console.log("  [--skills a,b,c] [--user] [--symlink] [--dry-run]");
+}
+
+function main() {
+  const o = parseArgs(process.argv.slice(2));
+  if (!existsSync(SRC)) { console.error(`error: skills/ not found at ${SRC}`); process.exit(1); }
+  for (const t of o.targets) if (!HOSTS[t]) { console.error(`error: unknown target '${t}' (claude|dsh|copilot|codex)`); process.exit(2); }
+
+  const allSkills = readdirSync(SRC).filter(n => statSync(join(SRC, n)).isDirectory());
+  const skills = o.skills ? allSkills.filter(n => o.skills.includes(n)) : allSkills;
+  if (!skills.length) { console.error("error: no matching skills"); process.exit(1); }
+
+  let n = 0;
+  for (const t of o.targets) {
+    const base = o.user ? HOSTS[t].user : resolve(process.cwd(), HOSTS[t].project);
+    console.log(`→ ${base}`);
+    for (const name of skills) {
+      const src = join(SRC, name), dest = join(base, name);
+      if (o.dry) { console.log(`   [dry-run] ${o.symlink ? "symlink" : "copy"} ${name}`); continue; }
+      mkdirSync(base, { recursive: true });
+      rmSync(dest, { recursive: true, force: true });
+      if (o.symlink) symlinkSync(src, dest);
+      else cpSync(src, dest, { recursive: true, dereference: true });
+      console.log(`   ✓ ${name}`); n++;
+    }
+  }
+  if (!o.dry) console.log(`done: ${n} skill install(s) (${o.symlink ? "symlink" : "copy"}). Restart the host session to load.`);
+}
+main();
