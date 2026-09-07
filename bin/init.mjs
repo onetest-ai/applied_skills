@@ -16,17 +16,20 @@
  *   --target claude,dsh,copilot,codex   (default: all four)
  *   --bundle <name>                      install a curated bundle (bundles/<name>/factory.json)
  *   --optional                           with --bundle, also install its optionalSkills
+ *   --deps                               build a DEDICATED venv (uv) for the skills' deps
+ *   --venv <dir>                         where that venv lives (default ~/.brain/venv)
  *   --skills a,b,c                       (default: all; ignored when --bundle is given)
  *   --user                               install under $HOME instead of the project
  *   --symlink                            symlink instead of copy (edits reflect live)
  *   --dry-run                            preview only
  *
- *   npx github:onetest-ai/applied_skills init --bundle brain
+ *   npx github:onetest-ai/applied_skills init --bundle brain --deps
  */
 import { existsSync, mkdirSync, rmSync, cpSync, symlinkSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
+import { spawnSync } from "node:child_process";
 
 const HOSTS = {
   claude:  { project: ".claude/skills",  user: join(homedir(), ".claude/skills") },
@@ -40,13 +43,15 @@ const SRC = join(ROOT, "skills");
 const BUNDLES = join(ROOT, "bundles");
 
 function parseArgs(argv) {
-  const o = { targets: Object.keys(HOSTS), skills: null, bundle: null, optional: false, user: false, symlink: false, dry: false };
+  const o = { targets: Object.keys(HOSTS), skills: null, bundle: null, optional: false, deps: false, venv: null, user: false, symlink: false, dry: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "init") continue;                       // npx passes the bin name as arg0
     else if (a === "--target") o.targets = argv[++i].split(",").map(s => s.trim()).filter(Boolean);
     else if (a === "--bundle" || a === "--factory") o.bundle = argv[++i];
     else if (a === "--optional") o.optional = true;
+    else if (a === "--deps") o.deps = true;
+    else if (a === "--venv") o.venv = argv[++i];
     else if (a === "--skills") o.skills = argv[++i].split(",").map(s => s.trim()).filter(Boolean);
     else if (a === "--user") o.user = true;
     else if (a === "--symlink") o.symlink = true;
@@ -58,7 +63,32 @@ function parseArgs(argv) {
 }
 function help() {
   console.log("npx github:onetest-ai/applied_skills init [--target claude,dsh,copilot,codex]");
-  console.log("  [--bundle <name> [--optional]] [--skills a,b,c] [--user] [--symlink] [--dry-run]");
+  console.log("  [--bundle <name> [--optional]] [--deps [--venv <dir>]] [--skills a,b,c] [--user] [--symlink] [--dry-run]");
+}
+
+// --deps: an isolated venv for the skills' Python deps, next to skills/ inside the
+// host dir (<root>/.claude/venv, …) — a separate env from the project's own. Scope
+// follows the skills: default per-project, or with --user ONE shared ~/.claude/venv
+// (use when the ~1.3 GB deps are too big to copy per project). Uses uv; needs a bundle.
+function installDeps(o, bases) {
+  const req = join(BUNDLES, o.bundle || "", "requirements.txt");
+  if (!o.bundle || !existsSync(req)) {
+    console.error(`error: --deps needs --bundle <name> with a requirements.txt (looked for ${req})`); process.exit(2);
+  }
+  if (spawnSync("uv", ["--version"], { stdio: "ignore" }).status !== 0) {
+    console.error("error: uv not found — install it: https://astral.sh/uv"); process.exit(1);
+  }
+  const venvs = o.venv ? [o.venv] : bases.map(b => join(dirname(b), "venv"));
+  const scope = o.user ? "shared (--user)" : "per-project";
+  for (const venv of venvs) {
+    console.log(`→ deps venv (isolated, ${scope}): ${venv}`);
+    if (o.dry) { console.log(`   [dry-run] uv venv "${venv}" && uv pip install --python "${venv}" -r "${req}"`); continue; }
+    if (spawnSync("uv", ["venv", venv], { stdio: "inherit" }).status !== 0) process.exit(1);
+    if (spawnSync("uv", ["pip", "install", "--python", venv, "-r", req], { stdio: "inherit" }).status !== 0) process.exit(1);
+    console.log(`   ✓ installed requirements.txt into ${venv}`);
+    console.log(`   run brain scripts with:  "${join(venv, "bin", "python")}" <script>   (BRAIN_PY)`);
+  }
+  if (!o.dry) console.log(`(zero-install alt, no venv: uv run --with-requirements "${req}" python <script>)`);
 }
 
 // Resolve the ordered skill list for a named bundle from its factory.json.
@@ -90,8 +120,10 @@ function main() {
   if (!skills.length) { console.error("error: no matching skills"); process.exit(1); }
 
   let n = 0;
+  const bases = [];
   for (const t of o.targets) {
     const base = o.user ? HOSTS[t].user : resolve(process.cwd(), HOSTS[t].project);
+    bases.push(base);
     console.log(`→ ${base}`);
     for (const name of skills) {
       const src = join(SRC, name), dest = join(base, name);
@@ -104,5 +136,6 @@ function main() {
     }
   }
   if (!o.dry) console.log(`done: ${n} skill install(s) (${o.symlink ? "symlink" : "copy"}). Restart the host session to load.`);
+  if (o.deps) installDeps(o, bases);
 }
 main();

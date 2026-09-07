@@ -2,10 +2,11 @@
 """Deterministic corpus parser for corpus-taxonomy-extraction.
 
 Converts a heterogeneous document corpus into uniform Markdown that a
-low-tier model can read. No LLM, no torch:
-  - .pptx/.docx  -> Docling (simple backend)
-  - .xlsx/.xlsm  -> Docling if small; openpyxl read_only structure-dump if large
-  - .pdf         -> pypdf text extraction (torch-free)
+low-tier model can read. No LLM. NOTE: Docling pulls in torch/transformers
+(~1 GB); the pypdf/openpyxl paths do not.
+  - .pptx/.docx  -> Docling (pulls torch/transformers)
+  - .xlsx/.xlsm  -> Docling if small (torch); openpyxl read_only structure-dump if large (no torch)
+  - .pdf         -> pypdf text extraction (no torch)
 Writes one .md per source file plus a manifest.json.
 
 Usage:

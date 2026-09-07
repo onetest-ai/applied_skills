@@ -35,7 +35,7 @@ A discovered metric is tagged by how it should later be answered — **format do
 
 ## Portability & dependencies
 
-Self-contained and corpus-agnostic — everything is driven by args + the goal string; no paths are hardcoded. Ships the taxonomy scripts (parse, consolidate, emit_taxonomy, emit_ontology) + store scripts (chunking, build_graph, classify_prep/write, to_obsidian) + the map template in this skill dir. Requires a Python (3.9+) with **`docling`, `pypdf`, `openpyxl`** (all torch-free for PPTX/PDF/XLSX; PDF uses pypdf so no ML models needed). Run scripts with any such interpreter, e.g. `uv run --with docling,pypdf,openpyxl python <script>` or a venv that has them. The low-tier map/merge/judge steps assume a subagent mechanism with a model override (e.g. Haiku); on a different harness, substitute any cheap model that can read a file and emit JSON. To apply to a new corpus: pick a goal string, point `parse_corpus.py` at the corpus, instantiate the map template, run the pipeline.
+Self-contained and corpus-agnostic — everything is driven by args + the goal string; no paths are hardcoded. Ships the taxonomy scripts (parse, consolidate, emit_taxonomy, emit_ontology) + store scripts (chunking, build_graph, classify_prep/write, to_obsidian) + the map template in this skill dir. Requires a Python (3.9+) with **`docling`, `pypdf`, `openpyxl`**. Note: `docling` (PPTX/DOCX parsing) pulls in **torch/transformers** (~1 GB); `pypdf` (PDF) and `openpyxl` (XLSX) do not. Run scripts with any such interpreter, e.g. `uv run --with docling,pypdf,openpyxl python <script>` or a venv that has them. The low-tier map/merge/judge steps assume a subagent mechanism with a model override (e.g. Haiku); on a different harness, substitute any cheap model that can read a file and emit JSON. To apply to a new corpus: pick a goal string, point `parse_corpus.py` at the corpus, instantiate the map template, run the pipeline.
 
 ## Pipeline (map → reduce → judge → emit)
 
@@ -48,9 +48,9 @@ goal + corpus + optional seed taxonomy
   → emit    taxonomy_v0.{json,md}     reviewable, versioned, with a demoted list
 ```
 
-### 1. Parse — `parse_corpus.py` (deterministic, torch-free)
+### 1. Parse — `parse_corpus.py` (deterministic, no LLM)
 `python parse_corpus.py --corpus <dir> --out <dir> --formats pptx,docx,pdf`
-- PPTX/DOCX → Docling (simple backend, no torch); PDF → pypdf; XLSX small → Docling, large → openpyxl `read_only` structure dump.
+- PPTX/DOCX → Docling (pulls torch/transformers); PDF → pypdf (no torch); XLSX small → Docling, large → openpyxl `read_only` structure dump.
 - **Taxonomy pass = narrative/summary formats only (`--formats pptx,docx,pdf`).** Do NOT Docling the big numeric workbooks — they explode into tens of MB of useless number-grid markdown and belong to the deterministic numeric lane, not here.
 
 ### 2. Map — low-tier subagents (Haiku), one batch per subagent
