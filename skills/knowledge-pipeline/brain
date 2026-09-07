@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# brain — one entry point so an agent NEVER has to guess where to run.
+#
+# It self-discovers, in this order (each overridable by an env var):
+#   • skills dir  — <self>/.claude/skills, .dsh, .codex, .github  (or $BRAIN_SKILLS;
+#                   also works when this launcher lives inside the skills dir itself)
+#   • interpreter — $BRAIN_PY → the venv next to the skills (<host>/venv) →
+#                   a shared ~/.claude/venv | ~/.dsh/venv | … → python3
+#   • store (db)  — $BRAIN_DB → <self>/knowledge.sqlite → <self>/schema/knowledge.sqlite
+#
+# Usage:
+#   ./brain which                 # print the resolved skills / python / db
+#   ./brain search "<question>" [k]
+#   ./brain sql "SELECT … FROM facts …"
+#   ./brain verify ["<smoke query>"]
+#   ./brain py <script.py> [args…]   # run any skill script with the right interpreter
+set -euo pipefail
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+find_skills() {
+  if [ -n "${BRAIN_SKILLS:-}" ] && [ -d "$BRAIN_SKILLS/knowledge-index" ]; then echo "$BRAIN_SKILLS"; return; fi
+  for d in "$SELF/.claude/skills" "$SELF/.dsh/skills" "$SELF/.codex/skills" "$SELF/.github/skills"; do
+    [ -d "$d/knowledge-index" ] && { echo "$d"; return; }
+  done
+  # launcher installed inside the skills dir (…/skills/knowledge-pipeline/brain)?
+  case "$SELF" in */knowledge-pipeline) [ -d "$(dirname "$SELF")/knowledge-index" ] && { dirname "$SELF"; return; };; esac
+  echo ""
+}
+SKILLS="$(find_skills)"
+[ -n "$SKILLS" ] || { echo "brain: cannot find a skills dir (set BRAIN_SKILLS to the dir holding knowledge-index/)"; exit 1; }
+
+find_py() {
+  [ -n "${BRAIN_PY:-}" ] && { echo "$BRAIN_PY"; return; }
+  local host; host="$(dirname "$SKILLS")"                 # e.g. <root>/.claude
+  for p in "$host/venv/bin/python" \
+           "$HOME/.claude/venv/bin/python" "$HOME/.dsh/venv/bin/python" \
+           "$HOME/.codex/venv/bin/python" "$HOME/.copilot/venv/bin/python"; do
+    [ -x "$p" ] && { echo "$p"; return; }
+  done
+  command -v python3
+}
+PY="$(find_py)"
+
+find_db() {
+  [ -n "${BRAIN_DB:-}" ] && { echo "$BRAIN_DB"; return; }
+  for d in "$SELF/knowledge.sqlite" "$SELF/schema/knowledge.sqlite"; do
+    [ -f "$d" ] && { echo "$d"; return; }
+  done
+  echo ""
+}
+DB="$(find_db)"
+
+need_db() { [ -n "$DB" ] || { echo "brain: no store found (set BRAIN_DB, or place knowledge.sqlite next to this launcher)"; exit 1; }; }
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  which)  echo "skills = $SKILLS"; echo "python = $PY"; echo "db     = ${DB:-<none>}";;
+  search) need_db; "$PY" "$SKILLS/knowledge-index/knowledge_index.py" search --db "$DB" --query "${1:?question}" --k "${2:-5}";;
+  sql)    need_db; "$PY" "$SKILLS/hybrid-retrieval/query.py" --db "$DB" --sql "${1:?SQL}";;
+  verify) need_db; "$PY" "$SKILLS/knowledge-pipeline/onboard.py" verify --db "$DB" ${1:+--query "$1"};;
+  py)     "$PY" "$@";;
+  *) sed -n '3,20p' "$0"; exit 2;;
+esac

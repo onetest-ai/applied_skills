@@ -15,7 +15,7 @@ deterministic parts so the wizard is reliable and copy-pasteable:
 The scripts referenced in the printed plan are resolved relative to this
 skill's install location, so the plan works wherever the bundle is installed.
 """
-import argparse, json, os, sqlite3, sys, textwrap
+import argparse, json, os, shutil, sqlite3, sys, textwrap
 from pathlib import Path
 
 # sibling skills live next to this one:  .../skills/<skill>/...
@@ -124,6 +124,13 @@ def cmd_scaffold(a):
     if not met.exists():
         _copy_template(TSL / "metrics.example.json", met, corpus)
     (proj / "goal.txt").write_text((a.goal or "") + "\n")
+
+    # drop the self-discovering launcher at the project root so nothing hardcodes
+    # an interpreter/path: `./brain which|search|sql|verify|py`
+    launcher = Path(__file__).resolve().parent / "brain"
+    if launcher.exists():
+        shutil.copy2(launcher, proj / "brain")
+        os.chmod(proj / "brain", 0o755)
 
     plan = _plan_text(proj, corpus, db, docs, reporting, fam, met, a.goal)
     (proj / "BRAIN.md").write_text(plan)
