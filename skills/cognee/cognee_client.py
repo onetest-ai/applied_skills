@@ -90,6 +90,7 @@ def main():
     ap.add_argument("--files", nargs="+", default=[]); ap.add_argument("--node-set")
     ap.add_argument("--description"); ap.add_argument("--dataset")
     ap.add_argument("--ontology-key", action="append", default=[])
+    ap.add_argument("--custom-prompt"); ap.add_argument("--custom-prompt-file")
     ap.add_argument("--background", action="store_true")
     ap.add_argument("--query"); ap.add_argument("--type", default="GRAPH_COMPLETION")
     ap.add_argument("--top-k", type=int, default=15)
@@ -107,6 +108,9 @@ def main():
     elif a.cmd == "cognify":
         body = {"datasets": [a.dataset], "runInBackground": a.background}
         if a.ontology_key: body["ontologyKey"] = a.ontology_key
+        cp = a.custom_prompt
+        if a.custom_prompt_file: cp = open(a.custom_prompt_file).read()
+        if cp: body["customPrompt"] = cp
         print(json.dumps(call(base, tok, "POST", "/api/v1/cognify", body), indent=2))
     elif a.cmd == "search":
         body = {"searchType": a.type, "query": a.query, "datasets": [a.dataset], "topK": a.top_k}
