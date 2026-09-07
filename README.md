@@ -46,6 +46,19 @@ Every host reads the standard `SKILL.md` format, so install is a copy (or symlin
 | `copilot` (GitHub Copilot) | `.github/skills/` | `~/.copilot/skills/` |
 | `codex` | `.codex/skills/` | `~/.codex/skills/` |
 
+### Bundles (curated sets)
+
+Install a whole curated toolchain in one shot instead of listing skills. The **`brain`**
+bundle is the full local knowledge engine (the pipeline above) — see
+[`bundles/brain/README.md`](bundles/brain/README.md) for how it all fits together (with
+diagrams), and [`bundles/SPEC.md`](bundles/SPEC.md) for the bundle format.
+
+```bash
+npx github:onetest-ai/applied_skills init --bundle brain              # the 5 pipeline skills
+npx github:onetest-ai/applied_skills init --bundle brain --optional   # + optional cognee
+./install.sh --bundle brain                                           # same, from a checkout
+```
+
 ### npx one-liner (no clone)
 
 ```bash

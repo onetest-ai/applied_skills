@@ -13,16 +13,18 @@
 #
 # Usage:
 #   ./install.sh [--target claude|dsh|copilot|codex|all] [--user] [--symlink]
-#                [--dry-run] [--root <dir>] [--skills a,b,c]
+#                [--dry-run] [--root <dir>] [--skills a,b,c] [--bundle <name> [--optional]]
 #
 # Examples:
 #   ./install.sh                       # all skills -> ./.claude/skills + ./.dsh/skills
+#   ./install.sh --bundle brain        # just the 'brain' bundle's skills (from factory.json)
 #   ./install.sh --target dsh --user   # -> ~/.dsh/skills
 #   ./install.sh --symlink             # link instead of copy (dev: edits reflect live)
 set -euo pipefail
 
-SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/skills"
-TARGET="all"; SCOPE_HOME=""; MODE="copy"; DRYRUN=""; ROOT="$PWD"; ONLY=""
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC="$HERE/skills"
+TARGET="all"; SCOPE_HOME=""; MODE="copy"; DRYRUN=""; ROOT="$PWD"; ONLY=""; BUNDLE=""; OPTIONAL=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -32,10 +34,27 @@ while [ $# -gt 0 ]; do
     --dry-run) DRYRUN=1; shift;;
     --root)   ROOT="$2"; shift 2;;
     --skills) ONLY=",$2,"; shift 2;;
+    --bundle|--factory) BUNDLE="$2"; shift 2;;
+    --optional) OPTIONAL=1; shift;;
     -h|--help) sed -n '2,25p' "$0"; exit 0;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
+
+# A bundle resolves an ordered skill list from bundles/<name>/factory.json.
+if [ -n "$BUNDLE" ]; then
+  MANIFEST="$HERE/bundles/$BUNDLE/factory.json"
+  [ -f "$MANIFEST" ] || { echo "error: bundle '$BUNDLE' not found ($MANIFEST)"; exit 2; }
+  LIST="$(python3 - "$MANIFEST" "${OPTIONAL:-0}" <<'PY'
+import json, sys
+f = json.load(open(sys.argv[1])); opt = sys.argv[2] == "1"
+names = list(f.get("skills", [])) + (list(f.get("optionalSkills", [])) if opt else [])
+print(",".join(names))
+PY
+)"
+  echo "bundle: $BUNDLE -> $LIST"
+  ONLY=",$LIST,"
+fi
 
 [ -d "$SRC" ] || { echo "error: skills/ not found next to install.sh (run from a repo checkout)"; exit 1; }
 [ -n "$SCOPE_HOME" ] && ROOT="$HOME"
