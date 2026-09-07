@@ -1,0 +1,16 @@
+{
+  "name": "onetest-ai",
+  "owner": { "name": "onetest-ai", "url": "https://github.com/onetest-ai" },
+  "metadata": {
+    "description": "Applied AI skills marketplace by onetest-ai.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "applied-skills",
+      "source": "./",
+      "description": "Document/graph/tabular data pipeline: corpus-taxonomy-extraction, cognee, tabular-semantic-layer, hybrid-retrieval.",
+      "version": "0.1.0"
+    }
+  ]
+}
