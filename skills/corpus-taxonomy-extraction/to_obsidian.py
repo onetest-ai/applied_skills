@@ -4,34 +4,61 @@
 The vault is a *view of the store*: one note per `chunks` row (= a retrieval chunk
 = a section a human reads), tagged with its REAL per-section taxonomy categories
 from `chunk_topics`, and linked to taxonomy topic notes that correspond 1:1 to the
-graph vertices (`graph_nodes`). So it is explicit how everything relates:
+graph vertices (`graph_nodes`).
 
-  section note ──[[doc MOC]]──> document
-       │  tags: source/<family>, intent/<L1>
-       └──[[topic · <L1>]]──> taxonomy vertex (graph_nodes) ──[[topic · <L2>]]──> children
+**Folder layout (browsable, not a flat dump):** the `source` string encodes the
+original path with `__` between folders, so we rebuild that hierarchy — parent
+folders, then one folder per document, and the section notes inside it:
+
+  <parent>/<...>/<document>/
+      <document>.md          ← the doc index (MOC): topics + section list
+      01 <section>.md        ← one note per section (a retrieval chunk)
+      02 <section>.md
+  _topics/
+      <L1>.md                ← taxonomy vertex (graph_nodes) + its L2 children
+      <L2>.md
+
+Links are **path-qualified** (`[[folder/note|alias]]`) so they resolve regardless
+of nesting and the note filenames can stay short.
 
 Usage: to_obsidian.py --db knowledge.sqlite --out <vault>
 """
 import argparse, os, re, sqlite3
 
 def kebab(s): return re.sub(r"[^a-z0-9]+", "-", str(s).lower()).strip("-") or "x"
-def slug(s):  return re.sub(r"\s+", " ", re.sub(r'[\\/:*?"<>|#^\[\]]+', " ", str(s))).strip()[:110] or "note"
 
-def short_id(rel, seen):
-    seg = re.sub(r"\.(pdf|pptx|docx|xlsx|xlsm)$", "", rel.split("__")[-1], flags=re.I)
-    seg = slug(re.sub(r"[_]+", " ", seg))[:48].strip() or "doc"
-    cand, n = seg, 2
-    while cand in seen: cand = f"{seg} {n}"; n += 1
-    seen.add(cand); return cand
+def slug(s):
+    """Filesystem/Obsidian-safe single path segment."""
+    s = re.sub(r'[\\/:*?"<>|#^\[\]]+', " ", str(s))
+    return re.sub(r"\s+", " ", s).strip()[:80] or "note"
 
-def family(rel):
-    return kebab(rel.split("__", 1)[0] if "__" in rel else rel.split("/", 1)[0]) or "other"
+def uniq(path, seen):
+    cand, n = path, 2
+    while cand.lower() in seen:
+        cand = f"{path} {n}"; n += 1
+    seen.add(cand.lower()); return cand
 
 def fm(tags, **kv):
     return "---\ntags:\n" + "".join(f"  - {t}\n" for t in tags) + \
            "".join(f'{k}: "{v}"\n' for k, v in kv.items()) + "---\n\n"
 
-def write(out, name, text): open(os.path.join(out, slug(name) + ".md"), "w").write(text)
+def write(out, relpath, text):
+    """relpath is a vault-relative path WITHOUT .md; returns the same relpath."""
+    full = os.path.join(out, *relpath.split("/")) + ".md"
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, "w") as f: f.write(text)
+    return relpath
+
+def link(relpath, alias=None):
+    return f"[[{relpath}|{alias}]]" if alias else f"[[{relpath}]]"
+
+def doc_relpath(src):
+    """source 'A__B__file.pptx' -> vault path 'A/B/file' (parent folders + doc)."""
+    rel = src[:-3] if src.endswith(".md") else src
+    parts = [p for p in rel.split("__") if p.strip()] or [rel]
+    parts = [slug(re.sub(r"[_]+", " ", p)) for p in parts]
+    parts[-1] = slug(re.sub(r"\.(pdf|pptx|ppt|docx|doc|xlsx|xlsm|xls|csv)$", "", parts[-1], flags=re.I)) or "doc"
+    return parts  # list of path segments; last is the doc name
 
 def main():
     ap = argparse.ArgumentParser()
@@ -43,20 +70,22 @@ def main():
     has_graph = bool(c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='graph_nodes'").fetchone())
     notes = 0
 
-    # taxonomy topic notes = graph vertices (L1 with its L2 children)
-    label_by_id = {}
+    # taxonomy topic notes = graph vertices, under _topics/
+    topic_rel = {}   # label -> vault relpath
     if has_graph:
-        for nid_, lbl, kind in c.execute("SELECT id,label,kind FROM graph_nodes"):
-            label_by_id[nid_] = lbl
+        label_by_id = {nid_: lbl for nid_, lbl, _ in c.execute("SELECT id,label,kind FROM graph_nodes")}
+        for _, lbl in c.execute("SELECT id,label FROM graph_nodes"):
+            topic_rel[lbl] = f"_topics/{slug(lbl)}"
         for nid_, lbl in c.execute("SELECT id,label FROM graph_nodes WHERE kind='intent_l1'"):
             kids = [label_by_id.get(s, s) for (s,) in
                     c.execute("SELECT source FROM graph_edges WHERE rel='subclass_of' AND target=?", (nid_,))]
             body = fm(["taxonomy/l1"]) + f"# {lbl}\n\n## Subcategories\n\n" + \
-                   ("".join(f"- [[topic · {slug(k)}]]\n" for k in kids) or "_none_\n") + \
+                   ("".join(f"- {link(topic_rel.get(k, '_topics/'+slug(k)), k)}\n" for k in kids) or "_none_\n") + \
                    "\n> Backlinks below = source notes tagged with this topic.\n"
-            write(a.out, f"topic · {lbl}", body); notes += 1
+            write(a.out, f"_topics/{slug(lbl)}", body); notes += 1
             for k in kids:
-                write(a.out, f"topic · {k}", fm(["taxonomy/l2"]) + f"# {k}\n\nParent: [[topic · {slug(lbl)}]]\n"); notes += 1
+                write(a.out, f"_topics/{slug(k)}",
+                      fm(["taxonomy/l2"]) + f"# {k}\n\nParent: {link('_topics/'+slug(lbl), lbl)}\n"); notes += 1
 
     # per-chunk topics (real per-section categories)
     topics = {}
@@ -64,35 +93,38 @@ def main():
         for cid, lbl in c.execute("SELECT chunk_id, category_label FROM chunk_topics"):
             topics.setdefault(cid, []).append(lbl)
 
-    # notes = chunks, grouped by source doc
-    seen = set(); doc_ids = {}
+    # notes = chunks, grouped by source doc, into <parents>/<doc>/
     docs = {}
     for cid, src, ordv, title, text in c.execute("SELECT id,source,ord,title,text FROM chunks ORDER BY source,ord"):
         docs.setdefault(src, []).append((cid, ordv, title, text))
+
+    seen_dirs = set()
     for src, rows in docs.items():
-        rel = src[:-3] if src.endswith(".md") else src
-        did = short_id(rel, seen); doc_ids[src] = did
-        fam = family(rel)
-        doc_topics = []
-        sec_names = []
+        segs = doc_relpath(src)
+        doc_name = segs[-1]
+        doc_dir = uniq("/".join(segs), seen_dirs)        # unique folder per document
+        fam = kebab(segs[0])
+        moc_rel = f"{doc_dir}/{doc_name}"                 # doc index note lives in its own folder
+        doc_topics, sec_links = [], []
         for cid, ordv, title, text in rows:
             cats = topics.get(cid, [])
             for c2 in cats:
                 if c2 not in doc_topics: doc_topics.append(c2)
             tags = [f"source/{fam}"] + [f"intent/{kebab(c2)}" for c2 in cats]
-            tl = " ".join(f"[[topic · {slug(c2)}]]" for c2 in cats)
-            nm = f"{did} · {ordv+1:02d} {(title or 'Section')[:44]}"
-            sec_names.append((nm, title or "Section"))
-            note = fm(tags, doc=f"[[{did}]]", section=(title or "Section").replace('"', "'")) + \
-                   f"# {title or 'Section'}\n\n{text}\n\n---\n↩ [[{did}]]" + (f" · topics: {tl}" if tl else "") + "\n"
-            write(a.out, nm, note); notes += 1
+            tl = " ".join(link(topic_rel.get(c2, "_topics/"+slug(c2)), c2) for c2 in cats)
+            st = (title or "Section")
+            nm = slug(f"{ordv+1:02d} {st[:60]}")
+            sec_rel = write(a.out, f"{doc_dir}/{nm}",
+                fm(tags, doc=link(moc_rel, doc_name), section=st.replace('"', "'")) +
+                f"# {st}\n\n{text}\n\n---\n↩ {link(moc_rel, doc_name)}" + (f" · topics: {tl}" if tl else "") + "\n")
+            sec_links.append((sec_rel, st)); notes += 1
         moc_tags = [f"source/{fam}"] + [f"intent/{kebab(t)}" for t in doc_topics]
-        moc = fm(moc_tags, source_file=src) + f"# {rel.replace('__',' / ')}\n\n" + \
-              (f"**Topics:** " + " ".join(f"[[topic · {slug(t)}]]" for t in doc_topics) + "\n\n" if doc_topics else "") + \
-              f"**Sections ({len(sec_names)}):**\n\n" + "".join(f"- [[{slug(nm)}|{st}]]\n" for nm, st in sec_names)
-        write(a.out, did, moc); notes += 1
+        moc = fm(moc_tags, source_file=src) + f"# {' / '.join(segs)}\n\n" + \
+              (("**Topics:** " + " ".join(link(topic_rel.get(t, "_topics/"+slug(t)), t) for t in doc_topics) + "\n\n") if doc_topics else "") + \
+              f"**Sections ({len(sec_links)}):**\n\n" + "".join(f"- {link(r, st)}\n" for r, st in sec_links)
+        write(a.out, moc_rel, moc); notes += 1
 
-    print(f"wrote {notes} notes -> {a.out} (from SQLite: {len(docs)} docs, "
+    print(f"wrote {notes} notes -> {a.out} ({len(docs)} docs in a folder tree; "
           f"{'per-section tags' if has_topics else 'NO chunk_topics — run classify first for real tags'})")
     c.close()
 
