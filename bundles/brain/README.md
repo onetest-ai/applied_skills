@@ -22,6 +22,7 @@ No server, no cloud, no lock-in. Copy one file and the whole brain moves with it
 | **knowledge-index** | 🔎 narrative: heading-aware chunks → FTS5 + vectors | `knowledge_index.py`, `chunking.py` (shared) |
 | **tabular-semantic-layer** | 🔢 numbers: Excel → deterministic `facts` | `build_marts.py`, `profile_workbooks.py`, `families.example.json`, `metrics.example.json` |
 | **hybrid-retrieval** | 🧭 answer: route each sub-claim to the right lane, fuse, cite | `query.py` |
+| **brain-mcp** | 🔌 tool layer: a dependency-free stdio MCP server exposing the lanes as tools | `brain_mcp.py` |
 | _cognee_ (optional) | 🌐 external graph service (only if you run one) | `cognee_client.py`, `api-reference.md` |
 
 ---
@@ -55,6 +56,44 @@ python .../knowledge-pipeline/onboard.py verify --db ./acme-brain/schema/knowled
 ```
 
 See **knowledge-pipeline → Guided onboarding** for the full flow.
+
+## The tool layer: an MCP server (who does what)
+
+The brain is served to an agent through the **`brain` MCP server** — a dependency-free
+stdio JSON-RPC server (stdlib only, ~100 lines; no SDK, no web framework — it *hides the
+scripts behind tools*). This draws a hard line between the two jobs:
+
+```mermaid
+flowchart LR
+    A["🧠 Agent<br/>(reasoning layer)<br/>decompose · route · compose<br/>ONE cited answer"] -->|MCP tool call| S
+    subgraph S["🔌 brain MCP server (tool layer)"]
+        direction TB
+        T1["search — narrative (cited)"]
+        T2["sql / metric — numbers (computed)"]
+        T3["graph — taxonomy (cited)"]
+        T4["verify · which"]
+    end
+    S --> DB[("🗄️ knowledge.sqlite")]
+    S -. owns .-> V["🐍 venv (its own)"]
+    S -. owns .-> K["📦 skills' code"]
+
+    classDef ag fill:#fff3e0,stroke:#e65100,color:#bf360c;
+    classDef srv fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;
+    class A ag
+    class S srv
+```
+
+- The **server owns the venv + skills + store** and returns cited text / computed numbers — it **never reasons**. The truthfulness rule lives right here: `sql`/`metric` return figures with `source_file`; `search`/`graph` return cited text, never a number.
+- The **agent never runs Python or guesses a path** — it calls tools. Because the server is registered with the venv's interpreter, "where do I run?" simply doesn't arise.
+
+Register it during install (writes `.mcp.json` for Claude Code: `command=<venv>/bin/python`, `args=[…/brain-mcp/brain_mcp.py]`):
+
+```bash
+./install.sh --bundle brain --deps --mcp          # copy skills, build venv, register the server
+./brain mcp-config                                # or print the JSON block for another host
+```
+
+Tools: `which` · `search(query,k)` · `sql(query)` · `metric(name,grain?,entity?,…)` · `graph(label?,relation?,kind?)` · `verify`.
 
 ## The core idea: two lanes, one truth
 

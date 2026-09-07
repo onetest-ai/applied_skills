@@ -36,7 +36,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$HERE/skills"
 TARGET="all"; SCOPE_HOME=""; MODE="copy"; DRYRUN=""; ROOT="$PWD"; ONLY=""; BUNDLE=""; OPTIONAL=""
-DEPS=""; VENV=""
+DEPS=""; VENV=""; MCP=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -50,7 +50,8 @@ while [ $# -gt 0 ]; do
     --optional) OPTIONAL=1; shift;;
     --deps)   DEPS=1; shift;;
     --venv)   VENV="$2"; shift 2;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0;;
+    --mcp)    MCP=1; shift;;
+    -h|--help) sed -n '2,32p' "$0"; exit 0;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
@@ -124,10 +125,47 @@ if [ -n "$DEPS" ]; then
     if [ -n "$DRYRUN" ]; then
       echo "   [dry-run] uv venv \"$venv\" && uv pip install --python \"$venv\" -r \"$REQ\""; continue
     fi
-    uv venv "$venv"
+    uv venv --allow-existing "$venv"
     uv pip install --python "$venv" -r "$REQ"
     echo "   ✓ installed $(basename "$REQ") into $venv"
     echo "   run brain scripts with:  \"$venv/bin/python\" <script>   (BRAIN_PY)"
   done
   [ -z "$DRYRUN" ] && echo "(zero-install alt, no venv: uv run --with-requirements \"$REQ\" python <script>)"
+fi
+
+# --mcp: register the brain MCP server (command = the venv python), so the agent
+# calls tools instead of guessing how to run python. Claude Code -> .mcp.json.
+if [ -n "$MCP" ]; then
+  [ -n "$BUNDLE" ] || { echo "error: --mcp needs --bundle"; exit 2; }
+  # primary target's skills dir + its venv python
+  first="${TARGETS%% *}"
+  skills_dir="$(dest_for "$first")"
+  server="$skills_dir/brain-mcp/brain_mcp.py"
+  py="${VENV:-$(dirname "$skills_dir")/venv}/bin/python"
+  db=""; for c in "$ROOT/knowledge.sqlite" "$ROOT/schema/knowledge.sqlite"; do [ -f "$c" ] && { db="$c"; break; }; done
+  echo "→ MCP server 'brain'  (python: $py)"
+  if [ -n "$DRYRUN" ]; then
+    echo "   [dry-run] register brain_mcp.py in .mcp.json / print block for non-claude hosts"
+  else
+    for tgt in $TARGETS; do
+      if [ "$tgt" = "claude" ]; then
+        conf="$ROOT/.mcp.json"
+        python3 - "$conf" "$py" "$server" "$skills_dir" "$db" <<'PY'
+import json, os, sys
+conf, py, server, skills, db = sys.argv[1:6]
+data = {}
+if os.path.exists(conf):
+    try: data = json.load(open(conf))
+    except Exception: data = {}
+env = {"BRAIN_SKILLS": skills}
+if db: env["BRAIN_DB"] = db
+data.setdefault("mcpServers", {})["brain"] = {"command": py, "args": [server], "env": env}
+json.dump(data, open(conf, "w"), indent=2)
+print(f"   ✓ wrote {conf} (mcpServers.brain)")
+PY
+      else
+        echo "   ($tgt) paste this into the host's MCP config — or run: \"$skills_dir/knowledge-pipeline/brain\" mcp-config"
+      fi
+    done
+  fi
 fi
