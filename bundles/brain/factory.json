@@ -1,0 +1,31 @@
+{
+  "id": "brain",
+  "title": "Brain — local truthful knowledge engine",
+  "description": "One portable knowledge.sqlite + Obsidian vault over a mixed corpus (docs + spreadsheets). Meaning is agentic (RAG/graph), numbers are computed (deterministic SQL). No server. Installs the full build+answer toolchain as one curated set.",
+  "kind": "skills-bundle",
+  "targets": ["claude", "dsh", "copilot", "codex"],
+  "entrypoint": "knowledge-pipeline",
+  "skills": [
+    "corpus-taxonomy-extraction",
+    "knowledge-index",
+    "tabular-semantic-layer",
+    "hybrid-retrieval",
+    "knowledge-pipeline"
+  ],
+  "optionalSkills": [
+    "cognee"
+  ],
+  "store": {
+    "file": "knowledge.sqlite",
+    "lanes": {
+      "narrative": { "tables": ["chunks", "chunks_fts", "chunks_vec"], "built_by": "knowledge-index" },
+      "numbers":   { "tables": ["facts"], "built_by": "tabular-semantic-layer" },
+      "taxonomy":  { "tables": ["graph_nodes", "graph_edges", "chunk_topics"], "built_by": "corpus-taxonomy-extraction" }
+    }
+  },
+  "deps": {
+    "python": ">=3.9",
+    "pip": ["sqlite-vec", "fastembed", "docling", "pypdf", "openpyxl", "pandas", "pyarrow"],
+    "notes": "all torch-free; sqlite3 is stdlib"
+  }
+}

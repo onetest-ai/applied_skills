@@ -14,12 +14,16 @@
  *
  * Options:
  *   --target claude,dsh,copilot,codex   (default: all four)
- *   --skills a,b,c                       (default: all)
+ *   --bundle <name>                      install a curated bundle (bundles/<name>/factory.json)
+ *   --optional                           with --bundle, also install its optionalSkills
+ *   --skills a,b,c                       (default: all; ignored when --bundle is given)
  *   --user                               install under $HOME instead of the project
  *   --symlink                            symlink instead of copy (edits reflect live)
  *   --dry-run                            preview only
+ *
+ *   npx github:onetest-ai/applied_skills init --bundle brain
  */
-import { existsSync, mkdirSync, rmSync, cpSync, symlinkSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, cpSync, symlinkSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -31,14 +35,18 @@ const HOSTS = {
   codex:   { project: ".codex/skills",   user: join(homedir(), ".codex/skills") },
 };
 
-const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..", "skills");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const SRC = join(ROOT, "skills");
+const BUNDLES = join(ROOT, "bundles");
 
 function parseArgs(argv) {
-  const o = { targets: Object.keys(HOSTS), skills: null, user: false, symlink: false, dry: false };
+  const o = { targets: Object.keys(HOSTS), skills: null, bundle: null, optional: false, user: false, symlink: false, dry: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "init") continue;                       // npx passes the bin name as arg0
     else if (a === "--target") o.targets = argv[++i].split(",").map(s => s.trim()).filter(Boolean);
+    else if (a === "--bundle" || a === "--factory") o.bundle = argv[++i];
+    else if (a === "--optional") o.optional = true;
     else if (a === "--skills") o.skills = argv[++i].split(",").map(s => s.trim()).filter(Boolean);
     else if (a === "--user") o.user = true;
     else if (a === "--symlink") o.symlink = true;
@@ -50,7 +58,21 @@ function parseArgs(argv) {
 }
 function help() {
   console.log("npx github:onetest-ai/applied_skills init [--target claude,dsh,copilot,codex]");
-  console.log("  [--skills a,b,c] [--user] [--symlink] [--dry-run]");
+  console.log("  [--bundle <name> [--optional]] [--skills a,b,c] [--user] [--symlink] [--dry-run]");
+}
+
+// Resolve the ordered skill list for a named bundle from its factory.json.
+function bundleSkills(name, withOptional) {
+  const manifest = join(BUNDLES, name, "factory.json");
+  if (!existsSync(manifest)) {
+    const avail = existsSync(BUNDLES) ? readdirSync(BUNDLES).filter(n => statSync(join(BUNDLES, n)).isDirectory()) : [];
+    console.error(`error: bundle '${name}' not found (bundles/${name}/factory.json). available: ${avail.join(", ") || "none"}`);
+    process.exit(2);
+  }
+  const f = JSON.parse(readFileSync(manifest, "utf8"));
+  const list = [...(f.skills || []), ...(withOptional ? (f.optionalSkills || []) : [])];
+  console.log(`bundle: ${f.id} — ${f.title}`);
+  return list;
 }
 
 function main() {
@@ -59,7 +81,12 @@ function main() {
   for (const t of o.targets) if (!HOSTS[t]) { console.error(`error: unknown target '${t}' (claude|dsh|copilot|codex)`); process.exit(2); }
 
   const allSkills = readdirSync(SRC).filter(n => statSync(join(SRC, n)).isDirectory());
-  const skills = o.skills ? allSkills.filter(n => o.skills.includes(n)) : allSkills;
+  const want = o.bundle ? bundleSkills(o.bundle, o.optional) : o.skills;
+  const skills = want ? allSkills.filter(n => want.includes(n)) : allSkills;
+  if (want) {                                          // surface any manifest name that has no skill dir
+    const missing = want.filter(n => !allSkills.includes(n));
+    if (missing.length) { console.error(`error: bundle references unknown skill(s): ${missing.join(", ")}`); process.exit(1); }
+  }
   if (!skills.length) { console.error("error: no matching skills"); process.exit(1); }
 
   let n = 0;
