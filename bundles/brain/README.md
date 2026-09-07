@@ -43,6 +43,19 @@ The installer reads `bundles/brain/factory.json`, resolves the ordered skill lis
 
 ---
 
+## Getting started — guided onboarding
+
+Don't hand-run the pipeline on your first brain. Ask the orchestrator to **create a brain** / **get started** and it runs a wizard: it asks for your **goal** (the single analytical goal that scopes everything), your **docs** folder, your **reporting spreadsheets** (if any), and a **project dir** — then scaffolds the layout, drops in config templates, preflights the deps, scans your corpus into narrative-vs-reporting, and writes a `BRAIN.md` with the exact ordered build commands. It walks you through the build (pausing at the two agent steps), verifies every lane, and answers your first question.
+
+```bash
+# the deterministic core of the wizard (the orchestrator drives the questions):
+python .../knowledge-pipeline/onboard.py scaffold --project ./acme-brain \
+  --goal "optimize call-center ops and introduce an AI workforce" --docs ./docs --reporting ./xlsx
+python .../knowledge-pipeline/onboard.py verify --db ./acme-brain/schema/knowledge.sqlite
+```
+
+See **knowledge-pipeline → Guided onboarding** for the full flow.
+
 ## The core idea: two lanes, one truth
 
 Most "chat with your docs" tools blur narrative and numbers into one embedding soup, then let the model *narrate a number*. That is exactly where they lie. Brain keeps the two apart by **what makes each trustworthy**, and only rejoins them at answer time.

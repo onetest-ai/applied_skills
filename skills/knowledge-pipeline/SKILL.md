@@ -1,6 +1,6 @@
 ---
 name: knowledge-pipeline
-description: Orchestrator — turn a document + data corpus into ONE local knowledge.sqlite (chunks+FTS+vector, numeric marts, taxonomy graph) and answer questions over it truthfully. Use when the user wants to "build the knowledge base", "index this corpus", "set up retrieval", or "answer questions over these docs+spreadsheets". Composes corpus-taxonomy-extraction, knowledge-index, tabular-semantic-layer, hybrid-retrieval. Local, portable, no server.
+description: Orchestrator — turn a document + data corpus into ONE local knowledge.sqlite (chunks+FTS+vector, numeric marts, taxonomy graph) and answer questions over it truthfully. Use when the user wants to "build the knowledge base", "index this corpus", "set up retrieval", "create a brain", "get started / onboard", or "answer questions over these docs+spreadsheets". Runs a guided onboarding wizard for first-time setup. Composes corpus-taxonomy-extraction, knowledge-index, tabular-semantic-layer, hybrid-retrieval. Local, portable, no server.
 ---
 
 # Knowledge Pipeline (orchestrator)
@@ -8,6 +8,35 @@ description: Orchestrator — turn a document + data corpus into ONE local knowl
 One entry point that turns a mixed corpus (documents + reporting spreadsheets) into a single portable **`knowledge.sqlite`** and answers questions over it. Composes the build + retrieval skills; the store is one file (no server), so it moves anywhere (.dsh / Claude / Copilot / Codex / CI).
 
 **Core principle (unchanged across the toolchain):** *meaning is agentic, numbers are computed.* RAG never emits a figure; the marts never guess. Every answer is cited or an honest "not modeled."
+
+## Guided onboarding (first-time setup)
+
+When the user wants to **create a brain** / "get started" / doesn't yet have a project, run the wizard instead of dumping commands. Drive it conversationally — the questions are judgment (yours + the user's); the deterministic scaffold/preflight/verify are the shipped `onboard.py`.
+
+**1. Ask, one at a time (skip any the user already answered):**
+- **Goal** — the single analytical goal that scopes everything (the noise filter). *"What are you trying to get out of this corpus?"* (e.g. "optimize call-center operations and introduce an AI workforce"). Don't proceed without it — it drives taxonomy + demotion.
+- **Docs** — folder of narrative documents (PDF/PPTX/DOCX).
+- **Reporting** — folder of the numeric workbooks (XLSX/XLSM), if any. May be the same folder or none (then the numbers lane stays empty — that's fine).
+- **Project dir** — where the brain + configs live (default: `./<name>-brain`).
+
+**2. Scaffold + preflight + scan** (deterministic):
+```bash
+python .../knowledge-pipeline/onboard.py scaffold \
+  --project <proj> --goal "<goal>" --docs <docs> [--reporting <xlsx-dir>] [--corpus <name>]
+```
+This creates the project layout (`schema/ parsed/ taxonomy/ classify/ marts/ vault/`), copies `families.<corpus>.json` + `metrics.<corpus>.json` templates into `schema/`, writes `goal.txt` and a **`BRAIN.md`** with the exact ordered build commands (real paths filled in), then reports missing pip deps and splits the corpus into narrative-vs-reporting counts. Relay the preflight/scan result and, if anything is missing, the one `pip install …` line.
+
+**3. Configure the numbers lane (only if there are workbooks).** The narrative/graph lanes need no config, but the marts do: walk the user through editing `schema/families.<corpus>.json` to describe their workbooks (glob, layout, sheets, measures). Use `tabular-semantic-layer` (its `profile_workbooks.py` inspects real files) — this is the one step that genuinely needs their input. If they have no workbooks, skip and note the numbers lane will be empty.
+
+**4. Walk the build.** Create a todo per step from `BRAIN.md` and run them in order, pausing at the two 🤖 agent steps (taxonomy induction, per-section classification) to dispatch low-tier subagents per `corpus-taxonomy-extraction`. Checkpoint on the long ones. Don't silently continue past a failed step — surface it.
+
+**5. Verify + first answer.**
+```bash
+python .../knowledge-pipeline/onboard.py verify --db <proj>/schema/knowledge.sqlite
+```
+Report per-lane row counts (it flags any empty lane) and the smoke-query result. Then answer the user's first real question via **hybrid-retrieval** to prove all lanes fire, and point them at the `vault/` to browse.
+
+Re-runnable: `onboard.py scan --docs <dir>` is a standalone preflight; re-running `scaffold` never clobbers an existing config or `goal.txt`.
 
 ## The store — one SQLite, three lanes
 | Lane | Tables | Built by |
