@@ -35,7 +35,7 @@ A discovered metric is tagged by how it should later be answered — **format do
 
 ## Portability & dependencies
 
-Self-contained and corpus-agnostic — everything is driven by args + the goal string; no paths are hardcoded. Ships five scripts (parse / consolidate / emit_taxonomy / emit_ontology, + the map template) in this skill dir. Requires a Python (3.9+) with **`docling`, `pypdf`, `openpyxl`** (all torch-free for PPTX/PDF/XLSX; PDF uses pypdf so no ML models needed). Run scripts with any such interpreter, e.g. `uv run --with docling,pypdf,openpyxl python <script>` or a venv that has them. The low-tier map/merge/judge steps assume a subagent mechanism with a model override (e.g. Haiku); on a different harness, substitute any cheap model that can read a file and emit JSON. To apply to a new corpus: pick a goal string, point `parse_corpus.py` at the corpus, instantiate the map template, run the pipeline.
+Self-contained and corpus-agnostic — everything is driven by args + the goal string; no paths are hardcoded. Ships the taxonomy scripts (parse, consolidate, emit_taxonomy, emit_ontology) + store scripts (chunking, build_graph, classify_prep/write, to_obsidian) + the map template in this skill dir. Requires a Python (3.9+) with **`docling`, `pypdf`, `openpyxl`** (all torch-free for PPTX/PDF/XLSX; PDF uses pypdf so no ML models needed). Run scripts with any such interpreter, e.g. `uv run --with docling,pypdf,openpyxl python <script>` or a venv that has them. The low-tier map/merge/judge steps assume a subagent mechanism with a model override (e.g. Haiku); on a different harness, substitute any cheap model that can read a file and emit JSON. To apply to a new corpus: pick a goal string, point `parse_corpus.py` at the corpus, instantiate the map template, run the pipeline.
 
 ## Pipeline (map → reduce → judge → emit)
 
@@ -70,6 +70,13 @@ Human-reviewable artifact: intent hierarchy + entity/dimension candidates + metr
 ### 6. (optional) Emit OWL — `emit_ontology.py`
 `python emit_ontology.py --taxonomy taxonomy_v0.json --out <name>.owl [--base http://you/ns]`
 Turns the ratified taxonomy into an **OWL (RDF/XML) ontology** — intent L1/L2 as an `owl:Class` hierarchy (L2 `rdfs:subClassOf` L1, under `IntentClass`) plus entity-kind classes under `Entity`. Instances (specific branch/region values) are omitted — that's data; the class-level vocabulary is what grounds extraction. Upload it to Cognee (`cognee` skill → `upload-ontology`) and pass its `ontologyKey` at cognify time so the graph is extracted **against your taxonomy** rather than free-form.
+
+## Companion scripts — populate the local knowledge SQLite
+Beyond taxonomy induction, this skill ships the scripts that wire the taxonomy into the one `knowledge.sqlite` store (shared with `knowledge-index` + `tabular-semantic-layer`):
+- **`chunking.py`** — the shared heading-aware chunker (a chunk = a section = an Obsidian note = a retrieval unit). Identical copy in `knowledge-index`.
+- **`build_graph.py`** — taxonomy → `graph_nodes`/`graph_edges` (L1/L2 vertices, `subclass_of`).
+- **`classify_prep.py` → (low-tier agents) → `classify_write.py`** — per-section taxonomy tags: prep batches + vocab, dispatch cheap-model subagents to assign real L1s (empty when nothing fits — never forced), write `chunk_topics` + `about` edges (chunk→vertex). *Meaning is agentic; this step is agents, not a script.*
+- **`to_obsidian.py`** — emit the Obsidian vault as a **view of the store**: notes = chunks, real per-section tags from `chunk_topics`, `[[topic · …]]` links = graph vertices.
 
 ## Downstream wiring
 

@@ -22,14 +22,20 @@ DB=<project>/schema/knowledge.sqlite
 # 1. parse docs → Markdown (torch-free; Docling/pypdf)
 python .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf
 # 2. (optional) induce taxonomy → taxonomy_v0.json  [map→reduce→judge→emit; see that skill]
-# 3. narrative index
+# 3. narrative index — heading-aware sections (shared chunker) → chunks+FTS+vector
 python .../knowledge-index/knowledge_index.py index --db "$DB" --corpus <project>/parsed --reset
-# 4. numeric marts (Excel → facts) into the SAME db
-python .../tabular-semantic-layer/build_marts.py --root <reporting> --config <project>/schema/families.<corpus>.json --out-dir <project>/marts --db "$DB"
-# 5. taxonomy graph into the SAME db
+# 4. taxonomy graph (vertices = L1/L2) into the SAME db
 python .../corpus-taxonomy-extraction/build_graph.py --taxonomy <project>/taxonomy/taxonomy_v0.json --db "$DB"
+# 5. per-section taxonomy tags — LOW-TIER AGENTS (meaning is agentic), not a script:
+python .../corpus-taxonomy-extraction/classify_prep.py --db "$DB" --taxonomy <project>/taxonomy/taxonomy_v0.json --out <project>/classify --batches 5
+#    → dispatch N Haiku subagents: each reads classify/{instructions,vocab,batch_k}.md/json → writes classify/result_k.json
+python .../corpus-taxonomy-extraction/classify_write.py --db "$DB" --results <project>/classify   # -> chunk_topics + graph 'about' edges
+# 6. numeric marts (Excel → facts) into the SAME db
+python .../tabular-semantic-layer/build_marts.py --root <reporting> --config <project>/schema/families.<corpus>.json --out-dir <project>/marts --db "$DB"
+# 7. Obsidian vault as a VIEW of the store (notes = chunks, real per-section tags, links = graph vertices)
+python .../corpus-taxonomy-extraction/to_obsidian.py --db "$DB" --out <project>/vault
 ```
-Result: one `knowledge.sqlite` with all three lanes. Check the `build_marts` audit (`--strict` in CI) so no source silently drops.
+Result: one `knowledge.sqlite` — `chunks`/`chunks_fts`/`chunks_vec` (a chunk = a section = an Obsidian note), `chunk_topics` (real per-section taxonomy tags via low-tier agents), `facts` (marts), `graph_nodes`/`graph_edges` (taxonomy vertices + `subclass_of` + `about` edges to chunks). Check the `build_marts` audit (`--strict` in CI). The vault is generated from the store, so notes, retrieval chunks, tags, and graph all reference the same ids.
 
 ## Answer (per question)
 Follow **`hybrid-retrieval`**: decompose → classify each sub-claim (computable→marts / narrative→RAG / relation→graph / both→reconcile) → retrieve against the one `$DB` → compose one cited answer. Tag facts `[MART]` / `[RAG]` / `[GRAPH]`; state unmodeled sub-parts plainly.
