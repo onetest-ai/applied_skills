@@ -20,6 +20,8 @@ def main():
     ap.add_argument("--db", required=True); ap.add_argument("--taxonomy", required=True)
     ap.add_argument("--out", required=True); ap.add_argument("--batches", type=int, default=5)
     ap.add_argument("--preview", type=int, default=400)
+    ap.add_argument("--docs", help="comma list of source relpaths — prep ONLY these docs' chunks (incremental reclassify)")
+    ap.add_argument("--chunks", help="comma list of chunk ids — prep ONLY these chunks (incremental reclassify)")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     it = json.load(open(a.taxonomy)).get("intent_taxonomy", {})
@@ -40,7 +42,16 @@ def main():
             '  {"12": ["Billing Disputes"], "13": [], "14": ["Delivery & Pickup Management","Billing & Payments"]}\n'
             "Judge by the title + preview. Be precise, not generous.\n")
     con = sqlite3.connect(a.db)
-    rows = con.execute("SELECT id, source, title, substr(text,1,?) FROM chunks ORDER BY id", (a.preview,)).fetchall()
+    where, params = "", [a.preview]
+    if a.docs:
+        docs = [s.strip() for s in a.docs.split(",") if s.strip()]
+        where = " WHERE source IN (" + ",".join("?" * len(docs)) + ")"; params += docs
+    elif a.chunks:
+        ids = [int(x) for x in a.chunks.split(",") if x.strip()]
+        where = " WHERE id IN (" + ",".join("?" * len(ids)) + ")"; params += ids
+    rows = con.execute(f"SELECT id, source, title, substr(text,1,?) FROM chunks{where} ORDER BY id", params).fetchall()
+    if not rows:
+        print(f"no chunks match — nothing to classify -> {a.out}"); return
     n = max(1, a.batches)
     size = (len(rows) + n - 1) // n
     for k in range(n):
