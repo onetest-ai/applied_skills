@@ -16,7 +16,8 @@
     "knowledge-index",
     "tabular-semantic-layer",
     "hybrid-retrieval",
-    "knowledge-pipeline"
+    "knowledge-pipeline",
+    "obsidian-vault"
   ],
   "mcp": {
     "servers": [
