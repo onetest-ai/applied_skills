@@ -49,6 +49,7 @@ Re-runnable: `onboard.py scan --docs <dir>` is a standalone preflight; re-runnin
 | Lane | Tables | Built by |
 |---|---|---|
 | narrative (RAG) | `chunks`, `chunks_fts`, `chunks_vec` | `knowledge-index` |
+| semantic neighbors | `related` (chunk↔chunk cosine kNN) | `knowledge-index` (`related`) |
 | numbers | `facts` (+ `metrics.<corpus>.json` catalog) | `tabular-semantic-layer` |
 | taxonomy graph | `graph_nodes`, `graph_edges` | `corpus-taxonomy-extraction` (`build_graph.py`) |
 
@@ -66,6 +67,8 @@ python .../corpus-taxonomy-extraction/build_graph.py --taxonomy <project>/taxono
 python .../corpus-taxonomy-extraction/classify_prep.py --db "$DB" --taxonomy <project>/taxonomy/taxonomy_v0.json --out <project>/classify --batches 5
 #    → dispatch N Haiku subagents: each reads classify/{instructions,vocab,batch_k}.md/json → writes classify/result_k.json
 python .../corpus-taxonomy-extraction/classify_write.py --db "$DB" --results <project>/classify   # -> chunk_topics + graph 'about' edges
+# 5b. semantic 'related' layer — cosine kNN over the vectors we already store (no re-embed, no API)
+python .../knowledge-index/knowledge_index.py related --db "$DB"                                   # -> related(chunk_id, related_id, score)
 # 6. numeric marts (Excel → facts) into the SAME db
 python .../tabular-semantic-layer/build_marts.py --root <reporting> --config <project>/schema/families.<corpus>.json --out-dir <project>/marts --db "$DB"
 # 7. Obsidian vault as a VIEW of the store (notes = chunks, real per-section tags, links = graph vertices)

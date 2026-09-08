@@ -97,6 +97,9 @@ def cmd_apply(a):
         if reclass:
             n_chunks, _ = K.index_docs(c, a.model, a.parsed, reclass, a.dim, a.max_chars)
             print(f"(re)embedded {n_chunks} chunks across {len(reclass)} doc(s)")
+        if (reclass or d["deleted"]) and not a.no_related:
+            nrel = K.build_related(c)   # cheap vector-only kNN; keeps the related layer current
+            print(f"rebuilt related layer: {nrel} semantic edges")
         ts = time.strftime("%Y-%m-%dT%H:%M:%S")
         for doc in d["added"] + d["changed"] + d["unchanged"]:
             m = now[doc]
@@ -165,6 +168,7 @@ def main():
         if name == "apply":
             p.add_argument("--out", help="where to write sync_plan.json (default: next to the db)")
             p.add_argument("--no-snapshot", action="store_true")
+            p.add_argument("--no-related", action="store_true", help="skip rebuilding the semantic related layer")
     a = ap.parse_args()
     {"plan": cmd_plan, "apply": cmd_apply, "seed": cmd_seed, "rollback": cmd_rollback}[a.cmd](a)
 
