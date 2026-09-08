@@ -60,6 +60,12 @@ def doc_relpath(src):
     parts[-1] = slug(re.sub(r"\.(pdf|pptx|ppt|docx|doc|xlsx|xlsm|xls|csv)$", "", parts[-1], flags=re.I)) or "doc"
     return parts  # list of path segments; last is the doc name
 
+def note_path(source, ordv, title):
+    """The vault-relative path (no .md) where a chunk's note lives — the SAME naming
+    to_obsidian writes. Lets tools show WHERE a hit is in the vault for transparency,
+    even when the vault hasn't been exported (regenerable with `./brain vault`)."""
+    return "/".join(doc_relpath(source)) + "/" + slug(f"{ordv+1:02d} {(title or 'Section')[:60]}")
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True); ap.add_argument("--out", required=True)

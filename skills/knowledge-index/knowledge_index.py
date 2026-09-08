@@ -212,17 +212,31 @@ def search(c, model, query, k):
     top = sorted(score, key=score.get, reverse=True)[:k]
     out = []
     for rid in top:
-        src, title, txt = c.execute("SELECT source,title,text FROM chunks WHERE id=?", (rid,)).fetchone()
-        out.append({"id": rid, "score": round(score[rid], 5), "source": src, "title": title, "text": txt})
+        src, ordv, title, txt = c.execute("SELECT source,ord,title,text FROM chunks WHERE id=?", (rid,)).fetchone()
+        out.append({"id": rid, "score": round(score[rid], 5), "source": src, "ord": ordv, "title": title, "text": txt})
     return {"query": query, "fts_hits": len(fts), "vec_hits": len(vec), "results": out}
+
+def _note_pather():
+    """Best-effort vault note-path function (shared naming with to_obsidian)."""
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "corpus-taxonomy-extraction"))
+        from to_obsidian import note_path
+        return note_path
+    except Exception:
+        return None
 
 def cmd_search(a):
     res = search(connect(a.db), a.model, a.query, a.k)
+    np = _note_pather()
+    if np:                                    # annotate each hit with its vault note path (for transparency)
+        for r in res["results"]:
+            r["note"] = np(r["source"], r.get("ord", 0), r.get("title"))
     if a.json:
         print(json.dumps(res, indent=2)); return
     print(f"query: {res['query']}  (fts={res['fts_hits']} vec={res['vec_hits']})\n")
     for r in res["results"]:
-        print(f"[{r['score']}] {r['source'][:55]}\n   {' '.join(r['text'].split())[:240]}\n")
+        print(f"[{r['score']}] {r['source'][:55]}" + (f"\n   vault: {r['note']}.md" if r.get("note") else "")
+              + f"\n   {' '.join(r['text'].split())[:240]}\n")
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(); sub = ap.add_subparsers(dest="cmd", required=True)
