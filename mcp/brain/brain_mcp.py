@@ -24,13 +24,27 @@ Env: BRAIN_DB (store), BRAIN_CATALOG (metrics.<corpus>.json), BRAIN_SKILLS.
 import json, os, re, sqlite3, sys
 from pathlib import Path
 
-SKILLS = Path(os.environ.get("BRAIN_SKILLS") or Path(__file__).resolve().parent.parent)
+def _resolve_skills():
+    """Find the skills dir. Installed layout: <host>/mcp/brain/brain_mcp.py with
+    skills at <host>/skills/ (siblings). Overridable by BRAIN_SKILLS; also tolerates
+    the old skills/brain-mcp/ location."""
+    if os.environ.get("BRAIN_SKILLS"):
+        return Path(os.environ["BRAIN_SKILLS"])
+    here = Path(__file__).resolve()
+    for cand in (here.parents[2] / "skills",   # <host>/skills  (mcp/brain/ + skills/ siblings)
+                 here.parent.parent):           # old layout: skills/brain-mcp/ -> skills/
+        if (cand / "knowledge-index").is_dir():
+            return cand
+    return here.parents[2] / "skills"
+
+SKILLS = _resolve_skills()
 sys.path.insert(0, str(SKILLS / "knowledge-index"))
 
 # ---- resolution (same discovery contract as the `brain` launcher) -------------
 def _project_roots():
     yield Path.cwd()
-    p = SKILLS.parent.parent          # <root> when skills live at <root>/.claude/skills
+    # <root> when skills are at <root>/.<host>/skills — go up from the skills dir
+    p = SKILLS.parent.parent
     if p != Path.cwd():
         yield p
 
