@@ -16,6 +16,7 @@
 #   ./brain plan   <parsed-dir>      # what changed since last build (added/changed/deleted)
 #   ./brain update <parsed-dir>      # incremental apply (snapshot + delta); prints reclassify order
 #   ./brain rollback                 # restore the latest pre-update snapshot
+#   ./brain vault  [out-dir]         # (re)export the Obsidian vault on demand — a disposable view
 #   ./brain py <script.py> [args…]   # run any skill script with the right interpreter
 set -euo pipefail
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -85,5 +86,10 @@ JSON
   update) need_db; "$PY" "$SKILLS/knowledge-pipeline/brain_sync.py" apply --db "$DB" --parsed "${1:?parsed-dir}";;
   rollback) need_db; "$PY" "$SKILLS/knowledge-pipeline/brain_sync.py" rollback --db "$DB";;
   related)  need_db; "$PY" "$SKILLS/knowledge-index/knowledge_index.py" related --db "$DB";;
-  *) sed -n '3,24p' "$0"; exit 2;;
+  vault)    need_db  # regenerate the Obsidian vault ON DEMAND (it's a disposable view of the store)
+    out="${1:-$(dirname "$DB")/vault}"
+    assets="${BRAIN_ASSETS:-$(dirname "$DB")/assets}"; af=""; [ -d "$assets" ] && af="--assets $assets"
+    "$PY" "$SKILLS/corpus-taxonomy-extraction/to_obsidian.py" --db "$DB" --out "$out" --clean $af
+    ;;
+  *) sed -n '3,26p' "$0"; exit 2;;
 esac
