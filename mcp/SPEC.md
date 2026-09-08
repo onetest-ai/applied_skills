@@ -30,9 +30,9 @@ mcp/<name>/
 ```
 `--mcp` (needs `--bundle`) copies each MCP server the bundle names (`factory.json` →
 `mcp.servers`) into `<host>/mcp/<name>/`, then registers it:
-- **Claude Code** → merges into `<root>/.mcp.json` under `mcpServers.<name>`, with
-  `command` = the bundle venv's python and `args` = `[<host>/mcp/<name>/<entry>]`.
-- **other hosts** → the installer prints the JSON block to paste (or run `./brain mcp-config`).
+- **Claude Code** → merges into `<root>/.mcp.json` under `mcpServers.<name>`.
+- **other hosts (dsh/codex/copilot)** → merges into `<host>/mcp.json` (e.g. `.dsh/mcp.json`), registered from inside the host dir.
+Both set `command` = the bundle venv's python, `args` = `[<host>/mcp/<name>/<entry>]`, and env `BRAIN_SKILLS` (+ `BRAIN_DB`/`BRAIN_ASSETS` when the store/assets are found in the host dir or project root).
 
 The server is registered with the venv interpreter, so the agent never launches Python
 itself — it calls the tools. (Bootstrapping the server process — the venv path in the

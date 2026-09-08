@@ -140,38 +140,38 @@ if [ -n "$MCP" ]; then
   [ -n "$BUNDLE" ] || { echo "error: --mcp needs --bundle"; exit 2; }
   SERVERS="$(python3 -c "import json;print(' '.join(json.load(open('$HERE/bundles/$BUNDLE/factory.json')).get('mcp',{}).get('servers',[])))" 2>/dev/null)"
   [ -n "$SERVERS" ] || echo "  (bundle '$BUNDLE' declares no mcp servers)"
-  db=""; for c in "$ROOT/knowledge.sqlite" "$ROOT/schema/knowledge.sqlite"; do [ -f "$c" ] && { db="$c"; break; }; done
   for tgt in $TARGETS; do
     skills_dir="$(dest_for "$tgt")"
-    host_dir="$(dirname "$skills_dir")"          # e.g. <root>/.claude
+    host_dir="$(dirname "$skills_dir")"          # e.g. <root>/.claude or <root>/.dsh
     py="${VENV:-$host_dir/venv}/bin/python"
+    # discover the store + assets: prefer inside the host dir, then the project root
+    db=""; for c in "$host_dir/knowledge.sqlite" "$ROOT/knowledge.sqlite" "$ROOT/schema/knowledge.sqlite"; do [ -f "$c" ] && { db="$c"; break; }; done
+    assets=""; for c in "$host_dir/assets" "$ROOT/assets"; do [ -d "$c" ] && { assets="$c"; break; }; done
+    # config location: Claude Code reads <root>/.mcp.json; other hosts read <host>/mcp.json (registered from inside)
+    if [ "$tgt" = "claude" ]; then conf="$ROOT/.mcp.json"; else conf="$host_dir/mcp.json"; fi
     for name in $SERVERS; do
       srcdir="$HERE/mcp/$name"
       [ -d "$srcdir" ] || { echo "  ! mcp/$name not found in repo"; continue; }
       entry="$(python3 -c "import json;print(json.load(open('$srcdir/server.json')).get('entry','server.py'))" 2>/dev/null)"
       dest="$host_dir/mcp/$name"
-      echo "→ MCP '$name' -> $dest  (python: $py)"
-      if [ -n "$DRYRUN" ]; then echo "   [dry-run] $MODE mcp/$name + register"; continue; fi
+      echo "→ MCP '$name' -> $dest  (python: $py)  config: $conf"
+      if [ -n "$DRYRUN" ]; then echo "   [dry-run] $MODE mcp/$name + write $conf"; continue; fi
       mkdir -p "$host_dir/mcp"; rm -rf "$dest"
       if [ "$MODE" = "symlink" ]; then ln -s "$srcdir" "$dest"; else cp -R "$srcdir" "$dest"; fi
-      if [ "$tgt" = "claude" ]; then
-        conf="$ROOT/.mcp.json"
-        python3 - "$conf" "$name" "$py" "$dest/$entry" "$skills_dir" "$db" <<'PY'
+      python3 - "$conf" "$name" "$py" "$dest/$entry" "$skills_dir" "$db" "$assets" <<'PY'
 import json, os, sys
-conf, name, py, server, skills, db = sys.argv[1:7]
+conf, name, py, server, skills, db, assets = sys.argv[1:8]
 data = {}
 if os.path.exists(conf):
     try: data = json.load(open(conf))
     except Exception: data = {}
 env = {"BRAIN_SKILLS": skills}
 if db: env["BRAIN_DB"] = db
+if assets: env["BRAIN_ASSETS"] = assets
 data.setdefault("mcpServers", {})[name] = {"command": py, "args": [server], "env": env}
 json.dump(data, open(conf, "w"), indent=2)
 print(f"   ✓ wrote {conf} (mcpServers.{name})")
 PY
-      else
-        echo "   ($tgt) add to the host MCP config — or run: \"$skills_dir/knowledge-pipeline/brain\" mcp-config"
-      fi
     done
   done
 fi
