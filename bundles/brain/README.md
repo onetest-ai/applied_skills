@@ -96,6 +96,8 @@ The server lives at the repo's top-level **`mcp/brain/`** (installed to `<host>/
 
 Tools: `which` · `search(query,k)` · `sql(query)` · `metric(name,grain?,entity?,…)` · `graph(label?,relation?,kind?)` · `related(chunk_id?,query?)` · `page(chunk_id?,query?)` · `verify`.
 
+**Building the answering agent on top?** See [`BUILDING-AGENTS.md`](BUILDING-AGENTS.md) — what to put in *your* agent's role instructions so it disambiguates scope/grain/population, surfaces caveats, and answers truthfully (this is agent-design guidance, separate from a deployment's own `AGENTS.md`).
+
 ## The core idea: two lanes, one truth
 
 Most "chat with your docs" tools blur narrative and numbers into one embedding soup, then let the model *narrate a number*. That is exactly where they lie. Brain keeps the two apart by **what makes each trustworthy**, and only rejoins them at answer time.
