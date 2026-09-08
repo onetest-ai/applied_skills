@@ -1,38 +1,82 @@
-# brain — MCP server (the tool layer)
+# Semantic Knowledge Brain — FastMCP
 
-A **dependency-free stdio MCP server** (line-delimited JSON-RPC 2.0, ~100 lines of
-stdlib — no SDK, no web framework) that turns the local **`knowledge.sqlite`** brain
-into tools. The point is to *hide the scripts behind tools*, not to run a web server.
+A governed MCP tool layer over a private `knowledge.sqlite` store. The same entry point supports:
 
-**Responsibility split (why it exists):**
+- **STDIO by default** for local clients, with no listening port;
+- **Streamable HTTP**, explicitly enabled for remote clients.
 
-| Layer | Who | Does |
-|---|---|---|
-| Tool layer | **this server** | owns the **venv + skills' code + store connection**; returns cited text / computed numbers. Never reasons. |
-| Reasoning layer | the **agent** (MCP client) | decomposes the question, calls tools, composes **one cited answer** with honest gaps |
-
-Truthfulness at the boundary: **numbers are computed** (`sql`/`metric`, every value carries `source_file`); **meaning is cited** (`search`/`graph`, text hits — never figures).
+Raw SQL is not exposed. SQLite is opened in read-only/query-only mode, filters are parameterized, and result sizes are bounded.
 
 ## Tools
-- `which()` — resolved store / catalog / skills (call first if unsure)
-- `search(query, k=5)` — narrative lane: hybrid RAG (BM25+vector, RRF); cited hits, not for numbers
-- `sql(query)` — numbers lane: read-only `SELECT`/`WITH` (write/DDL rejected) → `{columns, rows}`
-- `metric(name, grain?, entity?, entity_like?, month?, months?)` — governed metric → exact `facts` values with `source_file`
-- `graph(label?, relation?, kind?)` — taxonomy: node + subclasses + tagged sections, or listings
-- `related(chunk_id?, query?, k=6)` — semantic neighbors: sections nearest by meaning (cosine kNN over the RAG vectors), cross-doc
-- `page(chunk_id?, query?)` — FULL page content for answering: the rendered image + verbatim text + extracted table grids (retrieve on semantics, answer from content)
-- `verify()` — per-lane row counts + empty-lane flag
 
-## Resolution (no hardcoding; env overrides)
-- **skills** — `BRAIN_SKILLS` → the sibling `skills/` dir (installed at `<host>/skills`)
-- **store** — `BRAIN_DB` → `./knowledge.sqlite` → `./schema/knowledge.sqlite`
-- **catalog** — `BRAIN_CATALOG` → `schema/metrics.*.json`
+| Tool | Purpose |
+|---|---|
+| `list_metrics` | Discover governed metrics, units, grains, and periods |
+| `get_metric` | Read exact `facts` rows with `source_file` citations |
+| `search_knowledge` | Hybrid BM25 + vector narrative retrieval |
+| `get_taxonomy` | Explore taxonomy nodes, edges, and tagged sections |
+| `find_related_content` | Read precomputed semantic neighbors |
+| `get_evidence` | Inspect one cited section and optional page/table text |
+| `health` | Check knowledge lanes and deployed knowledge version |
 
-## Run / register
-Runs under the **brain venv** (needs `sqlite-vec` + `fastembed`; the server itself adds no dep). Install + register in one shot — the installer copies this dir to `<host>/mcp/brain/` and writes the host MCP config:
+`brain_mcp.py` is retained temporarily as the legacy stdio implementation. New integrations should use `fastmcp_server.py`.
+
+## Install and run
 
 ```bash
-./install.sh --bundle brain --deps --mcp    # Claude Code → .mcp.json (command=<venv>/bin/python, args=[…/mcp/brain/brain_mcp.py])
-./brain mcp-config                          # print the JSON block for another host
+./install.sh --bundle brain --deps --mcp
+
+# local stdio (default)
+<venv>/bin/python <host>/mcp/brain/fastmcp_server.py
+
+# explicit local stdio
+<venv>/bin/python <host>/mcp/brain/fastmcp_server.py --transport stdio
+
+# opt-in HTTP; loopback is the safe default
+BRAIN_API_KEY='<secret>' <venv>/bin/python <host>/mcp/brain/fastmcp_server.py --transport http
 ```
-Debug: `BRAIN_SKILLS=… BRAIN_DB=… "<venv>/bin/python" brain_mcp.py` (stdio).
+
+HTTP endpoints default to:
+
+- MCP: `http://127.0.0.1:8000/mcp`
+- health: `http://127.0.0.1:8000/healthz`
+
+## Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `BRAIN_MCP_TRANSPORT` | `stdio` | `stdio`, `http`, or `streamable-http` |
+| `HOST` | `127.0.0.1` | HTTP listen address |
+| `PORT` | `8000` | HTTP port |
+| `BRAIN_MCP_PATH` | `/mcp` | Streamable HTTP endpoint |
+| `BRAIN_DB` | auto-discovered | Private SQLite store |
+| `BRAIN_CATALOG` | auto-discovered | Governed metrics JSON |
+| `BRAIN_SKILLS` | auto-discovered | Runtime retrieval modules |
+| `BRAIN_ASSETS` | auto-discovered | Visual evidence sidecars |
+| `BRAIN_KNOWLEDGE_VERSION` | `unversioned` | Version reported by health |
+| `BRAIN_API_KEY` | empty | When set, require this value in `X-API-Key` on every MCP HTTP request |
+
+API-key protection applies only to the configured MCP path; `/healthz` remains unauthenticated for platform probes. Missing or incorrect keys receive `401 Unauthorized`. For Copilot Studio, configure **API key → Header** with header name `X-API-Key`. Store the key in a secret manager and inject it as `BRAIN_API_KEY`; never commit it to MCP config or source control.
+
+Binding to a non-loopback address exposes private knowledge to the network. Use TLS, authorization, rate limits, key rotation, and audit controls before production or public deployment. An API key authenticates the caller but does not provide user-level authorization.
+
+## Migration from the legacy server
+
+| Legacy | Governed API |
+|---|---|
+| `search` | `search_knowledge` |
+| `metric` | `get_metric` |
+| `graph` | `get_taxonomy` |
+| `related` | `find_related_content` |
+| `page` | `get_evidence` |
+| `verify` | `health` |
+| `which` | configuration plus `health` |
+| `sql` | removed; use governed tools |
+
+`get_evidence` returns source text and deterministic table sidecars, not binary images. Clients that need the rendered image should resolve the returned `page_asset` inside the configured private assets store.
+
+## Test
+
+```bash
+python mcp/brain/test_semantic_mcp.py -v
+```

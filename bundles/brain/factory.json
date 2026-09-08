@@ -1,7 +1,7 @@
 {
   "id": "brain",
   "title": "Brain \u2014 local truthful knowledge engine",
-  "description": "One portable knowledge.sqlite + Obsidian vault over a mixed corpus (docs + spreadsheets). Meaning is agentic (RAG/graph), numbers are computed (deterministic SQL). No server. Installs the full build+answer toolchain as one curated set.",
+  "description": "One portable knowledge.sqlite + Obsidian vault over a mixed corpus (docs + spreadsheets). Meaning is agentic (RAG/graph), numbers are computed from governed metrics. Includes an MCP tool layer with local stdio and opt-in Streamable HTTP.",
   "kind": "skills-bundle",
   "targets": [
     "claude",
@@ -56,14 +56,16 @@
     }
   },
   "deps": {
-    "python": ">=3.9",
+    "python": ">=3.10",
     "pip": [
       "sqlite-vec",
       "fastembed",
       "pymupdf",
       "openpyxl",
       "pandas",
-      "pyarrow"
+      "pyarrow",
+      "fastmcp>=2.14.7,<3",
+      "uvicorn>=0.30,<1"
     ],
     "venv": "isolated, owned by the skills (not the project); default <project>/.claude/venv, or --user for a shared ~/.claude/venv",
     "notes": "sqlite3 is stdlib; torch-free (docling retired). PDF/office parsing via pymupdf; .pptx/.docx also need LibreOffice `soffice` (system dep). fastembed uses onnx, no PyTorch."

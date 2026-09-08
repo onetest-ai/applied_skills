@@ -9,7 +9,7 @@ description: Use when a corpus has slide decks / diagram-heavy pages (flows, tim
 
 ## Two representations per page (the core principle)
 - **Semantic** — a vision model's faithful **structured Markdown** transcription (flow as an ordered list, timeline as a table, diagram relationships spelled out). This is what gets **chunked + embedded + indexed** → retrieval finds the page by meaning. It is a *simplification*.
-- **Factual** — the **full content kept beside it**: the rendered page **image**, the **verbatim text layer**, and **deterministically-extracted table grids** (`PyMuPDF.find_tables()` — a VLM misreads dense tables). This is what the agent pulls at **answer time** (via the MCP `page` tool) so no detail lost in the transcription is lost in the answer.
+- **Factual** — the **full content kept beside it**: the rendered page **image**, the **verbatim text layer**, and **deterministically-extracted table grids** (`PyMuPDF.find_tables()` — a VLM misreads dense tables). At answer time, MCP `get_evidence` returns the text/grids and the private image path so a capable local client can inspect the image.
 
 > **Retrieve on the semantic layer; generate from the factual content.** For any number in a table, cite the **extracted grid**, never the prose paraphrase.
 
@@ -35,7 +35,7 @@ Instantiate `vision_prep.py` to batch the **flagged, uncached** pages (image pat
 Per page in order: the VLM Markdown (flagged) or the text layer (text page), under a `## p<NN> · <title>` heading with the image marker. Internal `#`/`##` are demoted so a page stays one section. Writes the `page_render` cache when `--db` is given.
 
 ## How the classifier / retrieval change
-Nothing in the classifier or retriever changes — they just get **faithful input** instead of fragments. The classify agent now sees `North Star Vision & Service Design Blueprint / Future State Architecture / …` instead of `EPAM Proprietary & Confidential. 4`, so tagging, embeddings, and the related layer all improve for free. For genuinely visual edge cases, the classify/answer agent can also pull the page image (`page` MCP tool) and reason multimodally.
+Nothing in the classifier or retriever changes — they just get **faithful input** instead of fragments. The classify agent now sees `North Star Vision & Service Design Blueprint / Future State Architecture / …` instead of `EPAM Proprietary & Confidential. 4`, so tagging, embeddings, and the related layer all improve for free. For genuinely visual edge cases, `get_evidence` returns the page asset path for a capable local client to open and reason over multimodally.
 
 ## Deps
 `pymupdf` (render + text + `find_tables`) — torch-free. **LibreOffice `soffice`** (system dep) for .pptx/.docx. A cheap vision model for the transcription step (like the taxonomy/classify agents — meaning is agentic).

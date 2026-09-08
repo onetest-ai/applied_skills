@@ -1,7 +1,7 @@
 # 🧠 Brain — a local, truthful knowledge engine
 
 **One portable `knowledge.sqlite` + an Obsidian vault over a messy corpus of documents *and* spreadsheets.**
-No server, no cloud, no lock-in. Copy one file and the whole brain moves with it.
+No required cloud service and no lock-in. Copy one file and the whole brain moves with it; expose it through local stdio or explicitly enabled HTTP.
 
 > **The one rule everything obeys:**
 > **Meaning is agentic. Numbers are computed.**
@@ -24,7 +24,7 @@ No server, no cloud, no lock-in. Copy one file and the whole brain moves with it
 | **hybrid-retrieval** | 🧭 answer: route each sub-claim to the right lane, fuse, cite | `query.py` |
 | _cognee_ (optional) | 🌐 external graph service (only if you run one) | `cognee_client.py`, `api-reference.md` |
 
-Plus the repo's top-level **`mcp/brain/`** — the MCP **tool layer** (a dependency-free stdio server, `brain_mcp.py`) that fronts these skills as tools. It lives in `mcp/`, not `skills/` (see below).
+Plus the repo's top-level **`mcp/brain/`** — the governed FastMCP **tool layer** (`fastmcp_server.py`) with local stdio and opt-in Streamable HTTP. It lives in `mcp/`, not `skills/` (see below).
 
 ---
 
@@ -60,19 +60,19 @@ See **knowledge-pipeline → Guided onboarding** for the full flow.
 
 ## The tool layer: an MCP server (who does what)
 
-The brain is served to an agent through the **`brain` MCP server** — a dependency-free
-stdio JSON-RPC server (stdlib only, ~100 lines; no SDK, no web framework — it *hides the
-scripts behind tools*). This draws a hard line between the two jobs:
+The brain is served to an agent through the **`brain` MCP server** — a FastMCP server
+using local stdio by default and opt-in Streamable HTTP for remote clients. It hides the
+scripts behind governed tools and draws a hard line between the two jobs:
 
 ```mermaid
 flowchart LR
     A["🧠 Agent<br/>(reasoning layer)<br/>decompose · route · compose<br/>ONE cited answer"] -->|MCP tool call| S
     subgraph S["🔌 brain MCP server (tool layer)"]
         direction TB
-        T1["search — narrative (cited)"]
-        T2["sql / metric — numbers (computed)"]
-        T3["graph — taxonomy (cited)"]
-        T4["verify · which"]
+        T1["search_knowledge — narrative (cited)"]
+        T2["get_metric — numbers (computed)"]
+        T3["get_taxonomy — taxonomy (cited)"]
+        T4["get_evidence · health"]
     end
     S --> DB[("🗄️ knowledge.sqlite")]
     S -. owns .-> V["🐍 venv (its own)"]
@@ -84,17 +84,17 @@ flowchart LR
     class S srv
 ```
 
-- The **server owns the venv + skills + store** and returns cited text / computed numbers — it **never reasons**. The truthfulness rule lives right here: `sql`/`metric` return figures with `source_file`; `search`/`graph` return cited text, never a number.
+- The **server owns the venv + skills + store** and returns cited text / computed numbers — it **never reasons**. The truthfulness rule lives right here: `get_metric` returns governed figures with `source_file`; `search_knowledge`/`get_taxonomy` return cited text, never an authoritative number.
 - The **agent never runs Python or guesses a path** — it calls tools. Because the server is registered with the venv's interpreter, "where do I run?" simply doesn't arise.
 
-The server lives at the repo's top-level **`mcp/brain/`** (installed to `<host>/mcp/brain/`, a sibling of `<host>/skills/`). Register it during install (writes `.mcp.json` for Claude Code: `command=<venv>/bin/python`, `args=[…/mcp/brain/brain_mcp.py]`):
+The server lives at the repo's top-level **`mcp/brain/`** (installed to `<host>/mcp/brain/`, a sibling of `<host>/skills/`). Register it during install (writes a local stdio configuration using `fastmcp_server.py`):
 
 ```bash
 ./install.sh --bundle brain --deps --mcp          # copy skills, build venv, register the server
 ./brain mcp-config                                # or print the JSON block for another host
 ```
 
-Tools: `which` · `search(query,k)` · `sql(query)` · `metric(name,grain?,entity?,…)` · `graph(label?,relation?,kind?)` · `related(chunk_id?,query?)` · `page(chunk_id?,query?)` · `verify`.
+Tools: `list_metrics` · `get_metric` · `search_knowledge` · `get_taxonomy` · `find_related_content` · `get_evidence` · `health`. HTTP is opt-in and binds to loopback unless `HOST` is explicitly changed. Set `BRAIN_API_KEY` to require `X-API-Key` on `/mcp` (`/healthz` stays public for probes); production exposure still requires TLS, authorization, key rotation, rate limits, and auditing.
 
 **Building the answering agent on top?** See [`BUILDING-AGENTS.md`](BUILDING-AGENTS.md) — what to put in *your* agent's role instructions so it disambiguates scope/grain/population, surfaces caveats, and answers truthfully (this is agent-design guidance, separate from a deployment's own `AGENTS.md`).
 

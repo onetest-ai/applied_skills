@@ -68,7 +68,8 @@ function help() {
 }
 
 // --mcp: install the bundle's MCP servers from mcp/<name>/ into <host>/mcp/<name>/
-// and register each (command = the bundle venv python). Claude Code -> .mcp.json.
+// and register each for local stdio (command = the bundle venv python).
+// Streamable HTTP remains an explicit deployment choice.
 function installMcp(o, targets, bases) {
   const factory = join(BUNDLES, o.bundle || "", "factory.json");
   if (!o.bundle || !existsSync(factory)) { console.error("error: --mcp needs --bundle"); process.exit(2); }
@@ -84,6 +85,12 @@ function installMcp(o, targets, bases) {
     let assets = "";
     for (const c of [join(hostDir, "assets"), join(process.cwd(), "assets")])
       if (existsSync(c)) { assets = c; break; }
+    let catalog = "";
+    for (const schemaDir of [join(process.cwd(), "schema"), join(hostDir, "schema")]) {
+      if (!existsSync(schemaDir)) continue;
+      const catalogs = readdirSync(schemaDir).filter(n => /^metrics\..+\.json$/.test(n)).sort();
+      if (catalogs.length) { catalog = join(schemaDir, catalogs[0]); break; }
+    }
     // Claude Code reads <root>/.mcp.json; other hosts read <host>/mcp.json (registered from inside)
     const conf = targets[t] === "claude" ? resolve(process.cwd(), ".mcp.json") : join(hostDir, "mcp.json");
     for (const name of servers) {
@@ -98,8 +105,11 @@ function installMcp(o, targets, bases) {
       if (o.symlink) symlinkSync(srcdir, dest); else cpSync(srcdir, dest, { recursive: true, dereference: true });
       let data = {};
       if (existsSync(conf)) { try { data = JSON.parse(readFileSync(conf, "utf8")); } catch { data = {}; } }
-      const env = { BRAIN_SKILLS: skillsDir }; if (db) env.BRAIN_DB = db; if (assets) env.BRAIN_ASSETS = assets;
-      (data.mcpServers ||= {})[name] = { command: py, args: [join(dest, entry)], env };
+      const env = { BRAIN_SKILLS: skillsDir };
+      if (db) env.BRAIN_DB = db;
+      if (assets) env.BRAIN_ASSETS = assets;
+      if (catalog) env.BRAIN_CATALOG = catalog;
+      (data.mcpServers ||= {})[name] = { command: py, args: [join(dest, entry), "--transport", "stdio"], env };
       writeFileSync(conf, JSON.stringify(data, null, 2));
       console.log(`   ✓ wrote ${conf} (mcpServers.${name})`);
     }

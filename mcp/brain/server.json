@@ -1,15 +1,17 @@
 {
   "name": "brain",
-  "description": "Deterministic tool layer over the local knowledge.sqlite — cited retrieval + computed numbers (search, sql, metric, graph, related, page, verify). Dependency-free stdio JSON-RPC (stdlib only).",
-  "entry": "brain_mcp.py",
-  "transport": "stdio",
+  "description": "Governed semantic tool layer over private knowledge.sqlite. FastMCP supports local stdio and opt-in Streamable HTTP without exposing raw SQL.",
+  "entry": "fastmcp_server.py",
+  "transport": ["stdio", "streamable-http"],
   "runtime": "bundle-venv",
   "bundle": "brain",
-  "tools": ["which", "search", "sql", "metric", "graph", "related", "page", "verify"],
+  "tools": ["list_metrics", "get_metric", "search_knowledge", "get_taxonomy", "find_related_content", "get_evidence", "health"],
   "env": {
     "BRAIN_SKILLS": "<skills>",
     "BRAIN_DB": "<db>",
-    "BRAIN_CATALOG": "<catalog>"
+    "BRAIN_CATALOG": "<catalog>",
+    "BRAIN_ASSETS": "<assets>",
+    "BRAIN_API_KEY": "<optional-secret>"
   },
-  "env_notes": "BRAIN_SKILLS is set by the installer; BRAIN_DB / BRAIN_CATALOG are optional (auto-discovered from the project root / schema/ when absent)."
+  "env_notes": "Paths are populated by the installer when discovered. HTTP is opt-in via --transport http or BRAIN_MCP_TRANSPORT=http and binds to 127.0.0.1 by default."
 }

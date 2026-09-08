@@ -21,5 +21,9 @@ openpyxl     # XLSX structure dump
 pandas
 pyarrow
 
-# tool layer (mcp/brain): the MCP server is stdlib-only stdio JSON-RPC — NO extra dep.
+# tool layer (mcp/brain): local stdio + opt-in Streamable HTTP
+# Pin FastMCP below its next major API; uvicorn serves the HTTP transport.
+fastmcp>=2.14.7,<3
+uvicorn>=0.30,<1
+
 # System (not pip): LibreOffice `soffice` for rendering/parsing .pptx/.docx.
