@@ -1,4 +1,21 @@
+# Python
 __pycache__/
 *.pyc
-.DS_Store
 .venv/
+venv/
+
+# OS
+.DS_Store
+
+# Brain build artifacts — never commit a built brain into the toolkit repo
+# (these are created in a CONSUMING project, but guard against building inside a checkout)
+*.sqlite
+*.sqlite.bak-*
+knowledge.sqlite*
+/vault/
+/assets/
+/parsed/
+.mcp.json
+sync_plan.json
+result_*.json
+batch_*.json
