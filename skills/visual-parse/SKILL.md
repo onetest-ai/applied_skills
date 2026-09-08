@@ -24,8 +24,8 @@ doc (pdf / pptx via soffice→pdf)
 ```
 
 ### 1. Render — `render_pages.py` (deterministic, no LLM)
-`render_pages.py --doc <file> --out <assets> [--dpi 150] [--min-text 400] [--draw-thresh 40] [--cover 0.45] [--all]`
-Writes `<assets>/<slug>/p<NN>.png`, `p<NN>.txt` (PyMuPDF text layer), `p<NN>.tables.md` (extracted grids), and `pages.json` (per-page `img_sha`, `text_len`, `n_drawings`, `n_tables`, `img_cover`, `flagged`). A page is flagged visual when text is thin, drawings are many, images cover the page, or `--all` (treat as a deck). PPTX/DOCX are converted to PDF via LibreOffice `soffice` first.
+`render_pages.py --doc <file> --out <assets> [--dpi 150] [--min-text 220] [--hi-draw 60] [--mid-draw 28] [--mid-text 1000] [--all]`
+Writes `<assets>/<slug>/p<NN>.png`, `p<NN>.txt` (PyMuPDF text layer), `p<NN>.tables.md` (extracted grids), and `pages.json` (per-page `img_sha`, `text_len`, `n_drawings`, `n_tables`, `flagged`, `why`). A page is flagged visual (→ VLM) when the text layer likely misses the meaning: **thin text with no extracted table** (`why=thin-text`), **many drawings** (`why=dense-draw`, a timeline/diagram even with fragmented labels), or a **lighter diagram with modest text** (`why=diagram`). Image-area `cover` is NOT used (full-bleed backgrounds make it meaningless); a pure data table we already extracted is NOT flagged (we have the grid). Thresholds are tunable per corpus; `--all` forces every page. PPTX/DOCX → PDF via LibreOffice `soffice` first. On a representative sample this flags ~15–25% of deck pages (vs ~80% before tuning).
 
 ### 2. Transcribe — low-tier VISION subagents
 Instantiate `vision_prep.py` to batch the **flagged, uncached** pages (image path + any extracted table + page context) with instructions, then dispatch vision subagents (model: a cheap vision model) that read each page image and emit faithful structured Markdown → `result_<k>.json` keyed by `img_sha`. Cache by `img_sha` (a page whose rendered image is unchanged is never re-transcribed).
