@@ -12,9 +12,14 @@ LibreOffice `soffice` (must be on PATH or at /opt/homebrew/bin/soffice).
 Writes <out>/<doc>/p<NN>.png for every page and <out>/<doc>/pages.json:
   [{page, image, img_sha, text_len, n_drawings, img_cover, flagged}]
 
+A page is flagged VISUAL (→ vision model) when the text layer likely misses the
+meaning: thin text with no extracted table, OR many vector drawings (a flow /
+timeline / diagram). Image-area `cover` is deliberately NOT used — full-bleed
+backgrounds make it meaningless. All thresholds are tunable per corpus.
+
 Usage:
   render_pages.py --doc <file.pdf|pptx> --out <assets_dir> [--dpi 150]
-                  [--min-text 400] [--draw-thresh 40] [--cover 0.45] [--all]
+                  [--min-text 220] [--hi-draw 60] [--mid-draw 28] [--mid-text 1000] [--all]
 """
 import argparse, hashlib, json, os, re, shutil, subprocess, sys, tempfile
 
@@ -48,9 +53,13 @@ def main():
     ap.add_argument("--doc", required=True)
     ap.add_argument("--out", required=True, help="assets root; images go to <out>/<doc-slug>/")
     ap.add_argument("--dpi", type=int, default=150)
-    ap.add_argument("--min-text", type=int, default=400, help="flag a page with fewer extracted chars")
-    ap.add_argument("--draw-thresh", type=int, default=40, help="flag a page with more vector drawings")
-    ap.add_argument("--cover", type=float, default=0.45, help="flag a page whose images cover more area")
+    # Flag a page as VISUAL (needs a vision model) when the text layer likely misses the
+    # meaning. `cover` (image area) is NOT used — full-bleed background images make it
+    # meaningless. The signal is thin text OR many vector drawings (flows/timelines/diagrams).
+    ap.add_argument("--min-text", type=int, default=220, help="flag if fewer extracted chars (title/pure-visual)")
+    ap.add_argument("--hi-draw", type=int, default=60, help="flag if at least this many vector drawings (dense diagram/timeline), any text")
+    ap.add_argument("--mid-draw", type=int, default=28, help="with --mid-text: flag a lighter diagram")
+    ap.add_argument("--mid-text", type=int, default=1000, help="drawings>=mid-draw AND text<mid-text -> flag")
     ap.add_argument("--all", action="store_true", help="flag EVERY page (treat as a slide deck)")
     a = ap.parse_args()
     import pymupdf
@@ -100,10 +109,19 @@ def main():
                 cover += abs((x1 - x0) * (y1 - y0)) / parea
         except Exception:
             pass
-        flagged = a.all or (len(text.strip()) < a.min_text) or (n_draw > a.draw_thresh) or (cover > a.cover)
+        tl = len(text.strip())
+        # thin-text flags a page UNLESS it's a pure data table we already extracted (grid + cells captured)
+        thin = tl < a.min_text and n_tables == 0
+        flagged = (a.all
+                   or thin                                         # thin text: title / pure diagram (no extracted table)
+                   or n_draw >= a.hi_draw                          # dense diagram/timeline (even with fragmented labels)
+                   or (n_draw >= a.mid_draw and tl < a.mid_text))  # lighter diagram with modest text
+        why = ("all" if a.all else "thin-text" if thin
+               else "dense-draw" if n_draw >= a.hi_draw
+               else "diagram" if (n_draw >= a.mid_draw and tl < a.mid_text) else "")
         pages.append({"page": i + 1, "image": os.path.relpath(png, a.out), "img_sha": img_sha,
-                      "text_len": len(text.strip()), "n_drawings": n_draw, "n_tables": n_tables,
-                      "img_cover": round(cover, 3), "flagged": bool(flagged)})
+                      "text_len": tl, "n_drawings": n_draw, "n_tables": n_tables,
+                      "img_cover": round(cover, 3), "flagged": bool(flagged), "why": why})
     json.dump({"doc": os.path.basename(a.doc), "slug": slug, "dpi": a.dpi, "pages": pages},
               open(os.path.join(outdir, "pages.json"), "w"), indent=2)
     doc.close()
