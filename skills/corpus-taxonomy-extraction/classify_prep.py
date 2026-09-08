@@ -28,19 +28,24 @@ def main():
     tree = it.get("tree", {})
     l1s = sorted(set(it.get("l1", [])) | set(tree.keys()))
     with open(os.path.join(a.out, "vocab.md"), "w") as f:
-        f.write("# Taxonomy — allowed L1 categories (use EXACT names)\n\n")
+        f.write("# Taxonomy — allowed categories (use EXACT names). Assign the MOST SPECIFIC that fits:\n"
+                "# an **L2** (indented) when the chunk is specifically about it, else its **L1**.\n\n")
         for l1 in l1s:
-            kids = tree.get(l1) or []
-            f.write(f"- {l1}" + (f"  (subtopics: {', '.join(kids)})" if kids else "") + "\n")
+            f.write(f"- {l1}\n")
+            for l2 in (tree.get(l1) or []):
+                f.write(f"    - {l2}\n")
     with open(os.path.join(a.out, "instructions.md"), "w") as f:
         f.write(
-            "# Classify each chunk against the taxonomy\n\n"
-            "For every chunk below, choose the L1 categories from `vocab.md` that the chunk is "
-            "genuinely ABOUT (0–3). Use EXACT L1 names. If a chunk is generic/administrative and "
-            "fits none, return an empty list — do NOT force a tag.\n\n"
-            "Output ONE JSON file `result_<k>.json` mapping chunk id -> list of L1 names:\n"
-            '  {"12": ["Billing Disputes"], "13": [], "14": ["Delivery & Pickup Management","Billing & Payments"]}\n'
-            "Judge by the title + preview. Be precise, not generous.\n")
+            "# Classify each chunk against the taxonomy (L1 + L2)\n\n"
+            "For every chunk below, choose the categories from `vocab.md` the chunk is genuinely "
+            "ABOUT (0–3). **Prefer the most specific level:** pick an **L2** when the chunk is "
+            "specifically about that sub-topic; otherwise pick its **L1**. You may mix L1 and L2. "
+            "Use EXACT names. If a chunk is generic/administrative and fits none, return an empty "
+            "list — do NOT force a tag.\n\n"
+            "Output ONE JSON file `result_<k>.json` mapping chunk id -> list of category names "
+            "(each an EXACT L1 or L2 label):\n"
+            '  {"12": ["Unauthorized items"], "13": [], "14": ["Track Delivery","Billing & Payments"]}\n'
+            "Judge by the title + preview. Be precise, not generous. (An L2 auto-includes its L1.)\n")
     con = sqlite3.connect(a.db)
     where, params = "", [a.preview]
     if a.docs:

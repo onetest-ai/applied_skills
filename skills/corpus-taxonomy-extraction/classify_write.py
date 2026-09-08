@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Write agent chunk-classification results into the knowledge SQLite.
 
-Consumes result_<k>.json ({chunk_id: [L1 names]}) produced by the low-tier
-classification agents, and writes:
+Consumes result_<k>.json ({chunk_id: [category names]}) produced by the low-tier
+classification agents. Names may be **L1 or L2** — this resolves each against the
+graph, writes it with its real `kind` (intent_l1 / intent_l2), and — for an L2 —
+also rolls up its parent L1 (so L1 filters still catch it). Writes:
   chunk_topics(chunk_id INT, category_id TEXT, category_label TEXT, kind TEXT, source TEXT)
   graph_edges rows: (source='chunk:<id>', target=<category_id>, rel='about')   -- note↔vertex
 
@@ -42,18 +44,31 @@ def main():
     for cid in results:
         c.execute("DELETE FROM chunk_topics WHERE chunk_id=?", (cid,))
         c.execute("DELETE FROM graph_edges WHERE rel='about' AND source=?", (f"chunk:{cid}",))
-    valid = {r[0] for r in c.execute("SELECT id FROM graph_nodes")}
-    n_assign, n_chunks, skipped = 0, 0, 0
+    # resolve each label against the graph: id -> (label, kind, parent_id)
+    node = {i: (lbl, kind, par) for i, lbl, kind, par in
+            c.execute("SELECT id,label,kind,parent FROM graph_nodes")}
+    n_assign, n_l2, n_chunks, skipped = 0, 0, 0, 0
     for cid, labels in results.items():
         n_chunks += 1
+        added = set()
+        def put(catid, label, kind):
+            nonlocal n_assign
+            if catid in added: return
+            added.add(catid)
+            c.execute("INSERT INTO chunk_topics VALUES(?,?,?,?)", (cid, catid, label, kind))
+            c.execute("INSERT INTO graph_edges VALUES(?,?,?)", (f"chunk:{cid}", catid, "about"))
+            n_assign += 1
         for lbl in (labels or []):
             cat = nid(lbl)
-            if valid and cat not in valid: skipped += 1; continue   # keep to the graph vocabulary
-            c.execute("INSERT INTO chunk_topics VALUES(?,?,?,?)", (cid, cat, lbl, "intent_l1"))
-            c.execute("INSERT INTO graph_edges VALUES(?,?,?)", (f"chunk:{cid}", cat, "about"))
-            n_assign += 1
+            if node and cat not in node: skipped += 1; continue     # keep to the graph vocabulary
+            label, kind, parent = node.get(cat, (lbl, "intent_l1", None))
+            put(cat, label, kind)
+            if kind == "intent_l2":                                  # roll up the parent L1
+                n_l2 += 1
+                if parent and parent in node:
+                    put(parent, node[parent][0], "intent_l1")
     c.commit()
-    print(f"chunk_topics: {n_assign} assignments over {n_chunks} chunks"
+    print(f"chunk_topics: {n_assign} assignments over {n_chunks} chunks ({n_l2} L2)"
           + (" [reset]" if a.reset else " [incremental]")
           + (f" ({skipped} off-vocabulary dropped)" if skipped else ""))
     dist = c.execute("SELECT category_label, count(*) FROM chunk_topics GROUP BY category_id ORDER BY 2 DESC LIMIT 8").fetchall()
