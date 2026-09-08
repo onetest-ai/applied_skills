@@ -223,6 +223,69 @@ python .../corpus-taxonomy-extraction/to_obsidian.py --db "$DB" --out <project>/
 
 ---
 
+## The taxonomy — when it's made, where it lives, and how it changes
+
+The **taxonomy is the seed the whole store keys off**: the intent hierarchy (L1/L2) that becomes the graph vertices and the closed vocabulary the classifier tags sections against. Understanding *when* it's produced and *how it evolves* is the difference between a store that stays coherent and one whose tags rot.
+
+### Where it sits in the pipeline
+Taxonomy induction is the **first agentic step, right after parsing** — and everything relational depends on it:
+
+```mermaid
+flowchart TD
+    P["1 · parse (+ visual-parse)<br/>docs → parsed/*.md"] --> TX["2 · 🤖 TAXONOMY induction<br/>parsed/ + goal → taxonomy_v0.json<br/><i>map → reduce → judge → emit · human-gated</i>"]
+    P --> IDX["3 · index<br/>chunks + FTS + vector"]
+    TX --> G["4 · build_graph<br/>taxonomy → graph_nodes / edges (L1/L2)"]
+    TX --> CL["5 · 🤖 classify<br/>chunk × taxonomy-vocab → chunk_topics + about-edges"]
+    IDX --> CL
+    G --> CL
+    CL --> R["5b · related · 6 · marts · 7 · vault(opt) · 8 · seed"]
+
+    classDef ag fill:#fff3e0,stroke:#e65100,color:#bf360c;
+    class TX,CL ag
+```
+
+- **`index` (3) does NOT depend on the taxonomy** — it can run in parallel; but **`build_graph` (4) and `classify` (5) do**: the graph *is* the taxonomy as vertices, and the classifier tags each chunk *against the taxonomy vocabulary*. So the taxonomy must exist before them.
+- Induction reads the **document text** (`parsed/`), not the chunks/store.
+
+### How it's made (`map → reduce → judge → emit`)
+1. **map** — low-tier (Haiku) subagents, per document, extract candidate terms (intent classes, entities, metrics) each with an evidence quote, source, and confidence → one JSON per doc. The bulk context lives and dies inside each subagent.
+2. **reduce** — `consolidate.py` deterministically clusters near-duplicates (stdlib difflib); a low-tier agent adjudicates **only the ambiguous** merges ("Chicago" vs "CHI").
+3. **judge** — an LLM-as-judge scores coverage/coherence and flags low-confidence/unmapped terms.
+4. **emit** — `taxonomy_v0.json` (+ `.md`): human-reviewable, **versioned**, with a *demoted* list.
+
+The **goal string is a noise filter** — extraction is scoped to the analytical goal. Prefer **seed-guided over schema-free**: anchor on any existing taxonomy doc (a "Taxonomy Compendium") and extend it.
+
+### Where it lives
+`taxonomy_v0.json` is a **project artifact** — it lives in the consuming project (with `families.<corpus>.json`, the goal, the built store), **never in the store or the skills**. It is *loaded into* the store as `graph_nodes` by `build_graph`, but the source-of-truth JSON stays a file so it can be reviewed, versioned, and hand-edited.
+
+### How the visual/VLM parse affects it
+The parse stack now transcribes visual pages (flows, timelines, diagrams) via `visual-parse` instead of dropping them to fragments. Since induction reads `parsed/`, **its input is now richer** — concepts that previously lived only on slides ("North Star Vision & Service Design Blueprint", phase/framework/capability names) become visible to the map step, so a freshly-induced taxonomy covers **more**. Consequence:
+
+- A **from-scratch build** captures visual concepts automatically (induction reads the VLM-enriched `parsed/`).
+- An **existing brain whose taxonomy predates the visual parse under-covers** those concepts — visible as visual-page chunks that classify leaves **untagged** (no matching L1). That's the signal it's time to refresh the taxonomy.
+
+### How it behaves during an update (the key rule)
+The pipeline deliberately separates **two different deltas**:
+
+| What changes | Mechanism | Automatic? |
+|---|---|---|
+| **Content** (docs added/changed/deleted) | `brain_sync` by content hash → re-embed + reclassify only the delta | ✅ automatic (`./brain update`) |
+| **Vocabulary** (the taxonomy itself) | re-induce + **additive** merge | ❌ deliberate, human-gated |
+
+So on `./brain update`: the taxonomy is **reused as-is**; changed docs are **reclassified against the existing vocabulary**; a genuinely new concept in a new doc **does not get a new L1** until someone re-induces and extends the taxonomy.
+
+**Why vocabulary change is gated and additive:** chunk ids are content-addressed and graph node ids are `slug(label)`, so **adding** L1/L2 is safe (`build_graph` is non-destructive — it rebuilds `subclass_of`, preserves `about` edges, and only prunes nodes that vanished). But **renaming or removing** an L1 changes its node id and orphans every `chunk_topics` tag and `about` edge that pointed at it. Therefore taxonomy evolution during updates is **add-only, never rename**, and passes a human gate.
+
+### Refreshing the taxonomy (when the corpus or parse shifts)
+1. **Signal** — a rising share of **untagged** chunks after classification, or new docs / newly-transcribed visual pages carrying concepts with no home L1.
+2. **Re-induce on the delta** — run `map → reduce → judge` over the parsed text of the new/changed docs → candidate new terms.
+3. **Human review → additive merge** into `taxonomy_v0.json` (bump the version; **add** L1/L2, never rename; deprecate rather than delete).
+4. **Rebuild + reclassify** — `build_graph` (adds the new vertices, keeps existing edges) → reclassify the affected chunks (now the new L1s are available) → refresh `related` and (optionally) the vault.
+
+> Not yet automated: the induce-delta-and-merge step is currently a manual run of the taxonomy scripts plus a hand-merge of the JSON. `build_graph` (additive) and `classify` (incremental, per-chunk) already support the downstream half.
+
+---
+
 ## Answer pipeline (per question)
 
 ```mermaid
