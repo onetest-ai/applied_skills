@@ -76,8 +76,9 @@ python .../corpus-taxonomy-extraction/classify_write.py --db "$DB" --results <pr
 python .../knowledge-index/knowledge_index.py related --db "$DB"                                   # -> related(chunk_id, related_id, score)
 # 6. numeric marts (Excel → facts) into the SAME db
 python .../tabular-semantic-layer/build_marts.py --root <reporting> --config <project>/schema/families.<corpus>.json --out-dir <project>/marts --db "$DB"
-# 7. Obsidian vault as a VIEW of the store (notes = chunks, tags, [[related]], embedded page images)
-python .../corpus-taxonomy-extraction/to_obsidian.py --db "$DB" --out <project>/vault --clean --assets <project>/assets
+# 7. (OPTIONAL) Obsidian vault — a DISPOSABLE view of the store, regenerable anytime.
+#    Skip it in the default build; export on demand (debugging / a human wants to browse):
+python .../corpus-taxonomy-extraction/to_obsidian.py --db "$DB" --out <project>/vault --clean --assets <project>/assets   # or: ./brain vault
 # 8. record document hashes so future updates can diff (see "Updating" below)
 python .../knowledge-pipeline/brain_sync.py seed --db "$DB" --parsed <project>/parsed
 ```
