@@ -39,6 +39,21 @@ def _resolve_skills():
 
 SKILLS = _resolve_skills()
 sys.path.insert(0, str(SKILLS / "knowledge-index"))
+sys.path.insert(0, str(SKILLS / "corpus-taxonomy-extraction"))
+try:
+    from to_obsidian import note_path as _note_path   # shared vault naming
+except Exception:
+    _note_path = None
+
+def vault_note(source, ordv, title):
+    """Vault-relative note path for a chunk (for transparency — where it is in the vault,
+    even if the vault isn't exported; regenerate with `./brain vault`)."""
+    if _note_path is None or source is None:
+        return None
+    try:
+        return _note_path(source, ordv or 0, title) + ".md"
+    except Exception:
+        return None
 
 # ---- resolution (same discovery contract as the `brain` launcher) -------------
 def _project_roots():
@@ -65,6 +80,15 @@ def resolve_assets():
         if d.is_dir():
             return str(d)
     return str(next(_project_roots()))
+
+def resolve_vault():
+    """Where the vault is / would be (it's optional & regenerable)."""
+    if os.environ.get("BRAIN_VAULT"):
+        return os.environ["BRAIN_VAULT"]
+    try:
+        return os.path.join(os.path.dirname(resolve_db()), "vault")
+    except Exception:
+        return str(next(_project_roots()) / "vault")
 
 def resolve_catalog():
     p = os.environ.get("BRAIN_CATALOG")
@@ -105,13 +129,18 @@ def t_which():
         db = resolve_db()
     except Exception as e:
         db = f"<none: {e}>"
-    return {"skills": str(SKILLS), "db": db, "catalog_metrics": sorted(resolve_catalog().keys())}
+    vault = resolve_vault()
+    return {"skills": str(SKILLS), "db": db, "assets": resolve_assets(),
+            "vault": vault, "vault_exists": os.path.isdir(vault),
+            "vault_note": "each search/related/page hit carries a `note` = its vault path; run `./brain vault` to export",
+            "catalog_metrics": sorted(resolve_catalog().keys())}
 
 def t_search(query, k=5):
     import knowledge_index as K
     con = K.connect(resolve_db())
     res = K.search(con, K.DEFAULT_MODEL, query, int(k))
     out = [{"source": r["source"], "section": r.get("title") or "", "score": r["score"],
+            "note": vault_note(r["source"], r.get("ord"), r.get("title")),   # where this hit lives in the vault
             "text": " ".join((r["text"] or "").split())} for r in res["results"]]
     con.close()
     return out
@@ -173,11 +202,13 @@ def t_related(chunk_id=0, query="", k=6):
             (chunk_id, chunk_id, int(k))).fetchall()
         out = []
         for rid, sc in rows:
-            row = con.execute("SELECT source, title FROM chunks WHERE id=?", (rid,)).fetchone()
+            row = con.execute("SELECT source, ord, title FROM chunks WHERE id=?", (rid,)).fetchone()
             if row:
-                out.append({"chunk_id": rid, "source": row[0], "section": row[1] or "", "score": sc})
-        anchor = con.execute("SELECT source, title FROM chunks WHERE id=?", (chunk_id,)).fetchone()
-        return {"anchor": {"chunk_id": chunk_id, "source": anchor[0], "section": anchor[1] or ""} if anchor else None,
+                out.append({"chunk_id": rid, "source": row[0], "section": row[2] or "", "score": sc,
+                            "note": vault_note(row[0], row[1], row[2])})
+        a = con.execute("SELECT source, ord, title FROM chunks WHERE id=?", (chunk_id,)).fetchone()
+        return {"anchor": ({"chunk_id": chunk_id, "source": a[0], "section": a[2] or "",
+                            "note": vault_note(a[0], a[1], a[2])} if a else None),
                 "related": out}
     finally:
         con.close()
@@ -227,7 +258,7 @@ def t_page(chunk_id=0, query=""):
             import knowledge_index as K
             res = K.search(K.connect(resolve_db()), K.DEFAULT_MODEL, query, 1)
             chunk_id = res["results"][0]["id"] if res["results"] else 0
-        row = con.execute("SELECT source, title, image FROM chunks WHERE id=?", (chunk_id,)).fetchone()
+        row = con.execute("SELECT source, title, image, ord FROM chunks WHERE id=?", (chunk_id,)).fetchone()
         if not row or not row[2]:
             return {"error": "no image for this chunk (not a visual page)"}
         img_rel = row[2]
@@ -240,7 +271,7 @@ def t_page(chunk_id=0, query=""):
         data = base64.b64encode(open(path, "rb").read()).decode()
         mime = mimetypes.guess_type(path)[0] or "image/png"
         meta = {"chunk_id": chunk_id, "source": row[0], "section": row[1], "image": img_rel,
-                "has_tables": bool(tables)}
+                "note": vault_note(row[0], row[3], row[1]), "has_tables": bool(tables)}
         blocks = [{"type": "image", "data": data, "mimeType": mime}]
         if tables:
             blocks.append({"type": "text", "text": "EXTRACTED TABLES (verbatim cells — cite for numbers):\n" + tables})
