@@ -22,8 +22,9 @@ No server, no cloud, no lock-in. Copy one file and the whole brain moves with it
 | **knowledge-index** | 🔎 narrative: heading-aware chunks → FTS5 + vectors | `knowledge_index.py`, `chunking.py` (shared) |
 | **tabular-semantic-layer** | 🔢 numbers: Excel → deterministic `facts` | `build_marts.py`, `profile_workbooks.py`, `families.example.json`, `metrics.example.json` |
 | **hybrid-retrieval** | 🧭 answer: route each sub-claim to the right lane, fuse, cite | `query.py` |
-| **brain-mcp** | 🔌 tool layer: a dependency-free stdio MCP server exposing the lanes as tools | `brain_mcp.py` |
 | _cognee_ (optional) | 🌐 external graph service (only if you run one) | `cognee_client.py`, `api-reference.md` |
+
+Plus the repo's top-level **`mcp/brain/`** — the MCP **tool layer** (a dependency-free stdio server, `brain_mcp.py`) that fronts these skills as tools. It lives in `mcp/`, not `skills/` (see below).
 
 ---
 
@@ -86,7 +87,7 @@ flowchart LR
 - The **server owns the venv + skills + store** and returns cited text / computed numbers — it **never reasons**. The truthfulness rule lives right here: `sql`/`metric` return figures with `source_file`; `search`/`graph` return cited text, never a number.
 - The **agent never runs Python or guesses a path** — it calls tools. Because the server is registered with the venv's interpreter, "where do I run?" simply doesn't arise.
 
-Register it during install (writes `.mcp.json` for Claude Code: `command=<venv>/bin/python`, `args=[…/brain-mcp/brain_mcp.py]`):
+The server lives at the repo's top-level **`mcp/brain/`** (installed to `<host>/mcp/brain/`, a sibling of `<host>/skills/`). Register it during install (writes `.mcp.json` for Claude Code: `command=<venv>/bin/python`, `args=[…/mcp/brain/brain_mcp.py]`):
 
 ```bash
 ./install.sh --bundle brain --deps --mcp          # copy skills, build venv, register the server

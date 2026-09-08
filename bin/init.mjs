@@ -25,7 +25,7 @@
  *
  *   npx github:onetest-ai/applied_skills init --bundle brain --deps
  */
-import { existsSync, mkdirSync, rmSync, cpSync, symlinkSync, readdirSync, statSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, cpSync, symlinkSync, readdirSync, statSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -43,7 +43,7 @@ const SRC = join(ROOT, "skills");
 const BUNDLES = join(ROOT, "bundles");
 
 function parseArgs(argv) {
-  const o = { targets: Object.keys(HOSTS), skills: null, bundle: null, optional: false, deps: false, venv: null, user: false, symlink: false, dry: false };
+  const o = { targets: Object.keys(HOSTS), skills: null, bundle: null, optional: false, deps: false, mcp: false, venv: null, user: false, symlink: false, dry: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "init") continue;                       // npx passes the bin name as arg0
@@ -51,6 +51,7 @@ function parseArgs(argv) {
     else if (a === "--bundle" || a === "--factory") o.bundle = argv[++i];
     else if (a === "--optional") o.optional = true;
     else if (a === "--deps") o.deps = true;
+    else if (a === "--mcp") o.mcp = true;
     else if (a === "--venv") o.venv = argv[++i];
     else if (a === "--skills") o.skills = argv[++i].split(",").map(s => s.trim()).filter(Boolean);
     else if (a === "--user") o.user = true;
@@ -63,7 +64,45 @@ function parseArgs(argv) {
 }
 function help() {
   console.log("npx github:onetest-ai/applied_skills init [--target claude,dsh,copilot,codex]");
-  console.log("  [--bundle <name> [--optional]] [--deps [--venv <dir>]] [--skills a,b,c] [--user] [--symlink] [--dry-run]");
+  console.log("  [--bundle <name> [--optional]] [--deps [--venv <dir>]] [--mcp] [--skills a,b,c] [--user] [--symlink] [--dry-run]");
+}
+
+// --mcp: install the bundle's MCP servers from mcp/<name>/ into <host>/mcp/<name>/
+// and register each (command = the bundle venv python). Claude Code -> .mcp.json.
+function installMcp(o, targets, bases) {
+  const factory = join(BUNDLES, o.bundle || "", "factory.json");
+  if (!o.bundle || !existsSync(factory)) { console.error("error: --mcp needs --bundle"); process.exit(2); }
+  const servers = (JSON.parse(readFileSync(factory, "utf8")).mcp || {}).servers || [];
+  if (!servers.length) { console.log(`  (bundle '${o.bundle}' declares no mcp servers)`); return; }
+  let db = "";
+  for (const c of [join(process.cwd(), "knowledge.sqlite"), join(process.cwd(), "schema", "knowledge.sqlite")])
+    if (existsSync(c)) { db = c; break; }
+  for (let t = 0; t < targets.length; t++) {
+    const skillsDir = bases[t], hostDir = dirname(skillsDir);
+    const py = join(o.venv || join(hostDir, "venv"), "bin", "python");
+    for (const name of servers) {
+      const srcdir = join(ROOT, "mcp", name);
+      if (!existsSync(srcdir)) { console.error(`  ! mcp/${name} not found in repo`); continue; }
+      const entry = (JSON.parse(readFileSync(join(srcdir, "server.json"), "utf8")).entry) || "server.py";
+      const dest = join(hostDir, "mcp", name);
+      console.log(`→ MCP '${name}' -> ${dest}  (python: ${py})`);
+      if (o.dry) { console.log(`   [dry-run] ${o.symlink ? "symlink" : "copy"} mcp/${name} + register`); continue; }
+      mkdirSync(join(hostDir, "mcp"), { recursive: true });
+      rmSync(dest, { recursive: true, force: true });
+      if (o.symlink) symlinkSync(srcdir, dest); else cpSync(srcdir, dest, { recursive: true, dereference: true });
+      if (targets[t] === "claude") {
+        const conf = resolve(process.cwd(), ".mcp.json");
+        let data = {};
+        if (existsSync(conf)) { try { data = JSON.parse(readFileSync(conf, "utf8")); } catch { data = {}; } }
+        const env = { BRAIN_SKILLS: skillsDir }; if (db) env.BRAIN_DB = db;
+        (data.mcpServers ||= {})[name] = { command: py, args: [join(dest, entry)], env };
+        writeFileSync(conf, JSON.stringify(data, null, 2));
+        console.log(`   ✓ wrote ${conf} (mcpServers.${name})`);
+      } else {
+        console.log(`   (${targets[t]}) add to the host MCP config — or run: "${join(skillsDir, "knowledge-pipeline", "brain")}" mcp-config`);
+      }
+    }
+  }
 }
 
 // --deps: an isolated venv for the skills' Python deps, next to skills/ inside the
@@ -137,5 +176,6 @@ function main() {
   }
   if (!o.dry) console.log(`done: ${n} skill install(s) (${o.symlink ? "symlink" : "copy"}). Restart the host session to load.`);
   if (o.deps) installDeps(o, bases);
+  if (o.mcp) installMcp(o, o.targets, bases);
 }
 main();

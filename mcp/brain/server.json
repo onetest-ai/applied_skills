@@ -1,0 +1,15 @@
+{
+  "name": "brain",
+  "description": "Deterministic tool layer over the local knowledge.sqlite — cited retrieval + computed numbers (search, sql, metric, graph, verify). Dependency-free stdio JSON-RPC (stdlib only).",
+  "entry": "brain_mcp.py",
+  "transport": "stdio",
+  "runtime": "bundle-venv",
+  "bundle": "brain",
+  "tools": ["which", "search", "sql", "metric", "graph", "verify"],
+  "env": {
+    "BRAIN_SKILLS": "<skills>",
+    "BRAIN_DB": "<db>",
+    "BRAIN_CATALOG": "<catalog>"
+  },
+  "env_notes": "BRAIN_SKILLS is set by the installer; BRAIN_DB / BRAIN_CATALOG are optional (auto-discovered from the project root / schema/ when absent)."
+}

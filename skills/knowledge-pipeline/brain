@@ -55,20 +55,23 @@ need_db() { [ -n "$DB" ] || { echo "brain: no store found (set BRAIN_DB, or plac
 cmd="${1:-help}"; shift || true
 case "$cmd" in
   which)  echo "skills = $SKILLS"; echo "python = $PY"; echo "db     = ${DB:-<none>}";;
-  mcp-config)  # print the MCP server block to paste into a host config
+  mcp-config|mcp)  # locate the installed MCP server: <host>/mcp/brain/ (sibling of skills/)
+    SRV="$(dirname "$SKILLS")/mcp/brain/brain_mcp.py"
+    [ -f "$SRV" ] || SRV="$SKILLS/brain-mcp/brain_mcp.py"   # tolerate old layout
+    if [ "$cmd" = "mcp" ]; then exec "$PY" "$SRV"; fi       # run the server (stdio)
+    DBENV=""; [ -n "${DB:-}" ] && DBENV=", \"BRAIN_DB\": \"$DB\""
     cat <<JSON
 {
   "mcpServers": {
     "brain": {
       "command": "$PY",
-      "args": ["$SKILLS/brain-mcp/brain_mcp.py"],
-      "env": { "BRAIN_SKILLS": "$SKILLS"${DB:+, \"BRAIN_DB\": \"$DB\"} }
+      "args": ["$SRV"],
+      "env": { "BRAIN_SKILLS": "$SKILLS"$DBENV }
     }
   }
 }
 JSON
     ;;
-  mcp)    exec "$PY" "$SKILLS/brain-mcp/brain_mcp.py";;   # run the server (stdio)
   search) need_db; "$PY" "$SKILLS/knowledge-index/knowledge_index.py" search --db "$DB" --query "${1:?question}" --k "${2:-5}";;
   sql)    need_db; "$PY" "$SKILLS/hybrid-retrieval/query.py" --db "$DB" --sql "${1:?SQL}";;
   verify) need_db; "$PY" "$SKILLS/knowledge-pipeline/onboard.py" verify --db "$DB" ${1:+--query "$1"};;
