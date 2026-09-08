@@ -26,23 +26,30 @@ relation→`graph` · visual/table→`page` · both stated & computable→comput
 compose one answer, tag each fact `[RAG]`/`[GRAPH]`/`[MART]` with a citation, state
 unmodeled parts plainly.
 
-## Disambiguate before answering (the highest-leverage habit)
-A figure usually exists at more than one **scope / grain / population**, and the choice
-changes the answer. Bake this into the agent:
+## Disambiguate — but ALWAYS commit to the figure (the highest-leverage habit, with a trap)
+Disambiguation is high-leverage, but there's a failure mode to design against: an agent
+told to "watch scope and caveats" can over-hedge and **stop stating numbers** — going
+qualitative or "not modeled" even when the value is right there in the store. That is worse
+than being off-scope. Disambiguation **adds** a scope label and an alternative; it never
+**replaces** the number.
 
-1. **Look for a scope/grain fork first.** Common ones: a **total** vs a **KPI scope that
-   excludes some segment**; **division vs branch vs region** grain
-   (`SELECT DISTINCT grain FROM facts`); which time range; two reporting systems that cover
-   **different populations** (e.g. field vs workforce) and must not be equated.
-2. **If the choice materially changes the answer and the question doesn't pin it down —
-   ask one short clarifying question** before committing. When asking isn't practical,
-   **state the assumption explicitly and give the alternative's value**
-   ("at total: X; at the segment-excluded KPI scope: Y").
-3. **Always name the grain/scope/population used**, and **surface every data-quality caveat
-   the source flags** (missing rows for a date range, blank fields, excluded segments) —
-   a caveat that weakens a claim belongs in the answer, never dropped.
-4. **Call out confounders.** A rate that improved while the underlying volume shifted is
-   not a clean win — say so.
+1. **Give the figure first.** If the question asks for a value/target/date and it's in
+   `facts` or on a cited page, STATE it (with `[MART]`/`[STATED]` + source). Do not answer
+   a "what is the value / what does it say" question qualitatively when the value exists.
+2. **Source-of-truth precedence.** When a figure appears in several places (e.g. a periodic
+   **scorecard** vs a **transcribed table/chart** from a slide), cite the **authoritative
+   source**, not the lossy transcription; if they conflict, give the authoritative value and
+   **flag the discrepancy** — never silently pick the transcription.
+3. **Then label the scope; give the alternative when it matters.** a **total** vs a **KPI
+   scope that excludes some segment**; **division/branch/region** grain
+   (`SELECT DISTINCT grain FROM facts`); different reporting **populations** (e.g. field vs
+   workforce) that must not be equated. Name the one you used; when the choice changes the
+   answer, add the other's value too, or ask one crisp clarifying question if truly ambiguous.
+4. **Surface caveats and confounders in ADDITION to the number** (missing rows for a date
+   range, blank fields; a rate that improved while volume shifted) — never instead of it.
+
+Rule of thumb: **commit to the value, cite it, then qualify.** Off-scope is a minor miss;
+refusing to state a retrievable figure is a real one.
 
 ## Honesty guardrails to instruct
 - Prefer **"not modeled in this corpus"** over an unsupported claim; a gap beats a guess.
