@@ -35,20 +35,34 @@ def main():
     for kind in tax.get("entities", {}): add(kind, "entity_kind")
 
     c = sqlite3.connect(a.db)
+    # Non-destructive: this script OWNS the taxonomy (nodes + subclass_of edges) but
+    # must NOT touch the 'about' edges (chunk↔vertex) that classify_write manages.
     c.executescript("""
-      DROP TABLE IF EXISTS graph_nodes; DROP TABLE IF EXISTS graph_edges;
-      CREATE TABLE graph_nodes(id TEXT PRIMARY KEY, label TEXT, kind TEXT, parent TEXT);
-      CREATE TABLE graph_edges(source TEXT, target TEXT, rel TEXT);
-      CREATE INDEX idx_edges_src ON graph_edges(source);
-      CREATE INDEX idx_edges_tgt ON graph_edges(target);
-      CREATE INDEX idx_nodes_kind ON graph_nodes(kind);
+      CREATE TABLE IF NOT EXISTS graph_nodes(id TEXT PRIMARY KEY, label TEXT, kind TEXT, parent TEXT);
+      CREATE TABLE IF NOT EXISTS graph_edges(source TEXT, target TEXT, rel TEXT);
+      CREATE INDEX IF NOT EXISTS idx_edges_src ON graph_edges(source);
+      CREATE INDEX IF NOT EXISTS idx_edges_tgt ON graph_edges(target);
+      CREATE INDEX IF NOT EXISTS idx_nodes_kind ON graph_nodes(kind);
     """)
+    c.execute("DELETE FROM graph_edges WHERE rel='subclass_of'")      # rebuild only taxonomy edges
     c.executemany("INSERT OR REPLACE INTO graph_nodes VALUES(?,?,?,?)", list(nodes.values()))
     c.executemany("INSERT INTO graph_edges VALUES(?,?,?)", edges)
+    # prune nodes that vanished from the taxonomy, with their dependent rows (no dangling refs)
+    keep = set(nodes)
+    have_ct = bool(c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='chunk_topics'").fetchone())
+    removed = [r[0] for r in c.execute("SELECT id FROM graph_nodes")] if keep else []
+    removed = [nidv for nidv in removed if nidv not in keep]
+    for nidv in removed:
+        c.execute("DELETE FROM graph_nodes WHERE id=?", (nidv,))
+        c.execute("DELETE FROM graph_edges WHERE rel='about' AND target=?", (nidv,))
+        if have_ct:
+            c.execute("DELETE FROM chunk_topics WHERE category_id=?", (nidv,))
     c.commit()
     from collections import Counter
     kinds = Counter(n[2] for n in nodes.values())
-    print(f"graph -> {a.db}: {len(nodes)} nodes {dict(kinds)}, {len(edges)} edges (subclass_of)")
+    print(f"graph -> {a.db}: {len(nodes)} nodes {dict(kinds)}, {len(edges)} subclass_of edges"
+          + (f"; pruned {len(removed)} vanished node(s) + their tags/about-edges" if removed else "")
+          + " (about edges preserved)")
     c.close()
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ of nesting and the note filenames can stay short.
 
 Usage: to_obsidian.py --db knowledge.sqlite --out <vault>
 """
-import argparse, os, re, sqlite3
+import argparse, os, re, shutil, sqlite3
 
 def kebab(s): return re.sub(r"[^a-z0-9]+", "-", str(s).lower()).strip("-") or "x"
 
@@ -63,7 +63,13 @@ def doc_relpath(src):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True); ap.add_argument("--out", required=True)
+    ap.add_argument("--clean", action="store_true",
+                    help="wipe the vault dir first (reconcile: drop notes for docs no longer in the store)")
     a = ap.parse_args()
+    # the vault is a pure VIEW of the store, so a clean rebuild is the safe way to
+    # reconcile deletions — otherwise notes for removed docs would linger as orphans.
+    if a.clean and os.path.isdir(a.out):
+        shutil.rmtree(a.out)
     os.makedirs(a.out, exist_ok=True)
     c = sqlite3.connect(a.db)
     has_topics = bool(c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='chunk_topics'").fetchone())

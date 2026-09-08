@@ -69,9 +69,39 @@ python .../corpus-taxonomy-extraction/classify_write.py --db "$DB" --results <pr
 # 6. numeric marts (Excel → facts) into the SAME db
 python .../tabular-semantic-layer/build_marts.py --root <reporting> --config <project>/schema/families.<corpus>.json --out-dir <project>/marts --db "$DB"
 # 7. Obsidian vault as a VIEW of the store (notes = chunks, real per-section tags, links = graph vertices)
-python .../corpus-taxonomy-extraction/to_obsidian.py --db "$DB" --out <project>/vault
+python .../corpus-taxonomy-extraction/to_obsidian.py --db "$DB" --out <project>/vault --clean
+# 8. record document hashes so future updates can diff (see "Updating" below)
+python .../knowledge-pipeline/brain_sync.py seed --db "$DB" --parsed <project>/parsed
 ```
+Chunk ids are content-addressed (`f(source, section-ordinal)`), so an unchanged document keeps its ids across rebuilds and its tags/graph edges survive — this is what makes incremental updates safe.
 Result: one `knowledge.sqlite` — `chunks`/`chunks_fts`/`chunks_vec` (a chunk = a section = an Obsidian note), `chunk_topics` (real per-section taxonomy tags via low-tier agents), `facts` (marts), `graph_nodes`/`graph_edges` (taxonomy vertices + `subclass_of` + `about` edges to chunks). Check the `build_marts` audit (`--strict` in CI). The vault is generated from the store, so notes, retrieval chunks, tags, and graph all reference the same ids.
+
+## Updating the brain (documents add / change / delete)
+
+The store records a **content hash per document** (`documents` table), so updates are **incremental** — only the delta is re-embedded and re-classified, and unchanged docs (with their tags + graph edges) are left untouched. Cost scales with the change, not the corpus.
+
+```bash
+# 1. re-parse the corpus (or just the changed sources) into <project>/parsed
+python .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf
+# 2. see the delta
+python .../knowledge-pipeline/brain_sync.py plan  --db "$DB" --parsed <project>/parsed
+# 3. apply it (snapshots the .sqlite first; (re)embeds only added/changed, deletes removed)
+python .../knowledge-pipeline/brain_sync.py apply --db "$DB" --parsed <project>/parsed
+#    → writes sync_plan.json naming the chunk ids that must be RE-CLASSIFIED
+# 4. 🤖 reclassify ONLY those chunks (agentic), then refresh graph + vault:
+python .../corpus-taxonomy-extraction/classify_prep.py  --db "$DB" --taxonomy <tax> --out <cls> --chunks <ids from sync_plan.json>
+#    → Haiku subagents → classify/result_k.json
+python .../corpus-taxonomy-extraction/classify_write.py --db "$DB" --results <cls>          # incremental (only these chunks)
+python .../corpus-taxonomy-extraction/build_graph.py    --db "$DB" --taxonomy <tax>          # rebuilds subclass_of; preserves 'about'
+python .../corpus-taxonomy-extraction/to_obsidian.py    --db "$DB" --out <project>/vault --clean
+# marts: re-run build_marts only if the reporting workbooks changed (it's a full idempotent recompute)
+# rollback if needed:  brain_sync.py rollback --db "$DB"
+```
+What each lane does on change: **RAG** — per-doc delete+reindex, stable ids; **tags/graph** — only changed chunks re-tagged, `about` edges preserved, vanished taxonomy nodes pruned; **marts** — full idempotent recompute (self-healing); **vault** — `--clean` reconciles (drops notes for removed docs). **Taxonomy** is *not* auto-re-induced — many new/changed docs may warrant re-running induction (additively: add L1/L2, never rename — node ids = slug(label) must stay stable, or existing tags break); that stays a deliberate, human-gated step.
+
+> Migrating an OLD store (built before content-addressed ids): do one full rebuild (steps 3–8 above with `index --reset`) once, so chunk ids become stable; then incremental updates apply.
+
+Shortcut via the launcher: `./brain plan <parsed>` · `./brain update <parsed>` · `./brain rollback`.
 
 ## Answer (per question)
 Follow **`hybrid-retrieval`**: decompose → classify each sub-claim (computable→marts / narrative→RAG / relation→graph / both→reconcile) → retrieve against the one `$DB` → compose one cited answer. Tag facts `[MART]` / `[RAG]` / `[GRAPH]`; state unmodeled sub-parts plainly.

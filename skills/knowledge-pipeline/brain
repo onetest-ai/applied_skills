@@ -13,6 +13,9 @@
 #   ./brain search "<question>" [k]
 #   ./brain sql "SELECT … FROM facts …"
 #   ./brain verify ["<smoke query>"]
+#   ./brain plan   <parsed-dir>      # what changed since last build (added/changed/deleted)
+#   ./brain update <parsed-dir>      # incremental apply (snapshot + delta); prints reclassify order
+#   ./brain rollback                 # restore the latest pre-update snapshot
 #   ./brain py <script.py> [args…]   # run any skill script with the right interpreter
 set -euo pipefail
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -76,5 +79,8 @@ JSON
   sql)    need_db; "$PY" "$SKILLS/hybrid-retrieval/query.py" --db "$DB" --sql "${1:?SQL}";;
   verify) need_db; "$PY" "$SKILLS/knowledge-pipeline/onboard.py" verify --db "$DB" ${1:+--query "$1"};;
   py)     "$PY" "$@";;
-  *) sed -n '3,20p' "$0"; exit 2;;
+  plan)   need_db; "$PY" "$SKILLS/knowledge-pipeline/brain_sync.py" plan --db "$DB" --parsed "${1:?parsed-dir}";;
+  update) need_db; "$PY" "$SKILLS/knowledge-pipeline/brain_sync.py" apply --db "$DB" --parsed "${1:?parsed-dir}";;
+  rollback) need_db; "$PY" "$SKILLS/knowledge-pipeline/brain_sync.py" rollback --db "$DB";;
+  *) sed -n '3,24p' "$0"; exit 2;;
 esac
