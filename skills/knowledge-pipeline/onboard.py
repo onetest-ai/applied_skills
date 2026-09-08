@@ -45,11 +45,11 @@ def brain_py():
 NARRATIVE_EXT = {".pdf", ".pptx", ".ppt", ".docx", ".doc", ".md", ".txt"}
 REPORTING_EXT = {".xlsx", ".xlsm", ".xls", ".csv"}
 
-# module -> pip name (for the preflight message). fastembed/pypdf/openpyxl need no
-# torch; docling (PPTX/DOCX) pulls torch/transformers (~1.3 GB) — install into the
-# skills' own venv (install.sh --deps [--user]), not the project's env.
+# module -> pip name (for the preflight message). All torch-free (docling retired).
+# .pptx/.docx also need LibreOffice `soffice` (system dep). Install into the skills'
+# own venv (install.sh --deps [--user]), not the project's env.
 DEPS = [("sqlite_vec", "sqlite-vec"), ("fastembed", "fastembed"),
-        ("docling", "docling"), ("pypdf", "pypdf"), ("openpyxl", "openpyxl"),
+        ("pymupdf", "pymupdf"), ("openpyxl", "openpyxl"),
         ("pandas", "pandas")]
 
 
@@ -168,7 +168,7 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal):
     DB="{db}"
     PY="{py}"          # the brain venv interpreter (BRAIN_PY)
 
-    # 1 · parse narrative docs → Markdown (Docling pulls torch; pypdf does not)
+    # 1 · parse narrative docs → Markdown (pymupdf text; visual pages via visual-parse)
     "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats pptx,docx,pdf
 
     # 2 · 🤖 induce taxonomy (map→reduce→judge→emit) → taxonomy/taxonomy_v0.json

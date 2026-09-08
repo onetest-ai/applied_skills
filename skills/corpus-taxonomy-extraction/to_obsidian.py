@@ -65,6 +65,8 @@ def main():
     ap.add_argument("--db", required=True); ap.add_argument("--out", required=True)
     ap.add_argument("--clean", action="store_true",
                     help="wipe the vault dir first (reconcile: drop notes for docs no longer in the store)")
+    ap.add_argument("--assets", help="assets root holding page images (chunks.image is relative to it); "
+                                     "referenced images are copied into <vault>/_assets and embedded in notes")
     a = ap.parse_args()
     # the vault is a pure VIEW of the store, so a clean rebuild is the safe way to
     # reconcile deletions — otherwise notes for removed docs would linger as orphans.
@@ -109,9 +111,25 @@ def main():
             related[cid] = sorted(related[cid], key=lambda x: -x[1])[:6]
 
     # notes = chunks, grouped by source doc, into <parents>/<doc>/
+    has_image = "image" in {r[1] for r in c.execute("PRAGMA table_info(chunks)")}
+    sel = "SELECT id,source,ord,title,text," + ("image" if has_image else "NULL") + " FROM chunks ORDER BY source,ord"
     docs = {}
-    for cid, src, ordv, title, text in c.execute("SELECT id,source,ord,title,text FROM chunks ORDER BY source,ord"):
-        docs.setdefault(src, []).append((cid, ordv, title, text))
+    for cid, src, ordv, title, text, image in c.execute(sel):
+        docs.setdefault(src, []).append((cid, ordv, title, text, image))
+
+    def embed_image(image):
+        """Copy a referenced page image into <vault>/_assets and return an embed line."""
+        if not image or not a.assets:
+            return ""
+        srcpath = image if os.path.isabs(image) else os.path.join(a.assets, image)
+        if not os.path.exists(srcpath):
+            return ""
+        dest_rel = "_assets/" + image.replace("\\", "/").lstrip("/")
+        dest = os.path.join(a.out, *dest_rel.split("/"))
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        if not os.path.exists(dest):
+            shutil.copy2(srcpath, dest)
+        return f"![[{dest_rel}]]\n\n"
 
     # PASS 1 — assign each doc its folder and each chunk its note relpath + title,
     # so PASS 2 can link related sections ACROSS documents by their real paths.
@@ -120,7 +138,7 @@ def main():
         segs = doc_relpath(src)
         doc_dir = uniq("/".join(segs), seen_dirs)
         doc_meta[src] = (segs, doc_dir)
-        for cid, ordv, title, text in rows:
+        for cid, ordv, title, text, image in rows:
             st = (title or "Section")
             note_rel[cid] = f"{doc_dir}/{slug(f'{ordv+1:02d} {st[:60]}')}"
             note_title[cid] = st
@@ -131,7 +149,7 @@ def main():
         doc_name = segs[-1]; fam = kebab(segs[0])
         moc_rel = f"{doc_dir}/{doc_name}"
         doc_topics, sec_links = [], []
-        for cid, ordv, title, text in rows:
+        for cid, ordv, title, text, image in rows:
             cats = topics.get(cid, [])
             for c2 in cats:
                 if c2 not in doc_topics: doc_topics.append(c2)
@@ -144,7 +162,7 @@ def main():
                 rel_block = "\n\n## Related sections\n" + "".join(
                     f"- {link(note_rel[rid], note_title[rid])}  ·{sc:.2f}\n" for rid, sc in rlist)
             note = (fm(tags, doc=link(moc_rel, doc_name), section=st.replace('"', "'")) +
-                    f"# {st}\n\n{text}{rel_block}\n\n---\n↩ {link(moc_rel, doc_name)}" +
+                    f"# {st}\n\n{embed_image(image)}{text}{rel_block}\n\n---\n↩ {link(moc_rel, doc_name)}" +
                     (f" · topics: {tl}" if tl else "") + "\n")
             sec_rel = write(a.out, note_rel[cid], note)
             sec_links.append((sec_rel, st)); notes += 1

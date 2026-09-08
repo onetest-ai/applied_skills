@@ -2,36 +2,54 @@
 """Deterministic corpus parser for corpus-taxonomy-extraction.
 
 Converts a heterogeneous document corpus into uniform Markdown that a
-low-tier model can read. No LLM. NOTE: Docling pulls in torch/transformers
-(~1 GB); the pypdf/openpyxl paths do not.
-  - .pptx/.docx  -> Docling (pulls torch/transformers)
-  - .xlsx/.xlsm  -> Docling if small (torch); openpyxl read_only structure-dump if large (no torch)
-  - .pdf         -> pypdf text extraction (no torch)
+low-tier model can read. No LLM, no torch (docling is retired):
+  - .pdf         -> PyMuPDF text layer
+  - .pptx/.docx  -> LibreOffice (soffice) -> PDF -> PyMuPDF text layer
+  - .xlsx/.xlsm  -> openpyxl read_only structure-dump
+This is the TEXT-layer path. Visual/diagram pages (flows, timelines, complex
+tables) collapse under any text extractor — those go through the `visual-parse`
+skill (render page -> VLM transcription + deterministic table extraction).
 Writes one .md per source file plus a manifest.json.
 
 Usage:
   parse_corpus.py --corpus <dir> --out <dir> [--xlsx-max-mb 20] [--sample-rows 8]
 """
-import argparse, json, os, sys, warnings, traceback
+import argparse, json, os, shutil, subprocess, sys, tempfile, warnings, traceback
 warnings.filterwarnings("ignore")
 
-def parse_pptx_docx_xlsx_docling(path):
-    from docling.document_converter import DocumentConverter
-    conv = DocumentConverter()
-    return conv.convert(path).document.export_to_markdown()
+def _soffice():
+    for c in ("soffice", "libreoffice", "/opt/homebrew/bin/soffice",
+              "/Applications/LibreOffice.app/Contents/MacOS/soffice"):
+        if shutil.which(c) or os.path.exists(c):
+            return c
+    return None
 
-def parse_pdf_pypdf(path):
-    from pypdf import PdfReader
-    r = PdfReader(path)
+def parse_pdf_pymupdf(path):
+    """Text layer via PyMuPDF (torch-free). Replaces docling/pypdf. For visual/diagram
+    pages this is thin — that's the visual-parse skill's job (render + VLM)."""
+    import pymupdf
+    doc = pymupdf.open(path)
     parts = []
-    for i, pg in enumerate(r.pages, 1):
-        try:
-            t = pg.extract_text() or ""
-        except Exception as e:
-            t = f"(page {i} extract error: {e})"
-        if t.strip():
+    for i, pg in enumerate(doc, 1):
+        t = (pg.get_text() or "").strip()
+        if t:
             parts.append(f"\n\n## [page {i}]\n\n{t}")
+    doc.close()
     return "".join(parts)
+
+def parse_office_pymupdf(path):
+    """pptx/docx → PDF via LibreOffice, then PyMuPDF text (torch-free, no docling)."""
+    so = _soffice()
+    if not so:
+        raise RuntimeError("need LibreOffice (soffice) for pptx/docx, or pre-convert to PDF")
+    tmp = tempfile.mkdtemp(prefix="parse_")
+    try:
+        subprocess.run([so, "--headless", "--convert-to", "pdf", "--outdir", tmp, path],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        pdf = os.path.join(tmp, os.path.splitext(os.path.basename(path))[0] + ".pdf")
+        return parse_pdf_pymupdf(pdf)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 def parse_xlsx_structure(path, sample_rows):
     """Large-workbook structure dump: sheet names, header row, a few sample rows.
@@ -57,16 +75,11 @@ def parse_xlsx_structure(path, sample_rows):
 def parse_one(path, xlsx_max_mb, sample_rows):
     ext = os.path.splitext(path)[1].lower()
     size_mb = os.path.getsize(path) / 1e6
-    if ext in (".pptx", ".docx"):
-        return parse_pptx_docx_xlsx_docling(path), "docling"
+    if ext in (".pptx", ".docx", ".ppt", ".doc"):
+        return parse_office_pymupdf(path), "soffice+pymupdf"
     if ext == ".pdf":
-        return parse_pdf_pypdf(path), "pypdf"
+        return parse_pdf_pymupdf(path), "pymupdf"
     if ext in (".xlsx", ".xlsm"):
-        if size_mb <= xlsx_max_mb:
-            try:
-                return parse_pptx_docx_xlsx_docling(path), "docling"
-            except Exception:
-                return parse_xlsx_structure(path, sample_rows), "openpyxl-structure"
         return parse_xlsx_structure(path, sample_rows), "openpyxl-structure"
     return None, "skipped"
 

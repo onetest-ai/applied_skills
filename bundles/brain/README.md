@@ -94,7 +94,7 @@ The server lives at the repo's top-level **`mcp/brain/`** (installed to `<host>/
 ./brain mcp-config                                # or print the JSON block for another host
 ```
 
-Tools: `which` · `search(query,k)` · `sql(query)` · `metric(name,grain?,entity?,…)` · `graph(label?,relation?,kind?)` · `related(chunk_id?,query?)` · `verify`.
+Tools: `which` · `search(query,k)` · `sql(query)` · `metric(name,grain?,entity?,…)` · `graph(label?,relation?,kind?)` · `related(chunk_id?,query?)` · `page(chunk_id?,query?)` · `verify`.
 
 ## The core idea: two lanes, one truth
 
@@ -180,7 +180,7 @@ flowchart TD
         X["📊 Spreadsheets<br/>XLSX reporting"]
     end
 
-    D --> P["1 · parse_corpus.py<br/>→ uniform Markdown<br/><i>Docling (pptx/docx, +torch) · pypdf (pdf)</i>"]
+    D --> P["1 · parse + visual-parse<br/>→ uniform Markdown<br/><i>pymupdf text · VLM for visual pages</i>"]
     P --> TX["2 · induce taxonomy<br/>map → reduce → judge → emit<br/><b>low-tier agents</b> (Haiku)<br/>→ taxonomy_v0.json"]
 
     P --> IDX["3 · knowledge_index.py<br/>heading-aware sections (shared chunker)<br/>→ chunks + FTS5 + sqlite-vec"]
@@ -262,7 +262,7 @@ sequenceDiagram
 
 ## Dependencies & the skills' venv
 
-Python ≥ 3.9, all pip-installable: `sqlite-vec`, `fastembed`, `docling`, `pypdf`, `openpyxl`, `pandas`, `pyarrow` (`sqlite3` is stdlib). The RAG embedder (`fastembed`/onnx) and `pypdf`/`openpyxl` need **no PyTorch**; **`docling`** (PPTX/DOCX parsing) pulls **torch/transformers**, so the installed set is **~1.3 GB**.
+Python ≥ 3.9, all pip-installable: `sqlite-vec`, `fastembed`, `pymupdf`, `openpyxl`, `pandas`, `pyarrow` (`sqlite3` is stdlib). **Torch-free** (docling retired) — the installed set is small (~200 MB, mostly onnxruntime). `.pptx/.docx` also need LibreOffice `soffice` (a system dep); PDFs need only pymupdf.
 
 These deps live in a venv that **belongs to the skills, not your project** — kept separate so they never mix with your project's own Python env. The installer (via `uv`) builds it next to the skills inside the host dir:
 
@@ -271,7 +271,7 @@ These deps live in a venv that **belongs to the skills, not your project** — k
 ./install.sh --bundle brain --deps --user   # SHARED:       ~/.claude/venv  (or ~/.dsh/venv)
 ```
 
-Use `--user` to build **one shared venv reused by every project** instead of copying 1.3 GB into each — recommended given the size. The generated `BRAIN.md` and scripts then run under that interpreter (`BRAIN_PY`). Zero-install alternative (no venv, uv caches the deps): `uv run --with-requirements requirements.txt python <script>`.
+Use `--user` to build **one shared venv reused by every project** instead of a venv per project. The generated `BRAIN.md` and scripts then run under that interpreter (`BRAIN_PY`). Zero-install alternative (no venv, uv caches the deps): `uv run --with-requirements requirements.txt python <script>`.
 
 The low-tier map/classify steps assume a subagent mechanism with a model override (e.g. Haiku); on another harness, substitute any cheap model that can read a file and emit JSON.
 

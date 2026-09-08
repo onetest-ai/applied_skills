@@ -57,6 +57,15 @@ def resolve_db():
                 return str(c)
     raise RuntimeError("no store found — set BRAIN_DB or place knowledge.sqlite at the project root")
 
+def resolve_assets():
+    if os.environ.get("BRAIN_ASSETS"):
+        return os.environ["BRAIN_ASSETS"]
+    for base in _project_roots():
+        d = base / "assets"
+        if d.is_dir():
+            return str(d)
+    return str(next(_project_roots()))
+
 def resolve_catalog():
     p = os.environ.get("BRAIN_CATALOG")
     if p and Path(p).exists():
@@ -155,10 +164,7 @@ def t_related(chunk_id=0, query="", k=6):
             res = K.search(K.connect(resolve_db()), K.DEFAULT_MODEL, query, 1)
             if not res["results"]:
                 return {"anchor": None, "related": []}
-            r0 = res["results"][0]
-            chunk_id = con.execute("SELECT id FROM chunks WHERE source=? AND title IS ? LIMIT 1",
-                                   (r0["source"], r0["title"])).fetchone()
-            chunk_id = chunk_id[0] if chunk_id else 0
+            chunk_id = res["results"][0]["id"]
         if not con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='related'").fetchone():
             return {"error": "no related layer — run: knowledge_index.py related --db <db>"}
         rows = con.execute(
@@ -208,6 +214,43 @@ def t_graph(label="", relation="", kind=""):
     finally:
         con.close()
 
+def t_page(chunk_id=0, query=""):
+    """FULL PAGE CONTENT for ANSWERING (not just finding). Retrieval runs on the
+    semantic transcription, which is LOSSY — so before you answer from a visual/table
+    page, pull its full content here: the rendered IMAGE + the verbatim TEXT layer +
+    any DETERMINISTICALLY-EXTRACTED TABLE grids (cite these for figures, never the
+    prose paraphrase). Anchor by chunk_id or query. Returns image + text blocks."""
+    import base64, mimetypes
+    con = connect()
+    try:
+        if query and not chunk_id:
+            import knowledge_index as K
+            res = K.search(K.connect(resolve_db()), K.DEFAULT_MODEL, query, 1)
+            chunk_id = res["results"][0]["id"] if res["results"] else 0
+        row = con.execute("SELECT source, title, image FROM chunks WHERE id=?", (chunk_id,)).fetchone()
+        if not row or not row[2]:
+            return {"error": "no image for this chunk (not a visual page)"}
+        img_rel = row[2]
+        path = img_rel if os.path.isabs(img_rel) else os.path.join(resolve_assets(), img_rel)
+        if not os.path.exists(path):
+            return {"error": f"image not found: {path}"}
+        base = os.path.splitext(path)[0]                       # sibling raw text + tables
+        raw_text = open(base + ".txt").read() if os.path.exists(base + ".txt") else ""
+        tables = open(base + ".tables.md").read() if os.path.exists(base + ".tables.md") else ""
+        data = base64.b64encode(open(path, "rb").read()).decode()
+        mime = mimetypes.guess_type(path)[0] or "image/png"
+        meta = {"chunk_id": chunk_id, "source": row[0], "section": row[1], "image": img_rel,
+                "has_tables": bool(tables)}
+        blocks = [{"type": "image", "data": data, "mimeType": mime}]
+        if tables:
+            blocks.append({"type": "text", "text": "EXTRACTED TABLES (verbatim cells — cite for numbers):\n" + tables})
+        if raw_text:
+            blocks.append({"type": "text", "text": "VERBATIM PAGE TEXT:\n" + raw_text})
+        blocks.append({"type": "text", "text": json.dumps(meta, default=str)})
+        return {"content": blocks}
+    finally:
+        con.close()
+
 def t_verify():
     con = connect()
     try:
@@ -244,6 +287,8 @@ TOOLS = {
     "related": (t_related, "SEMANTIC NEIGHBORS (cited): sections nearest by meaning (cosine kNN over the RAG vectors), cross-doc. Anchor by chunk_id or query.",
                {"type": "object", "properties": {"chunk_id": {"type": "integer"}, "query": {"type": "string"},
                 "k": {"type": "integer", "default": 6}}}),
+    "page":   (t_page, "VISUAL PAGE: the rendered slide/page IMAGE for a chunk (diagram/flow/timeline) when layout matters. Anchor by chunk_id or query.",
+               {"type": "object", "properties": {"chunk_id": {"type": "integer"}, "query": {"type": "string"}}}),
     "verify": (t_verify, "Store health: per-lane row counts + empty-lane flag.",
                {"type": "object", "properties": {}}),
 }
@@ -264,7 +309,11 @@ def _dispatch(method, params):
         if name not in TOOLS:
             return {"content": [{"type": "text", "text": f"unknown tool '{name}'"}], "isError": True}
         try:
-            return _text_result(TOOLS[name][0](**args))
+            r = TOOLS[name][0](**args)
+            # a tool may return pre-formed MCP content (e.g. an image block); pass it through
+            if isinstance(r, dict) and isinstance(r.get("content"), list):
+                return r
+            return _text_result(r)
         except Exception as e:
             return {"content": [{"type": "text", "text": f"error: {e}"}], "isError": True}
     if method == "ping":
