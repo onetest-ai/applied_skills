@@ -3,7 +3,7 @@
 
 One portable file, no server (pattern lifted from github.com/arozumenko/wikis:
 BM25 + vector, Reciprocal Rank Fusion). Torch-free embeddings via fastembed/onnx.
-Feed it Docling/plain Markdown; it chunks, embeds, and serves hybrid recall.
+Feed it parser/plain Markdown; it chunks, embeds, and serves hybrid recall.
 
   index  --db K.sqlite --corpus DIR [--model M] [--max-chars N] [--reset]
   search --db K.sqlite --query "..." [--k 8] [--json]
@@ -48,13 +48,24 @@ def chunk_id(source, ordv):
 
 def _ensure_schema(c, dim):
     c.executescript("""
-      CREATE TABLE IF NOT EXISTS chunks(id INTEGER PRIMARY KEY, source TEXT, ord INT, title TEXT, text TEXT, sha TEXT);
+      CREATE TABLE IF NOT EXISTS chunks(id INTEGER PRIMARY KEY, source TEXT, ord INT, title TEXT, text TEXT, sha TEXT, image TEXT);
       CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text);
     """)
     c.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(embedding float[{dim}])")
-    # tolerate an older store that predates the `sha` column
-    if "sha" not in {r[1] for r in c.execute("PRAGMA table_info(chunks)")}:
-        c.execute("ALTER TABLE chunks ADD COLUMN sha TEXT")
+    cols = {r[1] for r in c.execute("PRAGMA table_info(chunks)")}
+    for col in ("sha", "image"):   # tolerate an older store that predates these columns
+        if col not in cols:
+            c.execute(f"ALTER TABLE chunks ADD COLUMN {col} TEXT")
+
+_IMG_MARKER = re.compile(r"^\s*<!--\s*image:\s*(.+?)\s*-->\s*$", re.M)
+
+def _split_image(body):
+    """Pull a `<!-- image: PATH -->` marker out of a section body (from the visual
+    parser). Returns (image_path_or_None, body_without_marker)."""
+    m = _IMG_MARKER.search(body)
+    if not m:
+        return None, body
+    return m.group(1), _IMG_MARKER.sub("", body, count=1).strip()
 
 def _has(c, table):
     return bool(c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone())
@@ -142,16 +153,29 @@ def index_docs(c, model, corpus, sources, dim, max_chars):
             rows.append((src, i, title, body))
     if not rows:
         return 0, 0
-    print(f"embedding {len(rows)} sections from {len(sources)} doc(s) ({model})…", file=sys.stderr)
-    vecs = embed(model, [f"{r[2]}\n\n{r[3]}" for r in rows])
-    for (src, i, title, body), v in zip(rows, vecs):
+    # pull image markers out BEFORE embedding so the marker never pollutes text/vectors.
+    # A visual page may split into several sections (VLM sub-headings) — only the first
+    # carries the marker, so sections INHERIT the last page image within the same doc
+    # (reset when the source changes, or when a new page marker appears).
+    clean = []
+    cur_src, cur_img = None, None
+    for (src, i, title, body) in rows:
+        if src != cur_src:
+            cur_src, cur_img = src, None
+        img, body = _split_image(body)
+        if img is not None:
+            cur_img = img
+        clean.append((src, i, title, cur_img, body))     # (src,i,title,image,body)
+    print(f"embedding {len(clean)} sections from {len(sources)} doc(s) ({model})…", file=sys.stderr)
+    vecs = embed(model, [f"{t}\n\n{b}" for (_, _, t, _, b) in clean])
+    for (src, i, title, image, body), v in zip(clean, vecs):
         cid = chunk_id(src, i)
         sha = hashlib.sha256(body.encode()).hexdigest()
-        c.execute("INSERT OR REPLACE INTO chunks(id,source,ord,title,text,sha) VALUES(?,?,?,?,?,?)",
-                  (cid, src, i, title, body, sha))
+        c.execute("INSERT OR REPLACE INTO chunks(id,source,ord,title,text,sha,image) VALUES(?,?,?,?,?,?,?)",
+                  (cid, src, i, title, body, sha, image))
         c.execute("INSERT INTO chunks_fts(rowid,text) VALUES(?,?)", (cid, f"{title}\n{body}"))
         c.execute("INSERT INTO chunks_vec(rowid,embedding) VALUES(?,?)", (cid, sqlite_vec.serialize_float32(v)))
-    return len(rows), len(sources)
+    return len(clean), len(sources)
 
 def corpus_docs(corpus):
     return sorted(os.path.relpath(f, corpus)
@@ -189,7 +213,7 @@ def search(c, model, query, k):
     out = []
     for rid in top:
         src, title, txt = c.execute("SELECT source,title,text FROM chunks WHERE id=?", (rid,)).fetchone()
-        out.append({"score": round(score[rid], 5), "source": src, "title": title, "text": txt})
+        out.append({"id": rid, "score": round(score[rid], 5), "source": src, "title": title, "text": txt})
     return {"query": query, "fts_hits": len(fts), "vec_hits": len(vec), "results": out}
 
 def cmd_search(a):

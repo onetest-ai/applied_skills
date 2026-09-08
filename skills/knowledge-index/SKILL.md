@@ -19,7 +19,7 @@ python knowledge_index.py index  --db knowledge.sqlite --corpus <markdown dir> [
 # hybrid recall (BM25 + vector, RRF-fused) — returns cited chunks
 python knowledge_index.py search --db knowledge.sqlite --query "why did X change" [--k 8] [--json]
 ```
-- **Input = Markdown.** Point it at Docling output (`corpus-taxonomy-extraction/parse_corpus.py`) or any `.md`. No code→text layer needed — the input is already text.
+- **Input = Markdown.** Point it at parser output (`corpus-taxonomy-extraction/parse_corpus.py` / `visual-parse`) or any `.md`. No code→text layer needed — the input is already text.
 - Chunking: paragraph-merge to ~`--max-chars` (default 1200). Deterministic.
 - Fusion knobs (top of the script): `RRF_K=60`, `W_FTS=0.4`, `W_VEC=0.6`, `POOL=30` — the wikis defaults.
 

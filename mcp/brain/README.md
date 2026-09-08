@@ -20,6 +20,7 @@ Truthfulness at the boundary: **numbers are computed** (`sql`/`metric`, every va
 - `metric(name, grain?, entity?, entity_like?, month?, months?)` — governed metric → exact `facts` values with `source_file`
 - `graph(label?, relation?, kind?)` — taxonomy: node + subclasses + tagged sections, or listings
 - `related(chunk_id?, query?, k=6)` — semantic neighbors: sections nearest by meaning (cosine kNN over the RAG vectors), cross-doc
+- `page(chunk_id?, query?)` — FULL page content for answering: the rendered image + verbatim text + extracted table grids (retrieve on semantics, answer from content)
 - `verify()` — per-lane row counts + empty-lane flag
 
 ## Resolution (no hardcoding; env overrides)

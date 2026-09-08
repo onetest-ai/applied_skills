@@ -35,7 +35,7 @@ A discovered metric is tagged by how it should later be answered — **format do
 
 ## Portability & dependencies
 
-Self-contained and corpus-agnostic — everything is driven by args + the goal string; no paths are hardcoded. Ships the taxonomy scripts (parse, consolidate, emit_taxonomy, emit_ontology) + store scripts (chunking, build_graph, classify_prep/write, to_obsidian) + the map template in this skill dir. Requires a Python (3.9+) with **`docling`, `pypdf`, `openpyxl`**. Note: `docling` (PPTX/DOCX parsing) pulls in **torch/transformers** (~1 GB); `pypdf` (PDF) and `openpyxl` (XLSX) do not. Run scripts with any such interpreter, e.g. `uv run --with docling,pypdf,openpyxl python <script>` or a venv that has them. The low-tier map/merge/judge steps assume a subagent mechanism with a model override (e.g. Haiku); on a different harness, substitute any cheap model that can read a file and emit JSON. To apply to a new corpus: pick a goal string, point `parse_corpus.py` at the corpus, instantiate the map template, run the pipeline.
+Self-contained and corpus-agnostic — everything is driven by args + the goal string; no paths are hardcoded. Ships the taxonomy scripts (parse, consolidate, emit_taxonomy, emit_ontology) + store scripts (chunking, build_graph, classify_prep/write, to_obsidian) + the map template in this skill dir. Requires a Python (3.9+) with **`pymupdf`, `openpyxl`** (torch-free). `.pptx/.docx` also need LibreOffice `soffice` (system dep). Run scripts with any such interpreter, e.g. `uv run --with pymupdf,openpyxl python <script>` or a venv that has them. The low-tier map/merge/judge steps assume a subagent mechanism with a model override (e.g. Haiku); on a different harness, substitute any cheap model that can read a file and emit JSON. To apply to a new corpus: pick a goal string, point `parse_corpus.py` at the corpus, instantiate the map template, run the pipeline.
 
 ## Pipeline (map → reduce → judge → emit)
 
@@ -50,8 +50,8 @@ goal + corpus + optional seed taxonomy
 
 ### 1. Parse — `parse_corpus.py` (deterministic, no LLM)
 `python parse_corpus.py --corpus <dir> --out <dir> --formats pptx,docx,pdf`
-- PPTX/DOCX → Docling (pulls torch/transformers); PDF → pypdf (no torch); XLSX small → Docling, large → openpyxl `read_only` structure dump.
-- **Taxonomy pass = narrative/summary formats only (`--formats pptx,docx,pdf`).** Do NOT Docling the big numeric workbooks — they explode into tens of MB of useless number-grid markdown and belong to the deterministic numeric lane, not here.
+- PDF → PyMuPDF text layer; PPTX/DOCX → soffice→PDF→PyMuPDF; XLSX → openpyxl `read_only` structure dump. (Visual/diagram pages → the `visual-parse` skill.)
+- **Taxonomy pass = narrative/summary formats only (`--formats pptx,docx,pdf`).** Do NOT parse the big numeric workbooks — they explode into tens of MB of useless number-grid markdown and belong to the deterministic numeric lane, not here.
 
 ### 2. Map — low-tier subagents (Haiku), one batch per subagent
 Instantiate `map_instructions.template.md` (shipped with this skill): replace `{{GOAL}}` with the run's goal and `{{MAP_DIR}}` with the run's map-output dir; write it to the run dir as `map_instructions.md`. Dispatch subagents (model: haiku) that read that instantiated file + their assigned parsed files and write one JSON per source into the map dir. The bulk document context lives and dies inside each subagent — the orchestrator only sees compact JSON. Extract `intent_classes`, `metrics` (with `source_type`), `entities`; each item carries `evidence` (≤200-char quote), `source`, `confidence`. Give any anchor taxonomy doc its own subagent.

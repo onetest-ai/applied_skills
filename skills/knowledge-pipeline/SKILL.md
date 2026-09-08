@@ -29,9 +29,9 @@ This creates the project layout (`schema/ parsed/ taxonomy/ classify/ marts/ vau
 **If deps are missing**, install them into the skills' **own isolated venv** (never the project's env) with `uv` via the installer:
 ```bash
 ./install.sh --bundle brain --deps          # per-project  <project>/.claude/venv
-./install.sh --bundle brain --deps --user   # ONE shared   ~/.claude/venv  (deps are ~1.3 GB — prefer this)
+./install.sh --bundle brain --deps --user   # ONE shared   ~/.claude/venv  (shared across projects)
 ```
-`docling` pulls torch/transformers (~1.3 GB), so the shared `--user` venv is usually the right call. `BRAIN.md`'s `$PY` points at whichever venv exists; the zero-install path is `uv run --with-requirements bundles/brain/requirements.txt python <script>`.
+Deps are torch-free (docling retired) and modest (~200 MB); `.pptx/.docx` also need LibreOffice `soffice` (system dep). `BRAIN.md`'s `$PY` points at whichever venv exists; the zero-install path is `uv run --with-requirements bundles/brain/requirements.txt python <script>`.
 
 **3. Configure the numbers lane (only if there are workbooks).** The narrative/graph lanes need no config, but the marts do: walk the user through editing `schema/families.<corpus>.json` to describe their workbooks (glob, layout, sheets, measures). Use `tabular-semantic-layer` (its `profile_workbooks.py` inspects real files) — this is the one step that genuinely needs their input. If they have no workbooks, skip and note the numbers lane will be empty.
 
@@ -56,8 +56,13 @@ Re-runnable: `onboard.py scan --docs <dir>` is a standalone preflight; re-runnin
 ## Build (run once per corpus; re-run to refresh)
 ```bash
 DB=<project>/schema/knowledge.sqlite
-# 1. parse docs → Markdown (Docling pulls torch; pypdf is torch-free)
+# 1. parse docs → Markdown. TEXT pages via pymupdf (torch-free):
 python .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf
+# 1v. VISUAL/diagram/table pages (slide decks, flows, timelines) — the visual-parse skill:
+python .../visual-parse/render_pages.py --doc <deck.pdf> --out <project>/assets     # PNG + text + table grids; flag visual pages
+python .../visual-parse/vision_prep.py --render-dir <project>/assets/<slug> --out <project>/vision --db "$DB"
+#    → 🤖 dispatch VISION subagents (cheap) → vision/result_k.json {img_sha: faithful markdown}
+python .../visual-parse/vision_assemble.py --render-dir <project>/assets/<slug> --out <project>/parsed/<doc>.md --results <project>/vision --db "$DB"
 # 2. (optional) induce taxonomy → taxonomy_v0.json  [map→reduce→judge→emit; see that skill]
 # 3. narrative index — heading-aware sections (shared chunker) → chunks+FTS+vector
 python .../knowledge-index/knowledge_index.py index --db "$DB" --corpus <project>/parsed --reset
@@ -71,8 +76,8 @@ python .../corpus-taxonomy-extraction/classify_write.py --db "$DB" --results <pr
 python .../knowledge-index/knowledge_index.py related --db "$DB"                                   # -> related(chunk_id, related_id, score)
 # 6. numeric marts (Excel → facts) into the SAME db
 python .../tabular-semantic-layer/build_marts.py --root <reporting> --config <project>/schema/families.<corpus>.json --out-dir <project>/marts --db "$DB"
-# 7. Obsidian vault as a VIEW of the store (notes = chunks, real per-section tags, links = graph vertices)
-python .../corpus-taxonomy-extraction/to_obsidian.py --db "$DB" --out <project>/vault --clean
+# 7. Obsidian vault as a VIEW of the store (notes = chunks, tags, [[related]], embedded page images)
+python .../corpus-taxonomy-extraction/to_obsidian.py --db "$DB" --out <project>/vault --clean --assets <project>/assets
 # 8. record document hashes so future updates can diff (see "Updating" below)
 python .../knowledge-pipeline/brain_sync.py seed --db "$DB" --parsed <project>/parsed
 ```
@@ -109,6 +114,8 @@ Shortcut via the launcher: `./brain plan <parsed>` · `./brain update <parsed>` 
 ## Answer (per question)
 Follow **`hybrid-retrieval`**: decompose → classify each sub-claim (computable→marts / narrative→RAG / relation→graph / both→reconcile) → retrieve against the one `$DB` → compose one cited answer. Tag facts `[MART]` / `[RAG]` / `[GRAPH]`; state unmodeled sub-parts plainly.
 
+**Retrieve on the semantic layer; answer from the content.** RAG finds a section by its (possibly VLM-transcribed, lossy) text. When a hit is a **visual/table page** (`chunks.image` set), pull the FULL content before answering — the `page` MCP tool returns the rendered image + verbatim text + **deterministically-extracted table grids**. Cite a table's grid for any figure, never the prose paraphrase — so detail dropped in transcription is never dropped in the answer.
+
 ## Workspace & checkpointing (for long / multi-step research)
 Borrowed from a disk-first research discipline — use it when a question needs many retrieval steps:
 ```
@@ -124,4 +131,4 @@ Rules: plan first; disk is truth, memory is scratch; checkpoint every ~10 steps 
 Generic (these skills): all the code. Project-specific (the consuming repo): `schema/families.<corpus>.json`, `schema/metrics.<corpus>.json`, the goal string, `taxonomy_v0.json`, and the built `knowledge.sqlite`. Keep project data in the project, never in the skills.
 
 ## Deps
-`sqlite3` (stdlib) + `sqlite-vec`, `fastembed` (RAG — fastembed/onnx, no torch), `docling`/`pypdf`/`openpyxl` (parse/marts), `pandas`/`pyarrow` (marts). All pip-installable. Note: `docling` pulls torch/transformers (~1 GB) — install into the skills' own isolated venv (`install.sh --deps` → `<host>/venv`), never the project's env, or run via `uv run --with-requirements`.
+`sqlite3` (stdlib) + `sqlite-vec`, `fastembed` (RAG, onnx — no torch), `pymupdf`/`openpyxl` (parse/marts), `pandas`/`pyarrow` (marts). **Torch-free** (docling retired). `.pptx/.docx` also need LibreOffice `soffice` (system dep). Install into the skills' own isolated venv (`install.sh --deps`), or `uv run --with-requirements`.
