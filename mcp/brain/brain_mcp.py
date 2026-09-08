@@ -141,6 +141,41 @@ def t_metric(name, grain="", entity="", entity_like="", month="", months=""):
         con.close()
     return {"metric": name, "family": spec["family"], "unit": spec.get("unit"), "rows": rows}
 
+def t_related(chunk_id=0, query="", k=6):
+    """SEMANTIC NEIGHBORS (cited): sections most similar by meaning (cosine kNN over the
+    same vectors RAG uses — full 384-dim, not a lossy projection). Give a `chunk_id`, or a
+    `query` (its top search hit is the anchor). Returns [{chunk_id, source, section, score}]
+    — cross-document links you can cite; still text/relations, never a number."""
+    con = connect()
+    try:
+        if not query and not chunk_id:
+            return {"error": "give chunk_id or query"}
+        if query and not chunk_id:
+            import knowledge_index as K
+            res = K.search(K.connect(resolve_db()), K.DEFAULT_MODEL, query, 1)
+            if not res["results"]:
+                return {"anchor": None, "related": []}
+            r0 = res["results"][0]
+            chunk_id = con.execute("SELECT id FROM chunks WHERE source=? AND title IS ? LIMIT 1",
+                                   (r0["source"], r0["title"])).fetchone()
+            chunk_id = chunk_id[0] if chunk_id else 0
+        if not con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='related'").fetchone():
+            return {"error": "no related layer — run: knowledge_index.py related --db <db>"}
+        rows = con.execute(
+            "SELECT related_id, score FROM related WHERE chunk_id=? "
+            "UNION SELECT chunk_id, score FROM related WHERE related_id=? ORDER BY score DESC LIMIT ?",
+            (chunk_id, chunk_id, int(k))).fetchall()
+        out = []
+        for rid, sc in rows:
+            row = con.execute("SELECT source, title FROM chunks WHERE id=?", (rid,)).fetchone()
+            if row:
+                out.append({"chunk_id": rid, "source": row[0], "section": row[1] or "", "score": sc})
+        anchor = con.execute("SELECT source, title FROM chunks WHERE id=?", (chunk_id,)).fetchone()
+        return {"anchor": {"chunk_id": chunk_id, "source": anchor[0], "section": anchor[1] or ""} if anchor else None,
+                "related": out}
+    finally:
+        con.close()
+
 def t_graph(label="", relation="", kind=""):
     con = connect()
     try:
@@ -206,6 +241,9 @@ TOOLS = {
     "graph":  (t_graph, "TAXONOMY lane (cited): a node + subclasses + tagged sections, or node/edge listings.",
                {"type": "object", "properties": {"label": {"type": "string"}, "relation": {"type": "string"},
                 "kind": {"type": "string"}}}),
+    "related": (t_related, "SEMANTIC NEIGHBORS (cited): sections nearest by meaning (cosine kNN over the RAG vectors), cross-doc. Anchor by chunk_id or query.",
+               {"type": "object", "properties": {"chunk_id": {"type": "integer"}, "query": {"type": "string"},
+                "k": {"type": "integer", "default": 6}}}),
     "verify": (t_verify, "Store health: per-lane row counts + empty-lane flag.",
                {"type": "object", "properties": {}}),
 }

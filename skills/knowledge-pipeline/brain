@@ -82,5 +82,6 @@ JSON
   plan)   need_db; "$PY" "$SKILLS/knowledge-pipeline/brain_sync.py" plan --db "$DB" --parsed "${1:?parsed-dir}";;
   update) need_db; "$PY" "$SKILLS/knowledge-pipeline/brain_sync.py" apply --db "$DB" --parsed "${1:?parsed-dir}";;
   rollback) need_db; "$PY" "$SKILLS/knowledge-pipeline/brain_sync.py" rollback --db "$DB";;
+  related)  need_db; "$PY" "$SKILLS/knowledge-index/knowledge_index.py" related --db "$DB";;
   *) sed -n '3,24p' "$0"; exit 2;;
 esac

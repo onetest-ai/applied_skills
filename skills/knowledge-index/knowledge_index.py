@@ -56,11 +56,15 @@ def _ensure_schema(c, dim):
     if "sha" not in {r[1] for r in c.execute("PRAGMA table_info(chunks)")}:
         c.execute("ALTER TABLE chunks ADD COLUMN sha TEXT")
 
+def _has(c, table):
+    return bool(c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone())
+
 def delete_docs(c, sources):
     """Remove every trace of the given source docs from the RAG lane AND the
-    dependent tag/graph rows keyed by their chunk ids (so nothing is orphaned)."""
-    has_topics = bool(c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='chunk_topics'").fetchone())
-    has_edges  = bool(c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='graph_edges'").fetchone())
+    dependent tag/graph/related rows keyed by their chunk ids (so nothing is orphaned)."""
+    has_topics = _has(c, "chunk_topics")
+    has_edges  = _has(c, "graph_edges")
+    has_rel    = _has(c, "related")
     for src in sources:
         ids = [r[0] for r in c.execute("SELECT id FROM chunks WHERE source=?", (src,))]
         for cid in ids:
@@ -70,8 +74,60 @@ def delete_docs(c, sources):
                 c.execute("DELETE FROM chunk_topics WHERE chunk_id=?", (cid,))
             if has_edges:
                 c.execute("DELETE FROM graph_edges WHERE rel='about' AND source=?", (f"chunk:{cid}",))
+            if has_rel:
+                c.execute("DELETE FROM related WHERE chunk_id=? OR related_id=?", (cid, cid))
         c.execute("DELETE FROM chunks WHERE source=?", (src,))
     return len(sources)
+
+def build_related(c, k=6, min_score=0.55, cross_doc=True):
+    """Native semantic 'related' layer from the vectors we already store: for each
+    chunk, its top-k cosine-nearest OTHER sections. Full 384-dim similarity (not a
+    lossy 2D/3D projection), deterministic, offline — no external plugin/API.
+    Writes `related(chunk_id, related_id, score)` (symmetric pair kept once, higher
+    score wins). cross_doc=True favors cross-document links (the useful, non-obvious
+    ones); set False to also relate adjacent sections of the same doc."""
+    c.executescript("""
+      CREATE TABLE IF NOT EXISTS related(chunk_id INT, related_id INT, score REAL,
+                                         PRIMARY KEY(chunk_id, related_id));
+      CREATE INDEX IF NOT EXISTS idx_rel_chunk ON related(chunk_id);
+      DELETE FROM related;
+    """)
+    src = {r[0]: r[1] for r in c.execute("SELECT id, source FROM chunks")}
+    n = 0
+    for cid in list(src):
+        row = c.execute("SELECT embedding FROM chunks_vec WHERE rowid=?", (cid,)).fetchone()
+        if not row:
+            continue
+        nbrs = c.execute(
+            "SELECT rowid, distance FROM chunks_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
+            (row[0], k + 8)).fetchall()
+        kept = 0
+        for rid, dist in nbrs:
+            if rid == cid:
+                continue
+            if cross_doc and src.get(rid) == src.get(cid):
+                continue
+            score = round(1.0 - (dist * dist) / 2.0, 4)   # unit vectors: cosine = 1 - L2^2/2
+            if score < min_score:
+                continue
+            a, b = (cid, rid) if cid < rid else (rid, cid)
+            cur = c.execute("SELECT score FROM related WHERE chunk_id=? AND related_id=?", (a, b)).fetchone()
+            if cur is None or score > cur[0]:
+                c.execute("INSERT OR REPLACE INTO related VALUES(?,?,?)", (a, b, score))
+            kept += 1
+            if kept >= k:
+                break
+    n = c.execute("SELECT COUNT(*) FROM related").fetchone()[0]
+    c.commit()
+    return n
+
+def cmd_related(a):
+    c = connect(a.db)
+    if not _has(c, "chunks_vec"):
+        print("no vectors — run index first", file=sys.stderr); return
+    n = build_related(c, a.k, a.min_score, not a.within_doc)
+    print(f"related: {n} semantic edges (k={a.k}, min_score={a.min_score}, "
+          f"{'cross-doc' if not a.within_doc else 'incl. within-doc'}) -> {a.db}", file=sys.stderr)
 
 def index_docs(c, model, corpus, sources, dim, max_chars):
     """(Re)index a specific set of source docs idempotently: delete-then-insert with
@@ -146,14 +202,18 @@ def cmd_search(a):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(); sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("index", "search"):
+    for name in ("index", "search", "related"):
         p = sub.add_parser(name)
         p.add_argument("--db", required=True); p.add_argument("--model", default=DEFAULT_MODEL); p.add_argument("--dim", type=int, default=DEFAULT_DIM)
         if name == "index":
             p.add_argument("--corpus"); p.add_argument("--max-chars", type=int, default=1200); p.add_argument("--reset", action="store_true")
             p.add_argument("--docs", help="comma list of source relpaths to (re)index only (incremental)")
             p.add_argument("--delete", help="comma list of source relpaths to remove from the index")
-        else:
+        elif name == "search":
             p.add_argument("--query", required=True); p.add_argument("--k", type=int, default=8); p.add_argument("--json", action="store_true")
+        else:  # related
+            p.add_argument("--k", type=int, default=6, help="neighbors per chunk")
+            p.add_argument("--min-score", type=float, default=0.55, help="cosine cutoff [0..1]")
+            p.add_argument("--within-doc", action="store_true", help="also relate sections of the same doc")
     a = ap.parse_args()
-    {"index": cmd_index, "search": cmd_search}[a.cmd](a)
+    {"index": cmd_index, "search": cmd_search, "related": cmd_related}[a.cmd](a)

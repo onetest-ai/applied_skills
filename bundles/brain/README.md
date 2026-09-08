@@ -94,7 +94,7 @@ The server lives at the repo's top-level **`mcp/brain/`** (installed to `<host>/
 ./brain mcp-config                                # or print the JSON block for another host
 ```
 
-Tools: `which` · `search(query,k)` · `sql(query)` · `metric(name,grain?,entity?,…)` · `graph(label?,relation?,kind?)` · `verify`.
+Tools: `which` · `search(query,k)` · `sql(query)` · `metric(name,grain?,entity?,…)` · `graph(label?,relation?,kind?)` · `related(chunk_id?,query?)` · `verify`.
 
 ## The core idea: two lanes, one truth
 

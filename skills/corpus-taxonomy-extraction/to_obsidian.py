@@ -99,18 +99,37 @@ def main():
         for cid, lbl in c.execute("SELECT chunk_id, category_label FROM chunk_topics"):
             topics.setdefault(cid, []).append(lbl)
 
+    # native semantic 'related' edges (chunk↔chunk cosine kNN), both directions
+    has_rel = bool(c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='related'").fetchone())
+    related = {}
+    if has_rel:
+        for a1, b1, s in c.execute("SELECT chunk_id, related_id, score FROM related"):
+            related.setdefault(a1, []).append((b1, s)); related.setdefault(b1, []).append((a1, s))
+        for cid in related:
+            related[cid] = sorted(related[cid], key=lambda x: -x[1])[:6]
+
     # notes = chunks, grouped by source doc, into <parents>/<doc>/
     docs = {}
     for cid, src, ordv, title, text in c.execute("SELECT id,source,ord,title,text FROM chunks ORDER BY source,ord"):
         docs.setdefault(src, []).append((cid, ordv, title, text))
 
-    seen_dirs = set()
+    # PASS 1 — assign each doc its folder and each chunk its note relpath + title,
+    # so PASS 2 can link related sections ACROSS documents by their real paths.
+    seen_dirs = set(); doc_meta = {}; note_rel = {}; note_title = {}
     for src, rows in docs.items():
         segs = doc_relpath(src)
-        doc_name = segs[-1]
-        doc_dir = uniq("/".join(segs), seen_dirs)        # unique folder per document
-        fam = kebab(segs[0])
-        moc_rel = f"{doc_dir}/{doc_name}"                 # doc index note lives in its own folder
+        doc_dir = uniq("/".join(segs), seen_dirs)
+        doc_meta[src] = (segs, doc_dir)
+        for cid, ordv, title, text in rows:
+            st = (title or "Section")
+            note_rel[cid] = f"{doc_dir}/{slug(f'{ordv+1:02d} {st[:60]}')}"
+            note_title[cid] = st
+
+    # PASS 2 — write
+    for src, rows in docs.items():
+        segs, doc_dir = doc_meta[src]
+        doc_name = segs[-1]; fam = kebab(segs[0])
+        moc_rel = f"{doc_dir}/{doc_name}"
         doc_topics, sec_links = [], []
         for cid, ordv, title, text in rows:
             cats = topics.get(cid, [])
@@ -119,10 +138,15 @@ def main():
             tags = [f"source/{fam}"] + [f"intent/{kebab(c2)}" for c2 in cats]
             tl = " ".join(link(topic_rel.get(c2, "_topics/"+slug(c2)), c2) for c2 in cats)
             st = (title or "Section")
-            nm = slug(f"{ordv+1:02d} {st[:60]}")
-            sec_rel = write(a.out, f"{doc_dir}/{nm}",
-                fm(tags, doc=link(moc_rel, doc_name), section=st.replace('"', "'")) +
-                f"# {st}\n\n{text}\n\n---\n↩ {link(moc_rel, doc_name)}" + (f" · topics: {tl}" if tl else "") + "\n")
+            rel_block = ""
+            rlist = [(rid, sc) for rid, sc in related.get(cid, []) if rid in note_rel]
+            if rlist:
+                rel_block = "\n\n## Related sections\n" + "".join(
+                    f"- {link(note_rel[rid], note_title[rid])}  ·{sc:.2f}\n" for rid, sc in rlist)
+            note = (fm(tags, doc=link(moc_rel, doc_name), section=st.replace('"', "'")) +
+                    f"# {st}\n\n{text}{rel_block}\n\n---\n↩ {link(moc_rel, doc_name)}" +
+                    (f" · topics: {tl}" if tl else "") + "\n")
+            sec_rel = write(a.out, note_rel[cid], note)
             sec_links.append((sec_rel, st)); notes += 1
         moc_tags = [f"source/{fam}"] + [f"intent/{kebab(t)}" for t in doc_topics]
         moc = fm(moc_tags, source_file=src) + f"# {' / '.join(segs)}\n\n" + \
@@ -131,7 +155,8 @@ def main():
         write(a.out, moc_rel, moc); notes += 1
 
     print(f"wrote {notes} notes -> {a.out} ({len(docs)} docs in a folder tree; "
-          f"{'per-section tags' if has_topics else 'NO chunk_topics — run classify first for real tags'})")
+          f"{'per-section tags' if has_topics else 'NO chunk_topics'}; "
+          f"{'+related links' if has_rel else 'no related layer'})")
     c.close()
 
 if __name__ == "__main__":

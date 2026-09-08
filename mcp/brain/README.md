@@ -19,6 +19,7 @@ Truthfulness at the boundary: **numbers are computed** (`sql`/`metric`, every va
 - `sql(query)` — numbers lane: read-only `SELECT`/`WITH` (write/DDL rejected) → `{columns, rows}`
 - `metric(name, grain?, entity?, entity_like?, month?, months?)` — governed metric → exact `facts` values with `source_file`
 - `graph(label?, relation?, kind?)` — taxonomy: node + subclasses + tagged sections, or listings
+- `related(chunk_id?, query?, k=6)` — semantic neighbors: sections nearest by meaning (cosine kNN over the RAG vectors), cross-doc
 - `verify()` — per-lane row counts + empty-lane flag
 
 ## Resolution (no hardcoding; env overrides)
