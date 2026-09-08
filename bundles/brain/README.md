@@ -276,13 +276,14 @@ So on `./brain update`: the taxonomy is **reused as-is**; changed docs are **rec
 
 **Why vocabulary change is gated and additive:** chunk ids are content-addressed and graph node ids are `slug(label)`, so **adding** L1/L2 is safe (`build_graph` is non-destructive — it rebuilds `subclass_of`, preserves `about` edges, and only prunes nodes that vanished). But **renaming or removing** an L1 changes its node id and orphans every `chunk_topics` tag and `about` edge that pointed at it. Therefore taxonomy evolution during updates is **add-only, never rename**, and passes a human gate.
 
-### Refreshing the taxonomy (when the corpus or parse shifts)
-1. **Signal** — a rising share of **untagged** chunks after classification, or new docs / newly-transcribed visual pages carrying concepts with no home L1.
-2. **Re-induce on the delta** — run `map → reduce → judge` over the parsed text of the new/changed docs → candidate new terms.
-3. **Human review → additive merge** into `taxonomy_v0.json` (bump the version; **add** L1/L2, never rename; deprecate rather than delete).
-4. **Rebuild + reclassify** — `build_graph` (adds the new vertices, keeps existing edges) → reclassify the affected chunks (now the new L1s are available) → refresh `related` and (optionally) the vault.
+### Refreshing the taxonomy — **assisted** (agent proposes, human gates), additive only
+When the signal appears (a rising share of **untagged** chunks), grow the taxonomy without breaking anything:
+1. **`taxonomy_refine_prep.py`** — gather the UNTAGGED chunks + the current L1/L2 vocab, batch them.
+2. **(low-tier agents)** — propose additions: a new **L2 under a named parent L1** (preferred) or a new **L1**, with evidence → `result_k.json`. (Or map a chunk the classifier missed to an existing category.)
+3. **`taxonomy_merge.py`** — dedups (exact + fuzzy) against the existing vocab, attaches each L2 to its parent, and **prints a diff DRY-RUN by default — the human gate**; `--apply` writes the version-bumped taxonomy (**add-only**, with history; never rename/remove).
+4. **Deterministic downstream** — `build_graph` (adds the new vertices, preserves `about` edges) → reclassify the affected chunks (`classify_prep --docs/--chunks` → agents → `classify_write`) → refresh `related` and (optionally) the vault.
 
-> Not yet automated: the induce-delta-and-merge step is currently a manual run of the taxonomy scripts plus a hand-merge of the JSON. `build_graph` (additive) and `classify` (incremental, per-chunk) already support the downstream half.
+**Classification is L1 + L2:** the classifier assigns the *most specific* fit (an L2 when the chunk is specifically about it, else its L1), and an L2 **rolls up its parent L1** automatically — so both granularities are queryable and L1 filters still catch L2-tagged chunks.
 
 ---
 
