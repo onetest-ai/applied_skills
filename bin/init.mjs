@@ -74,33 +74,34 @@ function installMcp(o, targets, bases) {
   if (!o.bundle || !existsSync(factory)) { console.error("error: --mcp needs --bundle"); process.exit(2); }
   const servers = (JSON.parse(readFileSync(factory, "utf8")).mcp || {}).servers || [];
   if (!servers.length) { console.log(`  (bundle '${o.bundle}' declares no mcp servers)`); return; }
-  let db = "";
-  for (const c of [join(process.cwd(), "knowledge.sqlite"), join(process.cwd(), "schema", "knowledge.sqlite")])
-    if (existsSync(c)) { db = c; break; }
   for (let t = 0; t < targets.length; t++) {
     const skillsDir = bases[t], hostDir = dirname(skillsDir);
     const py = join(o.venv || join(hostDir, "venv"), "bin", "python");
+    // discover store + assets: prefer inside the host dir, then the project root
+    let db = "";
+    for (const c of [join(hostDir, "knowledge.sqlite"), join(process.cwd(), "knowledge.sqlite"), join(process.cwd(), "schema", "knowledge.sqlite")])
+      if (existsSync(c)) { db = c; break; }
+    let assets = "";
+    for (const c of [join(hostDir, "assets"), join(process.cwd(), "assets")])
+      if (existsSync(c)) { assets = c; break; }
+    // Claude Code reads <root>/.mcp.json; other hosts read <host>/mcp.json (registered from inside)
+    const conf = targets[t] === "claude" ? resolve(process.cwd(), ".mcp.json") : join(hostDir, "mcp.json");
     for (const name of servers) {
       const srcdir = join(ROOT, "mcp", name);
       if (!existsSync(srcdir)) { console.error(`  ! mcp/${name} not found in repo`); continue; }
       const entry = (JSON.parse(readFileSync(join(srcdir, "server.json"), "utf8")).entry) || "server.py";
       const dest = join(hostDir, "mcp", name);
-      console.log(`→ MCP '${name}' -> ${dest}  (python: ${py})`);
-      if (o.dry) { console.log(`   [dry-run] ${o.symlink ? "symlink" : "copy"} mcp/${name} + register`); continue; }
+      console.log(`→ MCP '${name}' -> ${dest}  (python: ${py})  config: ${conf}`);
+      if (o.dry) { console.log(`   [dry-run] ${o.symlink ? "symlink" : "copy"} mcp/${name} + write ${conf}`); continue; }
       mkdirSync(join(hostDir, "mcp"), { recursive: true });
       rmSync(dest, { recursive: true, force: true });
       if (o.symlink) symlinkSync(srcdir, dest); else cpSync(srcdir, dest, { recursive: true, dereference: true });
-      if (targets[t] === "claude") {
-        const conf = resolve(process.cwd(), ".mcp.json");
-        let data = {};
-        if (existsSync(conf)) { try { data = JSON.parse(readFileSync(conf, "utf8")); } catch { data = {}; } }
-        const env = { BRAIN_SKILLS: skillsDir }; if (db) env.BRAIN_DB = db;
-        (data.mcpServers ||= {})[name] = { command: py, args: [join(dest, entry)], env };
-        writeFileSync(conf, JSON.stringify(data, null, 2));
-        console.log(`   ✓ wrote ${conf} (mcpServers.${name})`);
-      } else {
-        console.log(`   (${targets[t]}) add to the host MCP config — or run: "${join(skillsDir, "knowledge-pipeline", "brain")}" mcp-config`);
-      }
+      let data = {};
+      if (existsSync(conf)) { try { data = JSON.parse(readFileSync(conf, "utf8")); } catch { data = {}; } }
+      const env = { BRAIN_SKILLS: skillsDir }; if (db) env.BRAIN_DB = db; if (assets) env.BRAIN_ASSETS = assets;
+      (data.mcpServers ||= {})[name] = { command: py, args: [join(dest, entry)], env };
+      writeFileSync(conf, JSON.stringify(data, null, 2));
+      console.log(`   ✓ wrote ${conf} (mcpServers.${name})`);
     }
   }
 }

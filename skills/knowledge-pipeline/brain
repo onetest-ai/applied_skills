@@ -46,7 +46,9 @@ PY="$(find_py)"
 
 find_db() {
   [ -n "${BRAIN_DB:-}" ] && { echo "$BRAIN_DB"; return; }
-  for d in "$SELF/knowledge.sqlite" "$SELF/schema/knowledge.sqlite"; do
+  for d in "$SELF/knowledge.sqlite" "$SELF/schema/knowledge.sqlite" \
+           "$SELF/.dsh/knowledge.sqlite" "$SELF/.claude/knowledge.sqlite" \
+           "$SELF/.codex/knowledge.sqlite" "$SELF/.github/knowledge.sqlite"; do
     [ -f "$d" ] && { echo "$d"; return; }
   done
   echo ""
