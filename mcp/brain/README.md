@@ -5,7 +5,7 @@ A governed MCP tool layer over a private `knowledge.sqlite` store. The same entr
 - **STDIO by default** for local clients, with no listening port;
 - **Streamable HTTP**, explicitly enabled for remote clients.
 
-Raw SQL is not exposed. SQLite is opened in read-only/query-only mode, filters are parameterized, and result sizes are bounded.
+Raw SQL is not exposed. SQLite is opened in read-only/query-only mode, filters are parameterized, and every result `limit` is strictly bounded to `1..100`. Broad retrieval must be split into multiple focused calls rather than requesting an oversized response.
 
 ## Tools
 

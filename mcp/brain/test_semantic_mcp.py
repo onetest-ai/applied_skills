@@ -167,9 +167,19 @@ class FastMCPContractTests(FixtureCase):
         async def run():
             expected = {"list_metrics", "get_metric", "search_knowledge", "get_taxonomy", "find_related_content", "get_evidence", "health"}
             async with Client(fastmcp_server.mcp) as client:
-                self.assertEqual({tool.name for tool in await client.list_tools()}, expected)
+                tools = {tool.name: tool for tool in await client.list_tools()}
+                self.assertEqual(set(tools), expected)
+                for name in ("get_metric", "search_knowledge", "get_taxonomy", "find_related_content"):
+                    limit = tools[name].inputSchema["properties"]["limit"]
+                    self.assertEqual(limit["minimum"], 1)
+                    self.assertEqual(limit["maximum"], 100)
+                    self.assertIn("never send more than 100", limit["description"])
                 result = await client.call_tool("get_metric", {"name": "revenue", "grain": "overall"})
                 self.assertEqual(result.data["rows"][0]["value"], 100.0)
+                invalid = await client.call_tool("get_metric", {"name": "revenue", "limit": 200}, raise_on_error=False)
+                self.assertTrue(invalid.is_error)
+            self.assertIn("Never send limit above 100", fastmcp_server.INSTRUCTIONS)
+            self.assertIn("make multiple calls", fastmcp_server.INSTRUCTIONS)
             env = {key: os.environ[key] for key in ("BRAIN_DB", "BRAIN_CATALOG", "BRAIN_SKILLS", "BRAIN_ASSETS", "BRAIN_KNOWLEDGE_VERSION")}
             env["BRAIN_SHOW_BANNER"] = "0"
             env["PYTHONPATH"] = os.pathsep.join((str(self.fx["root"]), str(HERE)))

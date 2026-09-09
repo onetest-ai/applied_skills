@@ -33,6 +33,11 @@ Route narrative questions to search_knowledge, exact figures to get_metric, taxo
 questions to get_taxonomy, and source inspection to get_evidence. Never infer a number
 from narrative text: every numeric claim must come from get_metric and cite source_file.
 If a tool returns status=not_modeled, report the gap instead of guessing.
+
+IMPORTANT RESULT-LIMIT CONTRACT: every tool argument named limit accepts integers from
+1 through 100 inclusive. Never send limit above 100. Prefer narrow filters. If more
+coverage is needed, make multiple calls split by metric, month range, grain, entity,
+concept, or anchor section instead of requesting one oversized result set.
 """.strip()
 
 mcp = FastMCP(
@@ -59,7 +64,7 @@ def get_metric(
     month: Annotated[str | None, Field(description="Exact reporting period, normally YYYY-MM")] = None,
     start_month: Annotated[str | None, Field(description="Inclusive start period, normally YYYY-MM")] = None,
     end_month: Annotated[str | None, Field(description="Inclusive end period, normally YYYY-MM")] = None,
-    limit: Annotated[int, Field(ge=1, le=100, description="Maximum fact rows to return")] = 50,
+    limit: Annotated[int, Field(ge=1, le=100, description="Maximum fact rows to return. Required range: 1..100; never send more than 100. Split broad requests into multiple filtered calls.")] = 50,
 ) -> dict:
     """Return authoritative fact rows for one governed metric, with scope and source_file.
 
@@ -72,7 +77,7 @@ def get_metric(
 @mcp.tool(tags={"narrative"})
 def search_knowledge(
     query: Annotated[str, Field(min_length=1, description="Natural-language narrative question or concept")],
-    limit: Annotated[int, Field(ge=1, le=100, description="Maximum cited sections")] = 5,
+    limit: Annotated[int, Field(ge=1, le=100, description="Maximum cited sections. Required range: 1..100; never send more than 100. Split broad research into multiple focused queries.")] = 5,
 ) -> dict:
     """Search narrative evidence with hybrid BM25+vector retrieval and source citations.
 
@@ -86,7 +91,7 @@ def get_taxonomy(
     label: Annotated[str | None, Field(description="Exact node label or node id")] = None,
     relation: Annotated[str | None, Field(description="Exact edge relation to list")] = None,
     kind: Annotated[str | None, Field(description="Node kind filter")] = None,
-    limit: Annotated[int, Field(ge=1, le=100, description="Maximum nodes, edges, or citations")] = 50,
+    limit: Annotated[int, Field(ge=1, le=100, description="Maximum nodes, edges, or tagged sections. Required range: 1..100; never send more than 100. Split broad exploration into multiple filtered calls.")] = 50,
 ) -> dict:
     """Explore taxonomy nodes, subclasses, relations, and cited tagged sections."""
     return _get_taxonomy(label, relation, kind, limit)
@@ -96,7 +101,7 @@ def get_taxonomy(
 def find_related_content(
     chunk_id: Annotated[int | None, Field(description="Anchor chunk id from search_knowledge")] = None,
     query: Annotated[str | None, Field(description="Query used to discover an anchor when chunk_id is absent")] = None,
-    limit: Annotated[int, Field(ge=1, le=100, description="Maximum semantic neighbors")] = 6,
+    limit: Annotated[int, Field(ge=1, le=100, description="Maximum semantic neighbors. Required range: 1..100; never send more than 100. Use additional anchor queries for broader coverage.")] = 6,
 ) -> dict:
     """Find precomputed cross-document semantic neighbors for a cited section."""
     return _find_related_content(chunk_id, query, limit)
