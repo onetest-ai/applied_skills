@@ -32,11 +32,11 @@ Raw SQL is not exposed. SQLite is opened in read-only/query-only mode, filters a
 # explicit local stdio
 <venv>/bin/python <host>/mcp/brain/fastmcp_server.py --transport stdio
 
-# opt-in HTTP; loopback is the safe default
+# opt-in HTTP; binds all interfaces for container/orchestrator reachability
 BRAIN_API_KEY='<secret>' <venv>/bin/python <host>/mcp/brain/fastmcp_server.py --transport http
 ```
 
-HTTP endpoints default to:
+The server listens on `0.0.0.0:8000` by default. Connect through the machine/container address; from the same host use:
 
 - MCP: `http://127.0.0.1:8000/mcp`
 - health: `http://127.0.0.1:8000/healthz`
@@ -46,7 +46,7 @@ HTTP endpoints default to:
 | Variable | Default | Purpose |
 |---|---|---|
 | `BRAIN_MCP_TRANSPORT` | `stdio` | `stdio`, `http`, or `streamable-http` |
-| `HOST` | `127.0.0.1` | HTTP listen address |
+| `HOST` | `0.0.0.0` | HTTP listen address; set `127.0.0.1` for local-only access |
 | `PORT` | `8000` | HTTP port |
 | `BRAIN_MCP_PATH` | `/mcp` | Streamable HTTP endpoint |
 | `BRAIN_DB` | auto-discovered | Private SQLite store |
@@ -58,7 +58,7 @@ HTTP endpoints default to:
 
 API-key protection applies only to the configured MCP path; `/healthz` remains unauthenticated for platform probes. Missing or incorrect keys receive `401 Unauthorized`. For Copilot Studio, configure **API key → Header** with header name `X-API-Key`. Store the key in a secret manager and inject it as `BRAIN_API_KEY`; never commit it to MCP config or source control.
 
-Binding to a non-loopback address exposes private knowledge to the network. Use TLS, authorization, rate limits, key rotation, and audit controls before production or public deployment. An API key authenticates the caller but does not provide user-level authorization.
+The default all-interface bind makes container and orchestrator networking manageable, but may expose private knowledge anywhere the port is reachable. Set `BRAIN_API_KEY`, restrict ingress/firewalls, and use TLS, authorization, rate limits, key rotation, and audit controls. An API key authenticates the caller but does not provide user-level authorization.
 
 ## Migration from the legacy server
 

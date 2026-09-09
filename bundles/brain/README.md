@@ -94,7 +94,7 @@ The server lives at the repo's top-level **`mcp/brain/`** (installed to `<host>/
 ./brain mcp-config                                # or print the JSON block for another host
 ```
 
-Tools: `list_metrics` · `get_metric` · `search_knowledge` · `get_taxonomy` · `find_related_content` · `get_evidence` · `health`. HTTP is opt-in and binds to loopback unless `HOST` is explicitly changed. Set `BRAIN_API_KEY` to require `X-API-Key` on `/mcp` (`/healthz` stays public for probes); production exposure still requires TLS, authorization, key rotation, rate limits, and auditing.
+Tools: `list_metrics` · `get_metric` · `search_knowledge` · `get_taxonomy` · `find_related_content` · `get_evidence` · `health`. HTTP is opt-in and binds to `0.0.0.0` by default for container/orchestrator reachability. Set `BRAIN_API_KEY` to require `X-API-Key` on `/mcp` (`/healthz` stays public for probes); production exposure still requires TLS, authorization, key rotation, rate limits, and auditing.
 
 **Building the answering agent on top?** See [`BUILDING-AGENTS.md`](BUILDING-AGENTS.md) — what to put in *your* agent's role instructions so it disambiguates scope/grain/population, surfaces caveats, and answers truthfully (this is agent-design guidance, separate from a deployment's own `AGENTS.md`).
 
