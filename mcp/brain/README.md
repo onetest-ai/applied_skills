@@ -7,6 +7,8 @@ A governed MCP tool layer over a private `knowledge.sqlite` store. The same entr
 
 Raw SQL is not exposed. SQLite is opened in read-only/query-only mode, filters are parameterized, and every result `limit` is strictly bounded to `1..100`. Broad retrieval must be split into multiple focused calls rather than requesting an oversized response.
 
+Expected input, configuration, and runtime failures are returned as normal MCP results (`isError=false`) with `status=error`, a stable error code, and actionable `how_to_fix` guidance. This prevents gateways from translating recoverable tool mistakes into HTTP 500 responses. Agents should follow `how_to_fix` and retry; `status=not_modeled` remains a valid data-gap response rather than an error.
+
 ## Tools
 
 | Tool | Purpose |

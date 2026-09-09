@@ -9,11 +9,13 @@ from __future__ import annotations
 import argparse
 import hmac
 import os
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastmcp import FastMCP
+from fastmcp.server.middleware.middleware import CallNext, Middleware, MiddlewareContext
+from fastmcp.tools.tool import ToolResult
 from pydantic import Field
-from starlette.middleware import Middleware
+from starlette.middleware import Middleware as ASGIMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -32,7 +34,9 @@ This server exposes a private knowledge brain through safe semantic tools.
 Route narrative questions to search_knowledge, exact figures to get_metric, taxonomy
 questions to get_taxonomy, and source inspection to get_evidence. Never infer a number
 from narrative text: every numeric claim must come from get_metric and cite source_file.
-If a tool returns status=not_modeled, report the gap instead of guessing.
+If a tool returns status=not_modeled, report the gap instead of guessing. If a tool
+returns status=error, follow how_to_fix and retry with corrected arguments; the result is
+a normal MCP response so gateways do not turn recoverable tool mistakes into HTTP 500.
 
 IMPORTANT RESULT-LIMIT CONTRACT: every tool argument named limit accepts integers from
 1 through 100 inclusive. Never send limit above 100. Prefer narrow filters. If more
@@ -45,81 +49,214 @@ mcp = FastMCP(
     version="1.0.0",
     instructions=INSTRUCTIONS,
     mask_error_details=True,
-    strict_input_validation=True,
+    # Tool functions validate inputs themselves so mistakes can be returned as normal,
+    # actionable results instead of protocol errors that gateways may turn into HTTP 500.
+    strict_input_validation=False,
 )
+
+_TOOL_FIXES = {
+    "list_metrics": "Verify BRAIN_DB and BRAIN_CATALOG point to readable files, then retry.",
+    "get_metric": "Call list_metrics, use one returned metric name and valid filters, and keep limit between 1 and 100.",
+    "search_knowledge": "Provide a non-empty query and keep limit between 1 and 100.",
+    "get_taxonomy": "Use an optional label, relation, or kind filter and keep limit between 1 and 100.",
+    "find_related_content": "Provide either chunk_id from search_knowledge/get_taxonomy or a non-empty query; keep limit between 1 and 100.",
+    "get_evidence": "Provide a valid integer chunk_id returned by search_knowledge, get_taxonomy, or find_related_content.",
+    "health": "Verify BRAIN_DB, BRAIN_CATALOG, BRAIN_SKILLS, and sqlite-vec are installed and readable.",
+}
+
+
+def _error_result(tool: str, code: str, message: str) -> ToolResult:
+    payload = {
+        "status": "error",
+        "error": {"code": code, "message": message},
+        "how_to_fix": _TOOL_FIXES.get(tool, "Correct the tool arguments or server configuration, then retry."),
+        "retryable": code in {"invalid_arguments", "not_configured", "dependency_unavailable"},
+    }
+    # Deliberately return a normal MCP result (isError=false). Some gateways translate
+    # MCP tool errors into HTTP 500 and hide the actionable explanation from the model.
+    return ToolResult(structured_content=payload)
+
+
+class SafeToolErrorsMiddleware(Middleware):
+    """Convert all tool exceptions into structured, actionable, non-error results."""
+
+    async def on_call_tool(self, context: MiddlewareContext, call_next: CallNext) -> ToolResult:
+        tool = context.message.name
+        arguments = context.message.arguments or {}
+        try:
+            if "limit" in arguments:
+                limit = arguments["limit"]
+                if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+                    return _error_result(tool, "invalid_arguments", "limit must be an integer between 1 and 100")
+            return await call_next(context)
+        except (ValueError, TypeError) as exc:
+            return _error_result(tool, "invalid_arguments", str(exc))
+        except (FileNotFoundError, PermissionError) as exc:
+            return _error_result(tool, "not_configured", str(exc))
+        except (ImportError, ModuleNotFoundError) as exc:
+            return _error_result(tool, "dependency_unavailable", str(exc))
+        except Exception:
+            return _error_result(tool, "internal_error", "The tool could not complete the request safely.")
+
+
+mcp.add_middleware(SafeToolErrorsMiddleware())
+
+_LIMIT_DESCRIPTION = "Required integer range: 1..100; never send more than 100. Split broad requests into multiple focused calls."
+
+
+def _required_string(tool: str, field: str, value: Any) -> tuple[str | None, ToolResult | None]:
+    if not isinstance(value, str) or not value.strip():
+        return None, _error_result(tool, "invalid_arguments", f"{field} must be a non-empty string")
+    return value, None
+
+
+def _required_integer(tool: str, field: str, value: Any) -> tuple[int | None, ToolResult | None]:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None, _error_result(tool, "invalid_arguments", f"{field} must be an integer")
+    return value, None
+
+
+def _optional_string(tool: str, field: str, value: Any) -> tuple[str | None, ToolResult | None]:
+    if value is not None and not isinstance(value, str):
+        return None, _error_result(tool, "invalid_arguments", f"{field} must be a string when provided")
+    return value, None
+
+
+def _safe_call(tool: str, operation, *args: Any) -> dict | ToolResult:
+    try:
+        return operation(*args)
+    except (ValueError, TypeError) as exc:
+        return _error_result(tool, "invalid_arguments", str(exc))
+    except (FileNotFoundError, PermissionError) as exc:
+        return _error_result(tool, "not_configured", str(exc))
+    except (ImportError, ModuleNotFoundError) as exc:
+        return _error_result(tool, "dependency_unavailable", str(exc))
+    except Exception:
+        return _error_result(tool, "internal_error", "The tool could not complete the request safely.")
+
+
+def _limit_or_error(tool: str, value: Any) -> tuple[int | None, ToolResult | None]:
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 100:
+        return None, _error_result(tool, "invalid_arguments", "limit must be an integer between 1 and 100")
+    return value, None
 
 
 @mcp.tool(tags={"discovery", "numbers"})
-def list_metrics() -> dict:
+def list_metrics() -> dict | ToolResult:
     """Discover governed metrics, units, grains, date ranges, and data availability."""
-    return _list_metrics()
+    return _safe_call("list_metrics", _list_metrics)
 
 
 @mcp.tool(tags={"numbers"})
 def get_metric(
-    name: Annotated[str, Field(description="Governed metric name returned by list_metrics")],
-    grain: Annotated[str | None, Field(description="Exact grain such as overall, region, division, or branch")] = None,
-    entity: Annotated[str | None, Field(description="Exact entity name")] = None,
-    entity_contains: Annotated[str | None, Field(description="Case-insensitive literal substring for entity discovery")] = None,
-    month: Annotated[str | None, Field(description="Exact reporting period, normally YYYY-MM")] = None,
-    start_month: Annotated[str | None, Field(description="Inclusive start period, normally YYYY-MM")] = None,
-    end_month: Annotated[str | None, Field(description="Inclusive end period, normally YYYY-MM")] = None,
-    limit: Annotated[int, Field(ge=1, le=100, description="Maximum fact rows to return. Required range: 1..100; never send more than 100. Split broad requests into multiple filtered calls.")] = 50,
-) -> dict:
+    name: Annotated[Any, Field(description="Required non-empty governed metric name returned by list_metrics")] = None,
+    grain: Annotated[Any, Field(description="Optional exact grain such as overall, region, division, or branch")] = None,
+    entity: Annotated[Any, Field(description="Optional exact entity name")] = None,
+    entity_contains: Annotated[Any, Field(description="Optional case-insensitive literal substring for entity discovery")] = None,
+    month: Annotated[Any, Field(description="Optional exact reporting period, normally YYYY-MM")] = None,
+    start_month: Annotated[Any, Field(description="Optional inclusive start period, normally YYYY-MM")] = None,
+    end_month: Annotated[Any, Field(description="Optional inclusive end period, normally YYYY-MM")] = None,
+    limit: Annotated[Any, Field(description=_LIMIT_DESCRIPTION)] = 50,
+) -> dict | ToolResult:
     """Return authoritative fact rows for one governed metric, with scope and source_file.
 
     Use for every value, trend, comparison, or date-specific numeric claim. This tool
     does not aggregate incompatible grains and never reads numbers from prose.
     """
-    return _get_metric(name, grain, entity, entity_contains, month, start_month, end_month, limit)
+    valid_name, error = _required_string("get_metric", "name", name)
+    if error:
+        return error
+    valid_limit, error = _limit_or_error("get_metric", limit)
+    if error:
+        return error
+    optional = []
+    for field, value in (("grain", grain), ("entity", entity), ("entity_contains", entity_contains), ("month", month), ("start_month", start_month), ("end_month", end_month)):
+        valid, error = _optional_string("get_metric", field, value)
+        if error:
+            return error
+        optional.append(valid)
+    return _safe_call("get_metric", _get_metric, valid_name, *optional, valid_limit)
 
 
 @mcp.tool(tags={"narrative"})
 def search_knowledge(
-    query: Annotated[str, Field(min_length=1, description="Natural-language narrative question or concept")],
-    limit: Annotated[int, Field(ge=1, le=100, description="Maximum cited sections. Required range: 1..100; never send more than 100. Split broad research into multiple focused queries.")] = 5,
-) -> dict:
+    query: Annotated[Any, Field(description="Required non-empty natural-language narrative question or concept")] = None,
+    limit: Annotated[Any, Field(description=_LIMIT_DESCRIPTION)] = 5,
+) -> dict | ToolResult:
     """Search narrative evidence with hybrid BM25+vector retrieval and source citations.
 
     Do not use text returned here as the authority for numeric claims; call get_metric.
     """
-    return _search_knowledge(query, limit)
+    valid_query, error = _required_string("search_knowledge", "query", query)
+    if error:
+        return error
+    valid_limit, error = _limit_or_error("search_knowledge", limit)
+    if error:
+        return error
+    return _safe_call("search_knowledge", _search_knowledge, valid_query, valid_limit)
 
 
 @mcp.tool(tags={"taxonomy"})
 def get_taxonomy(
-    label: Annotated[str | None, Field(description="Exact node label or node id")] = None,
-    relation: Annotated[str | None, Field(description="Exact edge relation to list")] = None,
-    kind: Annotated[str | None, Field(description="Node kind filter")] = None,
-    limit: Annotated[int, Field(ge=1, le=100, description="Maximum nodes, edges, or tagged sections. Required range: 1..100; never send more than 100. Split broad exploration into multiple filtered calls.")] = 50,
-) -> dict:
+    label: Annotated[Any, Field(description="Optional exact node label or node id")] = None,
+    relation: Annotated[Any, Field(description="Optional exact edge relation to list")] = None,
+    kind: Annotated[Any, Field(description="Optional node kind filter")] = None,
+    limit: Annotated[Any, Field(description=_LIMIT_DESCRIPTION)] = 50,
+) -> dict | ToolResult:
     """Explore taxonomy nodes, subclasses, relations, and cited tagged sections."""
-    return _get_taxonomy(label, relation, kind, limit)
+    optional = []
+    for field, value in (("label", label), ("relation", relation), ("kind", kind)):
+        valid, error = _optional_string("get_taxonomy", field, value)
+        if error:
+            return error
+        optional.append(valid)
+    valid_limit, error = _limit_or_error("get_taxonomy", limit)
+    if error:
+        return error
+    return _safe_call("get_taxonomy", _get_taxonomy, *optional, valid_limit)
 
 
 @mcp.tool(tags={"narrative", "relations"})
 def find_related_content(
-    chunk_id: Annotated[int | None, Field(description="Anchor chunk id from search_knowledge")] = None,
-    query: Annotated[str | None, Field(description="Query used to discover an anchor when chunk_id is absent")] = None,
-    limit: Annotated[int, Field(ge=1, le=100, description="Maximum semantic neighbors. Required range: 1..100; never send more than 100. Use additional anchor queries for broader coverage.")] = 6,
-) -> dict:
+    chunk_id: Annotated[Any, Field(description="Optional integer anchor chunk id from search_knowledge")] = None,
+    query: Annotated[Any, Field(description="Optional query used to discover an anchor when chunk_id is absent")] = None,
+    limit: Annotated[Any, Field(description=_LIMIT_DESCRIPTION)] = 6,
+) -> dict | ToolResult:
     """Find precomputed cross-document semantic neighbors for a cited section."""
-    return _find_related_content(chunk_id, query, limit)
+    if chunk_id is not None:
+        valid_chunk_id, error = _required_integer("find_related_content", "chunk_id", chunk_id)
+        if error:
+            return error
+        chunk_id = valid_chunk_id
+    valid_query, error = _optional_string("find_related_content", "query", query)
+    if error:
+        return error
+    valid_limit, error = _limit_or_error("find_related_content", limit)
+    if error:
+        return error
+    if chunk_id is None and not (valid_query and valid_query.strip()):
+        return _error_result("find_related_content", "invalid_arguments", "Either chunk_id or a non-empty query is required")
+    return _safe_call("find_related_content", _find_related_content, chunk_id, valid_query, valid_limit)
 
 
 @mcp.tool(tags={"evidence"})
 def get_evidence(
-    chunk_id: Annotated[int, Field(description="Chunk id returned by search or taxonomy tools")],
-    include_page_text: Annotated[bool, Field(description="Include verbatim visual-page text and extracted table cells when available")] = True,
-) -> dict:
+    chunk_id: Annotated[Any, Field(description="Required integer chunk id returned by search or taxonomy tools")] = None,
+    include_page_text: Annotated[Any, Field(description="Boolean: include verbatim visual-page text and extracted table cells when available")] = True,
+) -> dict | ToolResult:
     """Inspect one cited source section and its optional verbatim page/table evidence."""
-    return _get_evidence(chunk_id, include_page_text)
+    valid_chunk_id, error = _required_integer("get_evidence", "chunk_id", chunk_id)
+    if error:
+        return error
+    if not isinstance(include_page_text, bool):
+        return _error_result("get_evidence", "invalid_arguments", "include_page_text must be a boolean")
+    return _safe_call("get_evidence", _get_evidence, valid_chunk_id, include_page_text)
 
 
 @mcp.tool(tags={"operations"})
-def health() -> dict:
+def health() -> dict | ToolResult:
     """Check all three knowledge lanes and report the deployed knowledge version."""
-    return _health()
+    return _safe_call("health", _health)
 
 
 @mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)
@@ -153,11 +290,11 @@ class ApiKeyMiddleware:
         await self.app(scope, receive, send)
 
 
-def _http_middleware() -> list[Middleware]:
+def _http_middleware() -> list[ASGIMiddleware]:
     api_key = os.getenv("BRAIN_API_KEY", "").strip()
     if not api_key:
         return []
-    return [Middleware(ApiKeyMiddleware, api_key=api_key, mcp_path=os.getenv("BRAIN_MCP_PATH", "/mcp"))]
+    return [ASGIMiddleware(ApiKeyMiddleware, api_key=api_key, mcp_path=os.getenv("BRAIN_MCP_PATH", "/mcp"))]
 
 
 app = mcp.http_app(
