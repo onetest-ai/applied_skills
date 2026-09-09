@@ -62,21 +62,28 @@ cmd="${1:-help}"; shift || true
 case "$cmd" in
   which)  echo "skills = $SKILLS"; echo "python = $PY"; echo "db     = ${DB:-<none>}";;
   mcp-config|mcp)  # locate the installed MCP server: <host>/mcp/brain/ (sibling of skills/)
-    SRV="$(dirname "$SKILLS")/mcp/brain/brain_mcp.py"
-    [ -f "$SRV" ] || SRV="$SKILLS/brain-mcp/brain_mcp.py"   # tolerate old layout
-    if [ "$cmd" = "mcp" ]; then exec "$PY" "$SRV"; fi       # run the server (stdio)
-    DBENV=""; [ -n "${DB:-}" ] && DBENV=", \"BRAIN_DB\": \"$DB\""
-    cat <<JSON
-{
-  "mcpServers": {
-    "brain": {
-      "command": "$PY",
-      "args": ["$SRV"],
-      "env": { "BRAIN_SKILLS": "$SKILLS"$DBENV }
-    }
-  }
-}
-JSON
+    SRVDIR="$(dirname "$SKILLS")/mcp/brain"
+    SRV="$SRVDIR/fastmcp_server.py"
+    [ -f "$SRV" ] || SRV="$SRVDIR/brain_mcp.py"             # legacy install fallback
+    [ -f "$SRV" ] || { echo "brain: MCP server not installed (run install with --mcp)"; exit 1; }
+    if [ "$cmd" = "mcp" ]; then exec "$PY" "$SRV" --transport stdio; fi
+    CAT="${BRAIN_CATALOG:-}"
+    if [ -z "$CAT" ]; then
+      for c in "$(dirname "$DB")"/metrics.*.json "$SELF"/schema/metrics.*.json; do
+        [ -f "$c" ] && { CAT="$c"; break; }
+      done
+    fi
+    "$PY" - "$PY" "$SRV" "$SKILLS" "$DB" "$CAT" "${BRAIN_ASSETS:-}" <<'PY'
+import json, sys
+py, server, skills, db, catalog, assets = sys.argv[1:7]
+env = {"BRAIN_SKILLS": skills}
+if db: env["BRAIN_DB"] = db
+if catalog: env["BRAIN_CATALOG"] = catalog
+if assets: env["BRAIN_ASSETS"] = assets
+print(json.dumps({"mcpServers": {"brain": {
+    "command": py, "args": [server, "--transport", "stdio"], "env": env
+}}}, indent=2))
+PY
     ;;
   search) need_db; "$PY" "$SKILLS/knowledge-index/knowledge_index.py" search --db "$DB" --query "${1:?question}" --k "${2:-5}";;
   sql)    need_db; "$PY" "$SKILLS/hybrid-retrieval/query.py" --db "$DB" --sql "${1:?SQL}";;

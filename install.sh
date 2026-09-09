@@ -134,8 +134,8 @@ if [ -n "$DEPS" ]; then
 fi
 
 # --mcp: install the bundle's MCP servers from mcp/<name>/ into <host>/mcp/<name>/,
-# and register each (command = the bundle venv python) so the agent calls tools
-# instead of running python itself. Claude Code -> .mcp.json.
+# and register each for local stdio (command = the bundle venv python) so the agent
+# calls tools instead of running Python itself. HTTP remains an explicit deployment mode.
 if [ -n "$MCP" ]; then
   [ -n "$BUNDLE" ] || { echo "error: --mcp needs --bundle"; exit 2; }
   SERVERS="$(python3 -c "import json;print(' '.join(json.load(open('$HERE/bundles/$BUNDLE/factory.json')).get('mcp',{}).get('servers',[])))" 2>/dev/null)"
@@ -147,6 +147,7 @@ if [ -n "$MCP" ]; then
     # discover the store + assets: prefer inside the host dir, then the project root
     db=""; for c in "$host_dir/knowledge.sqlite" "$ROOT/knowledge.sqlite" "$ROOT/schema/knowledge.sqlite"; do [ -f "$c" ] && { db="$c"; break; }; done
     assets=""; for c in "$host_dir/assets" "$ROOT/assets"; do [ -d "$c" ] && { assets="$c"; break; }; done
+    catalog=""; for c in "$ROOT"/schema/metrics.*.json "$host_dir"/schema/metrics.*.json; do [ -f "$c" ] && { catalog="$c"; break; }; done
     # config location: Claude Code reads <root>/.mcp.json; other hosts read <host>/mcp.json (registered from inside)
     if [ "$tgt" = "claude" ]; then conf="$ROOT/.mcp.json"; else conf="$host_dir/mcp.json"; fi
     for name in $SERVERS; do
@@ -158,9 +159,9 @@ if [ -n "$MCP" ]; then
       if [ -n "$DRYRUN" ]; then echo "   [dry-run] $MODE mcp/$name + write $conf"; continue; fi
       mkdir -p "$host_dir/mcp"; rm -rf "$dest"
       if [ "$MODE" = "symlink" ]; then ln -s "$srcdir" "$dest"; else cp -R "$srcdir" "$dest"; fi
-      python3 - "$conf" "$name" "$py" "$dest/$entry" "$skills_dir" "$db" "$assets" <<'PY'
+      python3 - "$conf" "$name" "$py" "$dest/$entry" "$skills_dir" "$db" "$assets" "$catalog" <<'PY'
 import json, os, sys
-conf, name, py, server, skills, db, assets = sys.argv[1:8]
+conf, name, py, server, skills, db, assets, catalog = sys.argv[1:9]
 data = {}
 if os.path.exists(conf):
     try: data = json.load(open(conf))
@@ -168,7 +169,8 @@ if os.path.exists(conf):
 env = {"BRAIN_SKILLS": skills}
 if db: env["BRAIN_DB"] = db
 if assets: env["BRAIN_ASSETS"] = assets
-data.setdefault("mcpServers", {})[name] = {"command": py, "args": [server], "env": env}
+if catalog: env["BRAIN_CATALOG"] = catalog
+data.setdefault("mcpServers", {})[name] = {"command": py, "args": [server, "--transport", "stdio"], "env": env}
 json.dump(data, open(conf, "w"), indent=2)
 print(f"   ✓ wrote {conf} (mcpServers.{name})")
 PY
