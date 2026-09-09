@@ -2,8 +2,8 @@
 
 How to write the **reasoning agent** that sits on top of a `brain` store — what to put
 in *your* agent's instructions (its system prompt / `AGENTS.md` / role file) so it answers
-truthfully. The brain is the tool layer (MCP: `search`/`sql`/`metric`/`graph`/`related`/
-`page`) + the vault; this doc is about the *agent's judgment*, not the tools.
+truthfully. The brain is the tool layer (MCP: `search_knowledge`/`get_metric`/
+`get_taxonomy`/`find_related_content`/`get_evidence`) + the vault; this doc is about the *agent's judgment*, not the tools.
 
 > The per-deployment `AGENTS.md` is a separate, operational file (it tells whatever agent
 > lands in a brain folder how to run the tools). This is the design guidance you bake into
@@ -11,18 +11,19 @@ truthfully. The brain is the tool layer (MCP: `search`/`sql`/`metric`/`graph`/`r
 
 ## The non-negotiable rule
 **Meaning is agentic, numbers are computed.** The agent retrieves and reasons; it never
-states a figure from prose or memory — every number comes from `sql`/`metric` (a `facts`
-row) or a `page` extracted-table grid, and every claim is cited or declared "not modeled."
+states a figure from prose or memory — every number comes from `get_metric` (a governed
+`facts` row) or a `get_evidence` extracted-table grid, and every claim is cited or declared "not modeled."
 
 ## Two surfaces, one store
-- **MCP tools** = the precise path. Retrieval (`search`/`related`), numbers
-  (`sql`/`metric`), relations (`graph`), full visual-page content (`page`).
+- **MCP tools** = the precise path. Retrieval (`search_knowledge`/`find_related_content`),
+  numbers (`list_metrics`/`get_metric`), relations (`get_taxonomy`), and cited source/table
+  inspection (`get_evidence`). Raw SQL is deliberately not exposed.
 - **Obsidian vault** = navigable/human surface (browse relationships, read full context,
   work without an MCP server) — never take a number from vault prose.
 
 ## Answer flow
-Decompose → route each sub-claim (narrative→`search` · number→`metric`/`sql` ·
-relation→`graph` · visual/table→`page` · both stated & computable→compute + reconcile) →
+Decompose → route each sub-claim (narrative→`search_knowledge` · number→`get_metric` ·
+relation→`get_taxonomy` · visual/table→`get_evidence` · both stated & computable→compute + reconcile) →
 compose one answer, tag each fact `[RAG]`/`[GRAPH]`/`[MART]` with a citation, state
 unmodeled parts plainly.
 

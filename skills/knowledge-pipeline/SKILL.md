@@ -115,7 +115,7 @@ Shortcut via the launcher: `./brain plan <parsed>` · `./brain update <parsed>` 
 ## Answer (per question)
 Follow **`hybrid-retrieval`**: decompose → classify each sub-claim (computable→marts / narrative→RAG / relation→graph / both→reconcile) → retrieve against the one `$DB` → compose one cited answer. Tag facts `[MART]` / `[RAG]` / `[GRAPH]`; state unmodeled sub-parts plainly.
 
-**Retrieve on the semantic layer; answer from the content.** RAG finds a section by its (possibly VLM-transcribed, lossy) text. When a hit is a **visual/table page** (`chunks.image` set), pull the FULL content before answering — the `page` MCP tool returns the rendered image + verbatim text + **deterministically-extracted table grids**. Cite a table's grid for any figure, never the prose paraphrase — so detail dropped in transcription is never dropped in the answer.
+**Retrieve on the semantic layer; answer from the content.** RAG finds a section by its (possibly VLM-transcribed, lossy) text. When a hit is a **visual/table page** (`chunks.image` set), call `get_evidence` for the source text and **deterministically-extracted table grids**. It also returns the private `page_asset` path for clients that can open the rendered image. Cite a table's grid for any figure, never the prose paraphrase.
 
 ## Workspace & checkpointing (for long / multi-step research)
 Borrowed from a disk-first research discipline — use it when a question needs many retrieval steps:
