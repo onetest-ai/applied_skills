@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import os
 import sqlite3
@@ -144,6 +145,12 @@ class SemanticCoreTests(FixtureCase):
         self.assertEqual(evidence["verbatim_page_text"], "VERBATIM PAGE")
         self.assertIn("|1|2|", evidence["extracted_tables"])
 
+    def test_evidence_rejects_asset_path_escape(self):
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.execute("UPDATE chunks SET image='../outside.png' WHERE id=1")
+        with self.assertRaises(PermissionError):
+            core.get_evidence(1)
+
     def test_missing_optional_tables_return_not_modeled(self):
         with sqlite3.connect(self.fx["db"]) as con:
             con.execute("DROP TABLE related")
@@ -218,6 +225,16 @@ class FastMCPContractTests(FixtureCase):
                     self.assertEqual(malformed.data["status"], "error", (tool_name, arguments))
                     self.assertEqual(malformed.data["error"]["code"], "invalid_arguments")
                     self.assertTrue(malformed.data["how_to_fix"])
+                with patch.object(fastmcp_server, "_get_evidence", side_effect=PermissionError("denied /secret/local/path")):
+                    hidden_path = await client.call_tool("get_evidence", {"chunk_id": 1})
+                self.assertFalse(hidden_path.is_error)
+                self.assertEqual(hidden_path.data["error"]["code"], "not_configured")
+                self.assertNotIn("secret/local/path", json.dumps(hidden_path.data))
+                with patch.object(fastmcp_server, "_search_knowledge", side_effect=ModuleNotFoundError("missing /secret/module")):
+                    hidden_dependency = await client.call_tool("search_knowledge", {"query": "alpha"})
+                self.assertFalse(hidden_dependency.is_error)
+                self.assertEqual(hidden_dependency.data["error"]["code"], "dependency_unavailable")
+                self.assertNotIn("secret/module", json.dumps(hidden_dependency.data))
                 for tool_name, attribute in (
                     ("list_metrics", "_list_metrics"),
                     ("get_metric", "_get_metric"),
@@ -249,6 +266,13 @@ class FastMCPContractTests(FixtureCase):
                 result = await client.call_tool("health", {})
                 self.assertEqual(result.data["status"], "healthy")
         asyncio.run(run())
+
+    def test_invalid_transport_env_is_parser_error(self):
+        import fastmcp_server
+
+        with patch.dict(os.environ, {"BRAIN_MCP_TRANSPORT": "invalid"}), self.assertRaises(SystemExit) as raised:
+            fastmcp_server.main([])
+        self.assertEqual(raised.exception.code, 2)
 
     def test_api_key_middleware(self):
         import fastmcp_server
@@ -286,6 +310,35 @@ class FastMCPContractTests(FixtureCase):
         self.assertEqual(len(configured), 1)
         with patch.dict(os.environ, {"BRAIN_API_KEY": "   "}):
             self.assertEqual(fastmcp_server._http_middleware(), [])
+
+    def test_http_app_enforces_api_key_end_to_end(self):
+        import httpx
+
+        async def run():
+            module_name = "fastmcp_server_authenticated_test"
+            with patch.dict(os.environ, {"BRAIN_API_KEY": "secret", "BRAIN_MCP_PATH": "/secure-mcp"}):
+                spec = importlib.util.spec_from_file_location(module_name, HERE / "fastmcp_server.py")
+                module = importlib.util.module_from_spec(spec)
+                assert spec.loader is not None
+                spec.loader.exec_module(module)
+            try:
+                async with module.app.router.lifespan_context(module.app):
+                    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=module.app), base_url="http://test") as client:
+                        health = await client.get("/healthz")
+                        missing = await client.post("/secure-mcp", headers={"accept": "application/json, text/event-stream"}, json={})
+                        wrong = await client.post("/secure-mcp", headers={"X-API-Key": "wrong", "accept": "application/json, text/event-stream"}, json={})
+                        valid = await client.post("/secure-mcp", headers={"X-API-Key": " secret ", "accept": "application/json, text/event-stream"}, json={
+                            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                            "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}},
+                        })
+                self.assertEqual(health.status_code, 200)
+                self.assertEqual(missing.status_code, 401)
+                self.assertEqual(wrong.status_code, 401)
+                self.assertEqual(valid.status_code, 200)
+            finally:
+                sys.modules.pop(module_name, None)
+
+        asyncio.run(run())
 
     def test_http_asgi_health_and_initialize(self):
         import httpx

@@ -146,7 +146,7 @@ def list_metrics() -> dict[str, Any]:
     with _readonly_connection() as con:
         availability = {
             (row["family"], row["metric"]): {
-                "grains": sorted(filter(None, (row["grains"] or "").split("\x1f"))),
+                "grains": sorted(filter(None, (row["grains"] or "").split(","))),
                 "first_month": row["first_month"],
                 "last_month": row["last_month"],
                 "row_count": row["row_count"],
@@ -162,10 +162,7 @@ def list_metrics() -> dict[str, Any]:
     metrics = []
     for name, spec in sorted(catalog.items()):
         available = availability.get((spec["family"], spec["metric"]), {})
-        # SQLite's group_concat separator is a comma when DISTINCT is used.
         grains = available.get("grains", [])
-        if len(grains) == 1 and "," in grains[0]:
-            grains = sorted(grains[0].split(","))
         metrics.append(
             {
                 "name": name,
@@ -383,7 +380,10 @@ def get_evidence(chunk_id: int, include_page_text: bool = True) -> dict[str, Any
     image = result.pop("image")
     result["page_asset"] = image
     if image and include_page_text:
-        path = Path(image) if Path(image).is_absolute() else resolve_assets() / image
+        assets = resolve_assets().resolve()
+        path = Path(image).resolve() if Path(image).is_absolute() else (assets / image).resolve()
+        if path != assets and assets not in path.parents:
+            raise PermissionError("Page asset resolves outside the configured assets directory")
         base = path.with_suffix("")
         text_path = base.with_suffix(".txt")
         tables_path = base.with_suffix(".tables.md")

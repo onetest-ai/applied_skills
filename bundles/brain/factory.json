@@ -64,7 +64,7 @@
       "openpyxl",
       "pandas",
       "pyarrow",
-      "fastmcp>=2.14.7,<3",
+      "fastmcp==2.14.7",
       "uvicorn>=0.30,<1"
     ],
     "venv": "isolated, owned by the skills (not the project); default <project>/.claude/venv, or --user for a shared ~/.claude/venv",

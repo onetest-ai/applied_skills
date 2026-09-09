@@ -127,10 +127,10 @@ class SafeToolErrorsMiddleware(Middleware):
             return await call_next(context)
         except (ValueError, TypeError) as exc:
             return _error_result(tool, "invalid_arguments", str(exc))
-        except (FileNotFoundError, PermissionError) as exc:
-            return _error_result(tool, "not_configured", str(exc))
-        except (ImportError, ModuleNotFoundError) as exc:
-            return _error_result(tool, "dependency_unavailable", str(exc))
+        except (FileNotFoundError, PermissionError):
+            return _error_result(tool, "not_configured", "A required configured file is missing or unreadable.")
+        except (ImportError, ModuleNotFoundError):
+            return _error_result(tool, "dependency_unavailable", "A required runtime dependency is unavailable.")
         except Exception:
             if tool in _LEGACY_TOOLS:
                 replacement = _LEGACY_TOOLS[tool]
@@ -173,10 +173,10 @@ def _safe_call(tool: str, operation, *args: Any) -> dict | ToolResult:
         return operation(*args)
     except (ValueError, TypeError) as exc:
         return _error_result(tool, "invalid_arguments", str(exc))
-    except (FileNotFoundError, PermissionError) as exc:
-        return _error_result(tool, "not_configured", str(exc))
-    except (ImportError, ModuleNotFoundError) as exc:
-        return _error_result(tool, "dependency_unavailable", str(exc))
+    except (FileNotFoundError, PermissionError):
+        return _error_result(tool, "not_configured", "A required configured file is missing or unreadable.")
+    except (ImportError, ModuleNotFoundError):
+        return _error_result(tool, "dependency_unavailable", "A required runtime dependency is unavailable.")
     except Exception:
         return _error_result(tool, "internal_error", "The tool could not complete the request safely.")
 
@@ -379,11 +379,16 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--transport",
         type=_transport,
-        default=_transport(os.getenv("BRAIN_MCP_TRANSPORT", "stdio")),
+        default=None,
         metavar="stdio|http",
         help="MCP transport; defaults to BRAIN_MCP_TRANSPORT or stdio",
     )
     args = parser.parse_args(argv)
+    if args.transport is None:
+        try:
+            args.transport = _transport(os.getenv("BRAIN_MCP_TRANSPORT", "stdio"))
+        except argparse.ArgumentTypeError as exc:
+            parser.error(str(exc))
     show_banner = os.getenv("BRAIN_SHOW_BANNER", "1") != "0"
     if args.transport == "stdio":
         mcp.run(transport="stdio", show_banner=show_banner)
