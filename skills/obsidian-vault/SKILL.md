@@ -12,8 +12,8 @@ needed. For a brain built by this toolkit the vault is a **view of the store**
 read here maps 1:1 to what the MCP tools return.
 
 ## When to use the vault vs the MCP tools
-- **Numbers / exact values** → the **brain MCP `sql`/`metric`** over `facts`. NEVER quote a figure from vault prose (it may be a lossy transcription); the vault is meaning, not the numeric source of truth.
-- **Precise semantic recall / a table on a visual page** → MCP `search` / `page` (full 384-dim hybrid + the extracted grid).
+- **Numbers / exact values** → the brain MCP `get_metric` over governed `facts`. NEVER quote a figure from vault prose (it may be a lossy transcription); the vault is meaning, not the numeric source of truth.
+- **Precise semantic recall / a table on a visual page** → MCP `search_knowledge` / `get_evidence` (hybrid retrieval + the extracted grid).
 - **The vault is best for:** browsing how things relate (`[[links]]`, topic notes, Related sections), reading a note's full context and its embedded slide image, filtering a theme by tag, and answering when no MCP server is connected.
 
 ## This vault's conventions (built by the toolkit)
@@ -40,9 +40,9 @@ sed -n '1,40p' "vault/_topics/Billing & Payments.md"
 # a section's cross-doc neighbors → its "## Related sections" block
 awk '/## Related sections/{p=1} p; /^---/{if(p)exit}' "vault/<Parent>/<Doc>/NN ....md"
 # follow a [[wikilink]] → the target file is the link text (+ .md), path-qualified links resolve directly
-# read a visual page's real content: open its ![[_assets/…png]] image, and for numbers use the brain `page` tool
+# read a visual page's image here; use MCP `get_evidence` for verbatim text/table cells
 ```
-Answering discipline (same as the whole toolkit): **retrieve on meaning, answer from content, cite the source.** Every note names its document (backlink) and its section title — cite those. For any number, switch to the MCP `sql`/`metric`/`page` path and cite the `facts` row or the extracted table grid.
+Answering discipline (same as the whole toolkit): **retrieve on meaning, answer from content, cite the source.** Every note names its document (backlink) and its section title — cite those. For any number, switch to MCP `get_metric` or the table grid returned by `get_evidence`, and cite its `source_file` or source section.
 
 ## Generic Obsidian (any vault)
 The same moves work on any Obsidian vault: `[[wikilinks]]` (and `[[note#heading]]`, `[[note|alias]]`), `#tags` / nested `#a/b` tags, MOC/index notes, and `![[embeds]]`. Prefer `grep -rl` over a tag/phrase to locate notes, then read and follow links. Dataview/Bases queries you can't execute — emulate them with `grep`/`awk` over the frontmatter.
