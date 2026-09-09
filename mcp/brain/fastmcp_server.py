@@ -44,7 +44,23 @@ coverage is needed, make multiple calls split by metric, month range, grain, ent
 concept, or anchor section instead of requesting one oversized result set.
 """.strip()
 
-mcp = FastMCP(
+class FailSafeFastMCP(FastMCP):
+    """Ensure even failures before tool middleware become normal MCP results."""
+
+    async def _call_tool_mcp(self, key: str, arguments: dict[str, Any]):
+        try:
+            return await super()._call_tool_mcp(key, arguments)
+        except Exception:
+            # Tool lookup and other protocol-adapter failures happen before on_call_tool
+            # middleware. Keep them out of MCP isError/HTTP 500 as well.
+            return _error_result(
+                key,
+                "unknown_tool" if key not in _TOOL_FIXES else "internal_error",
+                f"Tool '{key}' is not available." if key not in _TOOL_FIXES else "The tool could not complete the request safely.",
+            ).to_mcp_result()
+
+
+mcp = FailSafeFastMCP(
     name="Semantic Knowledge Brain",
     version="1.0.0",
     instructions=INSTRUCTIONS,
@@ -96,6 +112,8 @@ class SafeToolErrorsMiddleware(Middleware):
         except (ImportError, ModuleNotFoundError) as exc:
             return _error_result(tool, "dependency_unavailable", str(exc))
         except Exception:
+            if tool not in _TOOL_FIXES:
+                return _error_result(tool, "unknown_tool", f"Tool '{tool}' is not available.")
             return _error_result(tool, "internal_error", "The tool could not complete the request safely.")
 
 

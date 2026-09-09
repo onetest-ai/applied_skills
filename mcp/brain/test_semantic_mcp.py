@@ -190,6 +190,12 @@ class FastMCPContractTests(FixtureCase):
                 unknown_metric = await client.call_tool("get_metric", {"name": "not-a-metric"})
                 self.assertFalse(unknown_metric.is_error)
                 self.assertEqual(unknown_metric.data["status"], "error")
+                unknown_tool = await client.call_tool("definitely_not_a_tool", {})
+                self.assertFalse(unknown_tool.is_error)
+                unknown_payload = unknown_tool.data or json.loads(unknown_tool.content[0].text)
+                self.assertEqual(unknown_payload["status"], "error")
+                self.assertEqual(unknown_payload["error"]["code"], "unknown_tool")
+                self.assertIn("not available", unknown_payload["error"]["message"])
                 malformed_cases = (
                     ("get_metric", {"name": 123}),
                     ("get_metric", {"name": "revenue", "grain": ["region"]}),
