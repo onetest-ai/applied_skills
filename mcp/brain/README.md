@@ -73,7 +73,9 @@ The default all-interface bind makes container and orchestrator networking manag
 | `page` | `get_evidence` |
 | `verify` | `health` |
 | `which` | configuration plus `health` |
-| `sql` | removed; use governed tools |
+| `sql` | removed; use `list_metrics`/`get_metric` (no raw-SQL alias) |
+
+Legacy names are deliberately **not advertised or executed as aliases** because that would preserve the unsafe/raw contract and make migration invisible. If an older client calls one, the server returns a normal `isError=false`, `status=error`, `code=legacy_tool` result naming the replacement and telling the agent to retry. This avoids both silent semantic changes and gateway HTTP 500 failures.
 
 `get_evidence` returns source text and deterministic table sidecars, not binary images. Clients that need the rendered image should resolve the returned `page_asset` inside the configured private assets store.
 

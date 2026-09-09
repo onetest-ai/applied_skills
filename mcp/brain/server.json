@@ -10,8 +10,7 @@
     "BRAIN_SKILLS": "<skills>",
     "BRAIN_DB": "<db>",
     "BRAIN_CATALOG": "<catalog>",
-    "BRAIN_ASSETS": "<assets>",
-    "BRAIN_API_KEY": "<optional-secret>"
+    "BRAIN_ASSETS": "<assets>"
   },
-  "env_notes": "Paths are populated by the installer when discovered. HTTP is opt-in via --transport http or BRAIN_MCP_TRANSPORT=http and binds to 0.0.0.0 by default; protect remote exposure with BRAIN_API_KEY and TLS."
+  "env_notes": "Paths are populated by the installer when discovered. HTTP is opt-in via --transport http or BRAIN_MCP_TRANSPORT=http and binds to 0.0.0.0 by default. Set BRAIN_API_KEY only through deployment secrets; installers never write it into host configs."
 }

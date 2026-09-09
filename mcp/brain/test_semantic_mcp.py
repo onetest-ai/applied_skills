@@ -196,6 +196,12 @@ class FastMCPContractTests(FixtureCase):
                 self.assertEqual(unknown_payload["status"], "error")
                 self.assertEqual(unknown_payload["error"]["code"], "unknown_tool")
                 self.assertIn("not available", unknown_payload["error"]["message"])
+                for legacy, replacement in fastmcp_server._LEGACY_TOOLS.items():
+                    legacy_result = await client.call_tool(legacy, {})
+                    self.assertFalse(legacy_result.is_error, legacy)
+                    legacy_payload = legacy_result.data or json.loads(legacy_result.content[0].text)
+                    self.assertEqual(legacy_payload["error"]["code"], "legacy_tool", legacy)
+                    self.assertIn(replacement, legacy_payload["how_to_fix"], legacy)
                 malformed_cases = (
                     ("get_metric", {"name": 123}),
                     ("get_metric", {"name": "revenue", "grain": ["region"]}),
@@ -267,10 +273,12 @@ class FastMCPContractTests(FixtureCase):
         missing = asyncio.run(request("/custom/mcp", []))
         wrong = asyncio.run(request("/custom/mcp/", [(b"x-api-key", b"wrong")]))
         valid = asyncio.run(request("/custom/mcp", [(b"X-API-Key", b"secret")]))
+        padded = asyncio.run(request("/custom/mcp", [(b"X-API-Key", b"  secret  ")]))
         health = asyncio.run(request("/healthz", []))
         self.assertEqual(missing[0]["status"], 401)
         self.assertEqual(wrong[0]["status"], 401)
         self.assertEqual(valid[0]["status"], 204)
+        self.assertEqual(padded[0]["status"], 204)
         self.assertEqual(health[0]["status"], 204)
         self.assertIn(b"www-authenticate", dict(missing[0]["headers"]))
         with patch.dict(os.environ, {"BRAIN_API_KEY": " secret ", "BRAIN_MCP_PATH": "/custom/mcp"}):

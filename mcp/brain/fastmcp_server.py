@@ -44,6 +44,18 @@ coverage is needed, make multiple calls split by metric, month range, grain, ent
 concept, or anchor section instead of requesting one oversized result set.
 """.strip()
 
+_LEGACY_TOOLS = {
+    "search": "search_knowledge",
+    "metric": "get_metric",
+    "graph": "get_taxonomy",
+    "related": "find_related_content",
+    "page": "get_evidence",
+    "verify": "health",
+    "which": "health plus deployment configuration",
+    "sql": "list_metrics/get_metric; raw SQL is intentionally unavailable",
+}
+
+
 class FailSafeFastMCP(FastMCP):
     """Ensure even failures before tool middleware become normal MCP results."""
 
@@ -53,6 +65,14 @@ class FailSafeFastMCP(FastMCP):
         except Exception:
             # Tool lookup and other protocol-adapter failures happen before on_call_tool
             # middleware. Keep them out of MCP isError/HTTP 500 as well.
+            if key in _LEGACY_TOOLS:
+                replacement = _LEGACY_TOOLS[key]
+                return _error_result(
+                    key,
+                    "legacy_tool",
+                    f"Legacy tool '{key}' was removed. Use {replacement} instead.",
+                    how_to_fix=f"Retry with {replacement}. See the migration table in mcp/brain/README.md.",
+                ).to_mcp_result()
             return _error_result(
                 key,
                 "unknown_tool" if key not in _TOOL_FIXES else "internal_error",
@@ -81,11 +101,11 @@ _TOOL_FIXES = {
 }
 
 
-def _error_result(tool: str, code: str, message: str) -> ToolResult:
+def _error_result(tool: str, code: str, message: str, *, how_to_fix: str | None = None) -> ToolResult:
     payload = {
         "status": "error",
         "error": {"code": code, "message": message},
-        "how_to_fix": _TOOL_FIXES.get(tool, "Correct the tool arguments or server configuration, then retry."),
+        "how_to_fix": how_to_fix or _TOOL_FIXES.get(tool, "Correct the tool arguments or server configuration, then retry."),
         "retryable": code in {"invalid_arguments", "not_configured", "dependency_unavailable"},
     }
     # Deliberately return a normal MCP result (isError=false). Some gateways translate
@@ -112,6 +132,14 @@ class SafeToolErrorsMiddleware(Middleware):
         except (ImportError, ModuleNotFoundError) as exc:
             return _error_result(tool, "dependency_unavailable", str(exc))
         except Exception:
+            if tool in _LEGACY_TOOLS:
+                replacement = _LEGACY_TOOLS[tool]
+                return _error_result(
+                    tool,
+                    "legacy_tool",
+                    f"Legacy tool '{tool}' was removed. Use {replacement} instead.",
+                    how_to_fix=f"Retry with {replacement}. See the migration table in mcp/brain/README.md.",
+                )
             if tool not in _TOOL_FIXES:
                 return _error_result(tool, "unknown_tool", f"Tool '{tool}' is not available.")
             return _error_result(tool, "internal_error", "The tool could not complete the request safely.")
@@ -307,7 +335,7 @@ class ApiKeyMiddleware:
         protected = scope.get("type") == "http" and path.rstrip("/") == self.mcp_path.rstrip("/")
         if protected:
             headers = {key.lower(): value for key, value in scope.get("headers", [])}
-            supplied = headers.get(b"x-api-key", b"").decode("utf-8", errors="ignore")
+            supplied = headers.get(b"x-api-key", b"").decode("utf-8", errors="ignore").strip()
             if not hmac.compare_digest(supplied, self.api_key):
                 response = JSONResponse(
                     {"error": "unauthorized", "message": "A valid X-API-Key header is required."},
