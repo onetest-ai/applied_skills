@@ -261,8 +261,19 @@ def health() -> dict | ToolResult:
 
 @mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)
 async def healthz(_: Request) -> JSONResponse:
-    status = _health()
-    return JSONResponse(status, status_code=200 if status["status"] == "healthy" else 503)
+    try:
+        status = _health()
+        return JSONResponse(status, status_code=200 if status["status"] == "healthy" else 503)
+    except Exception:
+        return JSONResponse(
+            {
+                "status": "degraded",
+                "error": {"code": "health_check_failed", "message": "The health check could not complete safely."},
+                "how_to_fix": _TOOL_FIXES["health"],
+                "retryable": True,
+            },
+            status_code=503,
+        )
 
 
 class ApiKeyMiddleware:

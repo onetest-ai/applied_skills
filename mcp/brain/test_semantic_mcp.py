@@ -190,11 +190,43 @@ class FastMCPContractTests(FixtureCase):
                 unknown_metric = await client.call_tool("get_metric", {"name": "not-a-metric"})
                 self.assertFalse(unknown_metric.is_error)
                 self.assertEqual(unknown_metric.data["status"], "error")
-                with patch.object(fastmcp_server, "_health", side_effect=RuntimeError("secret /private/path")):
-                    internal = await client.call_tool("health", {})
-                self.assertFalse(internal.is_error)
-                self.assertEqual(internal.data["error"]["code"], "internal_error")
-                self.assertNotIn("private/path", json.dumps(internal.data))
+                malformed_cases = (
+                    ("get_metric", {"name": 123}),
+                    ("get_metric", {"name": "revenue", "grain": ["region"]}),
+                    ("search_knowledge", {}),
+                    ("search_knowledge", {"query": 42}),
+                    ("get_taxonomy", {"label": {"bad": "type"}}),
+                    ("find_related_content", {"chunk_id": "one"}),
+                    ("get_evidence", {"chunk_id": "one"}),
+                    ("get_evidence", {"chunk_id": 1, "include_page_text": "yes"}),
+                )
+                for tool_name, arguments in malformed_cases:
+                    malformed = await client.call_tool(tool_name, arguments)
+                    self.assertFalse(malformed.is_error, (tool_name, arguments))
+                    self.assertEqual(malformed.data["status"], "error", (tool_name, arguments))
+                    self.assertEqual(malformed.data["error"]["code"], "invalid_arguments")
+                    self.assertTrue(malformed.data["how_to_fix"])
+                for tool_name, attribute in (
+                    ("list_metrics", "_list_metrics"),
+                    ("get_metric", "_get_metric"),
+                    ("search_knowledge", "_search_knowledge"),
+                    ("get_taxonomy", "_get_taxonomy"),
+                    ("find_related_content", "_find_related_content"),
+                    ("get_evidence", "_get_evidence"),
+                    ("health", "_health"),
+                ):
+                    arguments = {
+                        "get_metric": {"name": "revenue"},
+                        "search_knowledge": {"query": "alpha"},
+                        "get_taxonomy": {},
+                        "find_related_content": {"chunk_id": 1},
+                        "get_evidence": {"chunk_id": 1},
+                    }.get(tool_name, {})
+                    with patch.object(fastmcp_server, attribute, side_effect=RuntimeError("secret /private/path")):
+                        unhandled = await client.call_tool(tool_name, arguments)
+                    self.assertFalse(unhandled.is_error, tool_name)
+                    self.assertEqual(unhandled.data["error"]["code"], "internal_error", tool_name)
+                    self.assertNotIn("private/path", json.dumps(unhandled.data), tool_name)
             self.assertIn("Never send limit above 100", fastmcp_server.INSTRUCTIONS)
             self.assertIn("make multiple calls", fastmcp_server.INSTRUCTIONS)
             env = {key: os.environ[key] for key in ("BRAIN_DB", "BRAIN_CATALOG", "BRAIN_SKILLS", "BRAIN_ASSETS", "BRAIN_KNOWLEDGE_VERSION")}
@@ -251,6 +283,11 @@ class FastMCPContractTests(FixtureCase):
                 async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
                     health = await client.get("/healthz")
                     self.assertEqual(health.status_code, 200)
+                    with patch.object(fastmcp_server, "_health", side_effect=RuntimeError("secret /private/path")):
+                        degraded = await client.get("/healthz")
+                    self.assertEqual(degraded.status_code, 503)
+                    self.assertEqual(degraded.json()["error"]["code"], "health_check_failed")
+                    self.assertNotIn("private/path", degraded.text)
                     response = await client.post("/mcp", headers={"accept": "application/json, text/event-stream"}, json={
                         "jsonrpc": "2.0", "id": 1, "method": "initialize",
                         "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}},
