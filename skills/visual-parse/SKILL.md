@@ -18,9 +18,10 @@ description: Use when a corpus has slide decks / diagram-heavy pages (flows, tim
 doc (pdf / pptx via soffice→pdf)
   → render_pages.py  (deterministic)   per-page PNG + text sidecar + table grids; FLAG visual pages
   → 🤖 vision agents (low-tier, VLM)    transcribe flagged pages → result_<k>.json {img_sha: markdown}
-  → vision_assemble.py                 merge into one parsed .md: each page = a section with an
-                                        `<!-- image: … -->` marker (text pages use their text layer)
-  → knowledge-index index              chunks it; the marker → chunks.image; siblings hold text+tables
+  → vision_assemble.py                 merge into one parsed .md: each page starts a top-level section
+                                        with an `<!-- image: … -->` marker (text pages use text layer)
+  → knowledge-index index              headings/size may split a page into sibling chunks; each inherits
+                                        the page marker → chunks.image. Table grids stay asset sidecars.
 ```
 
 ### 1. Render — `render_pages.py` (deterministic, no LLM)
@@ -32,7 +33,7 @@ Instantiate `vision_prep.py` to batch the **flagged, uncached** pages (image pat
 
 ### 3. Assemble — `vision_assemble.py`
 `vision_assemble.py --render-dir <assets>/<slug> --out <parsed>/<doc>.md [--results <dir>] [--db <db>]`
-Per page in order: the VLM Markdown (flagged) or the text layer (text page), under a `## p<NN> · <title>` heading with the image marker. Internal `#`/`##` are demoted so a page stays one section. Writes the `page_render` cache when `--db` is given.
+Per page in order: the VLM Markdown (flagged) or the text layer (text page), under a `## p<NN> · <title>` heading with the image marker. Internal `#`/`##` are demoted; deeper VLM headings and max-size splitting may still yield multiple downstream chunks for one page, all inheriting its image. Writes the `page_render` cache when `--db` is given. Extracted `p<NN>.tables.md` grids remain factual asset sidecars (served by `get_evidence`) and are not appended to parsed Markdown.
 
 ## How the classifier / retrieval change
 Nothing in the classifier or retriever changes — they just get **faithful input** instead of fragments. The classify agent now sees `North Star Vision & Service Design Blueprint / Future State Architecture / …` instead of `EPAM Proprietary & Confidential. 4`, so tagging, embeddings, and the related layer all improve for free. For genuinely visual edge cases, `get_evidence` returns the page asset path for a capable local client to open and reason over multimodally.
