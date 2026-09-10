@@ -14,7 +14,7 @@ from typing import Annotated, Any
 from fastmcp import FastMCP
 from fastmcp.server.middleware.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools.tool import ToolResult
-from pydantic import Field
+from pydantic import Field, SkipValidation
 from starlette.middleware import Middleware as ASGIMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -195,14 +195,14 @@ def list_metrics() -> dict | ToolResult:
 
 @mcp.tool(tags={"numbers"})
 def get_metric(
-    name: Annotated[Any, Field(description="Required non-empty governed metric name returned by list_metrics")] = None,
-    grain: Annotated[Any, Field(description="Optional exact grain such as overall, region, division, or branch")] = None,
-    entity: Annotated[Any, Field(description="Optional exact entity name")] = None,
-    entity_contains: Annotated[Any, Field(description="Optional case-insensitive literal substring for entity discovery")] = None,
-    month: Annotated[Any, Field(description="Optional exact reporting period, normally YYYY-MM")] = None,
-    start_month: Annotated[Any, Field(description="Optional inclusive start period, normally YYYY-MM")] = None,
-    end_month: Annotated[Any, Field(description="Optional inclusive end period, normally YYYY-MM")] = None,
-    limit: Annotated[Any, Field(description=_LIMIT_DESCRIPTION)] = 50,
+    name: Annotated[str | None, SkipValidation, Field(description="Required non-empty governed metric name returned by list_metrics")] = None,
+    grain: Annotated[str | None, SkipValidation, Field(description="Optional exact grain such as overall, region, division, or branch")] = None,
+    entity: Annotated[str | None, SkipValidation, Field(description="Optional exact entity name")] = None,
+    entity_contains: Annotated[str | None, SkipValidation, Field(description="Optional case-insensitive literal substring for entity discovery")] = None,
+    month: Annotated[str | None, SkipValidation, Field(description="Optional exact reporting period, normally YYYY-MM")] = None,
+    start_month: Annotated[str | None, SkipValidation, Field(description="Optional inclusive start period, normally YYYY-MM")] = None,
+    end_month: Annotated[str | None, SkipValidation, Field(description="Optional inclusive end period, normally YYYY-MM")] = None,
+    limit: Annotated[int, SkipValidation, Field(description=_LIMIT_DESCRIPTION)] = 50,
 ) -> dict | ToolResult:
     """Return authoritative fact rows for one governed metric, with scope and source_file.
 
@@ -226,8 +226,8 @@ def get_metric(
 
 @mcp.tool(tags={"narrative"})
 def search_knowledge(
-    query: Annotated[Any, Field(description="Required non-empty natural-language narrative question or concept")] = None,
-    limit: Annotated[Any, Field(description=_LIMIT_DESCRIPTION)] = 5,
+    query: Annotated[str | None, SkipValidation, Field(description="Required non-empty natural-language narrative question or concept")] = None,
+    limit: Annotated[int, SkipValidation, Field(description=_LIMIT_DESCRIPTION)] = 5,
 ) -> dict | ToolResult:
     """Search narrative evidence with hybrid BM25+vector retrieval and source citations.
 
@@ -244,10 +244,10 @@ def search_knowledge(
 
 @mcp.tool(tags={"taxonomy"})
 def get_taxonomy(
-    label: Annotated[Any, Field(description="Optional exact node label or node id")] = None,
-    relation: Annotated[Any, Field(description="Optional exact edge relation to list")] = None,
-    kind: Annotated[Any, Field(description="Optional node kind filter")] = None,
-    limit: Annotated[Any, Field(description=_LIMIT_DESCRIPTION)] = 50,
+    label: Annotated[str | None, SkipValidation, Field(description="Optional exact node label or node id")] = None,
+    relation: Annotated[str | None, SkipValidation, Field(description="Optional exact edge relation to list")] = None,
+    kind: Annotated[str | None, SkipValidation, Field(description="Optional node kind filter")] = None,
+    limit: Annotated[int, SkipValidation, Field(description=_LIMIT_DESCRIPTION)] = 50,
 ) -> dict | ToolResult:
     """Explore taxonomy nodes, subclasses, relations, and cited tagged sections."""
     optional = []
@@ -264,9 +264,9 @@ def get_taxonomy(
 
 @mcp.tool(tags={"narrative", "relations"})
 def find_related_content(
-    chunk_id: Annotated[Any, Field(description="Optional integer anchor chunk id from search_knowledge")] = None,
-    query: Annotated[Any, Field(description="Optional query used to discover an anchor when chunk_id is absent")] = None,
-    limit: Annotated[Any, Field(description=_LIMIT_DESCRIPTION)] = 6,
+    chunk_id: Annotated[int | None, SkipValidation, Field(description="Optional integer anchor chunk id from search_knowledge")] = None,
+    query: Annotated[str | None, SkipValidation, Field(description="Optional query used to discover an anchor when chunk_id is absent")] = None,
+    limit: Annotated[int, SkipValidation, Field(description=_LIMIT_DESCRIPTION)] = 6,
 ) -> dict | ToolResult:
     """Find precomputed cross-document semantic neighbors for a cited section."""
     if chunk_id is not None:
@@ -287,8 +287,8 @@ def find_related_content(
 
 @mcp.tool(tags={"evidence"})
 def get_evidence(
-    chunk_id: Annotated[Any, Field(description="Required integer chunk id returned by search or taxonomy tools")] = None,
-    include_page_text: Annotated[Any, Field(description="Boolean: include verbatim visual-page text and extracted table cells when available")] = True,
+    chunk_id: Annotated[int | None, SkipValidation, Field(description="Required integer chunk id returned by search or taxonomy tools")] = None,
+    include_page_text: Annotated[bool, SkipValidation, Field(description="Boolean: include verbatim visual-page text and extracted table cells when available")] = True,
 ) -> dict | ToolResult:
     """Inspect one cited source section and its optional verbatim page/table evidence."""
     valid_chunk_id, error = _required_integer("get_evidence", "chunk_id", chunk_id)
