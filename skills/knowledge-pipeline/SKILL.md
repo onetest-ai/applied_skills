@@ -18,13 +18,25 @@ When the user wants to **create a brain** / "get started" / doesn't yet have a p
 - **Docs** — folder of narrative documents (PDF/PPTX/DOCX).
 - **Reporting** — folder of the numeric workbooks (XLSX/XLSM), if any. May be the same folder or none (then the numbers lane stays empty — that's fine).
 - **Project dir** — where the brain + configs live (default: `./<name>-brain`).
+- **Source-root semantics** — for each supplied folder decide with the user:
+  - `import` (default/recommended): discover additions and content changes, but a missing file never removes it from the Brain;
+  - `mirror`: an available folder is authoritative, so missing files become removal candidates (still human-confirmed);
+  - `managed`: Brain-owned storage such as project-local `.incoming` for chat attachments.
+  Use portable root keys (`docs`, `reporting`, `incoming`) and paths relative to the project whenever possible. Never put absolute paths into SQLite.
 
 **2. Scaffold + preflight + scan** (deterministic):
 ```bash
 python .../knowledge-pipeline/onboard.py scaffold \
-  --project <proj> --goal "<goal>" --docs <docs> [--reporting <xlsx-dir>] [--corpus <name>]
+  --project <proj> --goal "<goal>" --docs <docs> [--reporting <xlsx-dir>] \
+  [--docs-mode import|mirror] [--reporting-mode import|mirror] [--corpus <name>]
 ```
-This creates the project layout (`schema/ parsed/ taxonomy/ classify/ marts/ vault/`), copies `families.<corpus>.json` + `metrics.<corpus>.json` templates into `schema/`, writes `goal.txt` and a **`BRAIN.md`** with the exact ordered build commands (real paths filled in), then reports missing deps and splits the corpus into narrative-vs-reporting counts.
+This creates the project layout (`schema/ parsed/ taxonomy/ classify/ vision/ marts/ vault/ .incoming/`), copies `families.<corpus>.json` + `metrics.<corpus>.json` templates into `schema/`, and writes:
+
+- `goal.txt`;
+- portable `brain.toml` with `incoming` (`managed`), `docs` (`import` by default), and `reporting` (`import` by default) roots; paths are relative to the project whenever the platform permits;
+- **`BRAIN.md`** with exact ordered build and source-registry commands.
+
+Never overwrite an existing `brain.toml`. After scaffold, read it back, explain each root/mode to the user, and adjust modes/includes only with their agreement. Then report missing deps and narrative-vs-reporting counts.
 
 **If deps are missing**, install them into the skills' **own isolated venv** (never the project's env) with `uv` via the installer:
 ```bash
@@ -33,11 +45,22 @@ This creates the project layout (`schema/ parsed/ taxonomy/ classify/ marts/ vau
 ```
 Deps are torch-free (docling retired) and modest (~200 MB); `.pptx/.docx` also need LibreOffice `soffice` (system dep). `BRAIN.md`'s `$PY` points at whichever venv exists; the zero-install path is `uv run --with-requirements bundles/brain/requirements.txt python <script>`.
 
-**3. Configure the numbers lane (only if there are workbooks).** The narrative/graph lanes need no config, but the marts do: walk the user through editing `schema/families.<corpus>.json` to describe their workbooks (glob, layout, sheets, measures). Use `tabular-semantic-layer` (its `profile_workbooks.py` inspects real files) — this is the one step that genuinely needs their input. If they have no workbooks, skip and note the numbers lane will be empty.
+**3. Initialize and register sources.** The scaffold creates the config, not registry rows. Once the store file exists, run:
 
-**4. Walk the build.** For the complete orchestration contract, read the installed bundle's `AGENT_README.md` when available (source checkout: `bundles/brain/AGENT_README.md`). Create a todo per phase and run in order. Visual corpora have **three** agentic stages: VLM transcription of flagged pages, taxonomy induction, and per-section classification. The top-level coding agent launches those subagents; no script or MCP server launches them automatically. Assemble VLM-enriched Markdown before taxonomy/index/classification, checkpoint long phases, validate every batch result, and never silently continue past a failed step.
+```bash
+./brain source init
+./brain source plan --out source_plan.json
+# Review proposed additions/content changes with the user, then:
+./brain source apply --plan source_plan.json
+```
 
-**5. Verify + first answer.**
+For a deliberately selected single file use `source adopt --root <key> <relative-path>`. For a chat attachment use `source import <temporary-path> --root incoming --provenance '{...}'`. During the first full build, link final parsed documents to registry sources using `brain_sync.py seed --root-key <key> --manifest <parsed>/manifest.json --strict-sources`; for a visual pipeline that emits its own manifest, require the same `{source, md}` mapping. If multiple narrative roots feed one parsed corpus, generate one unambiguous combined manifest or seed them separately without overwriting prior links.
+
+**4. Configure the numbers lane (only if there are workbooks).** The narrative/graph lanes need no config, but the marts do: walk the user through editing `schema/families.<corpus>.json` to describe their workbooks (glob, layout, sheets, measures). Use `tabular-semantic-layer` (its `profile_workbooks.py` inspects real files) — this is the one step that genuinely needs their input. If they have no workbooks, skip and note the numbers lane will be empty.
+
+**5. Walk the build.** For the complete orchestration contract, read the installed bundle's `AGENT_README.md` when available (source checkout: `bundles/brain/AGENT_README.md`). Create a todo per phase and run in order. Visual corpora have **three** agentic stages: VLM transcription of flagged pages, taxonomy induction, and per-section classification. The top-level coding agent launches those subagents; no script or MCP server launches them automatically. Assemble VLM-enriched Markdown before taxonomy/index/classification, checkpoint long phases, validate every batch result, and never silently continue past a failed step.
+
+**6. Verify + first answer.**
 ```bash
 python .../knowledge-pipeline/onboard.py verify --db <proj>/schema/knowledge.sqlite
 ```

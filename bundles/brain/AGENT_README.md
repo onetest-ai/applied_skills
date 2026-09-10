@@ -81,19 +81,29 @@ Run `./brain source plan` before source-driven work. Treat `root_unavailable` as
 Ask for missing values one at a time:
 
 1. analytical goal;
-2. narrative documents directory;
-3. reporting workbook directory, if any;
+2. narrative documents directory and whether it is safe `import` or authoritative `mirror`;
+3. reporting workbook directory, if any, and its `import`/`mirror` semantics;
 4. destination brain project.
+
+Recommend `import` unless the user explicitly says that deleting a file from an available folder should propose deleting it from the Brain. `incoming` is always project-local `managed`.
 
 Then scaffold and preflight:
 
 ```bash
 "$PY" "$SKILLS/knowledge-pipeline/onboard.py" scaffold \
   --project "$PROJECT" --goal "$GOAL" --docs "$DOCS" \
+  --docs-mode "$DOCS_MODE" --reporting-mode "$REPORTING_MODE" \
   ${REPORTING:+--reporting "$REPORTING"}
 ```
 
-Inspect the generated `BRAIN.md`, dependency report, source inventory, and workbook profiles. Configure `families.<corpus>.json` before marts.
+Read the generated `brain.toml` back to the user and confirm:
+
+- root keys and relative paths resolve to the intended directories;
+- `incoming` is `managed` and points to `.incoming`;
+- `docs` and `reporting` are `import` unless the user explicitly chose authoritative `mirror`;
+- include patterns do not unintentionally discover unrelated files.
+
+Do not overwrite a pre-existing config. Then inspect `BRAIN.md`, dependency report, source inventory, and workbook profiles. Configure `families.<corpus>.json` before marts.
 
 Create a durable checkpoint containing inputs, file counts, chosen visual thresholds, taxonomy strategy, and planned batch counts.
 

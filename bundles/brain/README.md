@@ -54,7 +54,9 @@ Don't hand-run the pipeline on your first brain. Ask the orchestrator to **creat
 ```bash
 # the deterministic core of the wizard (the orchestrator drives the questions):
 python .../knowledge-pipeline/onboard.py scaffold --project ./acme-brain \
-  --goal "optimize call-center ops and introduce an AI workforce" --docs ./docs --reporting ./xlsx
+  --goal "optimize call-center ops and introduce an AI workforce" \
+  --docs ./docs --reporting ./xlsx \
+  --docs-mode import --reporting-mode import   # use mirror only for authoritative folders
 python .../knowledge-pipeline/onboard.py verify --db ./acme-brain/schema/knowledge.sqlite
 ```
 
