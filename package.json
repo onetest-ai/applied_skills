@@ -8,5 +8,5 @@
   "repository": { "type": "git", "url": "https://github.com/onetest-ai/applied_skills.git" },
   "author": "onetest-ai",
   "license": "MIT",
-  "keywords": ["cognee", "duckdb", "rag", "semantic-layer", "skills", "claude", "codex", "copilot", "deepseek-harness"]
+  "keywords": ["sqlite", "rag", "semantic-layer", "knowledge-graph", "skills", "claude", "codex", "copilot", "deepseek-harness"]
 }
