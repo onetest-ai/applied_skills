@@ -1,7 +1,7 @@
 # 🧠 Brain — a local, truthful knowledge engine
 
 **One portable `knowledge.sqlite` + an Obsidian vault over a messy corpus of documents *and* spreadsheets.**
-No required cloud service and no lock-in. Copy one file and the whole brain moves with it; expose it through local stdio or explicitly enabled HTTP.
+No required cloud service and no lock-in. Copy `knowledge.sqlite` for text/graph/numeric querying; copy the project’s `assets/` as well when page images and extracted table evidence must remain available. Expose the store through local stdio or explicitly enabled HTTP.
 
 > **The one rule everything obeys:**
 > **Meaning is agentic. Numbers are computed.**
@@ -13,7 +13,7 @@ No required cloud service and no lock-in. Copy one file and the whole brain move
 
 ## What's in the bundle
 
-`brain` collects five skills (+ one optional) and all their scripts into one installable set:
+`brain` collects seven skills (+ one optional) and all their scripts into one installable set:
 
 | Skill | Role | Ships |
 |---|---|---|
@@ -22,6 +22,8 @@ No required cloud service and no lock-in. Copy one file and the whole brain move
 | **knowledge-index** | 🔎 narrative: heading-aware chunks → FTS5 + vectors | `knowledge_index.py`, `chunking.py` (shared) |
 | **tabular-semantic-layer** | 🔢 numbers: Excel → deterministic `facts` | `build_marts.py`, `profile_workbooks.py`, `families.example.json`, `metrics.example.json` |
 | **hybrid-retrieval** | 🧭 answer: route each sub-claim to the right lane, fuse, cite | `query.py` |
+| **visual-parse** | 👁️ page routing + visual understanding | `render_pages.py`, `vision_prep.py`, `vision_assemble.py` |
+| **obsidian-vault** | 🗂️ navigate the generated human-readable view | `SKILL.md` |
 | _cognee_ (optional) | 🌐 external graph service (only if you run one) | `cognee_client.py`, `api-reference.md` |
 
 Plus the repo's top-level **`mcp/brain/`** — the governed FastMCP **tool layer** (`fastmcp_server.py`) with local stdio and opt-in Streamable HTTP. It lives in `mcp/`, not `skills/` (see below).
@@ -47,7 +49,7 @@ The installer reads `bundles/brain/factory.json`, resolves the ordered skill lis
 
 ## Getting started — guided onboarding
 
-Don't hand-run the pipeline on your first brain. Ask the orchestrator to **create a brain** / **get started** and it runs a wizard: it asks for your **goal** (the single analytical goal that scopes everything), your **docs** folder, your **reporting spreadsheets** (if any), and a **project dir** — then scaffolds the layout, drops in config templates, preflights the deps, scans your corpus into narrative-vs-reporting, and writes a `BRAIN.md` with the exact ordered build commands. It walks you through the build (pausing at the two agent steps), verifies every lane, and answers your first question.
+Don't hand-run the pipeline on your first brain. Ask the orchestrator to **create a brain** / **get started** and it runs a wizard: it asks for your **goal** (the single analytical goal that scopes everything), your **docs** folder, your **reporting spreadsheets** (if any), and a **project dir** — then scaffolds the layout, drops in config templates, preflights the deps, scans your corpus into narrative-vs-reporting, and writes a `BRAIN.md` with the exact ordered build commands. It walks you through the build, pausing at the agentic stages (visual transcription when needed, taxonomy induction, and chunk classification), verifies every lane, and answers your first question.
 
 ```bash
 # the deterministic core of the wizard (the orchestrator drives the questions):
@@ -173,53 +175,126 @@ The **Obsidian vault** is a *view* of this same store: one note per chunk, real 
 
 ---
 
-## Build pipeline (run once per corpus; re-run to refresh)
+## Creating and updating a brain
+
+There are two actors:
+
+- **Human/operator:** supplies the goal and paths, approves taxonomy changes, reviews plans and failures, and starts or resumes the build agent.
+- **Orchestrating agent:** runs deterministic scripts in the consuming brain project, launches cheap vision/text subagents for judgment steps, validates their JSON outputs, then continues the pipeline. The subagents do not run by themselves and the MCP answering server does not build the brain.
+
+In other words, “agentic” does not mean an invisible daemon. A human asks an agent in Claude Code, dsh, Codex, or another capable host to create/update the brain. That top-level agent reads `knowledge-pipeline` and `visual-parse`, executes commands in the **brain project**, and dispatches subagents from that same session. See [`AGENT_README.md`](AGENT_README.md) for its exact runbook, contracts, checkpoints, and failure rules.
+
+### Project artifacts and ownership
+
+```text
+<brain-project>/
+  goal.txt
+  schema/                         # families/metrics config + usually knowledge.sqlite
+  taxonomy/taxonomy_vN.json       # reviewed vocabulary; source of truth
+  parsed/                         # final, VLM-enriched Markdown consumed by brain_sync
+  assets/<doc-slug>/
+    pages.json                    # page routing decision + img_sha
+    pNN.png                       # rendered factual evidence
+    pNN.txt                       # verbatim text layer
+    pNN.tables.md                 # deterministic table grids, when found
+  vision/                         # transient batch_*.json + agent result_*.json
+  classify/                       # transient batch_*.json + agent result_*.json
+  marts/                          # deterministic audits/intermediates
+  vault/                          # disposable human view
+  sync_plan.json                  # update work order
+```
+
+`knowledge.sqlite` owns two important caches/provenance tables:
+
+- `page_render(img_sha, …, md)` caches VLM transcription by rendered-page hash.
+- `documents(doc_id, sha, …)` records the hash of each **final parsed Markdown document** for indexing delta detection.
+
+These are separate deltas: page hashes avoid repeated VLM work; parsed-document hashes avoid repeated embedding and classification.
+
+### Full creation flow
 
 ```mermaid
 flowchart TD
-    subgraph IN["📥 Corpus"]
-        D["📄 Docs<br/>PDF · PPTX · DOCX"]
-        X["📊 Spreadsheets<br/>XLSX reporting"]
-    end
-
-    D --> P["1 · parse + visual-parse<br/>→ uniform Markdown<br/><i>pymupdf text · VLM for visual pages</i>"]
-    P --> TX["2 · induce taxonomy<br/>map → reduce → judge → emit<br/><b>low-tier agents</b> (Haiku)<br/>→ taxonomy_v0.json"]
-
-    P --> IDX["3 · knowledge_index.py<br/>heading-aware sections (shared chunker)<br/>→ chunks + FTS5 + sqlite-vec"]
-    TX --> G["4 · build_graph.py<br/>taxonomy → graph_nodes / edges<br/>(L1/L2 · subclass_of)"]
-    IDX --> CLS["5 · classify_prep → <b>Haiku agents</b> → classify_write<br/>real per-section tags (empty when nothing fits)<br/>→ chunk_topics + 'about' edges"]
-    G --> CLS
-
-    X --> M["6 · build_marts.py<br/>Excel → weighted rollups<br/>→ facts (+ audit, --strict)"]
-
-    CLS --> DB[("🗄️ knowledge.sqlite<br/>ONE portable file")]
-    IDX --> DB
-    G --> DB
-    M --> DB
-    DB --> OBS["7 · to_obsidian.py<br/>vault = a VIEW of the store<br/>notes · tags · [[topic]] links"]
-
-    classDef agent fill:#fff3e0,stroke:#e65100,color:#bf360c;
-    classDef det fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;
-    classDef store fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;
-    class TX,CLS agent
-    class P,IDX,G,M det
-    class DB,OBS store
+    H["Human: goal + source/reporting/project paths"] --> O["Top-level orchestrating agent"]
+    O --> R["render_pages.py for every narrative doc"]
+    R --> P["pages.json: text/table/drawing signals + flagged + img_sha"]
+    P --> VP["vision_prep.py: flagged AND uncached pages only"]
+    VP --> VA["Vision subagents → result_k.json"]
+    VA --> AS["vision_assemble.py → final parsed/*.md + page_render cache"]
+    AS --> TX["Taxonomy agents: map → reduce → judge → reviewed taxonomy_vN.json"]
+    AS --> IX["knowledge_index.py --reset"]
+    TX --> GR["build_graph.py"]
+    IX --> CP["classify_prep.py"]
+    GR --> CP
+    CP --> CA["Classification subagents → result_k.json"]
+    CA --> CW["classify_write.py"]
+    CW --> REL["related"]
+    REL --> DB[("knowledge.sqlite")]
+    X["Reporting workbooks"] --> M["build_marts.py --strict"] --> DB
+    DB --> V["to_obsidian.py --clean"]
+    V --> S["brain_sync.py seed"]
 ```
 
-**Steps 2 and 5 are agents on cheap models, not scripts** — deciding what a term *means*, what merges, and which section is *really* about a category is judgment, and a low-tier model does it well and cheaply. Everything numeric (steps 3, 4, 6) is deterministic code. The document bulk lives and dies inside each subagent; the orchestrator only ever sees compact JSON.
+Ordering matters:
 
-```bash
-DB=<project>/schema/knowledge.sqlite
-python .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf
-# 2. induce taxonomy (map→reduce→judge→emit; Haiku subagents) → taxonomy_v0.json
-python .../knowledge-index/knowledge_index.py index --db "$DB" --corpus <project>/parsed --reset
-python .../corpus-taxonomy-extraction/build_graph.py --taxonomy <project>/taxonomy/taxonomy_v0.json --db "$DB"
-python .../corpus-taxonomy-extraction/classify_prep.py --db "$DB" --taxonomy <project>/taxonomy/taxonomy_v0.json --out <project>/classify --batches 5
-#    → dispatch N Haiku subagents → classify/result_k.json
-python .../corpus-taxonomy-extraction/classify_write.py --db "$DB" --results <project>/classify
-python .../tabular-semantic-layer/build_marts.py --root <reporting> --config <project>/schema/families.<corpus>.json --out-dir <project>/marts --db "$DB"
-python .../corpus-taxonomy-extraction/to_obsidian.py --db "$DB" --out <project>/vault
+1. **Render first.** `render_pages.py` converts Office files through LibreOffice, renders every page, extracts text and table grids, and flags pages whose layout probably carries meaning.
+2. **Transcribe before taxonomy, indexing, or classification.** `vision_prep.py` creates batches only for `flagged` pages whose `img_sha` is absent from `page_render`. The orchestrator launches vision-capable low-cost subagents; each writes one `result_k.json`. `vision_assemble.py` then combines VLM Markdown for visual pages with PyMuPDF text for ordinary pages and stores fresh VLM results in `page_render`.
+3. **Induce taxonomy from final enriched Markdown.** This is agentic and human-gated. A pre-VLM taxonomy can miss concepts visible only in diagrams.
+4. **Index once, after visual assembly.** Do not classify a provisional text-only index and then redo it; that creates a needless second classification pass.
+5. **Classify after index + graph exist.** `classify_prep.py` creates batches; text agents assign exact L1/L2 labels; `classify_write.py` commits them.
+6. Build `related`, deterministic marts, and the optional vault; verify; finally run `brain_sync.py seed` to establish the update baseline.
+
+The generic text-only `parse_corpus.py` remains useful for corpora known not to need visual understanding. For slide decks, diagrams, timelines, or chart-heavy PDFs, the canonical path is **`render_pages → vision_prep → vision agents → vision_assemble`**, not `parse_corpus.py` alone.
+
+### Full update flow
+
+`./brain update <parsed>` starts at the **already assembled `parsed/` boundary**. It does not inspect source PDFs, render pages, or launch agents. A correct source-to-store update is therefore orchestrated as follows:
+
+1. Human tells the top-level agent which source corpus and brain project to update.
+2. Agent identifies added/changed/deleted source documents. Until a source-manifest command exists, use source paths plus SHA-256; do not rely only on mtime.
+3. For each added/changed narrative document, run `render_pages.py` into its stable asset directory. **Prevent basename collisions:** the current renderer derives `<slug>` from basename only, so same-named files from different source folders must be rendered under separate asset roots or assigned collision-free names by the orchestrator. Remove stale asset/parsed outputs for deleted documents.
+4. Use a **fresh run-specific `vision/` directory** (prep/consumer scripts do not clean stale files), then run `vision_prep.py --db "$DB"` across the changed render directories. Existing `page_render.img_sha` values are skipped automatically.
+5. If batches exist, dispatch vision subagents and validate that every batch `img_sha` appears exactly once in `result_*.json`; the consumer scripts are intentionally permissive, so this validation is mandatory.
+6. Run `vision_assemble.py --results <vision> --db "$DB"` for changed documents. This creates the final enriched Markdown and updates the page cache. For a cache-only run, `--db` can supply previous transcriptions even when no new results exist.
+7. Run `brain_sync.py plan`; show the added/changed/deleted/unchanged summary to the human. Note that `plan` ensures the `documents` table exists (and opening a missing DB can create it), so it is not byte-for-byte read-only. Then run `apply`, which snapshots SQLite, deletes removed documents, and re-embeds only added/changed parsed docs. It writes `sync_plan.json`. Preserve the snapshot: `apply` is not fully atomic because rebuilding `related` commits internally, so a later failure can require explicit rollback.
+8. Run `classify_prep.py --chunks <sync_plan.reclassify_chunk_ids>`, dispatch text subagents, validate results, and run incremental `classify_write.py` **without `--reset`**.
+9. Rebuild graph and related; rebuild marts only if reporting workbooks changed; regenerate the vault with `--clean`; run verify.
+10. Keep the current taxonomy unless coverage indicates vocabulary drift. Taxonomy expansion is a separate additive, human-approved operation—never silently rename/remove existing nodes.
+
+```text
+source change
+  → render changed docs
+  → page img_sha cache
+  → VLM only flagged + uncached pages
+  → assemble changed parsed docs
+  → parsed SHA delta
+  → embed/tag only changed chunks
+  → reconcile graph/related/marts/vault
 ```
+
+### Human quick start
+
+You do not need to run every command manually. From the brain project, ask a capable coding agent:
+
+> Create (or update) this brain from `<docs>`, using the full visual pipeline. Follow the brain bundle’s `AGENT_README.md`. Show me the source and parsed delta before destructive changes; pause for taxonomy changes; verify all lanes at the end.
+
+The agent should create a visible task list and checkpoints. You approve:
+
+- the analytical goal and input paths;
+- the initial taxonomy or an additive taxonomy diff;
+- the `brain_sync plan`, especially deletions;
+- any failed/partial VLM or classification batches;
+- completion only after verification.
+
+### Important current limitations
+
+- There is not yet a single source-aware executable that wraps the entire flow. The **top-level agent is the orchestrator**.
+- `brain_sync` compares final `parsed/*.md`, not original binaries.
+- `parse_corpus.py` rewrites outputs and does not clean removed outputs automatically; for visual corpora prefer the explicit per-document flow above and reconcile deletions deliberately.
+- `page_render` makes VLM incremental, but rendering changed source documents remains deterministic work.
+- Agent batch directories are transient work products and must be fresh per run; stale `result_*.json` files are otherwise consumed. Keep a run directory until validation succeeds, then archive or remove it. The durable VLM cache is in SQLite.
+- Extracted `pNN.tables.md` grids remain factual sidecars served by `get_evidence`; `vision_assemble.py` does not append them to parsed Markdown. Preserve `assets/` and use evidence retrieval for table figures.
+- A rendered page is one top-level `##` section, but VLM subheadings can split it into multiple chunks/notes. The image marker is inherited across those sibling chunks.
 
 ---
 
@@ -269,12 +344,12 @@ The pipeline deliberately separates **two different deltas**:
 
 | What changes | Mechanism | Automatic? |
 |---|---|---|
-| **Content** (docs added/changed/deleted) | `brain_sync` by content hash → re-embed + reclassify only the delta | ✅ automatic (`./brain update`) |
+| **Content** (docs added/changed/deleted) | top-level agent runs source visual preparation, then `brain_sync` diffs final parsed Markdown → re-embed + reclassify only the delta | ⚙️ agent-orchestrated; `./brain update` covers parsed→store only |
 | **Vocabulary** (the taxonomy itself) | re-induce + **additive** merge | ❌ deliberate, human-gated |
 
-So on `./brain update`: the taxonomy is **reused as-is**; changed docs are **reclassified against the existing vocabulary**; a genuinely new concept in a new doc **does not get a new L1** until someone re-induces and extends the taxonomy.
+During the complete agent-orchestrated update, `./brain update` is the parsed→store apply step: the taxonomy is **reused as-is**, after which the top-level agent reclassifies only chunk IDs listed in `sync_plan.json`. A genuinely new concept does **not** get a new L1 until someone proposes and approves an additive taxonomy extension.
 
-**Why vocabulary change is gated and additive:** chunk ids are content-addressed and graph node ids are `slug(label)`, so **adding** L1/L2 is safe (`build_graph` is non-destructive — it rebuilds `subclass_of`, preserves `about` edges, and only prunes nodes that vanished). But **renaming or removing** an L1 changes its node id and orphans every `chunk_topics` tag and `about` edge that pointed at it. Therefore taxonomy evolution during updates is **add-only, never rename**, and passes a human gate.
+**Why vocabulary change is gated and additive:** chunk ids are deterministic from source path + section ordinal, while graph node ids are `slug(label)`. **Adding** L1/L2 is safe (`build_graph` rebuilds `subclass_of` and preserves valid `about` edges). But **renaming or removing** a category changes/removes its node id; `build_graph` then prunes that node and deletes its dependent `chunk_topics` and `about` edges. That is destructive classification loss, so taxonomy evolution during updates is **add-only, never rename/remove**, and passes a human gate.
 
 ### Refreshing the taxonomy — **assisted** (agent proposes, human gates), additive only
 When the signal appears (a rising share of **untagged** chunks), grow the taxonomy without breaking anything:

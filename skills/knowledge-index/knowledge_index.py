@@ -40,9 +40,9 @@ def fts_query(q):
     return " OR ".join(toks) if toks else '""'
 
 def chunk_id(source, ordv):
-    """Stable, content-addressed chunk id = f(source, section-ordinal). An unchanged
-    document keeps the SAME chunk ids across rebuilds, so chunk_topics / graph 'about'
-    edges (keyed by chunk_id) survive. Positive int64 (valid vec0 rowid)."""
+    """Stable structural chunk id = f(source, section-ordinal). An unchanged document
+    with unchanged section boundaries keeps the SAME chunk ids across rebuilds, so
+    chunk_topics / graph 'about' edges survive. Positive int64 (valid vec0 rowid)."""
     h = hashlib.sha256(f"{source}\x00{ordv}".encode()).digest()
     return int.from_bytes(h[:8], "big") >> 1
 
