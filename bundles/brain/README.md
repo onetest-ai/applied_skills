@@ -13,11 +13,12 @@ No required cloud service and no lock-in. Copy `knowledge.sqlite` for text/graph
 
 ## What's in the bundle
 
-`brain` collects seven skills (+ one optional) and all their scripts into one installable set:
+`brain` collects eight skills (+ one optional) and all their scripts into one installable set:
 
 | Skill | Role | Ships |
 |---|---|---|
-| **knowledge-pipeline** | 🎛️ orchestrator — the entrypoint | `SKILL.md` (build & answer sequence) |
+| **knowledge-pipeline** | 🎛️ build orchestrator — create and answer | `SKILL.md` (build & answer sequence) |
+| **brain-maintenance** | 🔄 update/release planner — read-only status plus agent-gated update and external deployment guidance | `maintenance.py`, profile template, safety gates |
 | **corpus-taxonomy-extraction** | 🏷️ meaning: parse, induce taxonomy, build graph, tag sections, emit vault | `parse_corpus.py`, `consolidate.py`, `emit_taxonomy.py`, `emit_ontology.py`, `chunking.py`, `build_graph.py`, `classify_prep.py`, `classify_write.py`, `to_obsidian.py` |
 | **knowledge-index** | 🔎 narrative: heading-aware chunks → FTS5 + vectors | `knowledge_index.py`, `chunking.py` (shared) |
 | **tabular-semantic-layer** | 🔢 numbers: Excel → deterministic `facts` | `build_marts.py`, `profile_workbooks.py`, `families.example.json`, `metrics.example.json` |

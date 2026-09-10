@@ -92,9 +92,19 @@ def source_ids(c, parsed, manifest=None, root_key=None, strict=False):
         return {}, sorted(links)
     out, unmanaged = {}, []
     for doc_id, (key, rel) in links.items():
-        row = c.execute("SELECT source_id FROM sources WHERE root_key=? AND relative_path=? AND state='active'", (key, rel)).fetchone()
-        if row: out[doc_id] = row[0]
-        else: unmanaged.append(doc_id)
+        row = c.execute("SELECT source_id,state FROM sources WHERE root_key=? AND relative_path=?", (key, rel)).fetchone()
+        if row and row[1] == "active":
+            out[doc_id] = row[0]
+        elif row and row[1] == "removed":
+            # A previously linked tombstoned source is a valid strict mapping for deletion.
+            # Do not allow a new parsed document to bind to a removed source.
+            linked = c.execute("SELECT 1 FROM documents WHERE doc_id=? AND source_id=?", (doc_id, row[0])).fetchone()
+            if linked:
+                out[doc_id] = row[0]
+            else:
+                unmanaged.append(doc_id)
+        else:
+            unmanaged.append(doc_id)
     if strict:
         scanned = set(scan(parsed))
         manifest_docs = set(links)

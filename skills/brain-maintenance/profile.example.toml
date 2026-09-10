@@ -1,0 +1,61 @@
+version = 1
+
+[project]
+root = "."
+
+[paths]
+brain_config = "brain.toml"
+db = "schema/knowledge.sqlite"
+parsed = "parsed"
+manifest = "parsed/manifest.json"
+assets = "assets"
+taxonomy = "taxonomy/taxonomy_v0.json"
+runs = ".brain-maintenance/runs"
+
+[runtime]
+python = ".dsh/venv/bin/python"
+skills = ".dsh/skills"
+
+[update]
+# Version 1 supports one strict narrative root per parsed manifest.
+root_key = "docs"
+
+[classification]
+batches = 5
+max_labels = 3
+
+[marts]
+enabled = true
+root_key = "reporting"
+families = "schema/families.example.json"
+metrics = "schema/metrics.example.json"
+out = "marts"
+
+[verification]
+required_lanes = ["narrative", "taxonomy", "numbers"]
+smoke_query = "overview"
+expected_tools = [
+  "list_metrics",
+  "get_metric",
+  "search_knowledge",
+  "get_taxonomy",
+  "find_related_content",
+  "get_evidence",
+  "health",
+]
+
+[safety]
+require_strict_sources = true
+require_snapshot = true
+allow_legacy_unlinked_delete = false
+max_deleted_docs = 0
+
+[deployment]
+enabled = false
+# When enabled, these must exist inside the project. The adapter must be executable and
+# implement the project-defined plan/deploy/verify contract. It is invoked by the agent,
+# never by maintenance.py and never as a shell string.
+adapter = "ops/brain_deploy"
+profile = "ops/deploy.toml"
+secret_env = ["BRAIN_API_KEY"]
+require_immutable_version = true
