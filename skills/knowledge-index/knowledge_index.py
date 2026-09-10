@@ -40,9 +40,9 @@ def fts_query(q):
     return " OR ".join(toks) if toks else '""'
 
 def chunk_id(source, ordv):
-    """Stable, content-addressed chunk id = f(source, section-ordinal). An unchanged
-    document keeps the SAME chunk ids across rebuilds, so chunk_topics / graph 'about'
-    edges (keyed by chunk_id) survive. Positive int64 (valid vec0 rowid)."""
+    """Stable structural chunk id = f(source, section-ordinal). An unchanged document
+    with unchanged section boundaries keeps the SAME chunk ids across rebuilds, so
+    chunk_topics / graph 'about' edges survive. Positive int64 (valid vec0 rowid)."""
     h = hashlib.sha256(f"{source}\x00{ordv}".encode()).digest()
     return int.from_bytes(h[:8], "big") >> 1
 
@@ -90,19 +90,19 @@ def delete_docs(c, sources):
         c.execute("DELETE FROM chunks WHERE source=?", (src,))
     return len(sources)
 
-def build_related(c, k=6, min_score=0.55, cross_doc=True):
+def build_related(c, k=6, min_score=0.55, cross_doc=True, commit=True):
     """Native semantic 'related' layer from the vectors we already store: for each
     chunk, its top-k cosine-nearest OTHER sections. Full 384-dim similarity (not a
     lossy 2D/3D projection), deterministic, offline — no external plugin/API.
     Writes `related(chunk_id, related_id, score)` (symmetric pair kept once, higher
     score wins). cross_doc=True favors cross-document links (the useful, non-obvious
     ones); set False to also relate adjacent sections of the same doc."""
-    c.executescript("""
-      CREATE TABLE IF NOT EXISTS related(chunk_id INT, related_id INT, score REAL,
-                                         PRIMARY KEY(chunk_id, related_id));
-      CREATE INDEX IF NOT EXISTS idx_rel_chunk ON related(chunk_id);
-      DELETE FROM related;
-    """)
+    # Individual statements preserve the caller's transaction. sqlite3.executescript()
+    # implicitly commits pending work and would make brain_sync.apply only partially atomic.
+    c.execute("""CREATE TABLE IF NOT EXISTS related(
+        chunk_id INT, related_id INT, score REAL, PRIMARY KEY(chunk_id, related_id))""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_rel_chunk ON related(chunk_id)")
+    c.execute("DELETE FROM related")
     src = {r[0]: r[1] for r in c.execute("SELECT id, source FROM chunks")}
     n = 0
     for cid in list(src):
@@ -129,7 +129,8 @@ def build_related(c, k=6, min_score=0.55, cross_doc=True):
             if kept >= k:
                 break
     n = c.execute("SELECT COUNT(*) FROM related").fetchone()[0]
-    c.commit()
+    if commit:
+        c.commit()
     return n
 
 def cmd_related(a):

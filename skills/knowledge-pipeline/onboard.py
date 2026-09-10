@@ -114,7 +114,7 @@ def cmd_scaffold(a):
     reporting = Path(a.reporting).expanduser().resolve() if a.reporting else docs
     db = proj / "schema" / "knowledge.sqlite"
 
-    for sub in ["schema", "parsed", "taxonomy", "classify", "marts", "vault"]:
+    for sub in ["schema", "parsed", "taxonomy", "classify", "vision", "marts", "vault", ".incoming"]:
         (proj / sub).mkdir(parents=True, exist_ok=True)
 
     fam = proj / "schema" / f"families.{corpus}.json"
@@ -124,6 +124,24 @@ def cmd_scaffold(a):
     if not met.exists():
         _copy_template(TSL / "metrics.example.json", met, corpus)
     (proj / "goal.txt").write_text((a.goal or "") + "\n")
+    config = proj / "brain.toml"
+    if not config.exists():
+        def rel_or_abs(path):
+            if path is None: return ""
+            try: return Path(os.path.relpath(path, proj)).as_posix()
+            except ValueError: return str(path)
+        docs_path = rel_or_abs(docs)
+        reporting_path = rel_or_abs(reporting)
+        lines = ["version = 1", "", "[paths]", 'parsed = "parsed"', "",
+                 "[sources.roots.incoming]", 'path = ".incoming"', 'mode = "managed"',
+                 'include = ["**/*"]']
+        if docs:
+            lines += ["", "[sources.roots.docs]", f"path = {json.dumps(docs_path)}", f"mode = {json.dumps(a.docs_mode)}",
+                      'include = ["**/*.pdf", "**/*.ppt", "**/*.pptx", "**/*.doc", "**/*.docx"]']
+        if reporting:
+            lines += ["", "[sources.roots.reporting]", f"path = {json.dumps(reporting_path)}", f"mode = {json.dumps(a.reporting_mode)}",
+                      'include = ["**/*.xlsx", "**/*.xlsm", "**/*.xls"]']
+        config.write_text("\n".join(lines) + "\n")
 
     # drop the self-discovering launcher at the project root so nothing hardcodes
     # an interpreter/path: `./brain which|search|sql|verify|py`
@@ -138,7 +156,7 @@ def cmd_scaffold(a):
     print(f"scaffolded project: {proj}")
     print(f"  corpus name : {corpus}")
     print(f"  store (db)  : {db}")
-    print(f"  configs     : {fam.name}, {met.name}  (edit these to match your workbooks)")
+    print(f"  configs     : brain.toml, {fam.name}, {met.name}  (edit workbook mappings as needed)")
     print(f"  plan written: {proj/'BRAIN.md'}\n")
     cmd_scan(argparse.Namespace(docs=str(docs) if docs else None))
     print(f"\nNext: edit schema/{fam.name} to describe your reporting workbooks, then follow BRAIN.md.")
@@ -155,11 +173,41 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal):
     **Goal (noise filter):** {goal or "<state your analytical goal>"}
 
     **Store:** `{db}` — one portable SQLite file (chunks+FTS+vector · facts · graph).
+    **Source config:** `{proj/'brain.toml'}` — named roots with paths relative to this project.
     Rule: *meaning is agentic, numbers are computed.* Every answer cited or "not modeled".
 
     **Python:** `$PY` below is the skills' own project-local venv (isolated from your
     project's deps). Create it once with:
     `./install.sh --bundle brain --deps` (or `npx … init --bundle brain --deps`).
+
+    ## Source roots and registry
+
+    `brain.toml` was generated with these defaults:
+    - `incoming` → `.incoming`, mode `managed` (Brain-owned chat attachments)
+    - `docs` → the supplied narrative folder, mode `import`
+    - `reporting` → the supplied workbook folder, mode `import`
+
+    `import` discovers add/change but never infers deletion from absence. Change a root to
+    `mirror` only if that available directory is authoritative and missing members should
+    become human-approved removal candidates. If a root is unavailable, stop; never treat
+    it as an empty corpus. Paths are resolved relative to `brain.toml`, so moving the project
+    and its local mother-source folders preserves their logical identities.
+
+    ```bash
+    DB="{db}"
+    PY="{py}"          # the brain venv interpreter (BRAIN_PY)
+
+    # Initialize source metadata schema, inspect discovery, then approve safe metadata actions.
+    ./brain source init
+    ./brain source plan --out "{proj/'source_plan.json'}"
+    ./brain source apply --plan "{proj/'source_plan.json'}"
+
+    # One explicit existing file:
+    # ./brain source adopt --root docs "relative/path/inside/docs.pdf" --description "..."
+    # Chat attachment (temporary host path → durable project-local .incoming):
+    # ./brain source import "/temporary/attachment.pdf" --root incoming \
+    #   --provenance '{{"attachment_id":"…","conversation_id":"…"}}'
+    ```
 
     ## Build sequence
     Steps marked 🤖 are **low-tier agents** (judgment), the rest are deterministic scripts.
@@ -269,6 +317,10 @@ def main():
     s.add_argument("--goal", default="", help="analytical goal string (the noise filter)")
     s.add_argument("--docs", help="dir of narrative docs (pdf/pptx/docx)")
     s.add_argument("--reporting", help="dir of reporting spreadsheets (defaults to --docs)")
+    s.add_argument("--docs-mode", choices=("import", "mirror"), default="import",
+                   help="source-root semantics for narrative docs (default: safe import)")
+    s.add_argument("--reporting-mode", choices=("import", "mirror"), default="import",
+                   help="source-root semantics for reporting files (default: safe import)")
     s.add_argument("--corpus", help="corpus name for config filenames (default: project dir name)")
     s.set_defaults(func=cmd_scaffold)
 

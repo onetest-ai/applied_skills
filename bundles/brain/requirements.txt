@@ -16,6 +16,7 @@ fastembed
 # parsing (corpus-taxonomy-extraction + visual-parse): text layer, page render, tables — no torch
 pymupdf
 openpyxl     # XLSX structure dump
+tomli; python_version < "3.11"  # brain.toml source-root config on Python 3.10
 
 # numbers lane (tabular-semantic-layer): Excel -> facts
 pandas

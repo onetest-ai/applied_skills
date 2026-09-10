@@ -18,13 +18,25 @@ When the user wants to **create a brain** / "get started" / doesn't yet have a p
 - **Docs** — folder of narrative documents (PDF/PPTX/DOCX).
 - **Reporting** — folder of the numeric workbooks (XLSX/XLSM), if any. May be the same folder or none (then the numbers lane stays empty — that's fine).
 - **Project dir** — where the brain + configs live (default: `./<name>-brain`).
+- **Source-root semantics** — for each supplied folder decide with the user:
+  - `import` (default/recommended): discover additions and content changes, but a missing file never removes it from the Brain;
+  - `mirror`: an available folder is authoritative, so missing files become removal candidates (still human-confirmed);
+  - `managed`: Brain-owned storage such as project-local `.incoming` for chat attachments.
+  Use portable root keys (`docs`, `reporting`, `incoming`) and paths relative to the project whenever possible. Never put absolute paths into SQLite.
 
 **2. Scaffold + preflight + scan** (deterministic):
 ```bash
 python .../knowledge-pipeline/onboard.py scaffold \
-  --project <proj> --goal "<goal>" --docs <docs> [--reporting <xlsx-dir>] [--corpus <name>]
+  --project <proj> --goal "<goal>" --docs <docs> [--reporting <xlsx-dir>] \
+  [--docs-mode import|mirror] [--reporting-mode import|mirror] [--corpus <name>]
 ```
-This creates the project layout (`schema/ parsed/ taxonomy/ classify/ marts/ vault/`), copies `families.<corpus>.json` + `metrics.<corpus>.json` templates into `schema/`, writes `goal.txt` and a **`BRAIN.md`** with the exact ordered build commands (real paths filled in), then reports missing deps and splits the corpus into narrative-vs-reporting counts.
+This creates the project layout (`schema/ parsed/ taxonomy/ classify/ vision/ marts/ vault/ .incoming/`), copies `families.<corpus>.json` + `metrics.<corpus>.json` templates into `schema/`, and writes:
+
+- `goal.txt`;
+- portable `brain.toml` with `incoming` (`managed`), `docs` (`import` by default), and `reporting` (`import` by default) roots; paths are relative to the project whenever the platform permits;
+- **`BRAIN.md`** with exact ordered build and source-registry commands.
+
+Never overwrite an existing `brain.toml`. After scaffold, read it back, explain each root/mode to the user, and adjust modes/includes only with their agreement. Then report missing deps and narrative-vs-reporting counts.
 
 **If deps are missing**, install them into the skills' **own isolated venv** (never the project's env) with `uv` via the installer:
 ```bash
@@ -33,11 +45,22 @@ This creates the project layout (`schema/ parsed/ taxonomy/ classify/ marts/ vau
 ```
 Deps are torch-free (docling retired) and modest (~200 MB); `.pptx/.docx` also need LibreOffice `soffice` (system dep). `BRAIN.md`'s `$PY` points at whichever venv exists; the zero-install path is `uv run --with-requirements bundles/brain/requirements.txt python <script>`.
 
-**3. Configure the numbers lane (only if there are workbooks).** The narrative/graph lanes need no config, but the marts do: walk the user through editing `schema/families.<corpus>.json` to describe their workbooks (glob, layout, sheets, measures). Use `tabular-semantic-layer` (its `profile_workbooks.py` inspects real files) — this is the one step that genuinely needs their input. If they have no workbooks, skip and note the numbers lane will be empty.
+**3. Initialize and register sources.** The scaffold creates the config, not registry rows. Once the store file exists, run:
 
-**4. Walk the build.** Create a todo per step from `BRAIN.md` and run them in order, pausing at the two 🤖 agent steps (taxonomy induction, per-section classification) to dispatch low-tier subagents per `corpus-taxonomy-extraction`. Checkpoint on the long ones. Don't silently continue past a failed step — surface it.
+```bash
+./brain source init
+./brain source plan --out source_plan.json
+# Review proposed additions/content changes with the user, then:
+./brain source apply --plan source_plan.json
+```
 
-**5. Verify + first answer.**
+For a deliberately selected single file use `source adopt --root <key> <relative-path>`. For a chat attachment use `source import <temporary-path> --root incoming --provenance '{...}'`. During the first full build, link final parsed documents to registry sources using `brain_sync.py seed --root-key <key> --manifest <parsed>/manifest.json --strict-sources`; for a visual pipeline that emits its own manifest, require the same `{source, md}` mapping. If multiple narrative roots feed one parsed corpus, generate one unambiguous combined manifest or seed them separately without overwriting prior links.
+
+**4. Configure the numbers lane (only if there are workbooks).** The narrative/graph lanes need no config, but the marts do: walk the user through editing `schema/families.<corpus>.json` to describe their workbooks (glob, layout, sheets, measures). Use `tabular-semantic-layer` (its `profile_workbooks.py` inspects real files) — this is the one step that genuinely needs their input. If they have no workbooks, skip and note the numbers lane will be empty.
+
+**5. Walk the build.** For the complete orchestration contract, read the installed bundle's `AGENT_README.md` when available (source checkout: `bundles/brain/AGENT_README.md`). Create a todo per phase and run in order. Visual corpora have **three** agentic stages: VLM transcription of flagged pages, taxonomy induction, and per-section classification. The top-level coding agent launches those subagents; no script or MCP server launches them automatically. Assemble VLM-enriched Markdown before taxonomy/index/classification, checkpoint long phases, validate every batch result, and never silently continue past a failed step.
+
+**6. Verify + first answer.**
 ```bash
 python .../knowledge-pipeline/onboard.py verify --db <proj>/schema/knowledge.sqlite
 ```
@@ -82,35 +105,61 @@ python .../corpus-taxonomy-extraction/to_obsidian.py --db "$DB" --out <project>/
 # 8. record document hashes so future updates can diff (see "Updating" below)
 python .../knowledge-pipeline/brain_sync.py seed --db "$DB" --parsed <project>/parsed
 ```
-Chunk ids are content-addressed (`f(source, section-ordinal)`), so an unchanged document keeps its ids across rebuilds and its tags/graph edges survive — this is what makes incremental updates safe.
+Chunk ids are deterministic (`f(source, section-ordinal)`), so an unchanged document with unchanged section boundaries keeps its ids across rebuilds. During an update, changed documents are delete-then-reindexed and their new chunk ids are explicitly reclassified; unchanged documents keep their tags/graph edges.
 Result: one `knowledge.sqlite` — `chunks`/`chunks_fts`/`chunks_vec` (a chunk = a section = an Obsidian note), `chunk_topics` (real per-section taxonomy tags via low-tier agents), `facts` (marts), `graph_nodes`/`graph_edges` (taxonomy vertices + `subclass_of` + `about` edges to chunks). Check the `build_marts` audit (`--strict` in CI). The vault is generated from the store, so notes, retrieval chunks, tags, and graph all reference the same ids.
 
 ## Updating the brain (documents add / change / delete)
 
-The store records a **content hash per document** (`documents` table), so updates are **incremental** — only the delta is re-embedded and re-classified, and unchanged docs (with their tags + graph edges) are left untouched. Cost scales with the change, not the corpus.
+Read `bundles/brain/AGENT_README.md` for the authoritative source-to-store update runbook. The top-level coding agent orchestrates two deltas:
+
+1. **source/page delta:** identify changed source documents, rerun `render_pages.py`, use `page_render.img_sha` so `vision_prep.py` sends only flagged uncached pages to vision subagents, then assemble final enriched Markdown;
+2. **parsed/store delta:** `brain_sync` compares SHA-256 of final `parsed/*.md` against the `documents` table, re-embeds only added/changed docs, deletes removed docs, and writes `sync_plan.json` for incremental classification.
+
+`./brain update <parsed>` covers only the second boundary. It does **not** parse source files, run visual routing, or launch agents.
 
 ```bash
-# 1. re-parse the corpus (or just the changed sources) into <project>/parsed
-python .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf
-# 2. see the delta
+# After changed sources have gone through render → vision_prep → agents → vision_assemble:
 python .../knowledge-pipeline/brain_sync.py plan  --db "$DB" --parsed <project>/parsed
-# 3. apply it (snapshots the .sqlite first; (re)embeds only added/changed, deletes removed)
-python .../knowledge-pipeline/brain_sync.py apply --db "$DB" --parsed <project>/parsed
-#    → writes sync_plan.json naming the chunk ids that must be RE-CLASSIFIED
-# 4. 🤖 reclassify ONLY those chunks (agentic), then refresh graph + vault:
-python .../corpus-taxonomy-extraction/classify_prep.py  --db "$DB" --taxonomy <tax> --out <cls> --chunks <ids from sync_plan.json>
-#    → Haiku subagents → classify/result_k.json
-python .../corpus-taxonomy-extraction/classify_write.py --db "$DB" --results <cls>          # incremental (only these chunks)
-python .../corpus-taxonomy-extraction/build_graph.py    --db "$DB" --taxonomy <tax>          # rebuilds subclass_of; preserves 'about'
-python .../corpus-taxonomy-extraction/to_obsidian.py    --db "$DB" --out <project>/vault --clean
-# marts: re-run build_marts only if the reporting workbooks changed (it's a full idempotent recompute)
-# rollback if needed:  brain_sync.py rollback --db "$DB"
+# show/approve the delta; plan ensures `documents` exists, so validate the DB path first
+python .../knowledge-pipeline/brain_sync.py apply --db "$DB" --parsed <project>/parsed --out <project>
+# apply snapshots first and writes sync_plan.json; preserve the snapshot for rollback
+
+# Use a fresh result directory; scripts do not clean stale result_*.json:
+python .../corpus-taxonomy-extraction/classify_prep.py \
+  --db "$DB" --taxonomy <tax> --out <fresh-cls-run> --chunks <ids from sync_plan.json>
+# → low-tier text subagents → <fresh-cls-run>/result_k.json; validate complete ID coverage
+python .../corpus-taxonomy-extraction/classify_write.py --db "$DB" --results <fresh-cls-run>
+python .../corpus-taxonomy-extraction/build_graph.py --db "$DB" --taxonomy <tax>
+python .../knowledge-index/knowledge_index.py related --db "$DB"
+python .../corpus-taxonomy-extraction/to_obsidian.py \
+  --db "$DB" --out <project>/vault --clean --assets <project>/assets
+# Re-run build_marts --strict only when reporting inputs/config changed.
+# On failure: brain_sync.py rollback --db "$DB" (then reconcile parsed/assets/vault).
 ```
-What each lane does on change: **RAG** — per-doc delete+reindex, stable ids; **tags/graph** — only changed chunks re-tagged, `about` edges preserved, vanished taxonomy nodes pruned; **marts** — full idempotent recompute (self-healing); **vault** — `--clean` reconciles (drops notes for removed docs). **Taxonomy** is *not* auto-re-induced — many new/changed docs may warrant re-running induction (additively: add L1/L2, never rename — node ids = slug(label) must stay stable, or existing tags break); that stays a deliberate, human-gated step.
 
-> Migrating an OLD store (built before content-addressed ids): do one full rebuild (steps 3–8 above with `index --reset`) once, so chunk ids become stable; then incremental updates apply.
+What each lane does on change: **RAG** — per-doc delete+reindex with deterministic source+ordinal ids; **tags/graph** — only changed chunks are re-tagged; **marts** — full idempotent recompute when reporting changes; **vault** — `--clean` reconciles removed notes. Taxonomy is reused by default and changed only through a human-approved additive merge.
 
-Shortcut via the launcher: `./brain plan <parsed>` · `./brain update <parsed>` · `./brain rollback`.
+> Migrating an OLD store (built before deterministic source+ordinal ids): do one full rebuild (steps 3–8 above with `index --reset`) once; then incremental updates apply.
+
+Launcher shortcuts for the parsed→store stage: `./brain plan <parsed>` · `./brain update <parsed>` · `./brain rollback`.
+
+## Portable source registry
+
+A Brain may track its mother sources without storing original document bytes. `brain.toml` maps portable root keys to paths resolved relative to the project; SQLite stores only stable `source_id`, `root_key`, normalized `relative_path`, original SHA-256, description, and provenance JSON.
+
+```bash
+./brain source init
+./brain source adopt --root docs "path/inside/root.pdf" --description "..."
+./brain source import /temporary/chat-attachment.pdf --root incoming \
+  --provenance '{"attachment_id":"…","conversation_id":"…"}'
+./brain source list --json
+./brain source get <source-id>
+./brain source plan --out source_plan.json
+./brain source apply --plan source_plan.json       # adds/content changes/moves only
+./brain source remove <source-id> --yes            # explicit tombstone; then brain_sync removes derived doc
+```
+
+Root modes: `import` never infers deletion from absence; `mirror` reports `remove_candidate` only while the root is available; `managed` is for Brain-owned files such as `.incoming` and missing files are corruption. A missing whole root is `root_unavailable`, never “delete everything.” Attachments are atomically copied into the managed root; their bytes are not stored in SQLite. `documents.source_id` links parsed documents to the registry while `documents.doc_id == chunks.source` remains the parsed-relative identity for compatibility.
 
 ## Answer (per question)
 Follow **`hybrid-retrieval`**: decompose → classify each sub-claim (computable→marts / narrative→RAG / relation→graph / both→reconcile) → retrieve against the one `$DB` → compose one cited answer. Tag facts `[MART]` / `[RAG]` / `[GRAPH]`; state unmodeled sub-parts plainly.
