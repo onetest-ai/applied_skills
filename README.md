@@ -28,7 +28,6 @@ Retrieval is **hybrid**: BM25 (FTS5) + vector (sqlite-vec) fused by **Reciprocal
 | **hybrid-retrieval** | answer | Routes each sub-question — numbers→marts SQL, narrative→RRF RAG, relations→graph JOINs — over the one SQLite; reconciles `both`; composes one cited answer. |
 | **knowledge-pipeline** | orchestrate | Create the store (index+marts+graph) and answer, with guided onboarding and source registration. |
 | **brain-maintenance** | maintain/release | Read-only maintenance planning plus agent-owned, gated updates, verification, and optional external project-adapter deployment. |
-| **cognee** | optional | Connection-agnostic REST/MCP access to a Cognee server — an *alternative* remote knowledge backend. Not part of the default local stack. |
 
 ## Why this exists
 
@@ -56,8 +55,7 @@ bundle is the full local knowledge engine (the pipeline above) — see
 orchestration runbook, and [`bundles/SPEC.md`](bundles/SPEC.md) for the bundle format.
 
 ```bash
-npx github:onetest-ai/applied_skills init --bundle brain              # the 7 pipeline skills
-npx github:onetest-ai/applied_skills init --bundle brain --optional   # + optional cognee
+npx github:onetest-ai/applied_skills init --bundle brain              # the 8 Brain skills
 ./install.sh --bundle brain                                           # same, from a checkout
 ```
 
@@ -90,10 +88,10 @@ claude plugin install applied-skills@onetest-ai
 ```
 (Don't combine the plugin and the copy/symlink install — pick one, or the skills load twice.)
 
-Corpus-specific configuration (family definitions, metric catalogs, Cognee connection + dataset ids) belongs in the **consuming project's** repo, not here. Each skill's `*.example.*` templates show the shape to copy.
+Corpus-specific configuration (source roots, family definitions, metric catalogs, taxonomy, and deployment profiles) belongs in the **consuming project's** repo, not here. Each skill's example templates show the shape to copy.
 
 ## Dependencies
 
 Python 3.10+, stdlib `sqlite3` (with `enable_load_extension`). Per-skill: `pymupdf` (PDF text + page render + table extraction); `sqlite-vec`, `fastembed` (knowledge-index RAG); `openpyxl`, `pandas`, optional `pyarrow` (tabular); `fastmcp` + `uvicorn` (Brain MCP stdio/HTTP). All are pip-installable and **torch-free** (docling retired). `.pptx/.docx` also need LibreOffice `soffice` (a system dep); PDFs need only pymupdf.
 
-Install them into an **isolated venv that belongs to the skills, not your project** — `install.sh --bundle brain --deps` (uses `uv`) builds `<project>/.claude/venv`. Add `--user` to build **one shared** `~/.claude/venv` (or `~/.dsh/venv`) reused across all projects instead of a venv per project. Zero-install alternative: `uv run --with-requirements bundles/brain/requirements.txt python <script>`. The store remains local and portable; the optional Brain MCP HTTP transport is disabled by default. `cognee` remains an optional remote backend.
+Install them into an **isolated venv that belongs to the skills, not your project** — `install.sh --bundle brain --deps` (uses `uv`) builds `<project>/.claude/venv`. Add `--user` to build **one shared** `~/.claude/venv` (or `~/.dsh/venv`) reused across all projects instead of a venv per project. Zero-install alternative: `uv run --with-requirements bundles/brain/requirements.txt python <script>`. The store remains local and portable; the optional Brain MCP HTTP transport is disabled by default.

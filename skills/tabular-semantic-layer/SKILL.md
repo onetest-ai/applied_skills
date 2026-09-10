@@ -80,4 +80,4 @@ A config is authored from a sample of a family's files; if other files in that f
 
 ## Downstream
 
-The marts + `metrics.json` are consumed by the **`hybrid-retrieval`** skill, which runs the deterministic queries for `computable` metrics and merges them with the Cognee narrative lane for `stated`/`both` — the hybrid answer.
+The marts + `metrics.json` are consumed by the **`hybrid-retrieval`** skill, which runs deterministic queries for `computable` metrics and reconciles them with the local SQLite RAG lane for `stated`/`both` claims.

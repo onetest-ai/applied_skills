@@ -13,19 +13,18 @@ No required cloud service and no lock-in. Copy `knowledge.sqlite` for text/graph
 
 ## What's in the bundle
 
-`brain` collects eight skills (+ one optional) and all their scripts into one installable set:
+`brain` collects eight skills and all their scripts into one installable set:
 
 | Skill | Role | Ships |
 |---|---|---|
 | **knowledge-pipeline** | 🎛️ build orchestrator — create and answer | `SKILL.md` (build & answer sequence) |
 | **brain-maintenance** | 🔄 update/release planner — read-only status plus agent-gated update and external deployment guidance | `maintenance.py`, profile template, safety gates |
-| **corpus-taxonomy-extraction** | 🏷️ meaning: parse, induce taxonomy, build graph, tag sections, emit vault | `parse_corpus.py`, `consolidate.py`, `emit_taxonomy.py`, `emit_ontology.py`, `chunking.py`, `build_graph.py`, `classify_prep.py`, `classify_write.py`, `to_obsidian.py` |
+| **corpus-taxonomy-extraction** | 🏷️ meaning: parse, induce taxonomy, build graph, tag sections, emit vault | `parse_corpus.py`, `consolidate.py`, `emit_taxonomy.py`, `chunking.py`, `build_graph.py`, `classify_prep.py`, `classify_write.py`, `to_obsidian.py` |
 | **knowledge-index** | 🔎 narrative: heading-aware chunks → FTS5 + vectors | `knowledge_index.py`, `chunking.py` (shared) |
 | **tabular-semantic-layer** | 🔢 numbers: Excel → deterministic `facts` | `build_marts.py`, `profile_workbooks.py`, `families.example.json`, `metrics.example.json` |
 | **hybrid-retrieval** | 🧭 answer: route each sub-claim to the right lane, fuse, cite | `query.py` |
 | **visual-parse** | 👁️ page routing + visual understanding | `render_pages.py`, `vision_prep.py`, `vision_assemble.py` |
 | **obsidian-vault** | 🗂️ navigate the generated human-readable view | `SKILL.md` |
-| _cognee_ (optional) | 🌐 external graph service (only if you run one) | `cognee_client.py`, `api-reference.md` |
 
 Plus the repo's top-level **`mcp/brain/`** — the governed FastMCP **tool layer** (`fastmcp_server.py`) with local stdio and opt-in Streamable HTTP. It lives in `mcp/`, not `skills/` (see below).
 
@@ -40,8 +39,8 @@ npx github:onetest-ai/applied_skills init --bundle brain
 # or with the shell installer from a checkout
 ./install.sh --bundle brain
 
-# add the optional cognee skill; scope to one host; or symlink for live edits
-npx github:onetest-ai/applied_skills init --bundle brain --optional --target claude --symlink
+# scope to one host and symlink for live edits
+npx github:onetest-ai/applied_skills init --bundle brain --target claude --symlink
 ```
 
 The installer reads `bundles/brain/factory.json`, resolves the ordered skill list, and copies (or symlinks) each into the host's native `skills/` dir. All hosts read the same `SKILL.md` format — no translation.
@@ -433,7 +432,7 @@ sequenceDiagram
 - **Hybrid search is ours** — FTS5 + sqlite-vec + RRF need no external engine.
 - **Taxonomy & node-sets live fine in the graph tables + the vault** — a UI/server was more friction than value for a portable toolkit.
 - **RAG lives in the same SQLite** as the numbers and the graph, so one identity ties chunk ↔ note ↔ tag ↔ vertex.
-- **Cognee stays optional** — if you *do* run a graph service, the `cognee` skill talks to it (MCP-preferred), but nothing in the core depends on it.
+- **No external knowledge backend** — retrieval, taxonomy, evidence, and governed metrics stay in the local store; the Obsidian vault provides the browsable graph view.
 
 ---
 

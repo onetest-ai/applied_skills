@@ -1,13 +1,13 @@
 ---
 name: corpus-taxonomy-extraction
-description: Use when you need to induce a starting taxonomy (intent classes, entities/dimensions, and a metric inventory) from a heterogeneous document corpus (PDF/PPTX/DOCX/XLSX) under a stated analytical goal — e.g. seeding an ontology, a semantic layer, or classification scheme before building deterministic analytics. Goal-directed, agentic, runs bulk work on a low-tier model.
+description: Use when you need to induce a starting taxonomy (intent classes, entities/dimensions, and a metric inventory) from a heterogeneous document corpus (PDF/PPTX/DOCX/XLSX) under a stated analytical goal — e.g. seeding a local knowledge graph, semantic layer, or classification scheme before building deterministic analytics. Goal-directed, agentic, runs bulk work on a low-tier model.
 ---
 
 # Corpus Taxonomy Extraction
 
 ## Overview
 
-Induce a **starting taxonomy** from a document corpus, bottom-up and goal-directed. The taxonomy is the seed that everything downstream keys off: a Cognee ontology (grounds narrative extraction), conformed dimensions, and a governed semantic layer of metrics.
+Induce a **starting taxonomy** from a document corpus, bottom-up and goal-directed. The taxonomy is the seed that everything downstream keys off: the local graph and section classifier, conformed dimensions, and a governed semantic layer of metrics.
 
 **Core principle — separate the two things by what makes each trustworthy:**
 - **Meaning is agentic** (what's a term, what merges, what's in scope) → low-tier LLM + human gate.
@@ -19,7 +19,7 @@ The goal statement is a **noise filter** — research shows business context is 
 
 - Bootstrapping analytics/knowledge over a messy corpus where you don't yet have a schema.
 - You have a clear analytical goal to scope extraction (e.g. "optimize the call center + introduce an AI workforce").
-- You expect to feed the result into an ontology, semantic layer, or classifier.
+- You expect to feed the result into a local knowledge graph, semantic layer, or classifier.
 
 **Not for:** answering a specific numeric question (that's the deterministic semantic-layer path), or one-off single-doc reading.
 
@@ -29,13 +29,13 @@ A discovered metric is tagged by how it should later be answered — **format do
 
 | `source_type` | Meaning | How it gets answered later |
 |---|---|---|
-| `stated` | a figure/target quoted in prose/a slide (targets, exec summaries) | quote **with citation, labeled as reported** (RAG/Cognee is good here) |
+| `stated` | a figure/target quoted in prose/a slide (targets, exec summaries) | quote **with citation, labeled as reported** from the local RAG/evidence lane |
 | `computable` | a measure derived from a data table (branch/day drill-down) | deterministic SQL over the mart |
 | `both` | quoted *and* table-backed | compute authoritative value, **reconcile & flag discrepancies** |
 
 ## Portability & dependencies
 
-Self-contained and corpus-agnostic — everything is driven by args + the goal string; no paths are hardcoded. Ships the taxonomy scripts (parse, consolidate, emit_taxonomy, emit_ontology) + store scripts (chunking, build_graph, classify_prep/write, to_obsidian) + the map template in this skill dir. Requires a Python (3.9+) with **`pymupdf`, `openpyxl`** (torch-free). `.pptx/.docx` also need LibreOffice `soffice` (system dep). Run scripts with any such interpreter, e.g. `uv run --with pymupdf,openpyxl python <script>` or a venv that has them. The low-tier map/merge/judge steps assume a subagent mechanism with a model override (e.g. Haiku); on a different harness, substitute any cheap model that can read a file and emit JSON. To apply to a new corpus: pick a goal string, point `parse_corpus.py` at the corpus, instantiate the map template, run the pipeline.
+Self-contained and corpus-agnostic — everything is driven by args + the goal string; no paths are hardcoded. Ships the taxonomy scripts (parse, consolidate, emit_taxonomy) + store scripts (chunking, build_graph, classify_prep/write, to_obsidian) + the map template in this skill dir. Requires a Python (3.9+) with **`pymupdf`, `openpyxl`** (torch-free). `.pptx/.docx` also need LibreOffice `soffice` (system dep). Run scripts with any such interpreter, e.g. `uv run --with pymupdf,openpyxl python <script>` or a venv that has them. The low-tier map/merge/judge steps assume a subagent mechanism with a model override (e.g. Haiku); on a different harness, substitute any cheap model that can read a file and emit JSON. To apply to a new corpus: pick a goal string, point `parse_corpus.py` at the corpus, instantiate the map template, run the pipeline.
 
 ## Pipeline (map → reduce → judge → emit)
 
@@ -67,10 +67,6 @@ Score the draft for coverage (did we miss obvious goal-relevant categories?) and
 ### 5. Emit — `taxonomy_v0.{json,md}`
 Human-reviewable artifact: intent hierarchy + entity/dimension candidates + metric inventory (each tagged computed/stated/both, with provenance), plus a **demoted** list. Versioned — it's a starting point that grows, not ground truth.
 
-### 6. (optional) Emit OWL — `emit_ontology.py`
-`python emit_ontology.py --taxonomy taxonomy_v0.json --out <name>.owl [--base http://you/ns]`
-Turns the ratified taxonomy into an **OWL (RDF/XML) ontology** — intent L1/L2 as an `owl:Class` hierarchy (L2 `rdfs:subClassOf` L1, under `IntentClass`) plus entity-kind classes under `Entity`. Instances (specific branch/region values) are omitted — that's data; the class-level vocabulary is what grounds extraction. Upload it to Cognee (`cognee` skill → `upload-ontology`) and pass its `ontologyKey` at cognify time so the graph is extracted **against your taxonomy** rather than free-form.
-
 ## Companion scripts — populate the local knowledge SQLite
 Beyond taxonomy induction, this skill ships the scripts that wire the taxonomy into the one `knowledge.sqlite` store (shared with `knowledge-index` + `tabular-semantic-layer`):
 - **`chunking.py`** — the shared heading-aware chunker (a chunk = a section = an Obsidian note = a retrieval unit). Identical copy in `knowledge-index`.
@@ -87,8 +83,8 @@ The corpus or the parse shifts (e.g. `visual-parse` now transcribes diagrams, su
 
 ## Downstream wiring
 
-- **Intent classes** → classification scheme + Cognee **ontology grounding** (OWL via `emit_ontology.py` → `cognee upload-ontology` → `cognify --ontology-key`) — makes the graph consistent with your L1/L2 and cuts narrative noise.
-- **Entities** → conformed dimensions (Region→Division→Branch→RSR) shared by the graph and the marts — this shared vocabulary IS the Cognee↔DB link.
+- **Intent classes** → the local classification scheme and `graph_nodes`/`graph_edges`, keeping section tags consistent with the reviewed L1/L2 vocabulary.
+- **Entities** → conformed dimensions (Region→Division→Branch→RSR) shared by the local graph and marts.
 - **Metrics** → governed semantic-layer definitions; `computable` ones get SQL over the marts, `stated` ones stay citation-backed.
 
 ## Guardrails / common mistakes
