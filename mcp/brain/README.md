@@ -9,6 +9,8 @@ Raw SQL is not exposed. SQLite is opened in read-only/query-only mode, filters a
 
 All tool-level input, configuration, dependency, and unexpected runtime failures are returned as normal MCP results (`isError=false`) with `status=error`, a stable error code, and actionable `how_to_fix` guidance. Every public tool has local validation plus a shared final exception boundary, and internal errors are masked to avoid leaking paths or sensitive details. This prevents gateways from translating tool failures into HTTP 500 responses. Agents should follow `how_to_fix` and retry; `status=not_modeled` remains a valid data-gap response rather than an error. `/healthz` also catches unexpected failures and returns a sanitized `503` degraded payload rather than crashing the HTTP application.
 
+Every advertised tool property carries a concrete primitive schema, with a `null` alternative where `None` is the default. The Python boundary uses Pydantic `SkipValidation`, so malformed values still reach local fail-safe checks and return actionable normal tool results. This prevents schema-converting clients from silently replacing annotation-only properties with an empty fallback model while keeping defaults valid against their own schemas.
+
 ## Tools
 
 | Tool | Purpose |
@@ -78,6 +80,28 @@ The default all-interface bind makes container and orchestrator networking manag
 Legacy names are deliberately **not advertised or executed as aliases** because that would preserve the unsafe/raw contract and make migration invisible. If an older client calls one, the server returns a normal `isError=false`, `status=error`, `code=legacy_tool` result naming the replacement and telling the agent to retry. This avoids both silent semantic changes and gateway HTTP 500 failures.
 
 `get_evidence` returns source text and deterministic table sidecars, not binary images. Clients that need the rendered image should resolve the returned `page_asset` inside the configured private assets store.
+
+## Deployment contract
+
+Deployment automation is intentionally not embedded in the generic server yet: registry names, cloud subscriptions, resource groups, secret identifiers, ingress policy, and metric-catalog filenames belong to the consuming project. A reusable deployment layer should accept those values as explicit configuration and package the project's `knowledge.sqlite`, governed metric catalog, assets, and installed retrieval skills into an immutable image.
+
+Regardless of platform, a deployment is incomplete until all of these checks pass against the public endpoint:
+
+1. the new immutable image/revision is healthy and receives the intended traffic;
+2. `GET /healthz` returns `200`, `database_check=ok`, non-empty required lanes, and the intended `BRAIN_KNOWLEDGE_VERSION`;
+3. `/mcp` rejects missing and incorrect credentials;
+4. authenticated MCP initialization succeeds and `tools/list` returns exactly the seven governed tools;
+5. every advertised argument property has a concrete JSON Schema `type`;
+6. `get_metric` returns a real governed row with `source_file`;
+7. `search_knowledge` returns at least one cited hit without downloading its embedding model at runtime; and
+8. application logs contain no startup exception, request exception, or model-download attempt.
+
+Prefer a two-layer design when deployment automation is added:
+
+- a provider-neutral image contract and smoke-test command maintained here;
+- a consuming-project deployment profile or thin adapter containing Azure/AWS/GCP-specific resource names and secret references.
+
+Never put API-key values into manifests, build arguments, logs, documentation, or generated client configuration.
 
 ## Test
 
