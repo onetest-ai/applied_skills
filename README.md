@@ -26,7 +26,8 @@ Retrieval is **hybrid**: BM25 (FTS5) + vector (sqlite-vec) fused by **Reciprocal
 | **knowledge-index** | build | Local hybrid RAG over Markdown → SQLite **FTS5 + sqlite-vec, RRF-fused**. Torch-free embeddings (fastembed/onnx). The narrative lane. |
 | **tabular-semantic-layer** | build | Config-driven ETL of large/heterogeneous Excel → normalized `facts` in the same SQLite + a governed metric catalog. Four layouts, weighted rollups, build audit (`--strict`). |
 | **hybrid-retrieval** | answer | Routes each sub-question — numbers→marts SQL, narrative→RRF RAG, relations→graph JOINs — over the one SQLite; reconciles `both`; composes one cited answer. |
-| **knowledge-pipeline** | orchestrate | One entry point: build the store (index+marts+graph) then answer, with disk-first workspace/checkpoint discipline for long research. |
+| **knowledge-pipeline** | orchestrate | Create the store (index+marts+graph) and answer, with guided onboarding and source registration. |
+| **brain-maintenance** | maintain/release | Read-only maintenance planning plus agent-owned, gated updates, verification, and optional external project-adapter deployment. |
 | **cognee** | optional | Connection-agnostic REST/MCP access to a Cognee server — an *alternative* remote knowledge backend. Not part of the default local stack. |
 
 ## Why this exists
