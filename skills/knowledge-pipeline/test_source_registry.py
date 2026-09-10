@@ -202,6 +202,24 @@ include = ["**/*.pdf"]
             self.assertNotIn("a.pdf.md", now)
             self.assertEqual(delta["deleted"], ["a.pdf.md"])
 
+    def test_strict_sources_accepts_linked_tombstone_for_deletion(self):
+        parsed = self.root / "parsed"; parsed.mkdir()
+        md = parsed / "a.pdf.md"; md.write_text("# A\nbody")
+        manifest = parsed / "manifest.json"
+        manifest.write_text(json.dumps([{"source": "a.pdf", "md": "a.pdf.md"}]))
+        src = self.root / "docs" / "a.pdf"; src.write_bytes(b"a")
+        with sqlite3.connect(self.db) as con:
+            S.ensure_documents(con)
+            with R.connect(str(self.db)) as registry:
+                row = R.register(registry, "docs", "a.pdf", src)
+            meta = S.scan(str(parsed))["a.pdf.md"]
+            con.execute("INSERT INTO documents VALUES(?,?,?,?,?,?)", ("a.pdf.md", meta["sha"], meta["bytes"], meta["mtime"], "now", row["source_id"]))
+            con.execute("UPDATE sources SET state='removed' WHERE source_id=?", (row["source_id"],))
+            con.commit()
+            links, unmanaged = S.source_ids(con, str(parsed), str(manifest), "docs", True)
+            self.assertEqual(links["a.pdf.md"], row["source_id"])
+            self.assertEqual(unmanaged, [])
+
     def test_manifest_migration_links_document_without_changing_doc_id(self):
         src = self.root / "docs" / "a.pdf"; src.write_bytes(b"a")
         parsed = self.root / "parsed"; parsed.mkdir()
