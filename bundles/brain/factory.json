@@ -26,9 +26,6 @@
     ],
     "register_with": "install.sh --bundle brain --deps --mcp (copies mcp/brain -> <host>/mcp/brain, writes .mcp.json for Claude Code)"
   },
-  "optionalSkills": [
-    "cognee"
-  ],
   "store": {
     "file": "knowledge.sqlite",
     "lanes": {

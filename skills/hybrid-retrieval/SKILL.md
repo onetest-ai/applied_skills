@@ -14,7 +14,7 @@ Everything lives in **one portable `knowledge.sqlite`** (no server): `chunks/chu
 - **Taxonomy / categories / relations → graph JOINs** on `graph_nodes`/`graph_edges` (L1↔L2, entity kinds) via SQL / recursive CTE.
 - **Both (a figure quoted *and* table-backed) → compute the authoritative value, then reconcile** against the stated one and flag any discrepancy.
 
-This is the *retrieval* half; the store is produced by the **build** skills (`knowledge-index`, `tabular-semantic-layer`, `corpus-taxonomy-extraction`) — all writing into the same `.sqlite`. (Cognee is optional/legacy — see the `cognee` skill; the default stack is local SQLite.)
+This is the *retrieval* half; the store is produced by the **build** skills (`knowledge-index`, `tabular-semantic-layer`, `corpus-taxonomy-extraction`) — all writing into the same local `.sqlite`.
 
 ## When to use
 
@@ -62,4 +62,4 @@ For a mixed question, structure the answer as: the computed figures (each cited)
 
 ## Dependencies
 
-Stdlib `sqlite3` (query.py) + `sqlite-vec`, `fastembed` for the RAG lane (via `knowledge-index`). No server. Reads the one `knowledge.sqlite` produced by the build skills; produces nothing persistent itself. (Cognee remains available as an optional remote backend — see the `cognee` skill — but the default stack is local SQLite.)
+Stdlib `sqlite3` (query.py) + `sqlite-vec`, `fastembed` for the RAG lane (via `knowledge-index`). No server. Reads the one `knowledge.sqlite` produced by the build skills; produces nothing persistent itself.
