@@ -22,6 +22,7 @@ Usage:
                   [--min-text 220] [--hi-draw 60] [--mid-draw 28] [--mid-text 1000] [--all]
 """
 import argparse, hashlib, json, os, re, shutil, subprocess, sys, tempfile
+from pathlib import Path
 
 def kebab(s): return re.sub(r"[^a-z0-9]+", "-", str(s).lower()).strip("-") or "doc"
 
@@ -41,12 +42,20 @@ def to_pdf(path):
     if not so:
         sys.exit("error: need LibreOffice (soffice) to render non-PDF; install it or pre-convert to PDF")
     tmp = tempfile.mkdtemp(prefix="vparse_")
-    subprocess.run([so, "--headless", "--convert-to", "pdf", "--outdir", tmp, path],
-                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    out = os.path.join(tmp, os.path.splitext(os.path.basename(path))[0] + ".pdf")
-    if not os.path.exists(out):
-        sys.exit(f"error: soffice did not produce {out}")
-    return out, tmp
+    profile = tempfile.mkdtemp(prefix="vparse_soffice_")
+    try:
+        try:
+            subprocess.run([so, f"-env:UserInstallation={Path(profile).as_uri()}", "--headless", "--convert-to", "pdf", "--outdir", tmp, path],
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
+        out = os.path.join(tmp, os.path.splitext(os.path.basename(path))[0] + ".pdf")
+        if not os.path.exists(out):
+            sys.exit(f"error: soffice did not produce {out}")
+        return out, tmp
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
 
 def main():
     ap = argparse.ArgumentParser()

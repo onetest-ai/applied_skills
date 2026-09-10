@@ -15,6 +15,7 @@ Usage:
   parse_corpus.py --corpus <dir> --out <dir> [--xlsx-max-mb 20] [--sample-rows 8]
 """
 import argparse, json, os, shutil, subprocess, sys, tempfile, warnings, traceback
+from pathlib import Path
 warnings.filterwarnings("ignore")
 
 def _soffice():
@@ -43,12 +44,14 @@ def parse_office_pymupdf(path):
     if not so:
         raise RuntimeError("need LibreOffice (soffice) for pptx/docx, or pre-convert to PDF")
     tmp = tempfile.mkdtemp(prefix="parse_")
+    profile = tempfile.mkdtemp(prefix="parse_soffice_")
     try:
-        subprocess.run([so, "--headless", "--convert-to", "pdf", "--outdir", tmp, path],
+        subprocess.run([so, f"-env:UserInstallation={Path(profile).as_uri()}", "--headless", "--convert-to", "pdf", "--outdir", tmp, path],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         pdf = os.path.join(tmp, os.path.splitext(os.path.basename(path))[0] + ".pdf")
         return parse_pdf_pymupdf(pdf)
     finally:
+        shutil.rmtree(profile, ignore_errors=True)
         shutil.rmtree(tmp, ignore_errors=True)
 
 def parse_xlsx_structure(path, sample_rows):
