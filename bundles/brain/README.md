@@ -256,7 +256,7 @@ The generic text-only `parse_corpus.py` remains useful for corpora known not to 
 4. Use a **fresh run-specific `vision/` directory** (prep/consumer scripts do not clean stale files), then run `vision_prep.py --db "$DB"` across the changed render directories. Existing `page_render.img_sha` values are skipped automatically.
 5. If batches exist, dispatch vision subagents and validate that every batch `img_sha` appears exactly once in `result_*.json`; the consumer scripts are intentionally permissive, so this validation is mandatory.
 6. Run `vision_assemble.py --results <vision> --db "$DB"` for changed documents. This creates the final enriched Markdown and updates the page cache. For a cache-only run, `--db` can supply previous transcriptions even when no new results exist.
-7. Run `brain_sync.py plan`; show the added/changed/deleted/unchanged summary to the human. Note that `plan` ensures the `documents` table exists (and opening a missing DB can create it), so it is not byte-for-byte read-only. Then run `apply`, which snapshots SQLite, deletes removed documents, and re-embeds only added/changed parsed docs. It writes `sync_plan.json`. Preserve the snapshot: `apply` is not fully atomic because rebuilding `related` commits internally, so a later failure can require explicit rollback.
+7. Run `brain_sync.py plan`; show the added/changed/deleted/unchanged summary to the human. It now opens an existing initialized store read-only. Then run `apply`, which snapshots SQLite, deletes removed documents, re-embeds only added/changed parsed docs, and writes `sync_plan.json`. Preserve the snapshot as operational recovery even though the database changes are committed as one transaction.
 8. Run `classify_prep.py --chunks <sync_plan.reclassify_chunk_ids>`, dispatch text subagents, validate results, and run incremental `classify_write.py` **without `--reset`**.
 9. Rebuild graph and related; rebuild marts only if reporting workbooks changed; regenerate the vault with `--clean`; run verify.
 10. Keep the current taxonomy unless coverage indicates vocabulary drift. Taxonomy expansion is a separate additive, human-approved operation—never silently rename/remove existing nodes.
@@ -271,6 +271,39 @@ source change
   → embed/tag only changed chunks
   → reconcile graph/related/marts/vault
 ```
+
+### Portable mother sources and chat attachments
+
+A Brain now uses a relocatable `brain.toml` to name source roots. SQLite never stores absolute source paths or original PDF/PPTX/XLSX bytes; it stores a source registry with stable `source_id`, `root_key`, normalized relative path, SHA-256, description, kind, and provenance.
+
+```toml
+version = 1
+
+[sources.roots.incoming]
+path = ".incoming"
+mode = "managed"
+include = ["**/*"]
+
+[sources.roots.docs]
+path = "../company-docs"
+mode = "import"
+include = ["**/*.pdf", "**/*.pptx", "**/*.docx"]
+```
+
+- `import`: scans matching files and proposes adds/content updates, but absence never implies deletion. Use a narrow root/include set when discovery must be limited; `source adopt` registers one explicit file.
+- `mirror`: when the root is available, absence becomes a removal **candidate**, never an automatic delete.
+- `managed`: Brain-owned files such as chat attachments copied into `.incoming`; missing files are reported as corruption.
+- An unavailable root is always `root_unavailable`, not “all files deleted.”
+
+For a chat attachment, the host materializes a temporary file and the operator/agent runs:
+
+```bash
+./brain source import /temporary/attachment.pdf --root incoming \
+  --description "September CEC update" \
+  --provenance '{"attachment_id":"…","conversation_id":"…"}'
+```
+
+The file is atomically copied to the managed relative root with a hash-prefixed collision-safe name and registered. The temporary chat path may then disappear. Source bytes remain on the filesystem, not in SQLite. `source plan/apply` updates metadata for safe add/content-change/move actions; removal requires explicit `source remove <id> --yes`. Only a tombstoned linked source allows `brain_sync` to delete missing parsed output. This makes `list/get/remove` possible without changing existing `chunks.source` identities.
 
 ### Human quick start
 

@@ -32,7 +32,7 @@ All commands run on the machine that contains the corpus and brain project. Agen
 - Never use `classify_write --reset` during an incremental update.
 - Never silently change taxonomy node labels. Update taxonomy additively and only after human approval.
 - Show `brain_sync plan` before `apply`, especially when it reports deletions.
-- Preserve the automatic pre-apply SQLite snapshot. `apply` is not fully atomic (`build_related()` commits internally), so a later failure may leave partial DB changes; stop and roll back the snapshot before retrying.
+- Preserve the automatic pre-apply SQLite snapshot as operational recovery. Database mutations are committed together; on any failed verification, stop and offer rollback before retrying.
 - Do not claim completion until verification passes and row counts are plausible.
 
 ## Expected project layout
@@ -67,6 +67,12 @@ TAX="$PROJECT/taxonomy/taxonomy_v0.json"
 ```
 
 Do not guess paths. Resolve them with the installed launcher/config or ask the human.
+
+## Source intake before building
+
+Read the project’s `brain.toml`; do not search arbitrary filesystem locations. Source roots are named and relocatable. Register existing files with `./brain source adopt --root <key> <relative-path>`. For a chat attachment, materialize it temporarily and run `./brain source import <temp-path> --root incoming` with explicit attachment/conversation provenance. This copies it atomically into the managed `.incoming` root; the original chat temp path is not retained and no source bytes are stored in SQLite.
+
+Run `./brain source plan` before source-driven work. Treat `root_unavailable` as a blocking availability condition, never as mass deletion. `missing` under import is a warning; `remove_candidate` under mirror requires explicit human-approved `source remove`; `corrupt` under managed requires restoration or explicit removal. Keep `source_id` stable across content changes and safe moves.
 
 ## Creating a brain from scratch
 
@@ -293,7 +299,7 @@ Classify changes as:
 - deleted source;
 - changed reporting workbook.
 
-Show this plan to the human. Confirm deletions before removing derived files. Also note that `brain_sync plan` is not strictly side-effect-free: it ensures the `documents` table exists, and SQLite can create the DB file if the supplied path does not exist. Validate the DB path first.
+Show this plan to the human. Confirm deletions before removing derived files. `brain_sync plan` requires an existing seeded store and opens it read-only; a missing store or `documents` table is an error rather than something plan creates.
 
 ### Update phase 1 — refresh only changed visual documents
 
@@ -324,7 +330,7 @@ Show counts and filenames. After human confirmation:
   --db "$DB" --parsed "$PROJECT/parsed" --out "$PROJECT"
 ```
 
-`apply` creates a timestamped SQLite snapshot, deletes removed docs, re-embeds added/changed docs, updates `documents`, rebuilds related unless disabled, and writes `sync_plan.json`. It is not fully atomic because `build_related()` commits internally; if a later operation fails, treat the snapshot as authoritative and roll back before retrying.
+`apply` creates a timestamped SQLite snapshot, deletes removed docs, re-embeds added/changed docs, updates `documents`, rebuilds related unless disabled, and writes `sync_plan.json`. Its database mutations commit together; retain the snapshot so a failed downstream classification/verification can still be rolled back deliberately.
 
 Read `sync_plan.json`; do not infer changed chunk IDs yourself.
 

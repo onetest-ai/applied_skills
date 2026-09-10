@@ -120,6 +120,24 @@ What each lane does on change: **RAG** — per-doc delete+reindex with determini
 
 Launcher shortcuts for the parsed→store stage: `./brain plan <parsed>` · `./brain update <parsed>` · `./brain rollback`.
 
+## Portable source registry
+
+A Brain may track its mother sources without storing original document bytes. `brain.toml` maps portable root keys to paths resolved relative to the project; SQLite stores only stable `source_id`, `root_key`, normalized `relative_path`, original SHA-256, description, and provenance JSON.
+
+```bash
+./brain source init
+./brain source adopt --root docs "path/inside/root.pdf" --description "..."
+./brain source import /temporary/chat-attachment.pdf --root incoming \
+  --provenance '{"attachment_id":"…","conversation_id":"…"}'
+./brain source list --json
+./brain source get <source-id>
+./brain source plan --out source_plan.json
+./brain source apply --plan source_plan.json       # adds/content changes/moves only
+./brain source remove <source-id> --yes            # explicit tombstone; then brain_sync removes derived doc
+```
+
+Root modes: `import` never infers deletion from absence; `mirror` reports `remove_candidate` only while the root is available; `managed` is for Brain-owned files such as `.incoming` and missing files are corruption. A missing whole root is `root_unavailable`, never “delete everything.” Attachments are atomically copied into the managed root; their bytes are not stored in SQLite. `documents.source_id` links parsed documents to the registry while `documents.doc_id == chunks.source` remains the parsed-relative identity for compatibility.
+
 ## Answer (per question)
 Follow **`hybrid-retrieval`**: decompose → classify each sub-claim (computable→marts / narrative→RAG / relation→graph / both→reconcile) → retrieve against the one `$DB` → compose one cited answer. Tag facts `[MART]` / `[RAG]` / `[GRAPH]`; state unmodeled sub-parts plainly.
 

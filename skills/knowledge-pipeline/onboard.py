@@ -114,7 +114,7 @@ def cmd_scaffold(a):
     reporting = Path(a.reporting).expanduser().resolve() if a.reporting else docs
     db = proj / "schema" / "knowledge.sqlite"
 
-    for sub in ["schema", "parsed", "taxonomy", "classify", "marts", "vault"]:
+    for sub in ["schema", "parsed", "taxonomy", "classify", "vision", "marts", "vault", ".incoming"]:
         (proj / sub).mkdir(parents=True, exist_ok=True)
 
     fam = proj / "schema" / f"families.{corpus}.json"
@@ -124,6 +124,24 @@ def cmd_scaffold(a):
     if not met.exists():
         _copy_template(TSL / "metrics.example.json", met, corpus)
     (proj / "goal.txt").write_text((a.goal or "") + "\n")
+    config = proj / "brain.toml"
+    if not config.exists():
+        def rel_or_abs(path):
+            if path is None: return ""
+            try: return Path(os.path.relpath(path, proj)).as_posix()
+            except ValueError: return str(path)
+        docs_path = rel_or_abs(docs)
+        reporting_path = rel_or_abs(reporting)
+        lines = ["version = 1", "", "[paths]", 'parsed = "parsed"', "",
+                 "[sources.roots.incoming]", 'path = ".incoming"', 'mode = "managed"',
+                 'include = ["**/*"]']
+        if docs:
+            lines += ["", "[sources.roots.docs]", f"path = {json.dumps(docs_path)}", 'mode = "import"',
+                      'include = ["**/*.pdf", "**/*.ppt", "**/*.pptx", "**/*.doc", "**/*.docx"]']
+        if reporting:
+            lines += ["", "[sources.roots.reporting]", f"path = {json.dumps(reporting_path)}", 'mode = "import"',
+                      'include = ["**/*.xlsx", "**/*.xlsm", "**/*.xls"]']
+        config.write_text("\n".join(lines) + "\n")
 
     # drop the self-discovering launcher at the project root so nothing hardcodes
     # an interpreter/path: `./brain which|search|sql|verify|py`
@@ -138,7 +156,7 @@ def cmd_scaffold(a):
     print(f"scaffolded project: {proj}")
     print(f"  corpus name : {corpus}")
     print(f"  store (db)  : {db}")
-    print(f"  configs     : {fam.name}, {met.name}  (edit these to match your workbooks)")
+    print(f"  configs     : brain.toml, {fam.name}, {met.name}  (edit workbook mappings as needed)")
     print(f"  plan written: {proj/'BRAIN.md'}\n")
     cmd_scan(argparse.Namespace(docs=str(docs) if docs else None))
     print(f"\nNext: edit schema/{fam.name} to describe your reporting workbooks, then follow BRAIN.md.")
