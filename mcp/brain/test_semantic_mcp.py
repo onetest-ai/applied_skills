@@ -180,6 +180,27 @@ class FastMCPContractTests(FixtureCase):
                     limit = tools[name].inputSchema["properties"]["limit"]
                     self.assertIn("1..100", limit["description"])
                     self.assertIn("never send more than 100", limit["description"])
+                    self.assertEqual(limit["type"], "integer")
+                expected_types = {
+                    "get_metric": {
+                        "name": "string", "grain": "string", "entity": "string",
+                        "entity_contains": "string", "month": "string", "start_month": "string",
+                        "end_month": "string", "limit": "integer",
+                    },
+                    "search_knowledge": {"query": "string", "limit": "integer"},
+                    "get_taxonomy": {"label": "string", "relation": "string", "kind": "string", "limit": "integer"},
+                    "find_related_content": {"chunk_id": "integer", "query": "string", "limit": "integer"},
+                    "get_evidence": {"chunk_id": "integer", "include_page_text": "boolean"},
+                }
+                for tool_name, field_types in expected_types.items():
+                    properties = tools[tool_name].inputSchema["properties"]
+                    for field, expected_type in field_types.items():
+                        schema = properties[field]
+                        advertised = ({schema.get("type")} if schema.get("type") else
+                                      {item.get("type") for item in schema.get("anyOf", [])})
+                        self.assertIn(expected_type, advertised, f"{tool_name}.{field} missing concrete type")
+                        if schema.get("default", object()) is None:
+                            self.assertIn("null", advertised, f"{tool_name}.{field} has invalid null default")
                 result = await client.call_tool("get_metric", {"name": "revenue", "grain": "overall"})
                 self.assertEqual(result.data["rows"][0]["value"], 100.0)
                 invalid = await client.call_tool("get_metric", {"name": "revenue", "limit": 200})
@@ -212,6 +233,7 @@ class FastMCPContractTests(FixtureCase):
                 malformed_cases = (
                     ("get_metric", {"name": 123}),
                     ("get_metric", {"name": "revenue", "grain": ["region"]}),
+                    ("get_metric", {"name": None}),
                     ("search_knowledge", {}),
                     ("search_knowledge", {"query": 42}),
                     ("get_taxonomy", {"label": {"bad": "type"}}),
