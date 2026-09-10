@@ -6,7 +6,7 @@ This adds a `documents` provenance table (content hash per doc) and drives an
 INCREMENTAL update keyed off the delta:
 
   plan   — hash the parsed corpus, diff against `documents`, print added/changed/
-           unchanged/deleted (no writes).
+           unchanged/deleted. Requires an existing initialized store and is read-only.
   apply  — snapshot the .sqlite, then for the delta: delete removed docs' chunks
            (and their tags/edges), (re)embed only added/changed docs with STABLE
            chunk ids, update `documents`. Emits a work order (sync_plan.json) naming
@@ -42,7 +42,72 @@ def sha_file(p):
 
 def ensure_documents(c):
     c.execute("""CREATE TABLE IF NOT EXISTS documents(
-        doc_id TEXT PRIMARY KEY, sha TEXT, bytes INT, mtime REAL, updated_at TEXT)""")
+        doc_id TEXT PRIMARY KEY, sha TEXT, bytes INT, mtime REAL, updated_at TEXT,
+        source_id TEXT)""")
+    cols = {r[1] for r in c.execute("PRAGMA table_info(documents)")}
+    if "source_id" not in cols:
+        c.execute("ALTER TABLE documents ADD COLUMN source_id TEXT")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_documents_source_id ON documents(source_id)")
+
+
+def _has(c, table):
+    return bool(c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone())
+
+
+def _safe_rel(value):
+    value = str(value).replace("\\", "/")
+    p = Path(value)
+    if not value or value == "." or p.is_absolute() or any(x in ("", ".", "..") for x in value.split("/")):
+        raise ValueError(f"unsafe manifest relative path: {value!r}")
+    return p.as_posix()
+
+
+def manifest_links(parsed, manifest=None, root_key=None):
+    path = Path(manifest) if manifest else Path(parsed) / "manifest.json"
+    if not path.is_file() or not root_key:
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        raise ValueError("parse manifest must be a JSON array")
+    links = {}
+    for item in data:
+        if not isinstance(item, dict) or item.get("error") or not item.get("md") or not item.get("source"):
+            continue
+        doc_id, source = _safe_rel(item["md"]), _safe_rel(item["source"])
+        if doc_id in links:
+            raise ValueError(f"duplicate parsed document in manifest: {doc_id}")
+        links[doc_id] = (root_key, source)
+    return links
+
+
+def source_ids(c, parsed, manifest=None, root_key=None, strict=False):
+    links = manifest_links(parsed, manifest, root_key)
+    if not links:
+        if strict:
+            raise ValueError("strict source mode needs --root-key and a parse manifest")
+        return {}, []
+    if not _has(c, "sources"):
+        if strict:
+            raise ValueError("strict source mode needs an initialized sources registry")
+        return {}, sorted(links)
+    out, unmanaged = {}, []
+    for doc_id, (key, rel) in links.items():
+        row = c.execute("SELECT source_id FROM sources WHERE root_key=? AND relative_path=? AND state='active'", (key, rel)).fetchone()
+        if row: out[doc_id] = row[0]
+        else: unmanaged.append(doc_id)
+    if strict:
+        scanned = set(scan(parsed))
+        manifest_docs = set(links)
+        missing_manifest = sorted(scanned - manifest_docs)
+        stale_manifest = sorted(manifest_docs - scanned)
+        if missing_manifest or stale_manifest:
+            parts = []
+            if missing_manifest: parts.append("missing from manifest: " + ", ".join(missing_manifest[:10]))
+            if stale_manifest: parts.append("manifest output absent: " + ", ".join(stale_manifest[:10]))
+            raise ValueError("strict source manifest mismatch (" + "; ".join(parts) + ")")
+        if unmanaged:
+            raise ValueError("unmanaged parsed documents: " + ", ".join(unmanaged[:10]))
+    return out, sorted(unmanaged)
 
 
 def scan(parsed):
@@ -54,27 +119,65 @@ def scan(parsed):
     return out
 
 
-def delta(c, parsed):
-    ensure_documents(c)
-    cur = {r[0]: r[1] for r in c.execute("SELECT doc_id, sha FROM documents")}
+def delta(c, parsed, *, mutate_schema=True):
+    if mutate_schema:
+        ensure_documents(c)
+    elif not _has(c, "documents"):
+        raise RuntimeError("documents table missing; run brain_sync seed first")
+    cols = {r[1] for r in c.execute("PRAGMA table_info(documents)")}
+    select = ("SELECT doc_id, sha, source_id FROM documents" if "source_id" in cols
+              else "SELECT doc_id, sha, NULL FROM documents")
+    rows = list(c.execute(select))
+    cur = {r[0]: r[1] for r in rows}
+    source_for = {r[0]: r[2] for r in rows}
     now = scan(parsed)
-    added   = [d for d in now if d not in cur]
-    changed = [d for d in now if d in cur and now[d]["sha"] != cur[d]]
-    unchanged = [d for d in now if d in cur and now[d]["sha"] == cur[d]]
-    deleted = [d for d in cur if d not in now]
+    have_sources = _has(c, "sources")
+    removed_linked = set()
+    if have_sources:
+        removed_linked = {r[0] for r in c.execute(
+            """SELECT d.doc_id FROM documents d JOIN sources s ON s.source_id=d.source_id
+               WHERE s.state='removed'""")}
+    # A tombstoned source is an explicit deletion even when stale parsed output remains.
+    effective_now = {doc: meta for doc, meta in now.items() if doc not in removed_linked}
+    added = [d for d in effective_now if d not in cur]
+    changed = [d for d in effective_now if d in cur and effective_now[d]["sha"] != cur[d]]
+    unchanged = [d for d in effective_now if d in cur and effective_now[d]["sha"] == cur[d]]
+    missing = [d for d in cur if d not in effective_now]
+    deleted, blocked, legacy = [], [], []
+    for doc in missing:
+        sid = source_for.get(doc)
+        if doc in removed_linked:
+            deleted.append(doc)
+        elif sid and have_sources:
+            blocked.append(doc)
+        else:
+            deleted.append(doc)
+            legacy.append(doc)
+    now = effective_now
     return now, {"added": sorted(added), "changed": sorted(changed),
-                 "unchanged": sorted(unchanged), "deleted": sorted(deleted)}
+                 "unchanged": sorted(unchanged), "deleted": sorted(deleted),
+                 "blocked_missing_parsed": sorted(blocked),
+                 "legacy_unlinked_deleted": sorted(legacy)}
 
 
 def cmd_plan(a):
-    c = sqlite3.connect(a.db)
-    _, d = delta(c, a.parsed)
-    for k in ("added", "changed", "deleted", "unchanged"):
+    db = Path(a.db).expanduser().resolve()
+    if not db.is_file():
+        raise FileNotFoundError(f"knowledge store does not exist: {db}")
+    c = sqlite3.connect(db.as_uri() + "?mode=ro", uri=True)
+    _, d = delta(c, a.parsed, mutate_schema=False)
+    _, unmanaged = source_ids(c, a.parsed, a.manifest, a.root_key, a.strict_sources)
+    for k in ("added", "changed", "deleted", "blocked_missing_parsed", "unchanged"):
         print(f"{k:9} {len(d[k])}" + ("" if k == "unchanged" else "  " + ", ".join(x[:60] for x in d[k][:12])
                                        + (" …" if len(d[k]) > 12 else "")))
     reclass = d["added"] + d["changed"]
     print(f"\n→ would (re)embed {len(reclass)} doc(s), delete {len(d['deleted'])}, "
+          f"block {len(d['blocked_missing_parsed'])} linked missing parsed doc(s), "
           f"skip {len(d['unchanged'])} unchanged; {len(reclass)} doc(s) then need reclassify.")
+    if d["legacy_unlinked_deleted"]:
+        print(f"warning: {len(d['legacy_unlinked_deleted'])} legacy unlinked document(s) use deletion compatibility mode", file=sys.stderr)
+    if unmanaged:
+        print(f"warning: {len(unmanaged)} parsed document(s) are not linked to an active source", file=sys.stderr)
     c.close()
 
 
@@ -87,6 +190,12 @@ def cmd_apply(a):
     c = K.connect(a.db)
     K._ensure_schema(c, a.dim)
     now, d = delta(c, a.parsed)
+    links, unmanaged = source_ids(c, a.parsed, a.manifest, a.root_key, a.strict_sources)
+    if d["blocked_missing_parsed"]:
+        c.close()
+        raise RuntimeError("active registered source(s) have missing parsed output; restore/assemble them or explicitly tombstone the source: " + ", ".join(d["blocked_missing_parsed"][:10]))
+    if unmanaged:
+        print(f"warning: {len(unmanaged)} parsed document(s) are not linked to an active source", file=sys.stderr)
     reclass = d["added"] + d["changed"]
     try:
         if d["deleted"]:
@@ -98,23 +207,32 @@ def cmd_apply(a):
             n_chunks, _ = K.index_docs(c, a.model, a.parsed, reclass, a.dim, a.max_chars)
             print(f"(re)embedded {n_chunks} chunks across {len(reclass)} doc(s)")
         if (reclass or d["deleted"]) and not a.no_related:
-            nrel = K.build_related(c)   # cheap vector-only kNN; keeps the related layer current
+            nrel = K.build_related(c, commit=False)   # keep the full apply transaction atomic
             print(f"rebuilt related layer: {nrel} semantic edges")
         ts = time.strftime("%Y-%m-%dT%H:%M:%S")
         for doc in d["added"] + d["changed"] + d["unchanged"]:
             m = now[doc]
-            c.execute("INSERT OR REPLACE INTO documents VALUES(?,?,?,?,?)",
-                      (doc, m["sha"], m["bytes"], m["mtime"], ts))
+            prior = c.execute("SELECT source_id FROM documents WHERE doc_id=?", (doc,)).fetchone()
+            sid = links.get(doc) or (prior[0] if prior else None)
+            c.execute("INSERT OR REPLACE INTO documents(doc_id,sha,bytes,mtime,updated_at,source_id) VALUES(?,?,?,?,?,?)",
+                      (doc, m["sha"], m["bytes"], m["mtime"], ts, sid))
         c.commit()
     except Exception as e:
-        c.rollback(); print(f"apply FAILED ({e}); DB left unchanged. Restore a snapshot if needed.", file=sys.stderr)
+        c.rollback(); c.close()
+        if not a.no_snapshot and 'snap' in locals():
+            shutil.copy2(snap, a.db)
+            print(f"apply FAILED ({e}); restored snapshot {snap}", file=sys.stderr)
+        else:
+            print(f"apply FAILED ({e}); transaction rolled back", file=sys.stderr)
         raise
     # chunk ids that need reclassification (added + changed docs)
     recids = []
     for doc in reclass:
         recids += [r[0] for r in c.execute("SELECT id FROM chunks WHERE source=?", (doc,))]
     plan = {"reclassify_docs": reclass, "reclassify_chunk_ids": recids,
-            "deleted_docs": d["deleted"], "unchanged": len(d["unchanged"])}
+            "source_ids": {doc: links.get(doc) for doc in reclass if links.get(doc)},
+            "deleted_docs": d["deleted"], "blocked_missing_parsed": d["blocked_missing_parsed"],
+            "unmanaged_docs": unmanaged, "unchanged": len(d["unchanged"])}
     out = a.out or os.path.dirname(os.path.abspath(a.db))
     os.makedirs(out, exist_ok=True)
     pf = os.path.join(out, "sync_plan.json")
@@ -136,12 +254,16 @@ def cmd_seed(a):
     c = sqlite3.connect(a.db)
     ensure_documents(c)
     now = scan(a.parsed)
+    links, unmanaged = source_ids(c, a.parsed, a.manifest, a.root_key, a.strict_sources)
     ts = time.strftime("%Y-%m-%dT%H:%M:%S")
     for doc, m in now.items():
-        c.execute("INSERT OR REPLACE INTO documents VALUES(?,?,?,?,?)",
-                  (doc, m["sha"], m["bytes"], m["mtime"], ts))
+        prior = c.execute("SELECT source_id FROM documents WHERE doc_id=?", (doc,)).fetchone()
+        sid = links.get(doc) or (prior[0] if prior else None)
+        c.execute("INSERT OR REPLACE INTO documents(doc_id,sha,bytes,mtime,updated_at,source_id) VALUES(?,?,?,?,?,?)",
+                  (doc, m["sha"], m["bytes"], m["mtime"], ts, sid))
     c.commit()
-    print(f"seeded documents with {len(now)} doc hashes -> {a.db}")
+    print(f"seeded documents with {len(now)} doc hashes -> {a.db}"
+          + (f" ({len(unmanaged)} unmanaged)" if unmanaged else ""))
     c.close()
 
 
@@ -165,6 +287,9 @@ def main():
             p.add_argument("--model", default="BAAI/bge-small-en-v1.5")
             p.add_argument("--dim", type=int, default=384)
             p.add_argument("--max-chars", type=int, default=1200)
+            p.add_argument("--manifest", help="parse manifest (default: <parsed>/manifest.json)")
+            p.add_argument("--root-key", help="source registry root key for manifest source paths")
+            p.add_argument("--strict-sources", action="store_true", help="reject parsed docs not linked to active registered sources")
         if name == "apply":
             p.add_argument("--out", help="where to write sync_plan.json (default: next to the db)")
             p.add_argument("--no-snapshot", action="store_true")
