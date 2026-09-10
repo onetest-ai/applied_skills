@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Brain maintenance profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "project", "paths", "update", "safety"],
+  "properties": {
+    "version": {"const": 1},
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root"],
+      "properties": {"root": {"type": "string", "minLength": 1}}
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["brain_config", "db", "parsed", "manifest", "taxonomy", "runs"],
+      "properties": {
+        "brain_config": {"type": "string", "minLength": 1},
+        "db": {"type": "string", "minLength": 1},
+        "parsed": {"type": "string", "minLength": 1},
+        "manifest": {"type": "string", "minLength": 1},
+        "assets": {"type": "string", "minLength": 1},
+        "taxonomy": {"type": "string", "minLength": 1},
+        "runs": {"type": "string", "minLength": 1}
+      }
+    },
+    "runtime": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "python": {"type": "string", "minLength": 1},
+        "skills": {"type": "string", "minLength": 1}
+      }
+    },
+    "update": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root_key"],
+      "properties": {"root_key": {"type": "string", "minLength": 1}}
+    },
+    "classification": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "batches": {"type": "integer", "minimum": 1},
+        "max_labels": {"type": "integer", "minimum": 1}
+      }
+    },
+    "marts": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"}, "root_key": {"type": "string"},
+        "families": {"type": "string"}, "metrics": {"type": "string"}, "out": {"type": "string"}
+      }
+    },
+    "verification": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "required_lanes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "smoke_query": {"type": "string"},
+        "expected_tools": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "safety": {
+      "type": "object", "additionalProperties": false,
+      "required": ["require_strict_sources", "require_snapshot", "allow_legacy_unlinked_delete", "max_deleted_docs"],
+      "properties": {
+        "require_strict_sources": {"const": true},
+        "require_snapshot": {"const": true},
+        "allow_legacy_unlinked_delete": {"const": false},
+        "max_deleted_docs": {"type": "integer", "minimum": 0}
+      }
+    },
+    "deployment": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"}, "adapter": {"type": "string"},
+        "profile": {"type": "string"},
+        "secret_env": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$"}},
+        "require_immutable_version": {"type": "boolean"}
+      },
+      "allOf": [{
+        "if": {"properties": {"enabled": {"const": true}}, "required": ["enabled"]},
+        "then": {"required": ["adapter", "profile", "require_immutable_version"]}
+      }]
+    }
+  }
+}
