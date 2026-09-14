@@ -62,7 +62,8 @@ def parse_xlsx_structure(path, sample_rows):
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
     out = []
     for ws in wb.worksheets:
-        out.append(f"\n\n## sheet: {ws.title}  (dims={ws.dimensions})")
+        dims = getattr(ws, "dimensions", None) or "unknown"
+        out.append(f"\n\n## sheet: {ws.title}  (dims={dims})")
         rows = []
         for i, row in enumerate(ws.iter_rows(values_only=True)):
             rows.append(row)
@@ -96,10 +97,13 @@ def _parse_srt(path: str) -> str:
             cue_text = " ".join(rows[i+1:])
             if cue_text.strip():
                 seq += 1
+                speaker, cue_text = _speaker_and_text(cue_text)
                 # Format: MM:SS from HH:MM:SS,mmm
                 parts = ts.split(":")
                 label = f"{parts[1]}:{parts[2].split(',')[0]}"
-                lines.append(f"\n## {label} (cue {seq})\n\n{cue_text.strip()}\n")
+                who = f" — {speaker}" if speaker else ""
+                marker = f"<!-- speaker: {speaker} -->\n\n" if speaker else ""
+                lines.append(f"\n## {label}{who} (cue {seq})\n\n{marker}{cue_text.strip()}\n")
     return "\n".join(lines)
 
 
@@ -111,7 +115,7 @@ def _parse_vtt(path: str) -> str:
     # Remove WEBVTT header and NOTE blocks
     body = re.sub(r"^WEBVTT.*?\n", "", text, flags=re.MULTILINE)
     blocks = re.split(r"\n\s*\n", body.strip())
-    merged: dict = {}  # base_id -> {"ts": str, "text": [str]}
+    merged: dict = {}  # base_id -> {"ts": str, "text": [str], "speaker": str}
     order = []
     for block in blocks:
         rows = [r.strip() for r in block.strip().splitlines() if r.strip()]
@@ -128,11 +132,14 @@ def _parse_vtt(path: str) -> str:
             cue_text = " ".join(rows[i+1:]).strip()
             if not cue_text:
                 continue
+            speaker, cue_text = _speaker_and_text(cue_text)
             # Merge by UUID base (strip trailing -N suffix)
             base = re.sub(r"-\d+$", "", cue_id or ts)
             if base not in merged:
-                merged[base] = {"ts": ts, "text": []}
+                merged[base] = {"ts": ts, "text": [], "speaker": speaker}
                 order.append(base)
+            elif speaker and not merged[base]["speaker"]:
+                merged[base]["speaker"] = speaker
             merged[base]["text"].append(cue_text)
     seq = 0
     for base in order:
@@ -150,8 +157,23 @@ def _parse_vtt(path: str) -> str:
             label = f"{parts[-3].zfill(2)}:{parts[-2].zfill(2)}"
         else:
             label = ts[:5]
-        lines_out.append(f"\n## {label} (cue {seq})\n\n{full_text}\n")
+        speaker = entry["speaker"]
+        who = f" — {speaker}" if speaker else ""
+        marker = f"<!-- speaker: {speaker} -->\n\n" if speaker else ""
+        lines_out.append(f"\n## {label}{who} (cue {seq})\n\n{marker}{full_text}\n")
     return "\n".join(lines_out)
+
+
+def _speaker_and_text(text: str) -> tuple[str, str]:
+    """Extract WebVTT voice tags and conservative ``Name: text`` prefixes."""
+    import re
+    voice = re.match(r"\s*<v(?:\.[^ >]+)*\s+([^>]+)>\s*(.*)", text, flags=re.I | re.S)
+    if voice:
+        return voice.group(1).strip(), re.sub(r"</?v[^>]*>", "", voice.group(2)).strip()
+    labelled = re.match(r"\s*([A-Z][\w .'-]{1,48}):\s+(.+)", text, flags=re.S)
+    if labelled:
+        return labelled.group(1).strip(), labelled.group(2).strip()
+    return "", re.sub(r"</?v[^>]*>", "", text).strip()
 
 
 def parse_one(path, xlsx_max_mb, sample_rows):

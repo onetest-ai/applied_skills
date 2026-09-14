@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "assertions": [
+    {"assertion_id":"release-v0-late","entity":"project-atlas","predicate":"release_date","value":"2025-10-01","asserted_at":"2025-09-19T10:00:00Z","ingested_at":"2025-09-22T12:00:00Z","source":"meeting-2025-09-19.vtt","segment_id":"cue-09","authority":2},
+    {"assertion_id":"release-v1","entity":"project-atlas","predicate":"release_date","value":"2025-10-15","asserted_at":"2025-09-20T10:00:00Z","ingested_at":"2025-09-20T12:00:00Z","source":"meeting-2025-09-20.vtt","segment_id":"cue-14","authority":2,"supersedes":["release-v0-late"]},
+    {"assertion_id":"release-v2","entity":"project-atlas","predicate":"release_date","value":"2025-11-01","asserted_at":"2025-09-21T10:00:00Z","ingested_at":"2025-09-21T12:00:00Z","source":"meeting-2025-09-21.vtt","segment_id":"cue-06","authority":2,"supersedes":["release-v1"]},
+    {"assertion_id":"budget-a","entity":"project-atlas","predicate":"approved_budget","value":"EUR 100000","asserted_at":"2025-09-21T10:10:00Z","ingested_at":"2025-09-21T12:00:00Z","source":"meeting-2025-09-21.vtt","segment_id":"cue-20","authority":2},
+    {"assertion_id":"budget-b","entity":"project-atlas","predicate":"approved_budget","value":"EUR 120000","asserted_at":"2025-09-21T10:12:00Z","ingested_at":"2025-09-21T12:00:00Z","source":"meeting-2025-09-21.vtt","segment_id":"cue-22","authority":2,"contradicts":["budget-a"]}
+  ],
+  "questions": [
+    {"question_id":"q-atlas-owner","text":"Who owns the Atlas rollout?","asked_at":"2025-09-20T10:20:00Z","source":"meeting-2025-09-20.vtt","segment_id":"cue-30"},
+    {"question_id":"q-atlas-region","text":"Which region starts the Atlas rollout?","asked_at":"2025-09-20T10:21:00Z","source":"meeting-2025-09-20.vtt","segment_id":"cue-31"}
+  ],
+  "answers": [
+    {"answer_id":"a-atlas-owner","question_id":"q-atlas-owner","text":"Marta owns the Atlas rollout.","answered_at":"2025-09-21T10:30:00Z","source":"meeting-2025-09-21.vtt","segment_id":"cue-41"}
+  ]
+}

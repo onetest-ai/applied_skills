@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 import tempfile
@@ -8,6 +9,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "onboard.py"
+
+# Import onboard module directly so we can test internal helpers without subprocess.
+_spec = importlib.util.spec_from_file_location("onboard", SCRIPT)
+_onboard = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
+_spec.loader.exec_module(_onboard)  # type: ignore[union-attr]
 
 
 class OnboardSourceConfigTests(unittest.TestCase):
@@ -46,6 +52,38 @@ class OnboardSourceConfigTests(unittest.TestCase):
             ], text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(config.read_text(), "version = 1\n# custom\n")
+
+
+class NarrativeExtTests(unittest.TestCase):
+    """NARRATIVE_EXT must route .vtt and .srt files into the narrative lane."""
+
+    def _make_corpus(self, tmp: Path, exts: list) -> Path:
+        docs = tmp / "docs"
+        docs.mkdir()
+        for ext in exts:
+            (docs / f"file{ext}").write_text("dummy")
+        return docs
+
+    def test_vtt_file_classified_as_narrative(self):
+        with tempfile.TemporaryDirectory() as td:
+            docs = self._make_corpus(Path(td), [".vtt"])
+            narrative, reporting, other = _onboard._scan_docs(docs)
+            self.assertEqual(len(narrative), 1, f"Expected 1 narrative file, got {narrative}")
+            self.assertEqual(len(other), 0, f"Expected no 'other' files, got {other}")
+
+    def test_srt_file_classified_as_narrative(self):
+        with tempfile.TemporaryDirectory() as td:
+            docs = self._make_corpus(Path(td), [".srt"])
+            narrative, reporting, other = _onboard._scan_docs(docs)
+            self.assertEqual(len(narrative), 1, f"Expected 1 narrative file, got {narrative}")
+            self.assertEqual(len(other), 0, f"Expected no 'other' files, got {other}")
+
+    def test_mixed_corpus_vtt_srt_with_pdf_all_narrative(self):
+        with tempfile.TemporaryDirectory() as td:
+            docs = self._make_corpus(Path(td), [".vtt", ".srt", ".pdf"])
+            narrative, reporting, other = _onboard._scan_docs(docs)
+            self.assertEqual(len(narrative), 3, f"Expected 3 narrative files, got {narrative}")
+            self.assertEqual(len(other), 0, f"Expected no 'other' files, got {other}")
 
 
 if __name__ == "__main__":

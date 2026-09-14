@@ -234,7 +234,11 @@ def get_metric(
     }
 
 
-def search_knowledge(query: str, limit: int = 5) -> dict[str, Any]:
+def search_knowledge(
+    query: str, limit: int = 5, as_of: str | None = None,
+    latest_only: bool = False, source_contains: str | None = None,
+    tag: str | None = None,
+) -> dict[str, Any]:
     """Hybrid BM25+vector retrieval for narrative evidence, never authoritative figures."""
     limit = _bounded_limit(limit)
     if not query.strip():
@@ -246,7 +250,10 @@ def search_knowledge(query: str, limit: int = 5) -> dict[str, Any]:
     import knowledge_index as knowledge
 
     with _readonly_connection(vectors=True) as con:
-        result = knowledge.search(con, knowledge.DEFAULT_MODEL, query, limit)
+        if any((as_of, latest_only, source_contains, tag)):
+            result = knowledge.search(con, knowledge.DEFAULT_MODEL, query, limit, as_of, latest_only, source_contains, tag)
+        else:
+            result = knowledge.search(con, knowledge.DEFAULT_MODEL, query, limit)
     hits = [
         {
             "chunk_id": row["id"],
@@ -254,6 +261,10 @@ def search_knowledge(query: str, limit: int = 5) -> dict[str, Any]:
             "section": row.get("title") or "",
             "score": row["score"],
             "text": " ".join((row.get("text") or "").split()),
+            "event_date": row.get("event_date"),
+            "status": row.get("status"),
+            "breadcrumb_path": row.get("breadcrumb_path") or "",
+            "speaker": row.get("speaker") or "",
         }
         for row in result["results"]
     ]
@@ -263,6 +274,34 @@ def search_knowledge(query: str, limit: int = 5) -> dict[str, Any]:
         "count": len(hits),
         "guidance": "Narrative evidence only. Use get_metric for every numeric claim.",
     }
+
+
+def _temporal_operation(name: str, *args: Any) -> dict[str, Any]:
+    skills = resolve_skills()
+    index_dir = str(skills / "knowledge-index")
+    if index_dir not in sys.path:
+        sys.path.insert(0, index_dir)
+    import temporal_memory
+
+    with _readonly_connection() as con:
+        required = {"memory_assertions", "memory_assertion_links", "memory_questions", "memory_answers"}
+        if not required.issubset(_present_tables(con)):
+            return {"status": "not_modeled", "missing_tables": sorted(required - _present_tables(con))}
+        return getattr(temporal_memory, name)(con, *args)
+
+
+def get_current_fact(entity: str, predicate: str, as_of: str | None = None) -> dict[str, Any]:
+    """Return the explicit current/as-of value, its history, and every source citation."""
+    if not entity.strip() or not predicate.strip():
+        raise ValueError("entity and predicate must not be empty")
+    return _temporal_operation("current_fact", entity, predicate, as_of)
+
+
+def get_question_status(question_id: str, as_of: str | None = None) -> dict[str, Any]:
+    """Return open/resolved state for a stable question and cite question plus answer sessions."""
+    if not question_id.strip():
+        raise ValueError("question_id must not be empty")
+    return _temporal_operation("question_status", question_id, as_of)
 
 
 def get_taxonomy(
@@ -350,19 +389,36 @@ def find_related_content(
         anchor = con.execute(
             "SELECT id AS chunk_id, source, title AS section FROM chunks WHERE id=?", (chunk_id,)
         ).fetchone()
-        rows = [
-            dict(row)
-            for row in con.execute(
+        related_cols = {row["name"] for row in con.execute("PRAGMA table_info(related)")}
+        if {"edge_type", "directed"}.issubset(related_cols):
+            rows = [dict(row) for row in con.execute(
+                """SELECT c.id AS chunk_id, c.source, c.title AS section, r.score,
+                          r.edge_type, r.direction
+                   FROM (
+                     SELECT related_id AS id, score, edge_type,
+                            CASE WHEN directed=1 THEN 'outgoing' ELSE 'undirected' END AS direction
+                       FROM related WHERE chunk_id=?
+                     UNION ALL
+                     SELECT chunk_id AS id, score, edge_type,
+                            CASE WHEN directed=1 THEN 'incoming' ELSE 'undirected' END AS direction
+                       FROM related WHERE related_id=?
+                   ) r JOIN chunks c ON c.id=r.id
+                   ORDER BY CASE r.edge_type WHEN 'SIMILAR' THEN 1 ELSE 0 END,
+                            r.score DESC LIMIT ?""",
+                    (chunk_id, chunk_id, limit),
+                )]
+        else:
+            rows = [dict(row) for row in con.execute(
                 """SELECT c.id AS chunk_id, c.source, c.title AS section, r.score
                    FROM (
                      SELECT related_id AS id, score FROM related WHERE chunk_id=?
                      UNION ALL
                      SELECT chunk_id AS id, score FROM related WHERE related_id=?
-                   ) r JOIN chunks c ON c.id=r.id
-                   ORDER BY r.score DESC LIMIT ?""",
+                   ) r JOIN chunks c ON c.id=r.id ORDER BY r.score DESC LIMIT ?""",
                 (chunk_id, chunk_id, limit),
-            )
-        ]
+            )]
+            for row in rows:
+                row.update(edge_type="SIMILAR", direction="undirected")
     return {"status": "ok" if anchor else "not_modeled", "anchor": dict(anchor) if anchor else None, "related": rows}
 
 
