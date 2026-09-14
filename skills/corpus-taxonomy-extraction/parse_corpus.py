@@ -72,6 +72,85 @@ def parse_xlsx_structure(path, sample_rows):
     wb.close()
     return "".join(out)
 
+def _parse_srt(path: str) -> str:
+    """SRT → headed Markdown. Each numbered cue block → one ## heading."""
+    import re
+    text = open(path, encoding="utf-8", errors="replace").read()
+    # Split on blank lines between cue blocks
+    blocks = re.split(r"\n\s*\n", text.strip())
+    lines = []
+    seq = 0
+    for block in blocks:
+        rows = [r.strip() for r in block.strip().splitlines() if r.strip()]
+        if not rows:
+            continue
+        # First line is sequence number, second is timestamp, rest is text
+        i = 0
+        if rows[i].isdigit():
+            i += 1
+        if i < len(rows) and re.match(r"\d{2}:\d{2}:\d{2},\d+ --> ", rows[i]):
+            ts = rows[i].split("-->")[0].strip()  # start timestamp
+            cue_text = " ".join(rows[i+1:])
+            if cue_text.strip():
+                seq += 1
+                # Format: MM:SS from HH:MM:SS,mmm
+                parts = ts.split(":")
+                label = f"{parts[1]}:{parts[2].split(',')[0]}"
+                lines.append(f"\n## {label} (cue {seq})\n\n{cue_text.strip()}\n")
+    return "\n".join(lines)
+
+
+def _parse_vtt(path: str) -> str:
+    """WebVTT → headed Markdown. Multi-line cues (same UUID prefix) merged."""
+    import re
+    text = open(path, encoding="utf-8", errors="replace").read()
+    lines_out = []
+    # Remove WEBVTT header and NOTE blocks
+    body = re.sub(r"^WEBVTT.*?\n", "", text, flags=re.MULTILINE)
+    blocks = re.split(r"\n\s*\n", body.strip())
+    merged: dict = {}  # base_id -> {"ts": str, "text": [str]}
+    order = []
+    for block in blocks:
+        rows = [r.strip() for r in block.strip().splitlines() if r.strip()]
+        if not rows:
+            continue
+        # Detect cue block: first line is ID or timestamp
+        i = 0
+        cue_id = None
+        if i < len(rows) and not re.match(r"\d{2}:\d{2}[\d:\.]+\s+-->", rows[i]):
+            cue_id = rows[i]
+            i += 1
+        if i < len(rows) and re.match(r"[\d:\.]+\s+-->", rows[i]):
+            ts = rows[i].split("-->")[0].strip()
+            cue_text = " ".join(rows[i+1:]).strip()
+            if not cue_text:
+                continue
+            # Merge by UUID base (strip trailing -N suffix)
+            base = re.sub(r"-\d+$", "", cue_id or ts)
+            if base not in merged:
+                merged[base] = {"ts": ts, "text": []}
+                order.append(base)
+            merged[base]["text"].append(cue_text)
+    seq = 0
+    for base in order:
+        entry = merged[base]
+        full_text = " ".join(entry["text"]).strip()
+        if not full_text:
+            continue
+        seq += 1
+        ts = entry["ts"]
+        # Format: MM:SS from HH:MM:SS.mmm or MM:SS.mmm
+        ts_clean = re.sub(r"\.\d+$", "", ts.split(":")[0] and ts or "00:" + ts)
+        # Simpler: take first two colon-parts for MM:SS
+        parts = ts.replace(".", ":").split(":")
+        if len(parts) >= 3:
+            label = f"{parts[-3].zfill(2)}:{parts[-2].zfill(2)}"
+        else:
+            label = ts[:5]
+        lines_out.append(f"\n## {label} (cue {seq})\n\n{full_text}\n")
+    return "\n".join(lines_out)
+
+
 def parse_one(path, xlsx_max_mb, sample_rows):
     ext = os.path.splitext(path)[1].lower()
     size_mb = os.path.getsize(path) / 1e6
@@ -81,6 +160,10 @@ def parse_one(path, xlsx_max_mb, sample_rows):
         return parse_pdf_pymupdf(path), "pymupdf"
     if ext in (".xlsx", ".xlsm"):
         return parse_xlsx_structure(path, sample_rows), "openpyxl-structure"
+    if ext == ".srt":
+        return _parse_srt(path), "transcript-etl"
+    if ext == ".vtt":
+        return _parse_vtt(path), "transcript-etl"
     return None, "skipped"
 
 def main():
@@ -89,7 +172,7 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--xlsx-max-mb", type=float, default=20.0)
     ap.add_argument("--sample-rows", type=int, default=8)
-    ap.add_argument("--formats", default="pptx,docx,pdf,xlsx,xlsm",
+    ap.add_argument("--formats", default="pptx,docx,pdf,xlsx,xlsm,vtt,srt",
                     help="comma-separated extensions (no dot) to include")
     a = ap.parse_args()
     allow = {"." + e.strip().lower().lstrip(".") for e in a.formats.split(",") if e.strip()}
