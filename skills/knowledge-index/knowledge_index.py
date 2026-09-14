@@ -62,8 +62,7 @@ def _ensure_schema(c, dim):
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='chunks_vec'"
     ).fetchone()
     if _vec_row and _vec_row[0]:
-        import re as _re_dim
-        _m = _re_dim.search(r"float\[(\d+)\]", _vec_row[0])
+        _m = re.search(r"float\[(\d+)\]", _vec_row[0])
         if _m:
             _stored = int(_m.group(1))
             if _stored != dim:
@@ -160,7 +159,6 @@ def build_related(c, k=6, min_score=0.55, cross_doc=True, commit=True):
     # Individual statements preserve the caller's transaction. sqlite3.executescript()
     # implicitly commits pending work and would make brain_sync.apply only partially atomic.
     _ensure_related_schema(c)
-    c.execute("CREATE INDEX IF NOT EXISTS idx_rel_chunk ON related(chunk_id)")
     c.execute("DELETE FROM related WHERE edge_type='SIMILAR'")
     src = {r[0]: r[1] for r in c.execute("SELECT id, source FROM chunks")}
     n = 0
@@ -300,7 +298,7 @@ def corpus_docs(corpus):
         for f in glob.glob(os.path.join(corpus, "**", ext), recursive=True)
     )
     skipped = [
-        os.path.abspath(f)
+        f
         for ext in _BINARY_EXTS
         for f in glob.glob(os.path.join(corpus, "**", ext), recursive=True)
     ]
