@@ -55,6 +55,22 @@ def _ensure_schema(c, dim):
       CREATE TABLE IF NOT EXISTS documents(source TEXT PRIMARY KEY, content_hash TEXT NOT NULL, indexed_at TEXT NOT NULL);
     """)
     c.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(embedding float[{dim}])")
+    # Guard: if chunks_vec already existed with a different dimension, the IF NOT
+    # EXISTS above was a no-op and all subsequent inserts would silently corrupt
+    # data or raise an opaque sqlite-vec error.  Detect this early.
+    _vec_row = c.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='chunks_vec'"
+    ).fetchone()
+    if _vec_row and _vec_row[0]:
+        import re as _re_dim
+        _m = _re_dim.search(r"float\[(\d+)\]", _vec_row[0])
+        if _m:
+            _stored = int(_m.group(1))
+            if _stored != dim:
+                raise ValueError(
+                    f"existing index has dim={_stored}; "
+                    f"pass --reset to rebuild or use --dim {_stored}"
+                )
     cols = {r[1] for r in c.execute("PRAGMA table_info(chunks)")}
     additions = {
         "sha": "TEXT", "image": "TEXT", "embedding_content_hash": "TEXT",
