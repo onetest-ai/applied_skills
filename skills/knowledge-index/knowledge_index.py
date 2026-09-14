@@ -231,7 +231,9 @@ def index_docs(c, model, corpus, sources, dim, max_chars):
         speaker, body = _split_speaker(body)
         if img is not None:
             cur_img = img
-        emb_hash = hashlib.sha256(f"{model}\x00{dim}\x00{title}\x00{body}".encode()).hexdigest()
+        emb_hash = hashlib.sha256(
+            f"{model}\x00{dim}\x00{title}\x00{body}\x00{breadcrumb or ''}\x00{speaker or ''}".encode()
+        ).hexdigest()
         previous = c.execute(
             "SELECT embedding_content_hash,status,valid_from,valid_to FROM chunks WHERE id=?", (cid,)
         ).fetchone()
