@@ -27,7 +27,7 @@ def derive_title(title, body):
 
 def section_records(md, max_chars=1600):
     _s = md.strip()
-    if _s.startswith(("{", "[")):
+    if _s.startswith("{\"") or _s.startswith("[{"):
         raise ValueError(
             f"sections() input appears to be JSON, not Markdown. "
             f"Convert with extraction_to_md.py first. First 80 chars: {_s[:80]!r}"

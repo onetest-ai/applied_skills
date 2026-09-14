@@ -187,12 +187,10 @@ def _parse_vtt(path: str) -> str:
             continue
         seq += 1
         ts = entry["ts"]
-        # Format: MM:SS from HH:MM:SS.mmm or MM:SS.mmm
-        ts_clean = re.sub(r"\.\d+$", "", ts.split(":")[0] and ts or "00:" + ts)
-        # Simpler: take first two colon-parts for MM:SS
-        parts = ts.replace(".", ":").split(":")
-        if len(parts) >= 3:
-            label = f"{parts[-3].zfill(2)}:{parts[-2].zfill(2)}"
+        # MM:SS from HH:MM:SS[.mmm] — strip fractional, split on colon, take last two parts
+        parts = ts.split(".")[0].split(":")
+        if len(parts) >= 2:
+            label = f"{parts[-2].zfill(2)}:{parts[-1].zfill(2)}"
         else:
             label = ts[:5]
         speaker = entry["speaker"]

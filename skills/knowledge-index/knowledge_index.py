@@ -208,7 +208,12 @@ def index_docs(c, model, corpus, sources, dim, max_chars):
         for cid in old_ids - new_ids:
             c.execute("DELETE FROM chunks_fts WHERE rowid=?", (cid,))
             c.execute("DELETE FROM chunks_vec WHERE rowid=?", (cid,))
-            c.execute("DELETE FROM related WHERE chunk_id=? OR related_id=?", (cid, cid)) if _has(c, "related") else None
+            if _has(c, "chunk_topics"):
+                c.execute("DELETE FROM chunk_topics WHERE chunk_id=?", (cid,))
+            if _has(c, "graph_edges"):
+                c.execute("DELETE FROM graph_edges WHERE rel='about' AND source=?", (f"chunk:{cid}",))
+            if _has(c, "related"):
+                c.execute("DELETE FROM related WHERE chunk_id=? OR related_id=?", (cid, cid))
             c.execute("DELETE FROM chunks WHERE id=?", (cid,))
         c.execute("INSERT OR REPLACE INTO documents VALUES(?,?,datetime('now'))", (src, doc_hash))
     if not rows:
@@ -261,8 +266,12 @@ def index_docs(c, model, corpus, sources, dim, max_chars):
     return len(changed), changed_docs, skipped_docs
 
 def corpus_docs(corpus):
-    return sorted(os.path.relpath(f, corpus)
-                  for f in glob.glob(os.path.join(corpus, "**", "*.md"), recursive=True))
+    exts = ("*.md", "*.vtt", "*.srt")
+    return sorted(
+        os.path.relpath(f, corpus)
+        for ext in exts
+        for f in glob.glob(os.path.join(corpus, "**", ext), recursive=True)
+    )
 
 def cmd_index(a):
     c = connect(a.db)

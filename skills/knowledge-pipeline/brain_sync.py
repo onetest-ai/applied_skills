@@ -214,7 +214,7 @@ def cmd_apply(a):
                 c.execute("DELETE FROM documents WHERE doc_id=?", (doc,))
             print(f"deleted {len(d['deleted'])} doc(s)")
         if reclass:
-            n_chunks, _ = K.index_docs(c, a.model, a.parsed, reclass, a.dim, a.max_chars)
+            n_chunks, _n_docs, _skipped = K.index_docs(c, a.model, a.parsed, reclass, a.dim, a.max_chars)
             print(f"(re)embedded {n_chunks} chunks across {len(reclass)} doc(s)")
         if (reclass or d["deleted"]) and not a.no_related:
             nrel = K.build_related(c, commit=False)   # keep the full apply transaction atomic
