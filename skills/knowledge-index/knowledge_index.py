@@ -290,13 +290,30 @@ def index_docs(c, model, corpus, sources, dim, max_chars):
         c.execute("INSERT INTO chunks_vec(rowid,embedding) VALUES(?,?)", (cid, sqlite_vec.serialize_float32(v)))
     return len(changed), changed_docs, skipped_docs
 
+_INDEXED_EXTS = ("*.md", "*.vtt", "*.srt")
+_BINARY_EXTS = ("*.pdf", "*.pptx", "*.xlsx", "*.docx")
+
 def corpus_docs(corpus):
-    exts = ("*.md", "*.vtt", "*.srt")
-    return sorted(
+    indexed = sorted(
         os.path.relpath(f, corpus)
-        for ext in exts
+        for ext in _INDEXED_EXTS
         for f in glob.glob(os.path.join(corpus, "**", ext), recursive=True)
     )
+    skipped = [
+        os.path.abspath(f)
+        for ext in _BINARY_EXTS
+        for f in glob.glob(os.path.join(corpus, "**", ext), recursive=True)
+    ]
+    if skipped:
+        from collections import Counter
+        by_ext = Counter(os.path.splitext(f)[1].lstrip(".") for f in skipped)
+        summary = ", ".join(f"{count} .{ext}" for ext, count in sorted(by_ext.items()))
+        print(
+            f"WARNING: corpus_docs skipped {len(skipped)} binary file(s) ({summary}). "
+            f"Pre-process with `parse_corpus.py --corpus {corpus}` first.",
+            file=sys.stderr,
+        )
+    return indexed
 
 def cmd_index(a):
     c = connect(a.db)
