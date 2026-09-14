@@ -11,8 +11,8 @@ MCP response cap.  This script rewrites each .json as structured Markdown so
 the chunker produces ~1 chunk per extraction record (~200-400 chars each).
 
 Usage:
-    python3 extraction_to_md.py --input ~/projects/kt-docs/brain/extractions \
-                                 --out   ~/projects/kt-docs/brain/parsed
+    python3 extraction_to_md.py --input ~/projects/my-brain/extractions \
+                                 --out   ~/projects/my-brain/parsed
     # Backs up originals to <out>/orig/ before writing.
 """
 import argparse

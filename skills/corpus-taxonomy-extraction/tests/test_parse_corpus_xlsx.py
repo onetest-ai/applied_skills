@@ -27,7 +27,7 @@ def _workbook(path):
     ws.title = "Owners"
     ws.append(["Service", "DevSecOps Manager", "Comment"])
     ws.append(["First service", "Someone Else", "first row"])
-    ws.append(["D2C eCommerce", "Albers Carola", "Confirmed by Carola.\nQ3 owner"])
+    ws.append(["Acme Service", "Sample Person", "Confirmed by reviewer.\nQ3 owner"])
     wb.save(path)
 
 
@@ -43,12 +43,12 @@ def test_xlsx_rows_are_chunk_content_not_truncated_headings(tmp_path):
     assert method == "openpyxl-structure"
     assert "dims=A1:C3" in markdown
     # A small workbook is read completely even when the large-file sample is 1.
-    assert "Albers Carola" in markdown
-    assert "Confirmed by Carola. Q3 owner" in markdown
-    carola_chunks = [(title, body) for title, body in chunks if "Albers Carola" in body]
-    assert carola_chunks
-    assert "DevSecOps Manager: Albers Carola" in carola_chunks[0][1]
-    assert "Service: D2C eCommerce" in carola_chunks[0][1]
+    assert "Sample Person" in markdown
+    assert "Confirmed by reviewer. Q3 owner" in markdown
+    person_chunks = [(title, body) for title, body in chunks if "Sample Person" in body]
+    assert person_chunks
+    assert "DevSecOps Manager: Sample Person" in person_chunks[0][1]
+    assert "Service: Acme Service" in person_chunks[0][1]
     assert all(len(title) <= 70 for title, _ in chunks)
     assert all(body for _, body in chunks)
 
@@ -60,6 +60,6 @@ def test_xlsx_explicit_sampling_keeps_rows_separate(tmp_path):
     markdown = parse_corpus.parse_xlsx_structure(str(source), sample_rows=2)
 
     assert "First service" in markdown
-    assert "Albers Carola" not in markdown
+    assert "Sample Person" not in markdown
     assert "Columns: Service; DevSecOps Manager; Comment" in markdown
     assert "## sheet: Owners · row 2" in markdown
