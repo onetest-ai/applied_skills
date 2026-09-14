@@ -101,6 +101,53 @@ def test_typed_edges_are_directional_and_survive_similarity_rebuild(tmp_path, mo
     ).fetchone() == ("REFERENCES", 1)
 
 
+def test_index_docs_skips_embed_call_when_all_sections_unchanged(tmp_path, monkeypatch):
+    """Bug 9: embed() must not be called with an empty list.
+
+    When a doc's cache-key (model/dim/max_chars/content hash) changes but every
+    section's embedding_content_hash is already stored with the same value,
+    ``changed`` is empty.  The original code called ``embed(model, [])``
+    unconditionally, which has undefined behaviour for fastembed.
+
+    After the fix, embed() is guarded: it is only called when ``changed`` is
+    non-empty.
+
+    Scenario: index with max_chars=1200, then re-index with max_chars=800.
+    Both calls produce the same section bodies (content fits in 800 chars), so
+    emb_hash is identical but doc_hash differs → all sections are in ``clean``
+    but none are in ``changed``.
+    """
+    embed_calls = []
+
+    def recording_embed(model, texts):
+        embed_calls.append(texts)
+        return [[1.0] + [0.0] * 383 for _ in texts]
+
+    monkeypatch.setattr(index, "embed", recording_embed)
+
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "note.md").write_text("# Note\n\nShort body.", encoding="utf-8")
+
+    con = index.connect(str(tmp_path / "knowledge.sqlite"))
+
+    # First index with max_chars=1200 — sections are embedded.
+    index.index_docs(con, "fake", str(corpus), ["note.md"], 384, 1200)
+    assert any(len(c) > 0 for c in embed_calls), "first index should embed"
+    embed_calls.clear()
+
+    # Re-index with max_chars=800 — doc_hash changes (max_chars in hash),
+    # but emb_hash is the same (title+body identical) → changed == [].
+    # Bug 9: embed(model, []) called → potential crash or incorrect behaviour.
+    # After fix: embed is not called at all.
+    index.index_docs(con, "fake", str(corpus), ["note.md"], 384, 800)
+    for call_texts in embed_calls:
+        assert len(call_texts) > 0, (
+            "Bug 9: embed() was called with an empty list; "
+            "guard 'if changed:' must wrap the embed() call"
+        )
+
+
 def test_benchmark_calculates_hit_rate_and_mrr():
     cases = [
         {"eval_id": "R1", "expected_sources": "a.md"},

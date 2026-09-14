@@ -65,7 +65,11 @@ def _timestamp(value: str) -> str:
 
 def ensure_schema(con: sqlite3.Connection) -> None:
     con.execute("PRAGMA foreign_keys=ON")
-    con.executescript(SCHEMA)
+    # Bug 7 fix: executescript() implicitly commits any pending transaction in
+    # Python's sqlite3 module.  Using individual con.execute() calls instead
+    # preserves the caller's outer transaction (if any).
+    for stmt in (s.strip() for s in SCHEMA.split(";") if s.strip()):
+        con.execute(stmt)
 
 
 def _insert_immutable(con: sqlite3.Connection, table: str, columns: list[str], values: list[Any]) -> None:
@@ -143,7 +147,11 @@ def load_ledger(con: sqlite3.Connection, ledger: dict[str, Any]) -> dict[str, in
         con.execute("ROLLBACK TO SAVEPOINT temporal_load")
         con.execute("RELEASE SAVEPOINT temporal_load")
         raise
-    con.commit()
+    # Bug 7 fix: do NOT call con.commit() here.  load_ledger is a read-write
+    # helper that callers may embed inside a larger transaction.  Committing
+    # unconditionally prematurely closes any outer transaction, making the
+    # caller's ROLLBACK a no-op and breaking atomicity guarantees.
+    # The SAVEPOINT above already guarantees load_ledger's own atomicity.
     return {
         "assertions": len(ledger.get("assertions", [])),
         "questions": len(ledger.get("questions", [])),

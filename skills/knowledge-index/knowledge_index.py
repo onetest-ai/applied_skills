@@ -239,7 +239,10 @@ def index_docs(c, model, corpus, sources, dim, max_chars):
                       created_at, event_date, emb_hash, previous))
     changed = [row for row in clean if not row[-1] or row[-1][0] != row[-2]]
     print(f"embedding {len(changed)} changed sections from {changed_docs} changed doc(s); skipped {skipped_docs} unchanged doc(s) ({model})…", file=sys.stderr)
-    vecs = iter(embed(model, [f"{r[3]}\n\n{r[5]}" for r in changed]))
+    # Bug 9 fix: guard embed() call — fastembed behaviour on empty input is
+    # undefined.  When every section is already embedded with the same hash
+    # (e.g. only the doc-level cache-key changed), skip the embed call entirely.
+    vecs = iter(embed(model, [f"{r[3]}\n\n{r[5]}" for r in changed]) if changed else [])
     for (src, i, cid, title, image, body, parent, breadcrumb, speaker, created_at, event_date, emb_hash, previous) in clean:
         sha = hashlib.sha256(body.encode()).hexdigest()
         unchanged = bool(previous and previous[0] == emb_hash)

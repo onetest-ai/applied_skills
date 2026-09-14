@@ -72,6 +72,62 @@ def test_reingestion_is_idempotent_but_changed_id_is_rejected():
         raise AssertionError("changed stable ID must be rejected")
 
 
+def test_load_ledger_does_not_prematurely_commit_outer_transaction():
+    """Bug 7: load_ledger must not commit the outer transaction.
+
+    Root cause: ``ensure_schema`` uses ``con.executescript()`` which implicitly
+    commits any pending transaction in Python's sqlite3 module, AND ``load_ledger``
+    itself called ``con.commit()`` unconditionally after the SAVEPOINT.
+
+    Both commit points were removed in the fix:
+    - ``ensure_schema`` now uses individual ``con.execute()`` calls.
+    - ``load_ledger`` no longer calls ``con.commit()`` (its SAVEPOINT handles
+      its own atomicity; the caller owns the outer commit).
+
+    Test strategy: ensure_schema is called once up front (committed), then we
+    begin an outer transaction, load a ledger, and verify the outer transaction
+    is still active so the caller can roll back all data inserts atomically.
+    """
+    con = sqlite3.connect(":memory:")
+
+    # Set up schema outside the test transaction (schema is DDL, expected to commit).
+    from temporal_memory import ensure_schema
+    ensure_schema(con)
+    con.commit()  # explicitly commit the schema so it persists
+
+    simple_ledger = {
+        "schema_version": "1.0",
+        "assertions": [
+            {"assertion_id": "a1", "entity": "proj", "predicate": "status",
+             "value": "green", "asserted_at": "2025-09-20T10:00:00Z",
+             "ingested_at": "2025-09-20T10:00:00Z",
+             "source": "meet.vtt", "segment_id": "s1"},
+        ],
+        "questions": [],
+        "answers": [],
+    }
+
+    # Begin an outer transaction, call load_ledger, then roll back.
+    # After the fix, con.in_transaction must still be True after load_ledger
+    # because neither ensure_schema (no-op on existing schema) nor load_ledger
+    # commits the outer transaction.
+    con.execute("BEGIN")
+    load_ledger(con, simple_ledger)
+    # The outer transaction must still be open so the caller can roll back.
+    assert con.in_transaction, (
+        "load_ledger must not commit the outer transaction "
+        "(Bug 7: executescript/con.commit() committed it prematurely)"
+    )
+    con.execute("ROLLBACK")
+
+    count = con.execute("SELECT COUNT(*) FROM memory_assertions").fetchone()[0]
+    # After ROLLBACK the data inserts must be gone.
+    assert count == 0, (
+        "ROLLBACK must undo ledger inserts when load_ledger does not commit; "
+        f"found {count} row(s)"
+    )
+
+
 def test_invalid_relation_is_atomic_and_lower_authority_cannot_supersede():
     con = sqlite3.connect(":memory:")
     ledger = {
