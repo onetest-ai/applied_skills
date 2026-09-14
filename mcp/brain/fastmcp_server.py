@@ -389,8 +389,12 @@ async def search_shim(request: Request) -> JSONResponse:
     query = body.get("query", "").strip()
     if not query:
         return JSONResponse({"error": "query is required"}, status_code=400)
+    # Bug 10 fix: cap limit at 100 before passing to _search_knowledge.
+    # Before fix: limit=200 passed through unchecked, _limit_or_error raises
+    # inside _safe_call, and the shim returns str(ToolResult(...)) — a
+    # stringified object — instead of a structured JSON response.
     try:
-        limit = int(body.get("limit") or 15)
+        limit = max(1, min(int(body.get("limit") or 15), 100))
     except (TypeError, ValueError):
         limit = 15
     result = _safe_call(
