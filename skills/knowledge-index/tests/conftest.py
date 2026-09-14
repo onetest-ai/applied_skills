@@ -24,6 +24,29 @@ import types
 import pytest
 
 
+def make_db():
+    """Return a fresh in-memory SQLite connection with the minimal schema.
+
+    Used by tests that verify schema structure (e.g., index creation).
+    The connection is not patched — it uses real SQLite (no vec0 extension needed).
+    """
+    c = sqlite3.connect(":memory:")
+    c.executescript("""
+      CREATE TABLE IF NOT EXISTS chunks(
+        id INTEGER PRIMARY KEY, source TEXT, ord INT,
+        title TEXT, text TEXT, sha TEXT, image TEXT);
+      CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text);
+      CREATE TABLE IF NOT EXISTS documents(
+        source TEXT PRIMARY KEY,
+        content_hash TEXT NOT NULL,
+        indexed_at TEXT NOT NULL);
+    """)
+    # Plain table substituting vec0 virtual table.
+    c.execute("""CREATE TABLE IF NOT EXISTS chunks_vec(
+        rowid INTEGER PRIMARY KEY, embedding BLOB)""")
+    return c
+
+
 def _install_sqlite_vec_stub():
     if "sqlite_vec" not in sys.modules:
         stub = types.ModuleType("sqlite_vec")
@@ -82,6 +105,8 @@ def _patch_knowledge_index_for_no_ext(monkeypatch):
         for col, decl in additions.items():
             if col not in cols:
                 c.execute(f"ALTER TABLE chunks ADD COLUMN {col} {decl}")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_chunks_status ON chunks(status)")
 
     monkeypatch.setattr(ki, "_ensure_schema", _safe_ensure_schema)
 
@@ -93,7 +118,7 @@ def _patch_knowledge_index_for_no_ext(monkeypatch):
     # behaviour under test.
     def _safe_build_related(c, k=6, min_score=0.55, cross_doc=True, commit=True):
         ki._ensure_related_schema(c)
-        c.execute("CREATE INDEX IF NOT EXISTS idx_rel_chunk ON related(chunk_id)")
+        # _ensure_related_schema now creates both idx_rel_chunk and idx_rel_related
         c.execute("DELETE FROM related WHERE edge_type='SIMILAR'")
         if commit:
             c.commit()

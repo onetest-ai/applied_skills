@@ -81,6 +81,8 @@ def _ensure_schema(c, dim):
     for col, decl in additions.items():
         if col not in cols:
             c.execute(f"ALTER TABLE chunks ADD COLUMN {col} {decl}")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_chunks_status ON chunks(status)")
 
 _IMG_MARKER = re.compile(r"^\s*<!--\s*image:\s*(.+?)\s*-->\s*$", re.M)
 _SPEAKER_MARKER = re.compile(r"^\s*<!--\s*speaker:\s*(.+?)\s*-->\s*$", re.M)
@@ -145,6 +147,8 @@ def _ensure_related_schema(c):
         c.execute("ALTER TABLE related ADD COLUMN edge_type TEXT NOT NULL DEFAULT 'SIMILAR'")
     if "directed" not in rel_cols:
         c.execute("ALTER TABLE related ADD COLUMN directed INT NOT NULL DEFAULT 0")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_rel_chunk ON related(chunk_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_rel_related ON related(related_id)")
 
 def build_related(c, k=6, min_score=0.55, cross_doc=True, commit=True):
     """Native semantic 'related' layer from the vectors we already store: for each
