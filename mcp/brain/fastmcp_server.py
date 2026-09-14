@@ -322,6 +322,37 @@ async def healthz(_: Request) -> JSONResponse:
         )
 
 
+@mcp.custom_route("/api/v1/search", methods=["POST"], include_in_schema=False)
+async def search_shim(request: Request) -> JSONResponse:
+    """Thin REST shim so promptfoo can hit FastMCP without MCP JSON-RPC syntax.
+    Accepts: {"query": str, "searchType": "RAG_COMPLETION"|..., "limit": int}
+    Returns: [{"text": str, "source": str, ...}] — same shape as Cognee v1 for eval compat.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    query = body.get("query", "").strip()
+    if not query:
+        return JSONResponse({"error": "query is required"}, status_code=400)
+    limit = int(body.get("limit", 5))
+    result = _safe_call("search_knowledge", _search_knowledge, query, limit)
+    # _safe_call returns a dict with key "hits" (list of chunk dicts)
+    hits = []
+    if isinstance(result, dict):
+        hits = result.get("hits", result.get("results", []))
+    if hits:
+        flat = [{"text": h.get("text", ""), "source": h.get("source", ""),
+                 "title": h.get("section", h.get("title", "")),
+                 "score": h.get("score", 0)} for h in hits]
+        # Flatten into a single text block for promptfoo responseParser: json[0].text
+        combined = "\n\n---\n\n".join(
+            f"[{h['source']} / {h['title']}]\n{h['text']}" for h in flat
+        )
+        return JSONResponse([{"text": combined, "source": flat[0]["source"] if flat else ""}])
+    return JSONResponse([{"text": str(result), "source": ""}])
+
+
 class ApiKeyMiddleware:
     """Protect only the MCP HTTP endpoint with a constant-time API-key check."""
 
