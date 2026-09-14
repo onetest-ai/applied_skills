@@ -1,0 +1,21 @@
+description: Second-brain retrieval evals against FastMCP
+
+prompts:
+  - "{{question}}"
+
+providers:
+  - id: http
+    label: brain-fastmcp-retrieval
+    config:
+      url: http://127.0.0.1:8002/api/v1/search
+      method: POST
+      headers:
+        Content-Type: application/json
+      body: '{"query": "{{prompt}}", "limit": 15}'
+      responseParser: json[0].text
+
+defaultTest:
+  assert:
+    - type: javascript
+      metric: lexical-retrieval-coverage
+      value: file://assertions/retrieval-coverage.js

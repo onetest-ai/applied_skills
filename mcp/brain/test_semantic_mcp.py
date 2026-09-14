@@ -172,7 +172,7 @@ class FastMCPContractTests(FixtureCase):
         import fastmcp_server
 
         async def run():
-            expected = {"list_metrics", "get_metric", "search_knowledge", "get_taxonomy", "find_related_content", "get_evidence", "health"}
+            expected = {"list_metrics", "get_metric", "search_knowledge", "get_current_fact", "get_question_status", "get_taxonomy", "find_related_content", "get_evidence", "health"}
             async with Client(fastmcp_server.mcp) as client:
                 tools = {tool.name: tool for tool in await client.list_tools()}
                 self.assertEqual(set(tools), expected)
@@ -187,7 +187,9 @@ class FastMCPContractTests(FixtureCase):
                         "entity_contains": "string", "month": "string", "start_month": "string",
                         "end_month": "string", "limit": "integer",
                     },
-                    "search_knowledge": {"query": "string", "limit": "integer"},
+                    "search_knowledge": {"query": "string", "limit": "integer", "as_of": "string", "latest_only": "boolean", "source_contains": "string", "tag": "string"},
+                    "get_current_fact": {"entity": "string", "predicate": "string", "as_of": "string"},
+                    "get_question_status": {"question_id": "string", "as_of": "string"},
                     "get_taxonomy": {"label": "string", "relation": "string", "kind": "string", "limit": "integer"},
                     "find_related_content": {"chunk_id": "integer", "query": "string", "limit": "integer"},
                     "get_evidence": {"chunk_id": "integer", "include_page_text": "boolean"},
@@ -236,6 +238,9 @@ class FastMCPContractTests(FixtureCase):
                     ("get_metric", {"name": None}),
                     ("search_knowledge", {}),
                     ("search_knowledge", {"query": 42}),
+                    ("search_knowledge", {"query": "alpha", "latest_only": "yes"}),
+                    ("get_current_fact", {}),
+                    ("get_question_status", {"question_id": 42}),
                     ("get_taxonomy", {"label": {"bad": "type"}}),
                     ("find_related_content", {"chunk_id": "one"}),
                     ("get_evidence", {"chunk_id": "one"}),
@@ -261,6 +266,8 @@ class FastMCPContractTests(FixtureCase):
                     ("list_metrics", "_list_metrics"),
                     ("get_metric", "_get_metric"),
                     ("search_knowledge", "_search_knowledge"),
+                    ("get_current_fact", "_get_current_fact"),
+                    ("get_question_status", "_get_question_status"),
                     ("get_taxonomy", "_get_taxonomy"),
                     ("find_related_content", "_find_related_content"),
                     ("get_evidence", "_get_evidence"),
@@ -269,6 +276,8 @@ class FastMCPContractTests(FixtureCase):
                     arguments = {
                         "get_metric": {"name": "revenue"},
                         "search_knowledge": {"query": "alpha"},
+                        "get_current_fact": {"entity": "project-atlas", "predicate": "release_date"},
+                        "get_question_status": {"question_id": "q-atlas-owner"},
                         "get_taxonomy": {},
                         "find_related_content": {"chunk_id": 1},
                         "get_evidence": {"chunk_id": 1},

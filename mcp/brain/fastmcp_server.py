@@ -21,8 +21,10 @@ from starlette.responses import JSONResponse
 
 from semantic_core import (
     find_related_content as _find_related_content,
+    get_current_fact as _get_current_fact,
     get_evidence as _get_evidence,
     get_metric as _get_metric,
+    get_question_status as _get_question_status,
     get_taxonomy as _get_taxonomy,
     health as _health,
     list_metrics as _list_metrics,
@@ -42,6 +44,10 @@ IMPORTANT RESULT-LIMIT CONTRACT: every tool argument named limit accepts integer
 1 through 100 inclusive. Never send limit above 100. Prefer narrow filters. If more
 coverage is needed, make multiple calls split by metric, month range, grain, entity,
 concept, or anchor section instead of requesting one oversized result set.
+
+For mutable facts, call get_current_fact instead of choosing the newest retrieved
+sentence. For an open question, call get_question_status. A conflicted result has no
+current value until an explicit supersedes/retracts relation resolves it.
 """.strip()
 
 _LEGACY_TOOLS = {
@@ -96,6 +102,8 @@ _TOOL_FIXES = {
     "search_knowledge": "Provide a non-empty query and keep limit between 1 and 100.",
     "get_taxonomy": "Use an optional label, relation, or kind filter and keep limit between 1 and 100.",
     "find_related_content": "Provide either chunk_id from search_knowledge/get_taxonomy or a non-empty query; keep limit between 1 and 100.",
+    "get_current_fact": "Provide non-empty entity and predicate values; use ISO-8601 for optional as_of.",
+    "get_question_status": "Provide a stable non-empty question_id; use ISO-8601 for optional as_of.",
     "get_evidence": "Provide a valid integer chunk_id returned by search_knowledge, get_taxonomy, or find_related_content.",
     "health": "Verify BRAIN_DB, BRAIN_CATALOG, BRAIN_SKILLS, and sqlite-vec are installed and readable.",
 }
@@ -228,6 +236,10 @@ def get_metric(
 def search_knowledge(
     query: Annotated[str | None, SkipValidation, Field(description="Required non-empty natural-language narrative question or concept")] = None,
     limit: Annotated[int, SkipValidation, Field(description=_LIMIT_DESCRIPTION)] = 5,
+    as_of: Annotated[str | None, SkipValidation, Field(description="Optional ISO event-time cutoff")] = None,
+    latest_only: Annotated[bool, SkipValidation, Field(description="Exclude chunks marked SUPERSEDED")] = False,
+    source_contains: Annotated[str | None, SkipValidation, Field(description="Optional literal source-path substring")] = None,
+    tag: Annotated[str | None, SkipValidation, Field(description="Optional exact taxonomy tag")] = None,
 ) -> dict | ToolResult:
     """Search narrative evidence with hybrid BM25+vector retrieval and source citations.
 
@@ -239,7 +251,49 @@ def search_knowledge(
     valid_limit, error = _limit_or_error("search_knowledge", limit)
     if error:
         return error
-    return _safe_call("search_knowledge", _search_knowledge, valid_query, valid_limit)
+    if not isinstance(latest_only, bool):
+        return _error_result("search_knowledge", "invalid_arguments", "latest_only must be a boolean")
+    optional = []
+    for field, value in (("as_of", as_of), ("source_contains", source_contains), ("tag", tag)):
+        valid, error = _optional_string("search_knowledge", field, value)
+        if error:
+            return error
+        optional.append(valid)
+    return _safe_call("search_knowledge", _search_knowledge, valid_query, valid_limit, optional[0], latest_only, optional[1], optional[2])
+
+
+@mcp.tool(tags={"temporal", "facts"})
+def get_current_fact(
+    entity: Annotated[str | None, SkipValidation, Field(description="Required stable entity key")] = None,
+    predicate: Annotated[str | None, SkipValidation, Field(description="Required stable fact predicate")] = None,
+    as_of: Annotated[str | None, SkipValidation, Field(description="Optional ISO-8601 event-time cutoff")] = None,
+) -> dict | ToolResult:
+    """Resolve a mutable fact without discarding prior meeting assertions."""
+    valid_entity, error = _required_string("get_current_fact", "entity", entity)
+    if error:
+        return error
+    valid_predicate, error = _required_string("get_current_fact", "predicate", predicate)
+    if error:
+        return error
+    valid_as_of, error = _optional_string("get_current_fact", "as_of", as_of)
+    if error:
+        return error
+    return _safe_call("get_current_fact", _get_current_fact, valid_entity, valid_predicate, valid_as_of)
+
+
+@mcp.tool(tags={"temporal", "questions"})
+def get_question_status(
+    question_id: Annotated[str | None, SkipValidation, Field(description="Required stable question ID from extraction")] = None,
+    as_of: Annotated[str | None, SkipValidation, Field(description="Optional ISO-8601 event-time cutoff")] = None,
+) -> dict | ToolResult:
+    """Resolve an earlier question only through an explicit later answer link."""
+    valid_id, error = _required_string("get_question_status", "question_id", question_id)
+    if error:
+        return error
+    valid_as_of, error = _optional_string("get_question_status", "as_of", as_of)
+    if error:
+        return error
+    return _safe_call("get_question_status", _get_question_status, valid_id, valid_as_of)
 
 
 @mcp.tool(tags={"taxonomy"})
@@ -335,13 +389,22 @@ async def search_shim(request: Request) -> JSONResponse:
     query = body.get("query", "").strip()
     if not query:
         return JSONResponse({"error": "query is required"}, status_code=400)
-    limit = int(body.get("limit", 5))
-    result = _safe_call("search_knowledge", _search_knowledge, query, limit)
+    try:
+        limit = int(body.get("limit") or 15)
+    except (TypeError, ValueError):
+        limit = 15
+    result = _safe_call(
+        "search_knowledge", _search_knowledge, query, limit,
+        body.get("asOf"), bool(body.get("latestOnly", False)),
+        body.get("sourceContains"), body.get("tag"),
+    )
     # _safe_call returns a dict with key "hits" (list of chunk dicts)
     hits = []
     if isinstance(result, dict):
         hits = result.get("hits", result.get("results", []))
     if hits:
+        # Exclude orig/ chunks — they are raw JSON dumps, not structured retrieval content
+        hits = [h for h in hits if not h.get("source", "").startswith("orig/")]
         flat = [{"text": h.get("text", ""), "source": h.get("source", ""),
                  "title": h.get("section", h.get("title", "")),
                  "score": h.get("score", 0)} for h in hits]
@@ -349,7 +412,12 @@ async def search_shim(request: Request) -> JSONResponse:
         combined = "\n\n---\n\n".join(
             f"[{h['source']} / {h['title']}]\n{h['text']}" for h in flat
         )
-        return JSONResponse([{"text": combined, "source": flat[0]["source"] if flat else ""}])
+        return JSONResponse([{
+            "text": combined,
+            "source": flat[0]["source"] if flat else "",
+            "sources": [h["source"] for h in flat],
+            "result_type": "retrieved_context",
+        }])
     return JSONResponse([{"text": str(result), "source": ""}])
 
 

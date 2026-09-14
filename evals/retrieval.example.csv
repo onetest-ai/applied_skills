@@ -1,0 +1,4 @@
+eval_id,query,expected_sources,as_of,latest_only,source_contains,tag
+R01,What was the current Atlas release date?,meeting-2025-09-21.md,,true,meetings,ReleaseDate
+R02,What release date was known on September 20?,meeting-2025-09-20.md,2025-09-20,false,meetings,ReleaseDate
+R03,Who owns the Atlas rollout?,meeting-2025-09-20.md|meeting-2025-09-21.md,,true,meetings,Ownership

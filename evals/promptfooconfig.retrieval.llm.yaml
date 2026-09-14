@@ -1,0 +1,39 @@
+description: Second-brain semantic retrieval evals against FastMCP (LLM judge)
+
+prompts:
+  - "{{question}}"
+
+providers:
+  - id: http
+    label: brain-fastmcp-retrieval
+    config:
+      url: http://127.0.0.1:8002/api/v1/search
+      method: POST
+      headers:
+        Content-Type: application/json
+      body: '{"query": "{{prompt}}", "limit": 15}'
+      responseParser: json[0].text
+
+defaultTest:
+  options:
+    provider:
+      id: bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0
+      config:
+        region: us-east-1
+  assert:
+    - type: llm-rubric
+      metric: semantic-retrieval-coverage
+      value: |
+        This output is retrieved context, not a synthesized answer.
+
+        Query: {{question}}
+        PASS only when the context contains evidence for at least {{min_items}}
+        pipe-separated required concepts. Paraphrases are acceptable; topical
+        similarity without supporting evidence is not.
+
+        Required concepts: {{expected_answer_must_contain}}
+        Forbidden concepts: {{expected_answer_must_not_contain}}
+        Ground truth: {{ground_truth_source}}
+        Notes: {{notes}}
+
+        Judge evidence coverage only. Do not require a polished answer.

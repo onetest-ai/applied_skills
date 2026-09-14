@@ -42,7 +42,7 @@ def brain_py():
             return str(c)
     return sys.executable
 
-NARRATIVE_EXT = {".pdf", ".pptx", ".ppt", ".docx", ".doc", ".md", ".txt"}
+NARRATIVE_EXT = {".pdf", ".pptx", ".ppt", ".docx", ".doc", ".md", ".txt", ".vtt", ".srt"}
 REPORTING_EXT = {".xlsx", ".xlsm", ".xls", ".csv"}
 
 # module -> pip name (for the preflight message). All torch-free (docling retired).
