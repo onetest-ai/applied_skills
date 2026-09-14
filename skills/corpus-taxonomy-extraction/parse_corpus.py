@@ -54,27 +54,65 @@ def parse_office_pymupdf(path):
         shutil.rmtree(profile, ignore_errors=True)
         shutil.rmtree(tmp, ignore_errors=True)
 
-def parse_xlsx_structure(path, sample_rows):
-    """Large-workbook structure dump: sheet names, header row, a few sample rows.
-    Constant-memory via openpyxl read_only. This is a MAP for 'what is in here',
-    not the numeric source of truth (that path is openpyxl->Parquet->SQLite)."""
+def parse_xlsx_structure(path, sample_rows=None):
+    """Workbook text dump with one Markdown section per non-empty data row.
+
+    ``sample_rows`` limits each sheet when it is a positive integer. ``None`` or
+    zero reads the full sheet.  This remains a narrative map of workbook content;
+    governed numeric answers still come from the tabular semantic layer.
+    """
     import openpyxl
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
     out = []
     for ws in wb.worksheets:
-        dims = getattr(ws, "dimensions", None) or "unknown"
-        out.append(f"\n\n## sheet: {ws.title}  (dims={dims})")
+        try:
+            dims = ws.calculate_dimension(force=True)
+        except (AttributeError, TypeError, ValueError):
+            dims = "unknown"
         rows = []
         for i, row in enumerate(ws.iter_rows(values_only=True)):
-            rows.append(row)
-            if i >= sample_rows:
+            if sample_rows and i >= sample_rows:
                 break
-        for r in rows:
-            cells = [("" if c is None else str(c)) for c in r]
-            if any(cells):
-                out.append("| " + " | ".join(cells) + " |")
+            cells = ["" if value is None else " ".join(str(value).split()) for value in row]
+            rows.append((i + 1, cells))
+
+        nonempty = [(number, cells) for number, cells in rows if any(cells)]
+        if not nonempty:
+            continue
+
+        # Reporting sheets often have one or two decorative rows above the real
+        # header. The densest text row in the first ten non-empty rows is a stable
+        # deterministic approximation and works for ordinary single-table sheets.
+        candidates = nonempty[:10]
+        header_number, headers = max(
+            candidates,
+            key=lambda item: (
+                sum(bool(cell) for cell in item[1]),
+                sum(bool(cell) and not cell.replace(".", "", 1).isdigit() for cell in item[1]),
+            ),
+        )
+        labels = [header or f"Column {i + 1}" for i, header in enumerate(headers)]
+        out.append(
+            f"\n\n## sheet: {ws.title} · schema  (dims={dims})\n\n"
+            + "Columns: " + "; ".join(label for label in labels if label) + "\n"
+        )
+
+        for row_number, cells in nonempty:
+            if row_number <= header_number:
+                continue
+            fields = []
+            for i, value in enumerate(cells):
+                if not value:
+                    continue
+                label = labels[i] if i < len(labels) else f"Column {i + 1}"
+                fields.append(f"- {label}: {value}")
+            if fields:
+                out.append(
+                    f"\n\n## sheet: {ws.title} · row {row_number}  (dims={dims})\n\n"
+                    + "\n".join(fields) + "\n"
+                )
     wb.close()
-    return "".join(out)
+    return "".join(out).rstrip() + "\n"
 
 def _parse_srt(path: str) -> str:
     """SRT → headed Markdown. Each numbered cue block → one ## heading."""
@@ -184,7 +222,11 @@ def parse_one(path, xlsx_max_mb, sample_rows):
     if ext == ".pdf":
         return parse_pdf_pymupdf(path), "pymupdf"
     if ext in (".xlsx", ".xlsm"):
-        return parse_xlsx_structure(path, sample_rows), "openpyxl-structure"
+        # Small workbooks are useful narrative/entity sources and are cheap to
+        # read in full. Large reporting books stay bounded to a structural sample;
+        # their complete numeric data belongs in the deterministic facts lane.
+        row_limit = None if size_mb <= xlsx_max_mb else sample_rows
+        return parse_xlsx_structure(path, row_limit), "openpyxl-structure"
     if ext == ".srt":
         return _parse_srt(path), "transcript-etl"
     if ext == ".vtt":
