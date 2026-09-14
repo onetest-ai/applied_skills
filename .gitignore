@@ -19,3 +19,16 @@ knowledge.sqlite*
 sync_plan.json
 result_*.json
 batch_*.json
+
+# Host-specific MCP install directories — each host clones its own venv/server copy
+# The pattern matches any directory starting with a dot that has a /mcp subdir
+# (e.g. .claude/, .codex/, .dsh/, .github/ when used as an MCP host)
+.claude/
+.codex/
+.dsh/
+.github/
+
+# Eval output artifacts — generated per-run, not committed
+evals/temporal_cross_session.csv
+retrieval-results.json
+retrieval-results.html

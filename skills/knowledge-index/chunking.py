@@ -4,7 +4,8 @@ Used by knowledge-index (RAG chunks) AND corpus-taxonomy-extraction/to_obsidian
 (vault notes) so a retrieval chunk is exactly the note a human sees. Keep the copies
 in the two skills identical.
 
-sections(md, max_chars) -> list[(title, body)]
+section_records(md, max_chars) -> list[dict]
+sections(md, max_chars) -> list[(title, body)] (compatibility wrapper)
   Split at Markdown headings / '[page N]' markers; oversized sections split by
   paragraph; titles derived from the first substantive line when a heading is
   missing or useless ('Page N'). Falls back to paragraph-merge for heading-less docs.
@@ -24,7 +25,7 @@ def derive_title(title, body):
             return " ".join(s.split()[:10])[:70]
     return t or "Section"
 
-def sections(md, max_chars=1600):
+def section_records(md, max_chars=1600):
     _s = md.strip()
     if _s.startswith(("{", "[")):
         raise ValueError(
@@ -33,33 +34,45 @@ def sections(md, max_chars=1600):
         )
     md = strip_preamble(md)
     heading = re.compile(r"^#{1,6}\s+(.*\S)\s*$")
-    blocks, title, buf = [], None, []
+    blocks, title, buf, level = [], None, [], 0
+    hierarchy = []
+    breadcrumb, parent = "", ""
     for ln in md.splitlines():
         m = heading.match(ln)
         if m:
             if title is not None or "\n".join(buf).strip():
-                blocks.append((title, "\n".join(buf).strip()))
-            title, buf = re.sub(r"\[page (\d+)\]", r"Page \1", m.group(1)).strip(), []
+                blocks.append((title, "\n".join(buf).strip(), parent, breadcrumb))
+            level = len(ln) - len(ln.lstrip("#"))
+            title = re.sub(r"\[page (\d+)\]", r"Page \1", m.group(1)).strip()
+            hierarchy = hierarchy[: level - 1]
+            hierarchy.append(title)
+            breadcrumb = " > ".join(hierarchy)
+            parent = hierarchy[-2] if len(hierarchy) > 1 else ""
+            buf = []
         else:
             buf.append(ln)
     if title is not None or "\n".join(buf).strip():
-        blocks.append((title, "\n".join(buf).strip()))
-    blocks = [(t, b) for t, b in blocks if b or t]
+        blocks.append((title, "\n".join(buf).strip(), parent, breadcrumb))
+    blocks = [(t, b, p, bc) for t, b, p, bc in blocks if b]
     if not blocks:
-        blocks = [(None, md.strip())]
+        blocks = [(None, md.strip(), "", "")]
     out = []
-    for t, b in blocks:
+    for t, b, p, bc in blocks:
         if len(b) <= max_chars:
-            out.append((derive_title(t, b), b)); continue
+            out.append({"title": derive_title(t, b), "body": b, "parent_heading": p, "breadcrumb_path": bc}); continue
         paras = [p for p in re.split(r"\n\s*\n", b) if p.strip()]
         cur, part = "", 1
-        for p in paras:
-            if len(cur) + len(p) + 2 > max_chars and cur:
+        for para in paras:
+            if len(cur) + len(para) + 2 > max_chars and cur:
                 base = derive_title(t, cur)
-                out.append((f"{base} (part {part})", cur.strip())); cur = p; part += 1
+                out.append({"title": f"{base} (part {part})", "body": cur.strip(), "parent_heading": p, "breadcrumb_path": bc}); cur = para; part += 1
             else:
-                cur = (cur + "\n\n" + p) if cur else p
+                cur = (cur + "\n\n" + para) if cur else para
         if cur.strip():
             base = derive_title(t, cur)
-            out.append((f"{base} (part {part})" if part > 1 else base, cur.strip()))
+            out.append({"title": f"{base} (part {part})" if part > 1 else base, "body": cur.strip(), "parent_heading": p, "breadcrumb_path": bc})
     return out
+
+
+def sections(md, max_chars=1600):
+    return [(record["title"], record["body"]) for record in section_records(md, max_chars)]
