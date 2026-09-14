@@ -3,7 +3,7 @@ Corpus-agnostic adversarial eval CSV generator.
 Reads *_extraction.json files from --extractions dir, emits eval CSV.
 
 Usage:
-  python generate_evals.py --extractions <dir> --out <csv_path> [--min-evals 10]
+  python generate_evals.py --extractions <dir> --out <csv_path>
 """
 import argparse
 import csv
@@ -51,7 +51,7 @@ def load_extractions(extractions_dir):
     return result
 
 
-def generate_evals(extractions_dir, min_evals=10):
+def generate_evals(extractions_dir):
     """Generate list of eval dicts from extraction JSONs."""
     all_exts = load_extractions(extractions_dir)
     if not all_exts:
@@ -147,7 +147,6 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Generate adversarial eval CSV from extraction JSONs")
     parser.add_argument("--extractions", required=True, help="Dir containing *_extraction.json files")
     parser.add_argument("--out", required=True, help="Output CSV path")
-    parser.add_argument("--min-evals", type=int, default=10)
     args = parser.parse_args(argv)
 
     rows = generate_evals(args.extractions)

@@ -69,7 +69,7 @@ def test_pipe_separator_in_must_contain(tmp_path):
     cross = [r for r in rows if r["scope"] == "cross-session" or "|" in r["expected_answer_must_contain"]]
     # multi-fact rows use pipe separator
     multi = [r for r in rows if "|" in r["expected_answer_must_contain"]]
-    assert len(multi) >= 1 or len(rows) >= 1  # at minimum rows are generated
+    assert len(multi) >= 1
 
 
 def test_no_unresolved_product_in_output(tmp_path):
