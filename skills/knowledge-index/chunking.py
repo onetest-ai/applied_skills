@@ -25,6 +25,12 @@ def derive_title(title, body):
     return t or "Section"
 
 def sections(md, max_chars=1600):
+    _s = md.strip()
+    if _s.startswith(("{", "[")):
+        raise ValueError(
+            f"sections() input appears to be JSON, not Markdown. "
+            f"Convert with extraction_to_md.py first. First 80 chars: {_s[:80]!r}"
+        )
     md = strip_preamble(md)
     heading = re.compile(r"^#{1,6}\s+(.*\S)\s*$")
     blocks, title, buf = [], None, []
