@@ -110,3 +110,94 @@ def test_srt_name_prefix_is_extracted_as_speaker(tmp_path):
     content, _ = parse_one(str(path), 20, 8)
     assert "— Karen" in content
     assert "<!-- speaker: Karen -->" in content
+
+
+# ---------------------------------------------------------------------------
+# merge_cues tests (Task 1)
+# ---------------------------------------------------------------------------
+
+VTT_SAME_SPEAKER = """\
+WEBVTT
+
+aaa-0
+00:00:01.000 --> 00:00:02.000
+<v Alice>First sentence.
+
+aaa-1
+00:00:02.500 --> 00:00:03.500
+<v Alice>Second sentence.
+
+aaa-2
+00:00:04.000 --> 00:00:05.000
+<v Alice>Third sentence.
+
+bbb-0
+00:00:06.000 --> 00:00:07.000
+<v Bob>Bob speaks now.
+
+bbb-1
+00:00:07.500 --> 00:00:08.500
+<v Bob>Bob continues.
+"""
+
+
+def test_merge_cues_3_groups_same_speaker_into_one_heading(tmp_path):
+    """merge_cues=3: Alice's 3 cues -> 1 heading, Bob's 2 cues -> 1 heading = 2 headings total."""
+    p = tmp_path / "merged.vtt"
+    p.write_text(VTT_SAME_SPEAKER, encoding="utf-8")
+    content, _ = parse_one(str(p), 20, 8, merge_cues=3)
+    headings = [l for l in content.splitlines() if l.startswith("## ")]
+    assert len(headings) == 2, "Expected 2 headings, got %d:\n%s" % (len(headings), content)
+
+
+def test_merge_cues_default_1_preserves_per_cue_headings(tmp_path):
+    """merge_cues=1 (default): same VTT produces one heading per UUID group (2 total after UUID merge)."""
+    p = tmp_path / "unmerged.vtt"
+    p.write_text(VTT_SAME_SPEAKER, encoding="utf-8")
+    content, _ = parse_one(str(p), 20, 8, merge_cues=1)
+    headings = [l for l in content.splitlines() if l.startswith("## ")]
+    # aaa-0/1/2 all collapse to UUID base "aaa" -> 1 heading; bbb-0/1 -> 1 heading = 2 total
+    assert len(headings) == 2, "Expected 2 headings (UUID-merged), got %d:\n%s" % (len(headings), content)
+
+
+def test_merge_cues_speaker_change_flushes_buffer(tmp_path):
+    """merge_cues=5: even with budget=5, Alice->Bob boundary forces a flush = 2 headings."""
+    p = tmp_path / "flush.vtt"
+    p.write_text(VTT_SAME_SPEAKER, encoding="utf-8")
+    content, _ = parse_one(str(p), 20, 8, merge_cues=5)
+    headings = [l for l in content.splitlines() if l.startswith("## ")]
+    assert len(headings) == 2, "Expected 2 headings (speaker boundary flush), got %d" % len(headings)
+
+
+def test_merge_cues_merged_heading_contains_all_text(tmp_path):
+    """With merge_cues=3, Alice's merged heading must contain all three cue texts."""
+    p = tmp_path / "text_check.vtt"
+    p.write_text(VTT_SAME_SPEAKER, encoding="utf-8")
+    content, _ = parse_one(str(p), 20, 8, merge_cues=3)
+    assert "First sentence" in content
+    assert "Second sentence" in content
+    assert "Third sentence" in content
+
+
+SRT_SAME_SPEAKER = """\
+1
+00:00:01,000 --> 00:00:02,000
+Alice: Hello team.
+
+2
+00:00:03,000 --> 00:00:04,000
+Alice: Let's start.
+
+3
+00:00:05,000 --> 00:00:06,000
+Bob: Sounds good.
+"""
+
+
+def test_srt_merge_cues_groups_same_speaker(tmp_path):
+    """SRT with merge_cues=2: Alice's 2 cues -> 1 heading, Bob's 1 cue -> 1 heading = 2 total."""
+    p = tmp_path / "merged.srt"
+    p.write_text(SRT_SAME_SPEAKER, encoding="utf-8")
+    content, _ = parse_one(str(p), 20, 8, merge_cues=2)
+    headings = [l for l in content.splitlines() if l.startswith("## ")]
+    assert len(headings) == 2, "Expected 2 headings, got %d:\n%s" % (len(headings), content)

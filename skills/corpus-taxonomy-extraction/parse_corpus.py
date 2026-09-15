@@ -114,14 +114,42 @@ def parse_xlsx_structure(path, sample_rows=None):
     wb.close()
     return "".join(out).rstrip() + "\n"
 
-def _parse_srt(path: str) -> str:
-    """SRT → headed Markdown. Each numbered cue block → one ## heading."""
+def _merge_speaker_turns(groups, merge_cues):
+    """Merge consecutive same-speaker cue groups into turns.
+
+    Each group is {"ts": str, "speaker": str, "text": str}.
+    Returns list of same shape where consecutive same-speaker groups within
+    the merge_cues budget are joined (text concatenated with a space).
+    merge_cues=1 returns a copy of groups unchanged.
+    """
+    if merge_cues <= 1 or not groups:
+        return list(groups)
+    turns = []
+    buf_ts = groups[0]["ts"]
+    buf_speaker = groups[0]["speaker"]
+    buf_texts = [groups[0]["text"]]
+    for g in groups[1:]:
+        same_speaker = (g["speaker"] == buf_speaker) or (not g["speaker"] and not buf_speaker)
+        within_budget = len(buf_texts) < merge_cues
+        if same_speaker and within_budget:
+            buf_texts.append(g["text"])
+        else:
+            turns.append({"ts": buf_ts, "speaker": buf_speaker, "text": " ".join(buf_texts)})
+            buf_ts = g["ts"]
+            buf_speaker = g["speaker"]
+            buf_texts = [g["text"]]
+    turns.append({"ts": buf_ts, "speaker": buf_speaker, "text": " ".join(buf_texts)})
+    return turns
+
+
+def _parse_srt(path, merge_cues=1):
+    """SRT -> headed Markdown. Each numbered cue block -> one ## heading.
+    merge_cues>1 joins consecutive same-speaker cues into speaker turns."""
     import re
     text = open(path, encoding="utf-8", errors="replace").read()
     # Split on blank lines between cue blocks
     blocks = re.split(r"\n\s*\n", text.strip())
-    lines = []
-    seq = 0
+    groups = []
     for block in blocks:
         rows = [r.strip() for r in block.strip().splitlines() if r.strip()]
         if not rows:
@@ -134,26 +162,34 @@ def _parse_srt(path: str) -> str:
             ts = rows[i].split("-->")[0].strip()  # start timestamp
             cue_text = " ".join(rows[i+1:])
             if cue_text.strip():
-                seq += 1
                 speaker, cue_text = _speaker_and_text(cue_text)
                 # Format: MM:SS from HH:MM:SS,mmm
                 parts = ts.split(":")
-                label = f"{parts[1]}:{parts[2].split(',')[0]}"
-                who = f" — {speaker}" if speaker else ""
-                marker = f"<!-- speaker: {speaker} -->\n\n" if speaker else ""
-                lines.append(f"\n## {label}{who} (cue {seq})\n\n{marker}{cue_text.strip()}\n")
+                label = "%s:%s" % (parts[1], parts[2].split(",")[0])
+                groups.append({"ts": label, "speaker": speaker, "text": cue_text.strip()})
+
+    turns = _merge_speaker_turns(groups, merge_cues)
+
+    lines = []
+    for seq, turn in enumerate(turns, 1):
+        who = " -- %s" % turn["speaker"] if turn["speaker"] else ""
+        # Keep em-dash for consistency with existing output
+        who = (" — %s" % turn["speaker"]) if turn["speaker"] else ""
+        marker = ("<!-- speaker: %s -->\n\n" % turn["speaker"]) if turn["speaker"] else ""
+        lines.append("\n## %s%s (cue %d)\n\n%s%s\n" % (turn["ts"], who, seq, marker, turn["text"]))
     return "\n".join(lines)
 
 
-def _parse_vtt(path: str) -> str:
-    """WebVTT → headed Markdown. Multi-line cues (same UUID prefix) merged."""
+def _parse_vtt(path, merge_cues=1):
+    """WebVTT -> headed Markdown. Multi-line cues (same UUID prefix) merged.
+    merge_cues>1 joins consecutive same-speaker UUID groups into speaker turns."""
     import re
     text = open(path, encoding="utf-8", errors="replace").read()
     lines_out = []
     # Remove WEBVTT header and NOTE blocks
     body = re.sub(r"^WEBVTT.*?\n", "", text, flags=re.MULTILINE)
     blocks = re.split(r"\n\s*\n", body.strip())
-    merged: dict = {}  # base_id -> {"ts": str, "text": [str], "speaker": str}
+    merged = {}  # base_id -> {"ts": str, "text": [str], "speaker": str}
     order = []
     for block in blocks:
         rows = [r.strip() for r in block.strip().splitlines() if r.strip()]
@@ -179,24 +215,32 @@ def _parse_vtt(path: str) -> str:
             elif speaker and not merged[base]["speaker"]:
                 merged[base]["speaker"] = speaker
             merged[base]["text"].append(cue_text)
-    seq = 0
+
+    # Build UUID-group list
+    groups = []
     for base in order:
         entry = merged[base]
         full_text = " ".join(entry["text"]).strip()
-        if not full_text:
-            continue
+        if full_text:
+            groups.append({"ts": entry["ts"], "speaker": entry["speaker"], "text": full_text})
+
+    # Merge consecutive same-speaker groups into turns
+    turns = _merge_speaker_turns(groups, merge_cues)
+
+    seq = 0
+    for turn in turns:
         seq += 1
-        ts = entry["ts"]
-        # MM:SS from HH:MM:SS[.mmm] — strip fractional, split on colon, take last two parts
+        ts = turn["ts"]
+        # MM:SS from HH:MM:SS[.mmm] -- strip fractional, split on colon, take last two parts
         parts = ts.split(".")[0].split(":")
         if len(parts) >= 2:
-            label = f"{parts[-2].zfill(2)}:{parts[-1].zfill(2)}"
+            label = "%s:%s" % (parts[-2].zfill(2), parts[-1].zfill(2))
         else:
             label = ts[:5]
-        speaker = entry["speaker"]
-        who = f" — {speaker}" if speaker else ""
-        marker = f"<!-- speaker: {speaker} -->\n\n" if speaker else ""
-        lines_out.append(f"\n## {label}{who} (cue {seq})\n\n{marker}{full_text}\n")
+        speaker = turn["speaker"]
+        who = (" — %s" % speaker) if speaker else ""
+        marker = ("<!-- speaker: %s -->\n\n" % speaker) if speaker else ""
+        lines_out.append("\n## %s%s (cue %d)\n\n%s%s\n" % (label, who, seq, marker, turn["text"]))
     return "\n".join(lines_out)
 
 
@@ -212,7 +256,7 @@ def _speaker_and_text(text: str) -> tuple[str, str]:
     return "", re.sub(r"</?v[^>]*>", "", text).strip()
 
 
-def parse_one(path, xlsx_max_mb, sample_rows):
+def parse_one(path, xlsx_max_mb, sample_rows, merge_cues=1):
     ext = os.path.splitext(path)[1].lower()
     size_mb = os.path.getsize(path) / 1e6
     if ext in (".pptx", ".docx", ".ppt", ".doc"):
@@ -226,9 +270,9 @@ def parse_one(path, xlsx_max_mb, sample_rows):
         row_limit = None if size_mb <= xlsx_max_mb else sample_rows
         return parse_xlsx_structure(path, row_limit), "openpyxl-structure"
     if ext == ".srt":
-        return _parse_srt(path), "transcript-etl"
+        return _parse_srt(path, merge_cues=merge_cues), "transcript-etl"
     if ext == ".vtt":
-        return _parse_vtt(path), "transcript-etl"
+        return _parse_vtt(path, merge_cues=merge_cues), "transcript-etl"
     return None, "skipped"
 
 def main():
@@ -239,6 +283,8 @@ def main():
     ap.add_argument("--sample-rows", type=int, default=8)
     ap.add_argument("--formats", default="pptx,docx,pdf,xlsx,xlsm,vtt,srt",
                     help="comma-separated extensions (no dot) to include")
+    ap.add_argument("--merge-cues", type=int, default=1,
+                    help="join N consecutive same-speaker VTT/SRT cues into one chunk (default: 1 = per-cue)")
     a = ap.parse_args()
     allow = {"." + e.strip().lower().lstrip(".") for e in a.formats.split(",") if e.strip()}
     os.makedirs(a.out, exist_ok=True)
@@ -253,7 +299,7 @@ def main():
             if ext not in allow:
                 continue
             try:
-                md, method = parse_one(src, a.xlsx_max_mb, a.sample_rows)
+                md, method = parse_one(src, a.xlsx_max_mb, a.sample_rows, merge_cues=a.merge_cues)
                 if md is None:
                     continue
                 safe = rel.replace(os.sep, "__") + ".md"
