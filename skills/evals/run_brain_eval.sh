@@ -90,8 +90,8 @@ echo "Brain PID: $BRAIN_PID (log: $BRAIN_LOG)"
 for i in {1..15}; do
   sleep 1
   STATUS=$(curl -s "http://localhost:${PORT}/healthz" 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('status','?'))" 2>/dev/null || true)
-  if [[ "$STATUS" == "ready" || "$STATUS" == "degraded" ]]; then
-    echo "Brain ready (status=$STATUS)"
+  if [[ "$STATUS" == "healthy" || "$STATUS" == "degraded" ]]; then
+    echo "Brain up (status=$STATUS)"
     break
   fi
   if [[ $i -eq 15 ]]; then

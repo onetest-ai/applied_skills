@@ -54,8 +54,10 @@ def section_records(md, max_chars=1600):
     if title is not None or "\n".join(buf).strip():
         blocks.append((title, "\n".join(buf).strip(), parent, breadcrumb))
     # Title-only sections (heading with no body text) are intentionally dropped.
-    # If upgrading from a version that indexed title-only chunks, run with --reset
-    # to remove orphan chunks from existing databases.
+    # knowledge_index.py removes orphan chunk rows automatically on the next re-index
+    # via its per-source old_ids-minus-new_ids cascade (chunks, chunk_topics, graph_edges).
+    # The only residual risk: if classify_write.py ran before re-indexing, its chunk_topics
+    # rows for dropped sections remain until classify_write runs again on the updated DB.
     blocks = [(t, b, p, bc) for t, b, p, bc in blocks if b]
     if not blocks:
         blocks = [(None, md.strip(), "", "")]

@@ -336,12 +336,12 @@ def cmd_index(a):
         to_prune = sorted(indexed - present)
         if to_prune:
             print(
-                f"WARNING: {len(to_prune)} indexed source(s) not present in --corpus dir "
-                f"and will be DELETED. Pass --docs to limit indexing without pruning. "
+                f"WARNING: {len(to_prune)} indexed source(s) are not in --corpus dir "
+                f"and were NOT deleted (use --delete to remove specific docs or --reset "
+                f"to rebuild from scratch). "
                 f"Sources: {to_prune[:5]}{'...' if len(to_prune) > 5 else ''}",
                 file=sys.stderr,
             )
-            delete_docs(c, to_prune)
     n_chunks, n_docs, skipped = index_docs(c, a.model, a.corpus, sources, a.dim, a.max_chars) if sources else (0, 0, 0)
     c.commit()
     print(f"indexed {n_chunks} changed chunks from {n_docs} changed doc(s); skipped {skipped} unchanged doc(s) -> {a.db}", file=sys.stderr)

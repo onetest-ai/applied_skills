@@ -149,7 +149,7 @@ include = ["**/*.pdf"]
             with R.connect(str(self.db)) as registry:
                 row = R.register(registry, "docs", "a.pdf", src)
             meta = S.scan(str(parsed))["a.pdf.md"]
-            con.execute("INSERT INTO documents VALUES(?,?,?,?,?,?)", ("a.pdf.md", meta["sha"], meta["bytes"], meta["mtime"], "now", row["source_id"]))
+            con.execute("INSERT INTO synced_files VALUES(?,?,?,?,?,?)", ("a.pdf.md", meta["sha"], meta["bytes"], meta["mtime"], "now", row["source_id"]))
             con.commit()
             md.unlink()
             _, delta = S.delta(con, str(parsed))
@@ -166,7 +166,7 @@ include = ["**/*.pdf"]
         with sqlite3.connect(self.db) as con:
             S.ensure_documents(con)
             m = S.scan(str(parsed))["a.md"]
-            con.execute("INSERT INTO documents(doc_id,sha,bytes,mtime,updated_at,source_id) VALUES(?,?,?,?,?,NULL)",
+            con.execute("INSERT INTO synced_files(doc_id,sha,bytes,mtime,updated_at,source_id) VALUES(?,?,?,?,?,NULL)",
                         ("a.md", m["sha"], m["bytes"], m["mtime"], "now"))
             con.commit()
         before = self.db.read_bytes()
@@ -195,7 +195,7 @@ include = ["**/*.pdf"]
             with R.connect(str(self.db)) as registry:
                 row = R.register(registry, "docs", "a.pdf", src)
             meta = S.scan(str(parsed))["a.pdf.md"]
-            con.execute("INSERT INTO documents VALUES(?,?,?,?,?,?)", ("a.pdf.md", meta["sha"], meta["bytes"], meta["mtime"], "now", row["source_id"]))
+            con.execute("INSERT INTO synced_files VALUES(?,?,?,?,?,?)", ("a.pdf.md", meta["sha"], meta["bytes"], meta["mtime"], "now", row["source_id"]))
             con.execute("UPDATE sources SET state='removed' WHERE source_id=?", (row["source_id"],))
             con.commit()
             now, delta = S.delta(con, str(parsed))
@@ -213,7 +213,7 @@ include = ["**/*.pdf"]
             with R.connect(str(self.db)) as registry:
                 row = R.register(registry, "docs", "a.pdf", src)
             meta = S.scan(str(parsed))["a.pdf.md"]
-            con.execute("INSERT INTO documents VALUES(?,?,?,?,?,?)", ("a.pdf.md", meta["sha"], meta["bytes"], meta["mtime"], "now", row["source_id"]))
+            con.execute("INSERT INTO synced_files VALUES(?,?,?,?,?,?)", ("a.pdf.md", meta["sha"], meta["bytes"], meta["mtime"], "now", row["source_id"]))
             con.execute("UPDATE sources SET state='removed' WHERE source_id=?", (row["source_id"],))
             con.commit()
             links, unmanaged = S.source_ids(con, str(parsed), str(manifest), "docs", True)
@@ -229,11 +229,11 @@ include = ["**/*.pdf"]
         with sqlite3.connect(self.db) as con:
             S.ensure_documents(con)
             m = S.scan(str(parsed))["a.pdf.md"]
-            con.execute("INSERT INTO documents(doc_id,sha,bytes,mtime,updated_at,source_id) VALUES(?,?,?,?,?,NULL)", ("a.pdf.md", m["sha"], m["bytes"], m["mtime"], "now"))
+            con.execute("INSERT INTO synced_files(doc_id,sha,bytes,mtime,updated_at,source_id) VALUES(?,?,?,?,?,NULL)", ("a.pdf.md", m["sha"], m["bytes"], m["mtime"], "now"))
             con.commit()
         R.cmd_migrate(Namespace(db=str(self.db), config=str(self.config), root="docs", manifest=str(manifest)))
         with sqlite3.connect(self.db) as con:
-            doc = con.execute("SELECT doc_id,source_id FROM documents").fetchone()
+            doc = con.execute("SELECT doc_id,source_id FROM synced_files").fetchone()
             self.assertEqual(doc[0], "a.pdf.md")
             self.assertIsNotNone(doc[1])
 

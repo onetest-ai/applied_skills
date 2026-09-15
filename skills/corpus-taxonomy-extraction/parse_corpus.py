@@ -196,7 +196,7 @@ def _parse_vtt(path, merge_cues=1):
         # Detect cue block: first line is ID or timestamp
         i = 0
         cue_id = None
-        if i < len(rows) and not re.match(r"\d{2}:\d{2}[\d:\.]+\s+-->", rows[i]):
+        if i < len(rows) and not re.match(r"\d{1,2}:\d{2}[\d:\.]+\s+-->", rows[i]):
             cue_id = rows[i]
             i += 1
         if i < len(rows) and re.match(r"[\d:\.]+\s+-->", rows[i]):
@@ -328,6 +328,7 @@ def main(argv=None):
             try:
                 md, method = parse_one(src, a.xlsx_max_mb, a.sample_rows, merge_cues=a.merge_cues)
                 if md is None:
+                    manifest.append({"source": rel, "skipped": True, "method": method})
                     continue
                 safe = rel.replace(os.sep, "__") + ".md"
                 outp = os.path.join(a.out, safe)

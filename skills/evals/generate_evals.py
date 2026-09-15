@@ -211,18 +211,28 @@ def load_from_db(db_path, taxonomy_path=None):
             })
             eval_counter += 1
 
-    # No-hallucination evals: first 3 categories
-    for cat in categories[:3]:
+    # No-hallucination evals: fixed questions targeting data confirmed absent from any corpus.
+    # Do NOT use per-category KPI questions — many categories (MetricOrKPI, MigrationStatus)
+    # contain real numeric data and will correctly surface it, causing false failures.
+    _NO_HALLUC = [
+        ("What are the contractor day rates or salary figures for the EPAM team members?",
+         "salary contractor rates team compensation", "no-hallucination | absent-salaries"),
+        ("What is the approved annual budget in EUR or USD for the performance testing engagement?",
+         "budget EUR USD annual approved financial cost", "no-hallucination | absent-budget"),
+        ("What Gatling Enterprise license fees or LoadRunner license costs are recorded?",
+         "Gatling LoadRunner license fee cost annual", "no-hallucination | absent-license-cost"),
+    ]
+    for question, suffix, notes in _NO_HALLUC:
         rows.append({
             "eval_id": "E{:03d}".format(eval_counter),
             "category": "no-hallucination",
             "scope": "cross-session",
-            "question": "What are the exact numeric KPIs defined for {} items?".format(cat),
-            "query_suffix": DEFAULT_QUERY_SUFFIX,
+            "question": question,
+            "query_suffix": suffix,
             "expected_answer_must_contain": "not established | not found | no evidence",
             "expected_answer_must_not_contain": "specific percentage,exact figure",
             "ground_truth_source": "none",
-            "notes": "no-hallucination | {}".format(cat),
+            "notes": notes,
             "min_items": 0,
         })
         eval_counter += 1
@@ -326,18 +336,28 @@ def generate_evals(extractions_dir, taxonomy_path):
             })
             eval_counter += 1
 
-    # No-hallucination evals: one per category actually present in corpus (not taxonomy order)
-    for cat in list(by_cat.keys())[:3]:
+    # No-hallucination evals: fixed questions targeting data confirmed absent from any corpus.
+    # Do NOT use per-category KPI questions — many categories (MetricOrKPI, MigrationStatus)
+    # contain real numeric data and will correctly surface it, causing false failures.
+    _NO_HALLUC = [
+        ("What are the contractor day rates or salary figures for the EPAM team members?",
+         "salary contractor rates team compensation", "no-hallucination | absent-salaries"),
+        ("What is the approved annual budget in EUR or USD for the performance testing engagement?",
+         "budget EUR USD annual approved financial cost", "no-hallucination | absent-budget"),
+        ("What Gatling Enterprise license fees or LoadRunner license costs are recorded?",
+         "Gatling LoadRunner license fee cost annual", "no-hallucination | absent-license-cost"),
+    ]
+    for question, suffix, notes in _NO_HALLUC:
         rows.append({
             "eval_id": f"E{eval_counter:03d}",
             "category": "no-hallucination",
             "scope": "cross-session",
-            "question": f"What are the exact numeric KPIs defined for {cat} items?",
-            "query_suffix": eval_config.get(cat, {}).get("query_suffix", DEFAULT_QUERY_SUFFIX),
+            "question": question,
+            "query_suffix": suffix,
             "expected_answer_must_contain": "not established | not found | no evidence",
             "expected_answer_must_not_contain": "specific percentage,exact figure",
             "ground_truth_source": "none",
-            "notes": f"no-hallucination | {cat}",
+            "notes": notes,
             "min_items": 0,
         })
         eval_counter += 1

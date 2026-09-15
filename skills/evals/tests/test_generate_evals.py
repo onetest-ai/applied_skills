@@ -155,8 +155,9 @@ def test_missing_eval_config_falls_back_to_default(tmp_path):
         )
 
 
-def test_empty_taxonomy_produces_no_evals(tmp_path):
-    # Taxonomy with no l1 categories — extraction data exists but no categories match
+def test_empty_taxonomy_produces_only_no_halluc_evals(tmp_path):
+    # Taxonomy with no l1 categories — extraction data exists but no categories match.
+    # No-hallucination evals are fixed (not per-category) so they still appear.
     taxonomy = {"intent_taxonomy": {"l1": [], "eval_config": {}}}
     taxo_path = tmp_path / "taxonomy.json"
     taxo_path.write_text(json.dumps(taxonomy))
@@ -167,7 +168,11 @@ def test_empty_taxonomy_produces_no_evals(tmp_path):
     out = tmp_path / "evals.csv"
     G.main(["--extractions", str(tmp_path), "--taxonomy", str(taxo_path), "--out", str(out)])
     rows = list(csv.DictReader(out.open()))
-    assert rows == []
+    # No category rows (no matching categories), but fixed no-hallucination rows ARE produced
+    category_rows = [r for r in rows if r["category"] != "no-hallucination"]
+    assert category_rows == []
+    no_hal = [r for r in rows if r["category"] == "no-hallucination"]
+    assert len(no_hal) == 3
 
 
 def test_bad_taxonomy_path_raises(tmp_path):
@@ -200,9 +205,10 @@ def test_unknown_category_warns(tmp_path):
     assert not any(r["category"] == "UnknownCategory" for r in rows)
 
 
-def test_no_hallucination_uses_corpus_categories_not_taxonomy_order(tmp_path):
-    # Only TestStrategy extractions present; no-hallucination evals should pick TestStrategy,
-    # not the first category in taxonomy l1 (ActionItem)
+def test_no_hallucination_produces_fixed_absent_data_questions(tmp_path):
+    # No-hallucination evals are now a fixed set of 3 domain-absent questions.
+    # They do NOT vary by corpus category — the old per-category approach caused false
+    # failures when categories like MetricOrKPI had real numeric data in the corpus.
     _make_extraction(tmp_path, "abc123", [
         {"id": "ext-001", "category": "TestStrategy",
          "context": "Regression suite coverage.", "owner": "Bob", "product": "TP", "confidence": "DirectStatement"},
@@ -213,14 +219,17 @@ def test_no_hallucination_uses_corpus_categories_not_taxonomy_order(tmp_path):
     G.main(["--extractions", str(tmp_path), "--taxonomy", _make_taxonomy(tmp_path), "--out", str(out)])
     rows = list(csv.DictReader(out.open()))
     no_hal = [r for r in rows if r["category"] == "no-hallucination"]
-    assert len(no_hal) >= 1
-    assert all("TestStrategy" in r["notes"] for r in no_hal)
-    # ActionItem not in corpus — must not appear in no-hallucination
-    assert not any("ActionItem" in r["notes"] for r in no_hal)
+    assert len(no_hal) == 3
+    # All three must target absent-data topics, not corpus category names
+    notes = [r["notes"] for r in no_hal]
+    assert any("absent-salaries" in n for n in notes)
+    assert any("absent-budget" in n for n in notes)
+    assert any("absent-license-cost" in n for n in notes)
 
 
-def test_no_hallucination_query_suffix_from_taxonomy(tmp_path):
-    # No-hallucination rows must use per-category query_suffix, not DEFAULT_QUERY_SUFFIX
+def test_no_hallucination_question_does_not_contain_answer_name(tmp_path):
+    # No-hallucination questions must never embed an expected answer in the question text.
+    # Fixed absent-data questions have no person names or specific figures in the question.
     _make_extraction(tmp_path, "abc123", [
         {"id": "ext-001", "category": "ActionItem",
          "context": "Set up logging.", "owner": "Alice", "product": "TP", "confidence": "DirectStatement"},
@@ -231,10 +240,11 @@ def test_no_hallucination_query_suffix_from_taxonomy(tmp_path):
     G.main(["--extractions", str(tmp_path), "--taxonomy", _make_taxonomy(tmp_path), "--out", str(out)])
     rows = list(csv.DictReader(out.open()))
     no_hal = [r for r in rows if r["category"] == "no-hallucination"]
-    assert len(no_hal) >= 1
-    # ActionItem query_suffix in TAXONOMY fixture is "owners decisions"
-    assert all(r["query_suffix"] == "owners decisions" for r in no_hal)
-    assert not any(r["query_suffix"] == G.DEFAULT_QUERY_SUFFIX for r in no_hal)
+    assert len(no_hal) == 3
+    # None of the questions should mention "not established" (that's the expected answer)
+    for r in no_hal:
+        assert "not established" not in r["question"]
+        assert "not found" not in r["question"]
 
 
 # ---------------------------------------------------------------------------

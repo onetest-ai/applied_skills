@@ -152,3 +152,20 @@ def test_run_extractions_empty_parsed_dir(tmp_path):
     extract_facts.run_extractions(str(parsed_dir), taxonomy, str(out_dir), llm_fn=_fake_llm)
 
     assert not list(out_dir.glob("*_extraction.json"))
+
+
+def test_empty_fence_falls_back_to_full_response():
+    """LLM returns empty fence block followed by actual JSON — must parse correctly."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from extract_facts import extract_facts_from_md
+
+    def llm_fn(prompt):
+        # Two consecutive fences with no content, then valid JSON after
+        return '```\n```\n[{"category": "Decision", "verbatim_quote": "We chose Python."}]'
+
+    taxonomy_l1 = ["Decision"]
+    result = extract_facts_from_md("some md text", taxonomy_l1, llm_fn)
+    assert len(result) == 1
+    assert result[0]["verbatim_quote"] == "We chose Python."

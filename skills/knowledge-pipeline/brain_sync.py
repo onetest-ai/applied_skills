@@ -41,13 +41,13 @@ def sha_file(p):
 
 
 def ensure_documents(c):
-    c.execute("""CREATE TABLE IF NOT EXISTS documents(
+    c.execute("""CREATE TABLE IF NOT EXISTS synced_files(
         doc_id TEXT PRIMARY KEY, sha TEXT, bytes INT, mtime REAL, updated_at TEXT,
         source_id TEXT)""")
-    cols = {r[1] for r in c.execute("PRAGMA table_info(documents)")}
+    cols = {r[1] for r in c.execute("PRAGMA table_info(synced_files)")}
     if "source_id" not in cols:
-        c.execute("ALTER TABLE documents ADD COLUMN source_id TEXT")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_documents_source_id ON documents(source_id)")
+        c.execute("ALTER TABLE synced_files ADD COLUMN source_id TEXT")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_synced_files_source_id ON synced_files(source_id)")
 
 
 def _has(c, table):
@@ -98,7 +98,7 @@ def source_ids(c, parsed, manifest=None, root_key=None, strict=False):
         elif row and row[1] == "removed":
             # A previously linked tombstoned source is a valid strict mapping for deletion.
             # Do not allow a new parsed document to bind to a removed source.
-            linked = c.execute("SELECT 1 FROM documents WHERE doc_id=? AND source_id=?", (doc_id, row[0])).fetchone()
+            linked = c.execute("SELECT 1 FROM synced_files WHERE doc_id=? AND source_id=?", (doc_id, row[0])).fetchone()
             if linked:
                 out[doc_id] = row[0]
             else:
@@ -132,11 +132,11 @@ def scan(parsed):
 def delta(c, parsed, *, mutate_schema=True):
     if mutate_schema:
         ensure_documents(c)
-    elif not _has(c, "documents"):
-        raise RuntimeError("documents table missing; run brain_sync seed first")
-    cols = {r[1] for r in c.execute("PRAGMA table_info(documents)")}
-    select = ("SELECT doc_id, sha, source_id FROM documents" if "source_id" in cols
-              else "SELECT doc_id, sha, NULL FROM documents")
+    elif not _has(c, "synced_files"):
+        raise RuntimeError("synced_files table missing; run brain_sync seed first")
+    cols = {r[1] for r in c.execute("PRAGMA table_info(synced_files)")}
+    select = ("SELECT doc_id, sha, source_id FROM synced_files" if "source_id" in cols
+              else "SELECT doc_id, sha, NULL FROM synced_files")
     rows = list(c.execute(select))
     cur = {r[0]: r[1] for r in rows}
     source_for = {r[0]: r[2] for r in rows}
@@ -145,7 +145,7 @@ def delta(c, parsed, *, mutate_schema=True):
     removed_linked = set()
     if have_sources:
         removed_linked = {r[0] for r in c.execute(
-            """SELECT d.doc_id FROM documents d JOIN sources s ON s.source_id=d.source_id
+            """SELECT d.doc_id FROM synced_files d JOIN sources s ON s.source_id=d.source_id
                WHERE s.state='removed'""")}
     # A tombstoned source is an explicit deletion even when stale parsed output remains.
     effective_now = {doc: meta for doc, meta in now.items() if doc not in removed_linked}
@@ -211,7 +211,7 @@ def cmd_apply(a):
         if d["deleted"]:
             K.delete_docs(c, d["deleted"])
             for doc in d["deleted"]:
-                c.execute("DELETE FROM documents WHERE doc_id=?", (doc,))
+                c.execute("DELETE FROM synced_files WHERE doc_id=?", (doc,))
             print(f"deleted {len(d['deleted'])} doc(s)")
         if reclass:
             n_chunks, _n_docs, _skipped = K.index_docs(c, a.model, a.parsed, reclass, a.dim, a.max_chars)
@@ -222,9 +222,9 @@ def cmd_apply(a):
         ts = time.strftime("%Y-%m-%dT%H:%M:%S")
         for doc in d["added"] + d["changed"] + d["unchanged"]:
             m = now[doc]
-            prior = c.execute("SELECT source_id FROM documents WHERE doc_id=?", (doc,)).fetchone()
+            prior = c.execute("SELECT source_id FROM synced_files WHERE doc_id=?", (doc,)).fetchone()
             sid = links.get(doc) or (prior[0] if prior else None)
-            c.execute("INSERT OR REPLACE INTO documents(doc_id,sha,bytes,mtime,updated_at,source_id) VALUES(?,?,?,?,?,?)",
+            c.execute("INSERT OR REPLACE INTO synced_files(doc_id,sha,bytes,mtime,updated_at,source_id) VALUES(?,?,?,?,?,?)",
                       (doc, m["sha"], m["bytes"], m["mtime"], ts, sid))
         c.commit()
     except Exception as e:
@@ -267,9 +267,9 @@ def cmd_seed(a):
     links, unmanaged = source_ids(c, a.parsed, a.manifest, a.root_key, a.strict_sources)
     ts = time.strftime("%Y-%m-%dT%H:%M:%S")
     for doc, m in now.items():
-        prior = c.execute("SELECT source_id FROM documents WHERE doc_id=?", (doc,)).fetchone()
+        prior = c.execute("SELECT source_id FROM synced_files WHERE doc_id=?", (doc,)).fetchone()
         sid = links.get(doc) or (prior[0] if prior else None)
-        c.execute("INSERT OR REPLACE INTO documents(doc_id,sha,bytes,mtime,updated_at,source_id) VALUES(?,?,?,?,?,?)",
+        c.execute("INSERT OR REPLACE INTO synced_files(doc_id,sha,bytes,mtime,updated_at,source_id) VALUES(?,?,?,?,?,?)",
                   (doc, m["sha"], m["bytes"], m["mtime"], ts, sid))
     c.commit()
     print(f"seeded documents with {len(now)} doc hashes -> {a.db}"

@@ -12,12 +12,20 @@ import sys
 from pathlib import Path
 
 
-def export(db_path, out_dir, category_filter=None):
+def export(db_path, out_dir, category_filter=None, force=False):
     if not Path(db_path).exists():
         sys.exit(f"error: DB not found: {db_path}")
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if out_dir.exists() and any(out_dir.glob("*.md")) and not force:
+        print(
+            f"ERROR: {out_dir} already contains .md files. "
+            f"Pass --force to overwrite or choose an empty directory.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     with sqlite3.connect(db_path) as c:
         if category_filter:
@@ -78,13 +86,21 @@ def export(db_path, out_dir, category_filter=None):
             print(f"  wrote {len(chunks):3d} chunks → {safe_name}")
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--db",       required=True, help="Path to knowledge.sqlite")
-    ap.add_argument("--out",      required=True, help="Output directory for .md files")
-    ap.add_argument("--category", help="Only export sources tagged with this category (optional)")
-    a = ap.parse_args()
-    export(a.db, a.out, category_filter=a.category)
+def main(args=None):
+    if args is None:
+        ap = argparse.ArgumentParser()
+        ap.add_argument("--db",       required=True, help="Path to knowledge.sqlite")
+        ap.add_argument("--out",      required=True, help="Output directory for .md files")
+        ap.add_argument("--category", help="Only export sources tagged with this category (optional)")
+        ap.add_argument("--force", action="store_true",
+                        help="overwrite existing .md files in --out dir")
+        args = ap.parse_args()
+    export(
+        args.db,
+        args.out,
+        category_filter=getattr(args, "category", None),
+        force=getattr(args, "force", False),
+    )
 
 
 if __name__ == "__main__":
