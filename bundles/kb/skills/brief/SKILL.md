@@ -8,7 +8,7 @@ Author a brief, cited memo on **$subject** following `../_shared/authoring.md`.
 
 ## Steps
 
-1. **Detect the Brain.** Call `health` (see ../_shared/doctrine.md for namespace detection); if none, suggest `/kb:connect` and stop.
+1. **Detect the Brain.** Call `health` (see ../_shared/doctrine.md for namespace detection); if none, suggest `/kb:connect` and stop. Read `about` from the result and adapt the memo's **tone, depth, and section emphasis** to `about.audience`, within `about.goal`'s scope (empty audience → no persona).
 
 2. **Gather.** Call the Brain tools to collect narrative, metrics, and relations on the subject. Route per doctrine (narrative → `search_knowledge`, numbers → `get_metric`, relations → `get_taxonomy`, cited sections → `get_evidence`).
 

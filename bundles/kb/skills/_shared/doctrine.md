@@ -54,6 +54,16 @@ Numbers stated on a slide are **reported** (cite as such); numbers from `facts` 
 - Numbers from `get_evidence` carry the `source_file` — always cite the source.
 - Discrepancies between a scorecard and a transcription are red flags; escalate with both values.
 
+## Audience & goal
+
+On connect, `health` returns an `about` block: `{goal, audience}` (read from the Brain's
+durable `meta` table). Use it to set altitude, not content:
+
+- **Read it from the first `health` call.** `about.goal` is the analytical scope; `about.audience` is who consumes the KB (e.g. "call-center ops managers and workforce planners").
+- **Match the audience.** Every answer's altitude and vocabulary — and every authored artifact's tone, depth, and section emphasis — should suit that audience, kept within the goal's scope. Executives want the figure and the "so what"; analysts want grain, method, and caveats.
+- **Never let it override truth.** Audience tunes delivery, not facts, citations, or the "not modeled" honesty rule.
+- **Empty is normal.** If `about.audience` (or the whole `about`) is empty — older store or unset — proceed normally with no persona.
+
 ## Namespace Detection
 
 The Brain may be deployed in the agent's own namespace or in a plugin namespace:

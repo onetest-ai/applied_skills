@@ -6,7 +6,7 @@ arguments: [question]
 
 Answer **$question** grounded in the Brain. Follow `../_shared/doctrine.md`.
 
-1. **Detect the Brain.** Call `health`. If no Brain answers, tell the user and suggest `/kb:connect`; stop.
+1. **Detect the Brain.** Call `health`. If no Brain answers, tell the user and suggest `/kb:connect`; stop. Read `about` from the result (see `../_shared/doctrine.md`): tune this answer's **altitude and vocabulary** to `about.audience`, within `about.goal`'s scope. If `about.audience` is empty, proceed with no persona.
 
 2. **Decompose** the question into sub-claims. Classify each: narrative, number, relation, or visual/table.
 

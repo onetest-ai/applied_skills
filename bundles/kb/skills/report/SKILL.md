@@ -8,7 +8,7 @@ Author a long-form structured report on **$subject** following `../_shared/autho
 
 ## Steps
 
-1. **Detect the Brain.** Call `health` (see ../_shared/doctrine.md for namespace detection); if none, suggest `/kb:connect` and stop.
+1. **Detect the Brain.** Call `health` (see ../_shared/doctrine.md for namespace detection); if none, suggest `/kb:connect` and stop. Read `about` from the result and adapt the report's **tone, depth, section emphasis, and executive-summary-vs-detail balance** to `about.audience`, within `about.goal`'s scope (empty audience → no persona).
 
 2. **Gather.** Call the Brain tools to comprehensively collect narrative, metrics, relations, and evidence on the subject. Route per doctrine (narrative → `search_knowledge`, numbers → `get_metric`, relations → `get_taxonomy`, cited sections → `get_evidence`). Organize findings by theme or sub-topic.
 
