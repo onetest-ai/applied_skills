@@ -247,10 +247,12 @@ def _parse_ai_dial_json(path):
 
     Format: {history: [{name: str, messages: [{role, content}]}]}
     Only assistant messages with ≥50 chars are included.
-    Returns a Markdown string, or None if no usable content found.
+    Returns a Markdown string, or None if the file is not AI DIAL format or has no usable content.
     """
     import json as _json
     d = _json.loads(open(path, encoding="utf-8").read())
+    if not isinstance(d, dict) or "history" not in d:
+        return None
     parts = []
     for conv in d.get("history", []):
         name = conv.get("name", "conversation")
