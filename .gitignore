@@ -7,6 +7,9 @@ venv/
 # OS
 .DS_Store
 
+# Superpowers SDD workspace (ledgers, briefs, review packages — scratch)
+.superpowers/
+
 # Brain build artifacts — never commit a built brain into the toolkit repo
 # (these are created in a CONSUMING project, but guard against building inside a checkout)
 *.sqlite

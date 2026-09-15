@@ -81,17 +81,20 @@ Run `./brain source plan` before source-driven work. Treat `root_unavailable` as
 Ask for missing values one at a time:
 
 1. analytical goal;
-2. narrative documents directory and whether it is safe `import` or authoritative `mirror`;
-3. reporting workbook directory, if any, and its `import`/`mirror` semantics;
-4. destination brain project.
+2. audience — who will consume the KB (which roles/personas). Optional; pass `--audience`. It's a secondary lens that refines taxonomy emphasis and drives how the `kb` plugin sets answer altitude and authored-artifact style. Canonical in `brain.toml` `[project].audience`; distinct from the deployment target (distribution/infra);
+3. narrative documents directory and whether it is safe `import` or authoritative `mirror`;
+4. reporting workbook directory, if any, and its `import`/`mirror` semantics;
+5. destination brain project;
+6. deployment target — `local` (agent queries the local store) or `hosted-mcp` (governed MCP served to remote clients). Pass `--deploy-target`; it shapes `BRAIN.md` and is recorded in `brain.toml` `[deployment].target`.
 
-Recommend `import` unless the user explicitly says that deleting a file from an available folder should propose deleting it from the Brain. `incoming` is always project-local `managed`.
+Recommend `import` unless the user explicitly says that deleting a file from an available folder should propose deleting it from the Brain. `incoming` is always project-local `managed`. The goal is authoritative in `goal.txt` — a host operator doc (e.g. `AGENTS.md`) never replaces it; if a project's goal lives only in a host doc, write it back to `goal.txt` so maintenance can recover it.
 
 Then scaffold and preflight:
 
 ```bash
 "$PY" "$SKILLS/knowledge-pipeline/onboard.py" scaffold \
   --project "$PROJECT" --goal "$GOAL" --docs "$DOCS" \
+  ${AUDIENCE:+--audience "$AUDIENCE"} \
   --docs-mode "$DOCS_MODE" --reporting-mode "$REPORTING_MODE" \
   ${REPORTING:+--reporting "$REPORTING"}
 ```
@@ -115,13 +118,13 @@ Ensure the SQLite file exists before visual assembly so `vision_assemble.py --db
 
 ### Phase 1 — render and route every narrative document
 
-For every PDF/PPT/PPTX/DOC/DOCX, choose an asset root that cannot collide with another source. The current renderer derives the final slug from the **basename only**; two files such as `a/report.pdf` and `b/report.pdf` would otherwise overwrite each other. Use separate source-relative parent roots (or first establish globally unique basenames), and record the resulting render directory:
+For every PDF/PPT/PPTX/DOC/DOCX, render into a shared asset root. The renderer now derives the slug from the **full source-relative path** (dir + stem), so `a/report.pdf` and `b/report.pdf` produce distinct render dirs and can no longer overwrite each other — pass the source-relative path as `--doc`. (A bare basename still slugs as before, so pass the path, not just the filename.) Record the resulting render directory:
 
 ```bash
-ASSET_ROOT="$PROJECT/assets/$SOURCE_PARENT_KEY"
+ASSET_ROOT="$PROJECT/assets"
 "$PY" "$SKILLS/visual-parse/render_pages.py" \
-  --doc "$SOURCE" --out "$ASSET_ROOT" --dpi 150
-# actual render dir: $ASSET_ROOT/<kebab-source-basename>
+  --doc "$SOURCE_RELATIVE_PATH" --out "$ASSET_ROOT" --dpi 150
+# actual render dir: $ASSET_ROOT/<kebab-of-source-relative-path>
 ```
 
 `render_pages.py` performs the routing decision per page and writes `pages.json` with:
