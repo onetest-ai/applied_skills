@@ -470,6 +470,29 @@ def test_query_suffix_from_fact_excludes_stop_words():
     )
 
 
+def test_from_db_single_session_must_contain_uses_chunk_keyword_not_not_established(tmp_path):
+    # RCA: "slug | not established in slug" as must_contain gives the grader a false prior.
+    # When a source HAS chunk data, the second option should be a keyword from the chunk,
+    # not "not established" — which causes LLM judges to fail correct answers that cite
+    # specific facts by deciding they must be "hallucinated" since "not established" implies
+    # the source might be empty.
+    # Contract: single-session must_contain for a source WITH chunks must NOT contain
+    # the phrase "not established in".
+    db = str(tmp_path / "k.sqlite")
+    _make_sqlite_db(db)
+    out = str(tmp_path / "evals.csv")
+    G.main(["--db", db, "--out", out])
+    rows = list(csv.DictReader(open(out)))
+    single = [r for r in rows if r["scope"] == "single-session"]
+    assert len(single) >= 1, "Expected at least one single-session eval"
+    for r in single:
+        must = r["expected_answer_must_contain"]
+        assert "not established in" not in must, (
+            "Single-session eval from a source WITH chunks must NOT use 'not established in' "
+            "as must_contain option — grader will falsely fail correct answers. got: {!r}".format(must)
+        )
+
+
 def test_extraction_mode_question_uses_fact_not_label(tmp_path):
     """In extraction mode, question is derived from verbatim_quote, not taxonomy label."""
     _make_extraction(tmp_path, "aug31_sync", [{

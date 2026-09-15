@@ -170,14 +170,25 @@ def load_from_db(db_path, taxonomy_path=None):
 
         # Single-session evals: up to 3 sources
         for slug, texts in list(by_slug.items())[:3]:
-            # Use source slug as expected fact — the LLM answer will reference the source
-            # name when the brain retrieves the right chunk (chunk headers contain the slug).
-            # Provide two pipe-separated options so the N-1 rubric allows the answer to say
-            # either the slug (retrieval worked) or "not established in <slug>" (no chunks
-            # found for this source) — both are correct retrieval outcomes.
             if not any(t.strip() for t in texts):
                 continue
-            must_contain = "{} | not established in {}".format(slug, slug)
+            # Use slug + a concrete keyword from the first non-empty chunk as the two
+            # must_contain options.  "not established in slug" was the prior option but
+            # it gives LLM judges a false prior: seeing "not established" in the rubric,
+            # judges infer the source is empty and then fail any answer with specific
+            # numbers as "hallucinated" — even when those numbers are real and present.
+            # Fix: use an actual keyword from the chunk so the judge has verifiable ground truth.
+            first_text = next((t for t in texts if t.strip()), "")
+            # Extract a concrete keyword from the chunk for the grader — strip markdown
+            # punctuation so we don't pass ``` or ** as "facts".
+            _candidate = ""
+            if first_text:
+                for word in _query_suffix_from_fact(first_text).split():
+                    clean = word.strip("`*_#|>")
+                    if len(clean) > 3 and clean.isalpha():
+                        _candidate = clean
+                        break
+            must_contain = "{} | {}".format(slug, _candidate) if _candidate else slug
             rows.append({
                 "eval_id": "E{:03d}".format(eval_counter),
                 "category": cat,
