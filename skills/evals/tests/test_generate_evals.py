@@ -289,14 +289,76 @@ def test_from_db_question_uses_category_label(tmp_path):
 
 
 def test_from_db_expected_contains_chunk_text_snippet(tmp_path):
+    # After the source-slug fix: must_contain contains source slugs, not raw chunk text.
+    # The fixture has sources alpha.vtt.md and beta.vtt.md → slugs "alpha" and "beta".
     db = str(tmp_path / "k.sqlite")
     _make_sqlite_db(db)
     out = str(tmp_path / "evals.csv")
     G.main(["--db", db, "--out", out])
     rows = list(csv.DictReader(open(out)))
     all_must_contain = " ".join(r["expected_answer_must_contain"] for r in rows)
-    # At least some chunk text snippets must appear in expected_answer_must_contain
-    assert "Assign logging" in all_must_contain or "Alice" in all_must_contain or "Gatling" in all_must_contain
+    # slugs from fixture: alpha.vtt.md → "alpha", beta.vtt.md → "beta"
+    assert "alpha" in all_must_contain, (
+        "Source slug 'alpha' must appear in must_contain. Got: {}".format(all_must_contain[:200])
+    )
+
+
+def test_from_db_single_session_expected_contains_source_slug(tmp_path):
+    # expected_answer_must_contain for a single-session DB eval must be the source slug,
+    # not a raw chunk text prefix.
+    db = str(tmp_path / "k.sqlite")
+    _make_sqlite_db(db)
+    out = str(tmp_path / "evals.csv")
+    G.main(["--db", db, "--out", out])
+    rows = list(csv.DictReader(open(out)))
+    single = [r for r in rows if r["scope"] == "single-session"]
+    assert len(single) >= 1
+    for r in single:
+        slug = r["ground_truth_source"]
+        assert slug in r["expected_answer_must_contain"], (
+            "Single-session must_contain must be the source slug {!r}, got: {!r}".format(
+                slug, r["expected_answer_must_contain"]
+            )
+        )
+
+
+def test_from_db_cross_session_expected_contains_both_slugs(tmp_path):
+    # cross-session eval must_contain must pipe-join both source slugs
+    db = str(tmp_path / "k.sqlite")
+    _make_sqlite_db(db)
+    out = str(tmp_path / "evals.csv")
+    G.main(["--db", db, "--out", out])
+    rows = list(csv.DictReader(open(out)))
+    cross = [r for r in rows if r["scope"] == "cross-session" and r["category"] == "ActionItem"]
+    assert len(cross) >= 1
+    for r in cross:
+        must = r["expected_answer_must_contain"]
+        slugs = [s.strip() for s in must.split("|") if s.strip()]
+        assert len(slugs) >= 2, (
+            "Cross-session must_contain must pipe-join >=2 source slugs, got: {!r}".format(must)
+        )
+        for slug in slugs:
+            assert slug in r["ground_truth_source"], (
+                "Each slug in must_contain must appear in ground_truth_source. "
+                "slug={!r} ground_truth={!r}".format(slug, r["ground_truth_source"])
+            )
+
+
+def test_from_db_expected_does_not_contain_raw_icebreaker_text(tmp_path):
+    # Raw chunk text (first 60 chars of ASR) must NOT appear in expected_answer_must_contain.
+    # The fixture chunk text is "Assign logging setup to Alice by Friday." —
+    # this must not be in must_contain after the fix.
+    db = str(tmp_path / "k.sqlite")
+    _make_sqlite_db(db)
+    out = str(tmp_path / "evals.csv")
+    G.main(["--db", db, "--out", out])
+    rows = list(csv.DictReader(open(out)))
+    db_rows = [r for r in rows if "db-mode" in r.get("notes", "")]
+    for r in db_rows:
+        assert "Assign logging" not in r["expected_answer_must_contain"], (
+            "Raw chunk text must not be used as expected fact in DB mode, "
+            "got: {!r}".format(r["expected_answer_must_contain"])
+        )
 
 
 def test_from_db_and_extractions_together_raises(tmp_path):

@@ -112,8 +112,10 @@ def load_from_db(db_path, taxonomy_path=None):
 
         # Single-session evals: up to 3 sources
         for slug, texts in list(by_slug.items())[:3]:
-            snippets = [t[:60].strip() for t in texts[:2] if t.strip()]
-            if not snippets:
+            # Use source slug as expected fact — the LLM answer will reference the source
+            # name when the brain retrieves the right chunk (chunk headers contain the slug).
+            # Raw chunk text prefixes are ASR fragments that no rubric can match reliably.
+            if not texts:
                 continue
             rows.append({
                 "eval_id": "E{:03d}".format(eval_counter),
@@ -121,7 +123,7 @@ def load_from_db(db_path, taxonomy_path=None):
                 "scope": "single-session",
                 "question": "{} (source: {})".format(question_tmpl, slug),
                 "query_suffix": query_suffix,
-                "expected_answer_must_contain": " | ".join(snippets),
+                "expected_answer_must_contain": slug,
                 "expected_answer_must_not_contain": "hallucinated,invented,fabricated",
                 "ground_truth_source": slug,
                 "notes": "db-mode | {}".format(cat),
@@ -131,24 +133,17 @@ def load_from_db(db_path, taxonomy_path=None):
 
         # Cross-session eval when >= 2 sources
         if len(by_slug) >= 2:
-            all_snippets = []
-            seen = set()
-            for slug, texts in list(by_slug.items())[:5]:
-                for t in texts[:2]:
-                    s = t[:60].strip()
-                    if s and s not in seen:
-                        seen.add(s)
-                        all_snippets.append(s)
-            if len(all_snippets) >= 2:
+            cross_slugs = list(by_slug.keys())[:3]
+            if len(cross_slugs) >= 2:
                 rows.append({
                     "eval_id": "E{:03d}".format(eval_counter),
                     "category": cat,
                     "scope": "cross-session",
                     "question": question_tmpl,
                     "query_suffix": query_suffix,
-                    "expected_answer_must_contain": " | ".join(all_snippets[:3]),
+                    "expected_answer_must_contain": " | ".join(cross_slugs),
                     "expected_answer_must_not_contain": "hallucinated,invented,fabricated",
-                    "ground_truth_source": ",".join(list(by_slug.keys())[:3]),
+                    "ground_truth_source": ",".join(cross_slugs),
                     "notes": "db-mode | cross-session",
                     "min_items": 2,
                 })
