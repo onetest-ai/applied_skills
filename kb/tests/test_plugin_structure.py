@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -11,6 +12,23 @@ REPO_ROOT = KB_ROOT.parent                             # repo root
 def load_json(path: Path):
     with path.open(encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def parse_frontmatter(text: str) -> dict:
+    """Minimal YAML-frontmatter parser: top-level `key: value` pairs only."""
+    m = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
+    if not m:
+        return {}
+    out = {}
+    for line in m.group(1).splitlines():
+        if ":" in line and not line.startswith((" ", "\t", "#")):
+            k, _, v = line.partition(":")
+            out[k.strip()] = v.strip()
+    return out
 
 
 class TestPluginManifest(unittest.TestCase):
@@ -31,6 +49,23 @@ class TestPluginManifest(unittest.TestCase):
 
     def test_readme_exists(self):
         self.assertTrue((KB_ROOT / "README.md").is_file())
+
+
+class TestDoctrineAndVerifier(unittest.TestCase):
+    def test_doctrine_covers_truth_rules(self):
+        text = read_text(KB_ROOT / "skills" / "_shared" / "doctrine.md")
+        for token in ["[RAG:", "[MART:", "[GRAPH:", "not modeled", "source_file"]:
+            self.assertIn(token, text, f"doctrine missing {token!r}")
+
+    def test_verifier_agent_frontmatter(self):
+        text = read_text(KB_ROOT / "agents" / "verifier.md")
+        fm = parse_frontmatter(text)
+        self.assertEqual(fm.get("name"), "verifier")
+        self.assertIn("description", fm)
+        # read-only: no Write/Edit in the tools allowlist
+        self.assertIn("tools", fm)
+        self.assertNotIn("Write", fm["tools"])
+        self.assertNotIn("Edit", fm["tools"])
 
 
 if __name__ == "__main__":
