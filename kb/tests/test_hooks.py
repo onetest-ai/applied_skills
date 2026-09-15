@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import subprocess
@@ -92,6 +93,18 @@ class TestAmbientReminder(unittest.TestCase):
             res = run_script(SCRIPTS / "ambient-reminder.sh", {"CLAUDE_PROJECT_DIR": d})
             self.assertEqual(res.returncode, 0)
             self.assertEqual(res.stdout.strip(), "")
+
+
+class TestHooksManifest(unittest.TestCase):
+    def test_hooks_json_wires_both_events(self):
+        data = json.loads((KB_ROOT / "hooks" / "hooks.json").read_text())
+        hooks = data["hooks"]
+        self.assertIn("SessionStart", hooks)
+        self.assertIn("UserPromptSubmit", hooks)
+        blob = json.dumps(data)
+        self.assertIn("health-line.sh", blob)
+        self.assertIn("ambient-reminder.sh", blob)
+        self.assertIn("${CLAUDE_PLUGIN_ROOT}", blob)  # portable pathing
 
 
 if __name__ == "__main__":

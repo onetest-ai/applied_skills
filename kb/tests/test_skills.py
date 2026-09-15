@@ -81,5 +81,15 @@ class TestReportSkill(unittest.TestCase, SkillContractMixin):
         )
 
 
+class TestModeSkill(unittest.TestCase, SkillContractMixin):
+    def test_mode_contract(self):
+        self.assert_skill("mode", required_tokens=["state.json", "ambient", "on", "off", "status"])
+
+
+class TestConnectSkill(unittest.TestCase, SkillContractMixin):
+    def test_connect_contract(self):
+        self.assert_skill("connect", required_tokens=["health", "mcp-config", "brain"])
+
+
 if __name__ == "__main__":
     unittest.main()
