@@ -172,6 +172,80 @@ def test_derive_query_terms_extracts_keywords():
     assert "Rafael" in terms or "rafael" in terms.lower()
 
 
+def test_build_persona_block_empty_without_brain_context():
+    # When brain_context is None, build_persona_block must return empty string.
+    # This ensures backward-compat: no taxonomy → no injection.
+    result = GP.build_persona_block(None)
+    assert result == "", "build_persona_block(None) must return empty string, got: {!r}".format(result)
+
+
+def test_build_persona_block_with_persona_and_stakeholders():
+    # When brain_context has persona + stakeholders, block must contain both.
+    brain_context = {
+        "persona": "You are a Solution Architect I at EPAM.",
+        "stakeholders": {
+            "Sanjeev Patil": "Client-Side Coordinator",
+            "Carola Albers": "DevSecOps Manager D2C",
+        },
+    }
+    result = GP.build_persona_block(brain_context)
+    assert "Solution Architect" in result, "persona text must appear in block"
+    assert "Sanjeev Patil" in result, "stakeholder names must appear in block"
+    assert "Carola Albers" in result, "all stakeholders must appear in block"
+    assert "DevSecOps Manager" in result, "stakeholder roles must appear in block"
+
+
+def test_prompt_template_without_taxonomy_is_unchanged(tmp_path):
+    # Without --taxonomy, the emitted prompts list must equal PROMPT_TEMPLATE exactly.
+    csv_path = _write_csv(tmp_path, [_sample_row()])
+    out = tmp_path / "config.yaml"
+    js = tmp_path / "ctx.js"
+    js.write_text("module.exports = async function() { return {output: 'x'}; }")
+    GP.main(["--csv", csv_path, "--out", str(out),
+             "--brain-url", "http://localhost:8002",
+             "--context-js", str(js)])
+    cfg = yaml.safe_load(out.read_text())
+    assert cfg["prompts"] == [GP.PROMPT_TEMPLATE], (
+        "Without taxonomy, prompt template must be the canonical PROMPT_TEMPLATE string"
+    )
+
+
+def test_prompt_template_with_taxonomy_injects_project_context(tmp_path):
+    # With --taxonomy containing persona+stakeholders, the emitted prompt must include
+    # a <project_context> section before <question>.
+    import json
+    taxonomy = {
+        "brain_context": {
+            "goal": "Omniscient Project Assistant",
+            "audience": "New EPAM engineers",
+            "persona": "You are Solution Architect I at EPAM.",
+            "stakeholders": {
+                "Sanjeev Patil": "Client-Side Coordinator",
+                "Carola Albers": "DevSecOps Manager D2C",
+            },
+        }
+    }
+    taxo_path = tmp_path / "taxonomy.json"
+    taxo_path.write_text(json.dumps(taxonomy), encoding="utf-8")
+    csv_path = _write_csv(tmp_path, [_sample_row()])
+    out = tmp_path / "config.yaml"
+    js = tmp_path / "ctx.js"
+    js.write_text("module.exports = async function() { return {output: 'x'}; }")
+    GP.main(["--csv", csv_path, "--out", str(out),
+             "--brain-url", "http://localhost:8002",
+             "--context-js", str(js),
+             "--taxonomy", str(taxo_path)])
+    cfg = yaml.safe_load(out.read_text())
+    prompt = cfg["prompts"][0]
+    assert "<project_context>" in prompt, "taxonomy with persona must inject <project_context> block"
+    assert "Solution Architect" in prompt, "persona text must appear in the prompt"
+    assert "Sanjeev Patil" in prompt, "stakeholder names must appear in the prompt"
+    assert "<question>" in prompt, "<question> tag must still be present after injection"
+    assert prompt.index("<project_context>") < prompt.index("<question>"), (
+        "<project_context> must appear before <question> in the prompt"
+    )
+
+
 def test_generate_promptfoo_vars_include_derived_suffix(tmp_path):
     evals_csv = tmp_path / "evals.csv"
     context_js = tmp_path / "ctx.js"

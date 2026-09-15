@@ -42,6 +42,40 @@ Rules:
 </retrieved_context>"""
 
 
+def build_persona_block(brain_context):
+    """Build a project-context block from brain_context.persona + stakeholders.
+
+    Returns empty string when brain_context is None or lacks both fields,
+    so callers can safely prepend without special-casing the no-taxonomy path.
+    """
+    if not brain_context:
+        return ""
+    lines = []
+    persona = brain_context.get("persona", "").strip()
+    if persona:
+        lines.append(persona)
+    stakeholders = brain_context.get("stakeholders")
+    if stakeholders:
+        if lines:
+            lines.append("")
+        lines.append("Key stakeholders:")
+        for name, role in stakeholders.items():
+            lines.append("- {}: {}".format(name, role))
+    return "\n".join(lines)
+
+
+def build_prompt_template(persona_block=""):
+    """Return the prompt template string, optionally prefixed with project context."""
+    if not persona_block:
+        return PROMPT_TEMPLATE
+    return (
+        "<project_context>\n"
+        + persona_block
+        + "\n</project_context>\n\n"
+        + PROMPT_TEMPLATE
+    )
+
+
 def _derive_query_terms(must_have_raw):
     """Extract up to 8 meaningful keywords (>3 chars) from the first 2 pipe-separated facts."""
     terms = []
@@ -136,6 +170,9 @@ def main(argv=None):
         _taxo = _json.loads(Path(args.taxonomy).read_text(encoding="utf-8"))
         brain_context = _taxo.get("brain_context")
 
+    persona_block = build_persona_block(brain_context)
+    prompt_template = build_prompt_template(persona_block)
+
     js_path = Path(args.context_js).resolve()
     js_file_ref = f"file://{js_path}"
 
@@ -174,7 +211,7 @@ def main(argv=None):
 
     config = {
         "description": desc,
-        "prompts": [PROMPT_TEMPLATE],
+        "prompts": [prompt_template],
         "providers": PROVIDERS,
         "defaultTest": {
             "options": {
