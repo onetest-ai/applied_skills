@@ -87,6 +87,19 @@ t0=$SECONDS
   --db       "$DB"
 echo "  done in $((SECONDS - t0))s"
 
+echo "=== Stage 3.5: Extract verbatim facts from parsed MD (gold standard) ==="
+EXTRACT_OUT="$WORK/extractions"
+if "$VENV" "$SKILL_EVALS/extract_facts.py" \
+    --parsed   "$PARSED" \
+    --taxonomy "$TAXONOMY" \
+    --out      "$EXTRACT_OUT" 2>&1 | tee /tmp/extract_facts.log; then
+  n_files=$(ls "$EXTRACT_OUT"/*_extraction.json 2>/dev/null | wc -l)
+  echo "  $n_files extraction files written to $EXTRACT_OUT"
+  [[ -z "$EXTRACTIONS" ]] && EXTRACTIONS="$EXTRACT_OUT"
+else
+  echo "  WARNING: extract_facts.py failed (no AWS creds?) — Stage 5 will use DB-mode"
+fi
+
 echo "=== Stage 4: Start brain server ==="
 BRAIN_PID=""
 cleanup() { [[ -n "$BRAIN_PID" ]] && kill "$BRAIN_PID" 2>/dev/null || true; }
