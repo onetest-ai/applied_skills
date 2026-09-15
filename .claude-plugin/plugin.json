@@ -1,6 +1,6 @@
 {
-  "name": "applied-skills",
-  "description": "Truthful data pipeline over documents, knowledge graphs, and tabular reporting: goal-directed taxonomy extraction, Cognee (RAG) access, a config-driven DuckDB semantic layer, and hybrid retrieval that routes numbers to deterministic SQL and narrative to RAG.",
+  "name": "brain",
+  "description": "Build, maintain, and deploy the Brain — a local, truthful knowledge engine (RAG + taxonomy graph + deterministic marts) served over a governed MCP.",
   "version": "0.1.0",
   "author": { "name": "onetest-ai" },
   "homepage": "https://github.com/onetest-ai/applied_skills",

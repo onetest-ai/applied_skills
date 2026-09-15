@@ -7,9 +7,9 @@
   },
   "plugins": [
     {
-      "name": "applied-skills",
+      "name": "brain",
       "source": "./",
-      "description": "Document/graph/tabular data pipeline: corpus-taxonomy-extraction, cognee, tabular-semantic-layer, hybrid-retrieval.",
+      "description": "Build, maintain, and deploy the Brain — a local, truthful knowledge engine (RAG + taxonomy graph + deterministic marts) served over a governed MCP.",
       "version": "0.1.0"
     },
     {
