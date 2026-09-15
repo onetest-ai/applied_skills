@@ -56,5 +56,30 @@ class TestChallengeSkill(unittest.TestCase, SkillContractMixin):
         )
 
 
+class TestAuthoringShared(unittest.TestCase):
+    def test_authoring_pipeline_documented(self):
+        from test_plugin_structure import KB_ROOT, read_text
+        text = read_text(KB_ROOT / "skills" / "_shared" / "authoring.md")
+        for token in ["gather", "verify", "verifier", "human", "sources.json", "source_file"]:
+            self.assertIn(token, text, f"authoring.md missing {token!r}")
+
+
+class TestBriefSkill(unittest.TestCase, SkillContractMixin):
+    def test_brief_contract(self):
+        self.assert_skill(
+            "brief",
+            required_tokens=["_shared/authoring.md", "verifier", "docs/kb/", "Sources"],
+        )
+
+
+class TestReportSkill(unittest.TestCase, SkillContractMixin):
+    def test_report_contract(self):
+        self.assert_skill(
+            "report",
+            required_tokens=["_shared/authoring.md", "verifier", "docs/kb/",
+                             "Table of Contents", "Sources"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
