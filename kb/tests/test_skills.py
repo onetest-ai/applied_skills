@@ -34,5 +34,27 @@ class TestAskSkill(unittest.TestCase, SkillContractMixin):
         )
 
 
+class TestExploreSkill(unittest.TestCase, SkillContractMixin):
+    def test_explore_contract(self):
+        self.assert_skill(
+            "explore",
+            required_tokens=[
+                "../_shared/doctrine.md", "health",
+                "find_related_content", "get_taxonomy", "chunk_id",
+            ],
+        )
+
+
+class TestChallengeSkill(unittest.TestCase, SkillContractMixin):
+    def test_challenge_contract(self):
+        self.assert_skill(
+            "challenge",
+            required_tokens=[
+                "../_shared/doctrine.md", "health",
+                "get_metric", "get_evidence", "not modeled", "grain",
+            ],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
