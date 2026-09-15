@@ -9,7 +9,7 @@
     {
       "name": "applied-skills",
       "source": "./",
-      "description": "Document/graph/tabular data pipeline: corpus-taxonomy-extraction, cognee, tabular-semantic-layer, hybrid-retrieval.",
+      "description": "Document/graph/tabular data pipeline: corpus-taxonomy-extraction, knowledge-index, tabular-semantic-layer, hybrid-retrieval.",
       "version": "0.1.0"
     },
     {
