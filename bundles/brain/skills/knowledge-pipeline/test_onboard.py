@@ -35,6 +35,28 @@ class OnboardSourceConfigTests(unittest.TestCase):
             self.assertIn("./brain source plan", plan)
             self.assertIn("./brain source import", plan)
 
+    def test_scaffold_records_audience_in_brain_toml_and_plan(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            docs = root / "docs"; docs.mkdir()
+            project = root / "brain"
+            result = subprocess.run([
+                sys.executable, str(SCRIPT), "scaffold",
+                "--project", str(project), "--goal", "test goal",
+                "--audience", "ops managers", "--docs", str(docs),
+            ], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            config = (project / "brain.toml").read_text()
+            self.assertIn('[project]\naudience = "ops managers"', config)
+            # [project] must precede the [sources...] sections and be valid TOML.
+            self.assertLess(config.index("[project]"), config.index("[sources.roots.incoming]"))
+            import tomllib
+            parsed = tomllib.loads(config)
+            self.assertEqual(parsed["project"]["audience"], "ops managers")
+            plan = (project / "BRAIN.md").read_text()
+            self.assertIn("ops managers", plan)
+            self.assertIn("Audience", plan)
+
     def test_scaffold_does_not_overwrite_existing_brain_toml(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td); project = root / "brain"; project.mkdir()

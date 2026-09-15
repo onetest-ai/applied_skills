@@ -15,6 +15,7 @@ When the user wants to **create a brain** / "get started" / doesn't yet have a p
 
 **1. Ask, one at a time (skip any the user already answered):**
 - **Goal** — the single analytical goal that scopes everything (the noise filter). *"What are you trying to get out of this corpus?"* (e.g. "optimize call-center operations and introduce an AI workforce"). Don't proceed without it — it drives taxonomy + demotion.
+- **Audience** — *"Who will consume the KB — which roles/personas?"* (e.g. "call-center ops managers and workforce planners"). Optional but valuable: it's a secondary lens that refines taxonomy emphasis and drives how the `kb` plugin sets answer altitude/vocabulary and authored-artifact tone/depth. Distinct from the deployment target (that's distribution/infra). Recorded in `brain.toml` `[project].audience`.
 - **Docs** — folder of narrative documents (PDF/PPTX/DOCX).
 - **Reporting** — folder of the numeric workbooks (XLSX/XLSM), if any. May be the same folder or none (then the numbers lane stays empty — that's fine).
 - **Project dir** — where the brain + configs live (default: `./<name>-brain`).
@@ -28,14 +29,14 @@ When the user wants to **create a brain** / "get started" / doesn't yet have a p
 **2. Scaffold + preflight + scan** (deterministic):
 ```bash
 python .../knowledge-pipeline/onboard.py scaffold \
-  --project <proj> --goal "<goal>" --docs <docs> [--reporting <xlsx-dir>] \
+  --project <proj> --goal "<goal>" [--audience "<roles/personas>"] --docs <docs> [--reporting <xlsx-dir>] \
   [--docs-mode import|mirror] [--reporting-mode import|mirror] \
   [--deploy-target local|hosted-mcp] [--corpus <name>]
 ```
 This creates the project layout (`schema/ parsed/ taxonomy/ classify/ vision/ marts/ vault/ .incoming/`), copies `families.<corpus>.json` + `metrics.<corpus>.json` templates into `schema/`, and writes:
 
 - `goal.txt`;
-- portable `brain.toml` with `incoming` (`managed`), `docs` (`import` by default), and `reporting` (`import` by default) roots; paths are relative to the project whenever the platform permits;
+- portable `brain.toml` with a `[project]` section (canonical `audience`) followed by `incoming` (`managed`), `docs` (`import` by default), and `reporting` (`import` by default) roots; paths are relative to the project whenever the platform permits;
 - **`BRAIN.md`** with exact ordered build and source-registry commands (plus a deployment section matching the chosen target).
 
 **Canonical project artifacts** (what later maintenance relies on): `goal.txt` is the authoritative analytical goal, `brain.toml` the source registry, `BRAIN.md` the build plan. A host may add its own operator guide (e.g. an `AGENTS.md`), but that never replaces `goal.txt` — keep the goal in `goal.txt` so any agent/operator can recover it. If you find a project whose goal lives only inside a host doc, write it back to `goal.txt`.
@@ -109,6 +110,9 @@ python .../tabular-semantic-layer/build_marts.py --root <reporting> --config <pr
 #    Skip it in the default build; export on demand (debugging / a human wants to browse):
 python .../corpus-taxonomy-extraction/to_obsidian.py --db "$DB" --out <project>/vault --clean --assets <project>/assets   # or: ./brain vault
 # 8. record document hashes so future updates can diff (see "Updating" below)
+#    seed also UPSERTs the durable meta table (goal from goal.txt, audience from
+#    brain.toml [project].audience) that health() exposes as `about`. Re-run seed
+#    (no rebuild needed) whenever the goal or audience changes to refresh meta.
 python .../knowledge-pipeline/brain_sync.py seed --db "$DB" --parsed <project>/parsed
 ```
 Chunk ids are deterministic (`f(source, section-ordinal)`), so an unchanged document with unchanged section boundaries keeps its ids across rebuilds. During an update, changed documents are delete-then-reindexed and their new chunk ids are explicitly reclassified; unchanged documents keep their tags/graph edges.

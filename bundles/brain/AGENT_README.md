@@ -81,10 +81,11 @@ Run `./brain source plan` before source-driven work. Treat `root_unavailable` as
 Ask for missing values one at a time:
 
 1. analytical goal;
-2. narrative documents directory and whether it is safe `import` or authoritative `mirror`;
-3. reporting workbook directory, if any, and its `import`/`mirror` semantics;
-4. destination brain project;
-5. deployment target — `local` (agent queries the local store) or `hosted-mcp` (governed MCP served to remote clients). Pass `--deploy-target`; it shapes `BRAIN.md` and is recorded in `brain.toml` `[deployment].target`.
+2. audience — who will consume the KB (which roles/personas). Optional; pass `--audience`. It's a secondary lens that refines taxonomy emphasis and drives how the `kb` plugin sets answer altitude and authored-artifact style. Canonical in `brain.toml` `[project].audience`; distinct from the deployment target (distribution/infra);
+3. narrative documents directory and whether it is safe `import` or authoritative `mirror`;
+4. reporting workbook directory, if any, and its `import`/`mirror` semantics;
+5. destination brain project;
+6. deployment target — `local` (agent queries the local store) or `hosted-mcp` (governed MCP served to remote clients). Pass `--deploy-target`; it shapes `BRAIN.md` and is recorded in `brain.toml` `[deployment].target`.
 
 Recommend `import` unless the user explicitly says that deleting a file from an available folder should propose deleting it from the Brain. `incoming` is always project-local `managed`. The goal is authoritative in `goal.txt` — a host operator doc (e.g. `AGENTS.md`) never replaces it; if a project's goal lives only in a host doc, write it back to `goal.txt` so maintenance can recover it.
 
@@ -93,6 +94,7 @@ Then scaffold and preflight:
 ```bash
 "$PY" "$SKILLS/knowledge-pipeline/onboard.py" scaffold \
   --project "$PROJECT" --goal "$GOAL" --docs "$DOCS" \
+  ${AUDIENCE:+--audience "$AUDIENCE"} \
   --docs-mode "$DOCS_MODE" --reporting-mode "$REPORTING_MODE" \
   ${REPORTING:+--reporting "$REPORTING"}
 ```

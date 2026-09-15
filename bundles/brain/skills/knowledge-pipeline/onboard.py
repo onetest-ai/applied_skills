@@ -142,6 +142,10 @@ def cmd_scaffold(a):
         docs_path = rel_or_abs(docs)
         reporting_path = rel_or_abs(reporting)
         lines = ["version = 1", "", "[paths]", 'parsed = "parsed"', "",
+                 # Canonical audience (who consumes the KB): distinct from
+                 # [deployment].target (distribution/infra). Drives taxonomy emphasis
+                 # + kb answer/artifact altitude. Goal stays authoritative in goal.txt.
+                 "[project]", f"audience = {json.dumps(a.audience or '')}", "",
                  "[sources.roots.incoming]", 'path = ".incoming"', 'mode = "managed"',
                  'include = ["**/*"]']
         if docs:
@@ -162,7 +166,7 @@ def cmd_scaffold(a):
         shutil.copy2(launcher, proj / "brain")
         os.chmod(proj / "brain", 0o755)
 
-    plan = _plan_text(proj, corpus, db, docs, reporting, fam, met, a.goal, a.deploy_target)
+    plan = _plan_text(proj, corpus, db, docs, reporting, fam, met, a.goal, a.deploy_target, a.audience)
     (proj / "BRAIN.md").write_text(plan)
 
     print(f"scaffolded project: {proj}")
@@ -175,7 +179,7 @@ def cmd_scaffold(a):
     return 0
 
 
-def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target="local"):
+def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target="local", audience=""):
     docs_s = str(docs) if docs else "<docs-dir>"
     rep_s = str(reporting) if reporting else "<reporting-dir>"
     py = brain_py()
@@ -205,6 +209,11 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     # Brain build plan — {corpus}
 
     **Goal (noise filter):** {goal or "<state your analytical goal>"}
+
+    **Audience:** {audience or "<who will consume the KB — roles/personas>"} — refines
+    taxonomy emphasis (secondary lens under the goal) and how the `kb` plugin sets answer
+    altitude/vocabulary and authored-artifact tone/depth. Canonical in `brain.toml`
+    `[project].audience`; distinct from `[deployment].target` (distribution/infra).
 
     **Store:** `{db}` — one portable SQLite file (chunks+FTS+vector · facts · graph).
     **Source config:** `{proj/'brain.toml'}` — named roots with paths relative to this project.
@@ -368,6 +377,10 @@ def main():
     s = sub.add_parser("scaffold", help="create project layout + config templates + BRAIN.md plan, then preflight & scan")
     s.add_argument("--project", required=True, help="project dir to create/populate")
     s.add_argument("--goal", default="", help="analytical goal string (the noise filter)")
+    s.add_argument("--audience", default="", help="who will consume the KB — roles/personas "
+                   "(e.g. 'call-center ops managers and workforce planners'). Canonical in "
+                   "brain.toml [project].audience; drives taxonomy emphasis + kb answer/artifact "
+                   "style. Distinct from --deploy-target (distribution/infra).")
     s.add_argument("--docs", help="dir of narrative docs (pdf/pptx/docx)")
     s.add_argument("--reporting", help="dir of reporting spreadsheets (defaults to --docs)")
     s.add_argument("--docs-mode", choices=("import", "mirror"), default="import",
