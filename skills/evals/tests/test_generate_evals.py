@@ -106,25 +106,38 @@ def test_no_unresolved_product_in_output(tmp_path):
         assert "UNRESOLVED" not in r.get("notes", "")
 
 
-def test_query_suffix_comes_from_taxonomy(tmp_path):
+def test_query_suffix_comes_from_fact_keywords(tmp_path):
+    # query_suffix must be derived from the verbatim quote, not the taxonomy label.
+    # The quote "Deploy the auth module by Friday" contains searchable keywords.
     _make_extraction(tmp_path, "abc123", [{
         "id": "ext-001", "category": "ActionItem",
+        "verbatim_quote": "Deploy the auth module by Friday.",
         "context": "Deploy by Friday.", "owner": "Alice", "product": "TP", "confidence": "DirectStatement",
     }])
     out = tmp_path / "evals.csv"
     G.main(["--extractions", str(tmp_path), "--taxonomy", _make_taxonomy(tmp_path), "--out", str(out)])
     rows = list(csv.DictReader(out.open()))
-    action_rows = [r for r in rows if r["category"] == "ActionItem"]
-    assert all(r["query_suffix"] == "owners decisions" for r in action_rows)
+    action_rows = [r for r in rows if r["category"] == "ActionItem" and r["scope"] == "single-session"]
+    assert len(action_rows) >= 1
+    for r in action_rows:
+        suffix = r["query_suffix"]
+        # Must contain keywords from the verbatim quote — NOT the taxonomy label string
+        assert "Deploy" in suffix or "auth" in suffix or "module" in suffix or "Friday" in suffix, (
+            f"query_suffix should contain verbatim-fact keywords, got: {suffix!r}"
+        )
+        assert suffix != "owners decisions", (
+            "query_suffix must not be the taxonomy eval_config value — must come from the fact"
+        )
 
 
 def test_missing_eval_config_falls_back_to_default(tmp_path):
-    # Taxonomy with no eval_config — should not crash, falls back to DEFAULT_QUERY_SUFFIX
+    # Taxonomy with no eval_config — should not crash; query_suffix comes from fact keywords
     taxonomy = {"intent_taxonomy": {"l1": ["ActionItem"]}}
     taxo_path = tmp_path / "taxonomy.json"
     taxo_path.write_text(json.dumps(taxonomy))
     _make_extraction(tmp_path, "abc123", [{
         "id": "ext-001", "category": "ActionItem",
+        "verbatim_quote": "Deploy the auth module by Friday.",
         "context": "Do the thing.", "owner": "Alice", "product": "TP", "confidence": "DirectStatement",
     }])
     out = tmp_path / "evals.csv"
@@ -132,7 +145,14 @@ def test_missing_eval_config_falls_back_to_default(tmp_path):
     rows = list(csv.DictReader(out.open()))
     action_rows = [r for r in rows if r["category"] == "ActionItem"]
     assert len(action_rows) >= 1
-    assert all(r["query_suffix"] == G.DEFAULT_QUERY_SUFFIX for r in action_rows)
+    # query_suffix comes from verbatim_quote keywords — not from taxonomy (which has none)
+    for r in action_rows:
+        suffix = r["query_suffix"]
+        assert len(suffix) > 0, "query_suffix must be non-empty"
+        # When no eval_config exists, fact keywords are still used
+        assert "Deploy" in suffix or "auth" in suffix or "module" in suffix or "Friday" in suffix, (
+            f"query_suffix should contain fact keywords even without eval_config, got: {suffix!r}"
+        )
 
 
 def test_empty_taxonomy_produces_no_evals(tmp_path):
@@ -388,3 +408,105 @@ def test_extractions_mode_still_works_unchanged(tmp_path):
     G.main(["--extractions", str(tmp_path), "--taxonomy", _make_taxonomy(tmp_path), "--out", str(out)])
     rows = list(csv.DictReader(out.open()))
     assert len(rows) >= 1
+
+
+# ---------------------------------------------------------------------------
+# NEW: fact-derived question + query_suffix (judge quality fix)
+# ---------------------------------------------------------------------------
+
+def test_question_from_fact_contains_keywords():
+    """_question_from_fact returns a question containing keywords from the verbatim quote."""
+    q = G._question_from_fact(
+        "availability calendar which allows us to see who and when will be here",
+        "aug31_sync"
+    )
+    lower = q.lower()
+    # Must contain searchable keywords from the fact — not the taxonomy label
+    assert any(w in lower for w in ["availability", "calendar", "scheduling", "when"]), (
+        f"question should contain fact keywords, got: {q!r}"
+    )
+    # Must reference the source slug
+    assert "aug31_sync" in q, f"question should include source slug, got: {q!r}"
+    # Must NOT be just the taxonomy label pattern
+    assert "IntegrationPoint items" not in q, f"must not use taxonomy label, got: {q!r}"
+
+
+def test_question_from_fact_ends_with_question_mark():
+    """_question_from_fact result must end with a question mark."""
+    q = G._question_from_fact("deploy the auth module by Friday", "sep10_sync")
+    assert q.strip().endswith("?"), f"question must end with ?, got: {q!r}"
+
+
+def test_query_suffix_from_fact_extracts_keywords():
+    """_query_suffix_from_fact extracts meaningful keywords from the verbatim quote."""
+    suffix = G._query_suffix_from_fact(
+        "availability calendar which allows us to see who and when will be here"
+    )
+    # Must contain real keywords (>3 chars, not stop words)
+    assert "availability" in suffix or "calendar" in suffix, (
+        f"suffix should contain fact keywords, got: {suffix!r}"
+    )
+    # Must NOT contain stop words alone
+    assert suffix.strip() != "", "suffix must not be empty"
+
+
+def test_query_suffix_from_fact_excludes_stop_words():
+    """_query_suffix_from_fact drops common stop words (the, and, which, etc.)."""
+    suffix = G._query_suffix_from_fact("the team will coordinate with the vendor")
+    words = suffix.lower().split()
+    stop = {"the", "and", "with", "will", "which", "that", "this", "for"}
+    assert not all(w in stop for w in words), (
+        f"suffix should not be only stop words, got: {suffix!r}"
+    )
+
+
+def test_extraction_mode_question_uses_fact_not_label(tmp_path):
+    """In extraction mode, question is derived from verbatim_quote, not taxonomy label."""
+    _make_extraction(tmp_path, "aug31_sync", [{
+        "id": "ext-001",
+        "category": "IntegrationPoint",
+        "verbatim_quote": "availability calendar which allows us to see who and when will be here",
+        "context": "Team discussed using a shared calendar for visibility.",
+        "owner": "", "product": "TP", "confidence": "DirectStatement",
+    }])
+    out = tmp_path / "evals.csv"
+    G.main(["--extractions", str(tmp_path), "--taxonomy", _make_taxonomy(tmp_path), "--out", str(out)])
+    rows = list(csv.DictReader(out.open()))
+    ip_rows = [r for r in rows if r["category"] == "IntegrationPoint" and r["scope"] == "single-session"]
+    assert len(ip_rows) >= 1, "Expected at least one IntegrationPoint single-session eval"
+    for r in ip_rows:
+        q = r["question"]
+        # Must NOT be the generic taxonomy label question
+        assert "What integration points were identified?" not in q, (
+            f"question must not use taxonomy label: {q!r}"
+        )
+        # Must contain keywords from the verbatim quote
+        lower = q.lower()
+        assert any(w in lower for w in ["availability", "calendar", "when", "scheduling"]), (
+            f"question must contain fact keywords, got: {q!r}"
+        )
+
+
+def test_extraction_mode_query_suffix_uses_fact_keywords(tmp_path):
+    """In extraction mode, query_suffix contains keywords from verbatim_quote."""
+    _make_extraction(tmp_path, "aug31_sync", [{
+        "id": "ext-001",
+        "category": "IntegrationPoint",
+        "verbatim_quote": "availability calendar which allows us to see who and when will be here",
+        "context": "Shared calendar discussed.",
+        "owner": "", "product": "TP", "confidence": "DirectStatement",
+    }])
+    out = tmp_path / "evals.csv"
+    G.main(["--extractions", str(tmp_path), "--taxonomy", _make_taxonomy(tmp_path), "--out", str(out)])
+    rows = list(csv.DictReader(out.open()))
+    ip_rows = [r for r in rows if r["category"] == "IntegrationPoint" and r["scope"] == "single-session"]
+    assert len(ip_rows) >= 1
+    for r in ip_rows:
+        suffix = r["query_suffix"]
+        assert "availability" in suffix or "calendar" in suffix, (
+            f"query_suffix must contain fact keywords for retrieval, got: {suffix!r}"
+        )
+        # Must NOT be the taxonomy eval_config value
+        assert suffix != "dependency connection", (
+            "query_suffix must come from the fact, not the taxonomy eval_config"
+        )

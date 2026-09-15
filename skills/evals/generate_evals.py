@@ -28,6 +28,42 @@ from pathlib import Path
 DEFAULT_QUERY_SUFFIX = "specific details findings decisions evidence"
 DEFAULT_TAXONOMY = Path(__file__).parent / "taxonomy.default.json"
 
+_STOP_WORDS = frozenset({
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+    "of", "with", "by", "from", "that", "this", "which", "who", "what",
+    "how", "is", "are", "was", "were", "be", "been", "being", "have",
+    "has", "had", "do", "does", "did", "will", "would", "could", "should",
+    "may", "might", "shall", "can", "not", "us", "we", "it", "its",
+    "as", "so", "if", "then", "when", "where", "there", "here", "up",
+    "out", "into", "about", "also", "than", "me", "my", "our", "their",
+    "them", "they", "he", "she", "his", "her", "you", "your",
+})
+
+
+def _query_suffix_from_fact(verbatim_quote: str) -> str:
+    """Extract searchable keywords from a verbatim quote for BM25 retrieval."""
+    words = verbatim_quote.replace(",", " ").replace(".", " ").replace(";", " ").split()
+    keywords = [
+        w.strip("'\"()[]") for w in words
+        if len(w) > 3 and w.lower().strip("'\"()[]") not in _STOP_WORDS
+    ]
+    seen: set = set()
+    deduped = []
+    for w in keywords:
+        key = w.lower()
+        if key not in seen:
+            seen.add(key)
+            deduped.append(w)
+    return " ".join(deduped[:8])
+
+
+def _question_from_fact(verbatim_quote: str, slug: str) -> str:
+    """Build a retrieval-friendly question from a verbatim fact and source slug."""
+    suffix = _query_suffix_from_fact(verbatim_quote)
+    if suffix:
+        return f"What was discussed about {suffix} (source: {slug})?"
+    return f"What was discussed in this meeting (source: {slug})?"
+
 
 def load_taxonomy(taxonomy_path):
     """Return (categories_list, eval_config_dict) from taxonomy JSON."""
@@ -217,18 +253,21 @@ def generate_evals(extractions_dir, taxonomy_path):
             by_slug[slug].append(ext)
 
         for slug, exts in list(by_slug.items())[:3]:
-            facts = [e.get("context") or e.get("verbatim_quote", "") for e in exts[:3]]
+            facts = [e.get("verbatim_quote") or e.get("context", "") for e in exts[:3]]
             facts = [f for f in facts if f.strip()]
             if not facts:
                 continue
             product = exts[0].get("product", "CROSS-PRODUCT")
-            question = f"{base_q} (source: {slug})"
+            # Derive question and query_suffix from the primary verbatim fact
+            primary_fact = facts[0]
+            question = _question_from_fact(primary_fact, slug)
+            fact_suffix = _query_suffix_from_fact(primary_fact)
             rows.append({
                 "eval_id": f"E{eval_counter:03d}",
                 "category": cat,
                 "scope": "single-session",
                 "question": question,
-                "query_suffix": query_suffix,
+                "query_suffix": fact_suffix or query_suffix,
                 "expected_answer_must_contain": " | ".join(facts[:2]),
                 "expected_answer_must_not_contain": "hallucinated,invented,fabricated",
                 "ground_truth_source": slug,
@@ -239,20 +278,22 @@ def generate_evals(extractions_dir, taxonomy_path):
 
         # Cross-session eval: one per category (all slugs)
         all_facts = []
-        seen_facts = set()
+        seen_facts: set = set()
         for slug, ext in items[:5]:
-            fact = (ext.get("context") or ext.get("verbatim_quote", "")).strip()
+            fact = (ext.get("verbatim_quote") or ext.get("context", "")).strip()
             if fact and fact not in seen_facts:
                 seen_facts.add(fact)
                 all_facts.append(fact)
         if len(all_facts) >= 2:
             slugs = list({s for s, _ in items})
+            # Cross-session query: combine keywords from first two facts
+            cross_suffix = _query_suffix_from_fact(" ".join(all_facts[:2]))
             rows.append({
                 "eval_id": f"E{eval_counter:03d}",
                 "category": cat,
                 "scope": "cross-session",
                 "question": base_q,
-                "query_suffix": query_suffix,
+                "query_suffix": cross_suffix or query_suffix,
                 "expected_answer_must_contain": " | ".join(all_facts[:3]),
                 "expected_answer_must_not_contain": "hallucinated,invented,fabricated",
                 "ground_truth_source": ",".join(slugs[:3]),
