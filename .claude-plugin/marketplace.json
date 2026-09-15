@@ -11,6 +11,12 @@
       "source": "./",
       "description": "Document/graph/tabular data pipeline: corpus-taxonomy-extraction, cognee, tabular-semantic-layer, hybrid-retrieval.",
       "version": "0.1.0"
+    },
+    {
+      "name": "kb",
+      "source": "./kb",
+      "description": "Knowledge-worker companion over the Brain: cited answers and Markdown deliverables.",
+      "version": "0.1.0"
     }
   ]
 }
