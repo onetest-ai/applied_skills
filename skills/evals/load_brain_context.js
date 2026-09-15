@@ -6,6 +6,7 @@
  *
  * otherVars recognised:
  *   BRAIN_URL     — override brain endpoint (env var fallback: BRAIN_URL)
+ *   BRAIN_API_KEY — optional API key forwarded as X-API-Key header (matches BRAIN_API_KEY env var)
  *   tag           — tagBoost: RRF bonus for chunks matching tag (does not exclude untagged)
  *   query_suffix  — corpus-specific terms appended to the secondary query
  *                   (default: 'specific details findings decisions evidence')
@@ -20,12 +21,16 @@ module.exports = async function (varName, prompt, otherVars) {
   const tag = otherVars.tag || undefined;
   const querySuffix = String(otherVars.query_suffix || 'specific details findings decisions evidence');
 
+  const headers = { 'Content-Type': 'application/json' };
+  const apiKey = otherVars.BRAIN_API_KEY || process.env.BRAIN_API_KEY;
+  if (apiKey) headers['X-API-Key'] = apiKey;
+
   async function fetchChunks(query, limit) {
     const body = { query, limit };
     if (tag) body.tagBoost = tag;
     const res = await fetch(`${brainUrl}/api/v1/search`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

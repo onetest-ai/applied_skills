@@ -9,6 +9,7 @@ Usage:
 """
 import argparse
 import csv
+import os
 import yaml
 from pathlib import Path
 
@@ -122,6 +123,8 @@ def main(argv=None):
     js_path = Path(args.context_js).resolve()
     js_file_ref = f"file://{js_path}"
 
+    brain_api_key = os.environ.get("BRAIN_API_KEY", "")
+
     with open(args.csv, encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
 
@@ -132,6 +135,8 @@ def main(argv=None):
             "context": js_file_ref,
             "BRAIN_URL": args.brain_url,
         }
+        if brain_api_key:
+            vars_["BRAIN_API_KEY"] = brain_api_key
         existing_suffix = row.get("query_suffix", "").strip()
         derived = _derive_query_terms(row.get("expected_answer_must_contain", ""))
         vars_["query_suffix"] = "{} {}".format(existing_suffix, derived).strip() if existing_suffix else derived

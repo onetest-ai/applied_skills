@@ -407,15 +407,19 @@ async def search_shim(request: Request) -> JSONResponse:
     source_contains = body.get("sourceContains") or None
     tag = body.get("tag") or None
     tag_boost = body.get("tagBoost") or None
+    latest_only_raw = body.get("latestOnly", False)
+    if not isinstance(latest_only_raw, bool):
+        return JSONResponse({"error": "latestOnly must be a boolean"}, status_code=400)
     result = _safe_call(
         "search_knowledge", _search_knowledge, query, limit,
-        as_of, bool(body.get("latestOnly", False)),
+        as_of, latest_only_raw,
         source_contains, tag, tag_boost,
     )
-    # _safe_call returns a dict with key "hits" (list of chunk dicts)
-    hits = []
-    if isinstance(result, dict):
-        hits = result.get("hits", result.get("results", []))
+    # _safe_call returns a dict with key "hits" (list of chunk dicts); any other
+    # type means _safe_call caught an exception and returned a ToolResult.
+    if not isinstance(result, dict):
+        return JSONResponse({"error": "internal error"}, status_code=500)
+    hits = result.get("hits", result.get("results", []))
     if hits:
         # Exclude orig/ chunks — they are raw JSON dumps, not structured retrieval content
         hits = [h for h in hits if not h.get("source", "").startswith("orig/")]

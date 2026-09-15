@@ -53,6 +53,9 @@ def section_records(md, max_chars=1600):
             buf.append(ln)
     if title is not None or "\n".join(buf).strip():
         blocks.append((title, "\n".join(buf).strip(), parent, breadcrumb))
+    # Title-only sections (heading with no body text) are intentionally dropped.
+    # If upgrading from a version that indexed title-only chunks, run with --reset
+    # to remove orphan chunks from existing databases.
     blocks = [(t, b, p, bc) for t, b, p, bc in blocks if b]
     if not blocks:
         blocks = [(None, md.strip(), "", "")]

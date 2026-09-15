@@ -38,3 +38,16 @@ python skills/evals/generate_promptfoo.py \
 | `generate_promptfoo.py` | Read CSV → promptfoo YAML with 3 Bedrock providers |
 | `load_brain_context.js` | Dynamic context fetcher (dual-query, dedup) |
 | `run_e2e.sh` | Full pipeline orchestrator |
+
+## Eval modes and pass-rate comparability
+
+Two modes produce `evals.csv` with different ground-truth quality:
+
+| Mode | Trigger | `expected_answer_must_contain` | `query_suffix` |
+|------|---------|-------------------------------|----------------|
+| **Extraction** (recommended) | AWS creds present; `extract_facts.py` runs | Verbatim quoted fact from transcript | Keywords derived from the fact itself |
+| **DB fallback** | No AWS creds; reads `chunk_topics` directly | Source slug (e.g. `"aug31"`) | Taxonomy `eval_config` default or empty |
+
+**Pass rates from the two modes are not directly comparable.** Extraction-mode tests whether the brain retrieves and surfaces specific facts. DB-mode tests whether the brain retrieves the right source. Running without AWS creds produces a higher pass rate (source slug is easier to satisfy than a verbatim fact) but measures a weaker property.
+
+Always use extraction mode for meaningful quality tracking. DB mode is a smoke test.

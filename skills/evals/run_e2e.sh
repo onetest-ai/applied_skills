@@ -109,12 +109,14 @@ BRAIN_DB="$DB" PORT="$PORT" \
   "$VENV" "$MCP_BRAIN/fastmcp_server.py" --transport http &
 BRAIN_PID=$!
 
-# Wait for health
+# Wait for health — accept 200 (healthy) or 503 (degraded-but-running, e.g. sqlite-vec absent)
 for i in $(seq 1 20); do
-  if curl -sf "http://localhost:$PORT/healthz" > /dev/null 2>&1; then break; fi
+  status=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PORT/healthz" 2>/dev/null)
+  [[ "$status" == "200" || "$status" == "503" ]] && break
   sleep 1
 done
-curl -sf "http://localhost:$PORT/healthz" > /dev/null || { echo "Brain failed to start"; exit 1; }
+status=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PORT/healthz" 2>/dev/null)
+[[ "$status" == "200" || "$status" == "503" ]] || { echo "Brain failed to start"; exit 1; }
 echo "  brain running at http://localhost:$PORT (PID $BRAIN_PID)"
 
 echo "=== Stage 5: Generate evals ==="

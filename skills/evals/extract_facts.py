@@ -116,22 +116,25 @@ def run_extractions(
     written = []
     for md_file in sorted(parsed_path.glob("*.md")):
         slug = md_file.stem
+        out_file = out_path / f"{slug}_extraction.json"
+        if out_file.exists():
+            print(f"  [skip] {md_file.name} — extraction already exists", file=sys.stderr)
+            continue
         md_text = md_file.read_text(encoding="utf-8")
         try:
             facts = extract_facts_from_md(md_text, taxonomy_l1, llm_fn)
-        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        except (json.JSONDecodeError, KeyError, TypeError, IndexError) as exc:
             print(f"WARNING: failed to extract facts from {md_file.name}: {exc}", file=sys.stderr)
             continue
         if not facts:
             print(f"  {md_file.name}: no facts extracted — skipping", file=sys.stderr)
             continue
-        outfile = out_path / f"{slug}_extraction.json"
-        outfile.write_text(
+        out_file.write_text(
             json.dumps({"file_slug": slug, "extractions": facts}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        written.append(str(outfile))
-        print(f"  {md_file.name}: {len(facts)} facts → {outfile.name}")
+        written.append(str(out_file))
+        print(f"  {md_file.name}: {len(facts)} facts → {out_file.name}")
     return written
 
 

@@ -253,7 +253,7 @@ def generate_evals(extractions_dir, taxonomy_path):
             by_slug[slug].append(ext)
 
         for slug, exts in list(by_slug.items())[:3]:
-            facts = [e.get("verbatim_quote") or e.get("context", "") for e in exts[:3]]
+            facts = [e.get("verbatim_quote", "") for e in exts[:3]]
             facts = [f for f in facts if f.strip()]
             if not facts:
                 continue
@@ -280,7 +280,7 @@ def generate_evals(extractions_dir, taxonomy_path):
         all_facts = []
         seen_facts: set = set()
         for slug, ext in items[:5]:
-            fact = (ext.get("verbatim_quote") or ext.get("context", "")).strip()
+            fact = ext.get("verbatim_quote", "").strip()
             if fact and fact not in seen_facts:
                 seen_facts.add(fact)
                 all_facts.append(fact)
