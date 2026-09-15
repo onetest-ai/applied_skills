@@ -338,8 +338,8 @@ def test_from_db_cross_session_expected_contains_both_slugs(tmp_path):
             "Cross-session must_contain must pipe-join >=2 source slugs, got: {!r}".format(must)
         )
         for slug in slugs:
-            assert slug in r["ground_truth_source"], (
-                "Each slug in must_contain must appear in ground_truth_source. "
+            assert slug in r["ground_truth_source"].split(","), (
+                "Each slug in must_contain must appear as a discrete entry in ground_truth_source. "
                 "slug={!r} ground_truth={!r}".format(slug, r["ground_truth_source"])
             )
 
