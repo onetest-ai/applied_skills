@@ -34,8 +34,16 @@ def profile_sheet(ws, sample_rows, scan_rows):
     if header_idx is not None:
         for r in buffered[header_idx + 1: header_idx + 1 + sample_rows]:
             samples.append([("" if c is None else str(c)) for c in r])
+    # NOTE: `ws.dimensions` raises AttributeError on a read_only worksheet
+    # (openpyxl ReadOnlyWorksheet). Use calculate_dimension(force=True), which
+    # is read_only-safe, and fall back to the max_row/col we already have.
+    try:
+        dims = ws.calculate_dimension(force=True)
+    except Exception:
+        mr, mc = ws.max_row, ws.max_column
+        dims = f"1:{mr}x{mc}" if mr and mc else None
     return {
-        "dims": ws.dimensions,
+        "dims": dims,
         "max_row": ws.max_row, "max_col": ws.max_column,
         "header_row_index": header_idx,
         "columns": [h for h in (header or []) if h],
@@ -71,13 +79,28 @@ def main():
                     except Exception as e:
                         rec["sheets"][ws.title] = {"error": str(e)}
                 wb.close()
+                # A workbook whose every sheet errored profiled nothing usable —
+                # flag it so a wholesale failure is not mistaken for success.
+                if rec["sheets"] and all("error" in s for s in rec["sheets"].values()):
+                    rec["error"] = "all sheets failed to profile"
                 print(f"[ok] {rec['size_mb']:>7} MB  {len(rec['sheets']):>2} sheets  {rel}", file=sys.stderr)
             except Exception as e:
                 rec["error"] = str(e)
                 print(f"[ERR] {rel}: {e}", file=sys.stderr)
             out.append(rec)
     json.dump(out, open(a.out, "w"), indent=2)
-    print(f"\nprofiled {len(out)} workbooks -> {a.out}", file=sys.stderr)
+    # Loud gate: if there were workbooks but NONE produced a usable sheet, the
+    # reporting/marts lane would be silently empty. Fail loudly instead.
+    usable = sum(1 for r in out if any("error" not in s for s in r.get("sheets", {}).values()))
+    print(f"\nprofiled {len(out)} workbooks ({usable} with usable sheets) -> {a.out}", file=sys.stderr)
+    if out and usable == 0:
+        print(
+            "ERROR: every workbook failed to profile — the reporting/marts lane "
+            "would be empty. This is a hard failure, not a warning (check the "
+            "openpyxl version / read_only compatibility and the profiles JSON).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
 if __name__ == "__main__":
     main()
