@@ -158,7 +158,12 @@ function main() {
   const o = parseArgs(process.argv.slice(2));
   // Skills live inside their bundle: bundles/<name>/skills/ (default bundle: brain).
   const SRC = join(BUNDLES, o.bundle || "brain", "skills");
-  if (!existsSync(SRC)) { console.error(`error: bundle skills dir not found at ${SRC}`); process.exit(1); }
+  if (!existsSync(SRC)) {
+    const avail = existsSync(BUNDLES) ? readdirSync(BUNDLES).filter(n => existsSync(join(BUNDLES, n, "skills"))) : [];
+    console.error(`error: bundle skills dir not found at ${SRC}`);
+    console.error(`  pass --bundle <name>; available: ${avail.join(", ") || "(none found under bundles/)"}`);
+    process.exit(1);
+  }
   for (const t of o.targets) if (!HOSTS[t]) { console.error(`error: unknown target '${t}' (claude|dsh|copilot|codex)`); process.exit(2); }
 
   const allSkills = readdirSync(SRC).filter(n => statSync(join(SRC, n)).isDirectory());

@@ -10,6 +10,9 @@ Usage: emit_taxonomy.py --consolidated <file> --map-dir <dir> --out-json <f> --o
 import argparse, glob, json, os, re, sys
 from collections import Counter
 
+# Skills are copied as flat, non-package dirs into each host's skills/ folder, so a
+# sibling module can't be imported as a package. Prepend this file's dir so `flags`
+# (the same directory) resolves regardless of the caller's cwd.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from flags import near_duplicate_labels, off_axis_l1
 

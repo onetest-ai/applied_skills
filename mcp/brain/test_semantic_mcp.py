@@ -403,5 +403,46 @@ class FastMCPContractTests(FixtureCase):
         asyncio.run(run())
 
 
+@unittest.skipIf(Client is None, "fastmcp not installed")
+class TestFinalizeErrorFlags(unittest.TestCase):
+    """Unit-level checks for the isError promotion, independent of a live client."""
+
+    def test_tagged_error_becomes_iserror_and_marker_is_stripped(self):
+        import fastmcp_server as fs
+        err = fs._error_result("search_knowledge", "invalid_arguments",
+                               "query is required", how_to_fix="Provide a non-empty query")
+        result = fs._finalize_error_flags(err.to_mcp_result())
+        self.assertIsInstance(result, fs.CallToolResult)
+        self.assertTrue(result.isError)
+        # the private marker must never reach the client
+        self.assertFalse((result.meta or {}).get(fs._ERROR_META_KEY))
+        # actionable guidance survives for body-reading clients (structured + text)
+        text_blob = " ".join(getattr(c, "text", "") for c in (result.content or []))
+        blob = json.dumps(result.structuredContent or {}) + text_blob
+        self.assertIn("query is required", blob)
+        self.assertIn("Provide a non-empty query", blob)
+
+    def test_untagged_result_stays_non_error(self):
+        import fastmcp_server as fs
+        # An ok/not_modeled result reaches _finalize_error_flags as a CallToolResult
+        # with no error marker (a successful ToolResult otherwise converts to a plain
+        # (content, structured) tuple, which the function also leaves untouched).
+        ok = fs.CallToolResult(content=[fs.TextContent(type="text", text='{"status": "not_modeled"}')])
+        result = fs._finalize_error_flags(ok)
+        self.assertFalse(bool(result.isError))
+        # a non-CallToolResult (successful tuple form) passes through unchanged
+        passthrough = fs._finalize_error_flags(([fs.TextContent(type="text", text="ok")], {"status": "ok"}))
+        self.assertIsInstance(passthrough, tuple)
+
+    def test_legacy_tool_call_is_iserror_with_fix(self):
+        import fastmcp_server as fs
+        err = fs._error_result("search", "legacy_tool", "Legacy tool 'search' was removed.",
+                               how_to_fix="Retry with search_knowledge.")
+        result = fs._finalize_error_flags(err.to_mcp_result())
+        self.assertTrue(result.isError)
+        blob = json.dumps(result.structuredContent or {})
+        self.assertIn("search_knowledge", blob)
+
+
 if __name__ == "__main__":
     unittest.main()

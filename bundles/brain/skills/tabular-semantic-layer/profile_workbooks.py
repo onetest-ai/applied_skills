@@ -38,10 +38,11 @@ def profile_sheet(ws, sample_rows, scan_rows):
     # (openpyxl ReadOnlyWorksheet). Use calculate_dimension(force=True), which
     # is read_only-safe, and fall back to the max_row/col we already have.
     try:
-        dims = ws.calculate_dimension(force=True)
+        dims = ws.calculate_dimension(force=True)  # Excel-style range, e.g. "A1:C3"
     except Exception:
-        mr, mc = ws.max_row, ws.max_column
-        dims = f"1:{mr}x{mc}" if mr and mc else None
+        # No reliable range in read_only mode — leave dims unknown rather than
+        # emit a non-Excel string; max_row/max_col below still carry the extent.
+        dims = None
     return {
         "dims": dims,
         "max_row": ws.max_row, "max_col": ws.max_column,
@@ -57,6 +58,9 @@ def main():
     ap.add_argument("--formats", default="xlsx,xlsm")
     ap.add_argument("--sample-rows", type=int, default=3)
     ap.add_argument("--scan-rows", type=int, default=25)
+    ap.add_argument("--no-fail-on-empty", action="store_true",
+                    help="Do not exit non-zero when no workbook yields a usable sheet "
+                         "(default: fail loudly so a wholesale profiling failure is caught).")
     a = ap.parse_args()
     allow = {"." + e.strip().lower().lstrip(".") for e in a.formats.split(",")}
     import openpyxl
@@ -93,7 +97,7 @@ def main():
     # reporting/marts lane would be silently empty. Fail loudly instead.
     usable = sum(1 for r in out if any("error" not in s for s in r.get("sheets", {}).values()))
     print(f"\nprofiled {len(out)} workbooks ({usable} with usable sheets) -> {a.out}", file=sys.stderr)
-    if out and usable == 0:
+    if out and usable == 0 and not a.no_fail_on_empty:
         print(
             "ERROR: every workbook failed to profile — the reporting/marts lane "
             "would be empty. This is a hard failure, not a warning (check the "
