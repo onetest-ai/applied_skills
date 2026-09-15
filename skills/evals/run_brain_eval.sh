@@ -67,9 +67,14 @@ else
   echo "WARNING: AWS credential check failed: $CALLER"
 fi
 
-# Kill any leftover brain
-pkill -f "fastmcp_server" 2>/dev/null || true
-sleep 1
+# Kill leftover brain from a prior run on this specific port (PID file keyed to port)
+BRAIN_PIDFILE="/tmp/brain-port${PORT}.pid"
+if [[ -f "$BRAIN_PIDFILE" ]]; then
+  OLD_PID=$(cat "$BRAIN_PIDFILE")
+  kill "$OLD_PID" 2>/dev/null || true
+  rm -f "$BRAIN_PIDFILE"
+  sleep 1
+fi
 
 # Start brain
 BRAIN_LOG="/tmp/brain-port${PORT}.log"
@@ -84,6 +89,7 @@ nohup env \
   "$BRAIN_PYTHON" "$BRAIN_SCRIPT" --transport http \
   > "$BRAIN_LOG" 2>&1 &
 BRAIN_PID=$!
+echo "$BRAIN_PID" > "$BRAIN_PIDFILE"
 echo "Brain PID: $BRAIN_PID (log: $BRAIN_LOG)"
 
 # Wait for brain to be ready
@@ -103,7 +109,7 @@ for i in {1..15}; do
 done
 
 # Ensure brain is killed on script exit
-trap 'echo "Stopping brain..."; kill $BRAIN_PID 2>/dev/null || true' EXIT
+trap 'echo "Stopping brain..."; kill $BRAIN_PID 2>/dev/null || true; rm -f "$BRAIN_PIDFILE"' EXIT
 
 # Run promptfoo eval
 CONFIG_DIR="$(dirname "$CONFIG")"

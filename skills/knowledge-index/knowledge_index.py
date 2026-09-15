@@ -49,6 +49,13 @@ def chunk_id(source, ordv):
     return int.from_bytes(h[:8], "big") >> 1
 
 def _ensure_schema(c, dim):
+    # Migration: brain_sync ≤ main used `documents(doc_id, sha, bytes, mtime, ...)`.
+    # knowledge_index uses `documents(source PK, content_hash, indexed_at)`.
+    # If the old brain_sync table is present (identified by `doc_id` column), rename
+    # it to `synced_files` so the CREATE TABLE IF NOT EXISTS below creates the right one.
+    _docs_cols = {r[1] for r in c.execute("PRAGMA table_info(documents)")}
+    if "doc_id" in _docs_cols:
+        c.execute("ALTER TABLE documents RENAME TO synced_files")
     c.executescript("""
       CREATE TABLE IF NOT EXISTS chunks(id INTEGER PRIMARY KEY, source TEXT, ord INT, title TEXT, text TEXT, sha TEXT, image TEXT);
       CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text);

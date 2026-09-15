@@ -162,12 +162,12 @@ echo "  done in $((SECONDS - t0))s"
 echo ""
 echo "=== Results ==="
 if [[ -f "$EVAL_RESULTS" ]]; then
-  python3 -c "
-import json
-d = json.load(open('$EVAL_RESULTS'))
+  python3 - "$EVAL_RESULTS" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
 r = d['results']['results']
 total = len(r); passed = sum(1 for x in r if x.get('success'))
 print(f'PASS: {passed}/{total} ({round(100*passed/total) if total else 0}%)')
-"
+PYEOF
 fi
 echo "Full results: $EVAL_RESULTS"

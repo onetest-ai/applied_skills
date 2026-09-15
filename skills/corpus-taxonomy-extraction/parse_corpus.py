@@ -158,7 +158,7 @@ def _parse_srt(path, merge_cues=1):
         i = 0
         if rows[i].isdigit():
             i += 1
-        if i < len(rows) and re.match(r"\d{2}:\d{2}:\d{2},\d+ --> ", rows[i]):
+        if i < len(rows) and re.match(r"\d{1,2}:\d{2}:\d{2},\d+ --> ", rows[i]):
             ts = rows[i].split("-->")[0].strip()  # start timestamp
             cue_text = " ".join(rows[i+1:])
             if cue_text.strip():
