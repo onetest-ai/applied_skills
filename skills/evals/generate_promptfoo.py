@@ -130,6 +130,7 @@ def main(argv=None):
         vars_ = {
             "question": row["question"],
             "context": js_file_ref,
+            "BRAIN_URL": args.brain_url,
         }
         existing_suffix = row.get("query_suffix", "").strip()
         derived = _derive_query_terms(row.get("expected_answer_must_contain", ""))

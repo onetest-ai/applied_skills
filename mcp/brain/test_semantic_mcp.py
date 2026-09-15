@@ -187,7 +187,7 @@ class FastMCPContractTests(FixtureCase):
                         "entity_contains": "string", "month": "string", "start_month": "string",
                         "end_month": "string", "limit": "integer",
                     },
-                    "search_knowledge": {"query": "string", "limit": "integer", "as_of": "string", "latest_only": "boolean", "source_contains": "string", "tag": "string"},
+                    "search_knowledge": {"query": "string", "limit": "integer", "as_of": "string", "latest_only": "boolean", "source_contains": "string", "tag": "string", "tag_boost": "string"},
                     "get_current_fact": {"entity": "string", "predicate": "string", "as_of": "string"},
                     "get_question_status": {"question_id": "string", "as_of": "string"},
                     "get_taxonomy": {"label": "string", "relation": "string", "kind": "string", "limit": "integer"},

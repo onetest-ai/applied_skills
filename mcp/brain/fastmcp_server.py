@@ -398,14 +398,19 @@ async def search_shim(request: Request) -> JSONResponse:
         limit = max(1, min(int(body.get("limit") or 15), 100))
     except (TypeError, ValueError):
         limit = 15
-    tag_boost_raw = body.get("tagBoost")
-    tag_boost, tag_boost_err = _optional_string("search_shim", "tagBoost", tag_boost_raw)
-    if tag_boost_err:
-        return JSONResponse({"error": f"tagBoost must be a string"}, status_code=400)
+    for field in ("asOf", "sourceContains", "tag", "tagBoost"):
+        raw = body.get(field)
+        _, err = _optional_string("search_shim", field, raw)
+        if err:
+            return JSONResponse({"error": f"{field} must be a string"}, status_code=400)
+    as_of = body.get("asOf") or None
+    source_contains = body.get("sourceContains") or None
+    tag = body.get("tag") or None
+    tag_boost = body.get("tagBoost") or None
     result = _safe_call(
         "search_knowledge", _search_knowledge, query, limit,
-        body.get("asOf"), bool(body.get("latestOnly", False)),
-        body.get("sourceContains"), body.get("tag"), tag_boost,
+        as_of, bool(body.get("latestOnly", False)),
+        source_contains, tag, tag_boost,
     )
     # _safe_call returns a dict with key "hits" (list of chunk dicts)
     hits = []
@@ -427,7 +432,7 @@ async def search_shim(request: Request) -> JSONResponse:
             "sources": [h["source"] for h in flat],
             "result_type": "retrieved_context",
         }])
-    return JSONResponse([{"text": str(result), "source": ""}])
+    return JSONResponse([{"text": "No context retrieved.", "source": ""}])
 
 
 class ApiKeyMiddleware:
@@ -440,7 +445,10 @@ class ApiKeyMiddleware:
 
     async def __call__(self, scope, receive, send):
         path = scope.get("path", "")
-        protected = scope.get("type") == "http" and path.rstrip("/") == self.mcp_path.rstrip("/")
+        protected = scope.get("type") == "http" and (
+            path.rstrip("/") == self.mcp_path.rstrip("/")
+            or path.startswith("/api/")
+        )
         if protected:
             headers = {key.lower(): value for key, value in scope.get("headers", [])}
             supplied = headers.get(b"x-api-key", b"").decode("utf-8", errors="ignore").strip()

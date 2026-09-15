@@ -172,8 +172,6 @@ def _parse_srt(path, merge_cues=1):
 
     lines = []
     for seq, turn in enumerate(turns, 1):
-        who = " -- %s" % turn["speaker"] if turn["speaker"] else ""
-        # Keep em-dash for consistency with existing output
         who = (" — %s" % turn["speaker"]) if turn["speaker"] else ""
         marker = ("<!-- speaker: %s -->\n\n" % turn["speaker"]) if turn["speaker"] else ""
         lines.append("\n## %s%s (cue %d)\n\n%s%s\n" % (turn["ts"], who, seq, marker, turn["text"]))

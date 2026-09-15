@@ -113,11 +113,11 @@ if [[ -n "$EXTRACTIONS" ]]; then
 else
   # No --extractions provided: generate directly from the classified knowledge DB.
   # taxonomy.json is optional — if present, it overrides question/query_suffix per category.
-  TAXO_ARG=""
-  [[ -f "$TAXONOMY" ]] && TAXO_ARG="--taxonomy $TAXONOMY"
+  TAXO_ARGS=()
+  [[ -f "$TAXONOMY" ]] && TAXO_ARGS=(--taxonomy "$TAXONOMY")
   "$VENV" "$SKILL_EVALS/generate_evals.py" \
     --db       "$DB" \
-    $TAXO_ARG \
+    "${TAXO_ARGS[@]}" \
     --out      "$EVAL_CSV"
 fi
 
