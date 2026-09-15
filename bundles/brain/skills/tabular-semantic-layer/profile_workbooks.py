@@ -40,9 +40,15 @@ def profile_sheet(ws, sample_rows, scan_rows):
     try:
         dims = ws.calculate_dimension(force=True)  # Excel-style range, e.g. "A1:C3"
     except Exception:
-        # No reliable range in read_only mode — leave dims unknown rather than
-        # emit a non-Excel string; max_row/max_col below still carry the extent.
-        dims = None
+        # Fall back to an Excel-style range built from the known extent so `dims`
+        # stays a consistent A1-style string for any downstream reader; None only
+        # if the extent is unknown too.
+        mr, mc = ws.max_row, ws.max_column
+        try:
+            from openpyxl.utils import get_column_letter
+            dims = f"A1:{get_column_letter(mc)}{mr}" if mr and mc else None
+        except Exception:
+            dims = None
     return {
         "dims": dims,
         "max_row": ws.max_row, "max_col": ws.max_column,

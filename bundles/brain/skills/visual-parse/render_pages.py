@@ -26,14 +26,26 @@ from pathlib import Path
 
 def kebab(s): return re.sub(r"[^a-z0-9]+", "-", str(s).lower()).strip("-") or "doc"
 
-def doc_slug(doc_path):
+def doc_slug(doc_path, rel_to=None):
     """Asset slug for --doc, derived from its FULL given path (dir + stem), not just the
     basename — so `a/report.pdf` and `b/report.pdf` land in distinct asset dirs instead of
     overwriting each other. Each path component is kebabed individually and joined with
     `__` (a sequence kebab() never itself produces, since it strips underscores) so a `-`
     inside one component can't be confused with a directory boundary. A bare filename with
     no directory component (or one passed as a plain basename) yields the same slug as
-    before, so single-flat-directory setups are unaffected."""
+    before, so single-flat-directory setups are unaffected.
+
+    Pass a SOURCE-RELATIVE `--doc`. If an absolute path is unavoidable, pass `--rel-to
+    <source-root>`: when the doc is inside that root, the slug is computed from the
+    relative path so host-specific segments (e.g. /Users/<name>/…) don't leak into asset
+    dir names."""
+    if rel_to:
+        try:
+            rp = os.path.relpath(doc_path, rel_to)
+            if not rp.startswith(".."):   # doc is inside rel_to
+                doc_path = rp
+        except ValueError:
+            pass  # different drive (Windows) — fall back to the given path
     norm = os.path.normpath(doc_path).replace("\\", "/")
     d, base = os.path.split(norm)
     stem = os.path.splitext(base)[0]
@@ -75,6 +87,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--doc", required=True)
     ap.add_argument("--out", required=True, help="assets root; images go to <out>/<doc-slug>/")
+    ap.add_argument("--rel-to", help="source root; if --doc is inside it, slug from the relative "
+                                     "path so absolute/host path segments don't leak into asset dirs")
     ap.add_argument("--dpi", type=int, default=150)
     # Flag a page as VISUAL (needs a vision model) when the text layer likely misses the
     # meaning. `cover` (image area) is NOT used — full-bleed background images make it
@@ -88,7 +102,7 @@ def main():
     import pymupdf
 
     pdf, tmp = to_pdf(a.doc)
-    slug = doc_slug(a.doc)
+    slug = doc_slug(a.doc, a.rel_to)
     outdir = os.path.join(a.out, slug)
     os.makedirs(outdir, exist_ok=True)
     doc = pymupdf.open(pdf)
