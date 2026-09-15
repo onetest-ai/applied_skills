@@ -150,6 +150,9 @@ def cmd_scaffold(a):
         if reporting:
             lines += ["", "[sources.roots.reporting]", f"path = {json.dumps(reporting_path)}", f"mode = {json.dumps(a.reporting_mode)}",
                       'include = ["**/*.xlsx", "**/*.xlsm", "**/*.xls"]']
+        # Record the consumption model chosen at onboarding so downstream steps and
+        # the operator guide (BRAIN.md/AGENTS.md) don't have to be reshaped later.
+        lines += ["", "[deployment]", f"target = {json.dumps(a.deploy_target)}"]
         config.write_text("\n".join(lines) + "\n")
 
     # drop the self-discovering launcher at the project root so nothing hardcodes
@@ -159,7 +162,7 @@ def cmd_scaffold(a):
         shutil.copy2(launcher, proj / "brain")
         os.chmod(proj / "brain", 0o755)
 
-    plan = _plan_text(proj, corpus, db, docs, reporting, fam, met, a.goal)
+    plan = _plan_text(proj, corpus, db, docs, reporting, fam, met, a.goal, a.deploy_target)
     (proj / "BRAIN.md").write_text(plan)
 
     print(f"scaffolded project: {proj}")
@@ -172,11 +175,33 @@ def cmd_scaffold(a):
     return 0
 
 
-def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal):
+def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target="local"):
     docs_s = str(docs) if docs else "<docs-dir>"
     rep_s = str(reporting) if reporting else "<reporting-dir>"
     py = brain_py()
-    return textwrap.dedent(f"""\
+    deploy_section = textwrap.dedent({
+        "local": """
+    ## Deployment target: local
+    This brain is consumed **locally** — an answering agent queries the store over stdio.
+    Register the MCP with `./brain mcp-config` (stdio) and answer via the hybrid-retrieval
+    skill. No hosting, auth, or TLS needed. If this later becomes a hosted service, switch
+    `[deployment].target` in brain.toml to `hosted-mcp` and follow the hosted guidance.
+    """,
+        "hosted-mcp": """
+    ## Deployment target: hosted-mcp
+    This brain will be served as a **governed MCP to remote clients** (e.g. Copilot Studio).
+    Plan for this from the start so the operator guide isn't rewritten later:
+    - Author operator docs for a *server* (auth, transport, image build/revisions), not a
+      local Q&A agent.
+    - Enable HTTP transport deliberately; set `BRAIN_API_KEY` (X-API-Key), require TLS,
+      authorization, key rotation, rate limits, and auditing (see `mcp/brain/README.md`).
+    - Use the **brain-maintenance** skill's deployment profile (`profile.example.toml`);
+      deployment stays an agent-owned, human-gated external step.
+    - Never update the deployed store in place — ship an immutable image/revision, and
+      **resync every distributable copy** of `knowledge.sqlite` when the store rebuilds.
+    """,
+    }[deploy_target])
+    return deploy_section + "\n" + textwrap.dedent(f"""\
     # Brain build plan — {corpus}
 
     **Goal (noise filter):** {goal or "<state your analytical goal>"}
@@ -350,6 +375,12 @@ def main():
     s.add_argument("--reporting-mode", choices=("import", "mirror"), default="import",
                    help="source-root semantics for reporting files (default: safe import)")
     s.add_argument("--corpus", help="corpus name for config filenames (default: project dir name)")
+    s.add_argument("--deploy-target", choices=("local", "hosted-mcp"), default="local",
+                   help="how the brain will be consumed: 'local' (answering agent queries the "
+                        "local store over stdio) or 'hosted-mcp' (governed MCP served to remote "
+                        "clients, e.g. Copilot Studio — needs auth/TLS + a deployment profile). "
+                        "Shapes BRAIN.md guidance; ask this at onboarding so the operator doc "
+                        "isn't rewritten later.")
     s.set_defaults(func=cmd_scaffold)
 
     s = sub.add_parser("scan", help="preflight deps + split a docs dir into narrative vs reporting (no writes)")

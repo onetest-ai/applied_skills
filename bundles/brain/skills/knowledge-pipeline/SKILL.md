@@ -23,18 +23,22 @@ When the user wants to **create a brain** / "get started" / doesn't yet have a p
   - `mirror`: an available folder is authoritative, so missing files become removal candidates (still human-confirmed);
   - `managed`: Brain-owned storage such as project-local `.incoming` for chat attachments.
   Use portable root keys (`docs`, `reporting`, `incoming`) and paths relative to the project whenever possible. Never put absolute paths into SQLite.
+- **Deployment target** — *"Will this brain be consumed locally (an agent queries the local store), or served as a hosted MCP to remote clients like Copilot Studio?"* Ask this now: `hosted-mcp` needs auth/TLS, an immutable-image deployment profile, and server-shaped operator docs, so choosing up front avoids rewriting the operator guide later. Recorded in `brain.toml` `[deployment].target`; changeable later.
 
 **2. Scaffold + preflight + scan** (deterministic):
 ```bash
 python .../knowledge-pipeline/onboard.py scaffold \
   --project <proj> --goal "<goal>" --docs <docs> [--reporting <xlsx-dir>] \
-  [--docs-mode import|mirror] [--reporting-mode import|mirror] [--corpus <name>]
+  [--docs-mode import|mirror] [--reporting-mode import|mirror] \
+  [--deploy-target local|hosted-mcp] [--corpus <name>]
 ```
 This creates the project layout (`schema/ parsed/ taxonomy/ classify/ vision/ marts/ vault/ .incoming/`), copies `families.<corpus>.json` + `metrics.<corpus>.json` templates into `schema/`, and writes:
 
 - `goal.txt`;
 - portable `brain.toml` with `incoming` (`managed`), `docs` (`import` by default), and `reporting` (`import` by default) roots; paths are relative to the project whenever the platform permits;
-- **`BRAIN.md`** with exact ordered build and source-registry commands.
+- **`BRAIN.md`** with exact ordered build and source-registry commands (plus a deployment section matching the chosen target).
+
+**Canonical project artifacts** (what later maintenance relies on): `goal.txt` is the authoritative analytical goal, `brain.toml` the source registry, `BRAIN.md` the build plan. A host may add its own operator guide (e.g. an `AGENTS.md`), but that never replaces `goal.txt` — keep the goal in `goal.txt` so any agent/operator can recover it. If you find a project whose goal lives only inside a host doc, write it back to `goal.txt`.
 
 Never overwrite an existing `brain.toml`. After scaffold, read it back, explain each root/mode to the user, and adjust modes/includes only with their agreement. Then report missing deps and narrative-vs-reporting counts.
 

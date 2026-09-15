@@ -83,9 +83,10 @@ Ask for missing values one at a time:
 1. analytical goal;
 2. narrative documents directory and whether it is safe `import` or authoritative `mirror`;
 3. reporting workbook directory, if any, and its `import`/`mirror` semantics;
-4. destination brain project.
+4. destination brain project;
+5. deployment target — `local` (agent queries the local store) or `hosted-mcp` (governed MCP served to remote clients). Pass `--deploy-target`; it shapes `BRAIN.md` and is recorded in `brain.toml` `[deployment].target`.
 
-Recommend `import` unless the user explicitly says that deleting a file from an available folder should propose deleting it from the Brain. `incoming` is always project-local `managed`.
+Recommend `import` unless the user explicitly says that deleting a file from an available folder should propose deleting it from the Brain. `incoming` is always project-local `managed`. The goal is authoritative in `goal.txt` — a host operator doc (e.g. `AGENTS.md`) never replaces it; if a project's goal lives only in a host doc, write it back to `goal.txt` so maintenance can recover it.
 
 Then scaffold and preflight:
 

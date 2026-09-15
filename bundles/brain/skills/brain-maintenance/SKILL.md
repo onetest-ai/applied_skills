@@ -149,6 +149,8 @@ Deployment remains an **agent-owned external step**, not functionality implement
 
 The deployment adapter accepts resource identifiers from its project-owned profile but reads the verification API key only from the configured environment variable. It never prints the key. A deployment is complete only after revision health/traffic, health endpoint, missing/wrong-key rejection, typed seven-tool contract, governed metric, narrative search, and logs all pass.
 
+**Resync every secondary copy of the store.** The rebuilt `knowledge.sqlite` is the source of truth, but a project often keeps additional distributable copies (a bundled instance shipped to a client, a Copilot-Studio instruction pack, a baked container image). Any such copy is stale the moment the primary store rebuilds. As part of deploy, enumerate and refresh (or explicitly re-cut) every secondary copy — and preserve `assets/` alongside it when page images / table evidence must travel — so no consumer reads a pre-rebuild snapshot. A copy built before the rebuild finished (a common cadence slip) must be re-cut, never shipped as-is.
+
 Deployment failure does not mutate the local Brain. Keep the prior image/revision and SQLite snapshot for rollback.
 
 ## Resume protocol
