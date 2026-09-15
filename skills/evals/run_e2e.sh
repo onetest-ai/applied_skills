@@ -105,7 +105,7 @@ BRAIN_PID=""
 cleanup() { [[ -n "$BRAIN_PID" ]] && kill "$BRAIN_PID" 2>/dev/null || true; }
 trap cleanup EXIT
 
-BRAIN_DB="$DB" PORT="$PORT" \
+BRAIN_DB="$DB" PORT="$PORT" BRAIN_SKILLS="$REPO/skills" \
   "$VENV" "$MCP_BRAIN/fastmcp_server.py" --transport http &
 BRAIN_PID=$!
 
@@ -144,6 +144,10 @@ BRAIN_URL="http://localhost:$PORT" \
   --context-js "$JS"
 
 echo "=== Stage 6: Run evals ==="
+# Verify brain is still alive before spending eval tokens
+kill -0 "$BRAIN_PID" 2>/dev/null || { echo "ERROR: brain process died before eval stage"; exit 1; }
+http_pre=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PORT/healthz" 2>/dev/null)
+[[ "$http_pre" == "200" || "$http_pre" == "503" ]] || { echo "ERROR: brain not responding (HTTP $http_pre) before eval stage"; exit 1; }
 t0=$SECONDS
 (cd "$(dirname "$EVAL_YAML")" && \
   AWS_REGION=us-east-1 \

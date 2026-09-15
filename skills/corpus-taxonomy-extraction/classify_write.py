@@ -47,6 +47,21 @@ def main():
     # resolve each label against the graph: id -> (label, kind, parent_id)
     node = {i: (lbl, kind, par) for i, lbl, kind, par in
             c.execute("SELECT id,label,kind,parent FROM graph_nodes")}
+    # Detect stale batch files: chunk IDs that no longer exist in the DB.
+    # Happens when --reset re-indexes after chunking param changes or corpus edits.
+    live_ids = {r[0] for r in c.execute("SELECT id FROM chunks")}
+    stale = [cid for cid in results if cid not in live_ids]
+    if stale:
+        import sys
+        print(
+            f"WARNING: {len(stale)} chunk ID(s) in result files not found in chunks table "
+            f"— batch files are stale (re-run classify_prep after re-indexing). "
+            f"Stale IDs will be skipped.",
+            file=sys.stderr,
+        )
+        for cid in stale:
+            del results[cid]
+
     n_assign, n_l2, n_chunks, skipped = 0, 0, 0, 0
     for cid, labels in results.items():
         n_chunks += 1
