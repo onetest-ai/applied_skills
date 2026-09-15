@@ -286,13 +286,15 @@ def generate_evals(extractions_dir, taxonomy_path):
                 all_facts.append(fact)
         if len(all_facts) >= 2:
             slugs = list({s for s, _ in items})
-            # Cross-session query: combine keywords from first two facts
+            # Cross-session: derive question and query from combined fact keywords
             cross_suffix = _query_suffix_from_fact(" ".join(all_facts[:2]))
+            cross_q = (f"What was discussed about {cross_suffix}?"
+                       if cross_suffix else base_q)
             rows.append({
                 "eval_id": f"E{eval_counter:03d}",
                 "category": cat,
                 "scope": "cross-session",
-                "question": base_q,
+                "question": cross_q,
                 "query_suffix": cross_suffix or query_suffix,
                 "expected_answer_must_contain": " | ".join(all_facts[:3]),
                 "expected_answer_must_not_contain": "hallucinated,invented,fabricated",

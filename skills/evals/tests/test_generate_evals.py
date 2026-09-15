@@ -510,3 +510,32 @@ def test_extraction_mode_query_suffix_uses_fact_keywords(tmp_path):
         assert suffix != "dependency connection", (
             "query_suffix must come from the fact, not the taxonomy eval_config"
         )
+
+
+def test_cross_session_question_uses_fact_keywords_not_label(tmp_path):
+    """Cross-session question must be derived from combined fact keywords, not taxonomy label."""
+    _make_extraction(tmp_path, "aug31_sync", [
+        {"id": "ext-001", "category": "IntegrationPoint",
+         "verbatim_quote": "availability calendar allows team to see scheduling",
+         "context": "Calendar discussed.", "owner": "", "product": "TP", "confidence": "DirectStatement"},
+    ])
+    _make_extraction(tmp_path, "sep10_sync", [
+        {"id": "ext-002", "category": "IntegrationPoint",
+         "verbatim_quote": "Salesforce CRM connected to the billing pipeline",
+         "context": "CRM integration.", "owner": "", "product": "TP", "confidence": "DirectStatement"},
+    ])
+    out = tmp_path / "evals.csv"
+    G.main(["--extractions", str(tmp_path), "--taxonomy", _make_taxonomy(tmp_path), "--out", str(out)])
+    rows = list(csv.DictReader(out.open()))
+    cross = [r for r in rows if r["category"] == "IntegrationPoint" and r["scope"] == "cross-session"]
+    assert len(cross) >= 1, "Expected cross-session eval with 2 sources"
+    for r in cross:
+        q = r["question"].lower()
+        # Must NOT be the generic taxonomy label question
+        assert "what integration points were identified" not in q, (
+            f"cross-session question must not be taxonomy label, got: {r['question']!r}"
+        )
+        # Must contain keywords from the verbatim facts
+        assert any(w in q for w in ["availability", "calendar", "salesforce", "crm", "billing", "scheduling"]), (
+            f"cross-session question must contain fact keywords, got: {r['question']!r}"
+        )
