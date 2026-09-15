@@ -242,6 +242,31 @@ def _parse_vtt(path, merge_cues=1):
     return "\n".join(lines_out)
 
 
+def _parse_ai_dial_json(path):
+    """AI DIAL conversation JSON → Markdown of assistant messages.
+
+    Format: {history: [{name: str, messages: [{role, content}]}]}
+    Only assistant messages with ≥50 chars are included.
+    Returns a Markdown string, or None if no usable content found.
+    """
+    import json as _json
+    d = _json.loads(open(path, encoding="utf-8").read())
+    parts = []
+    for conv in d.get("history", []):
+        name = conv.get("name", "conversation")
+        conv_parts = []
+        for msg in conv.get("messages", []):
+            if msg.get("role") == "assistant":
+                content = (msg.get("content") or "").strip()
+                if len(content) >= 50:
+                    conv_parts.append(content)
+        if conv_parts:
+            parts.append(f"# {name}\n\n" + "\n\n---\n\n".join(conv_parts))
+    if not parts:
+        return None
+    return "\n\n".join(parts)
+
+
 def _speaker_and_text(text: str) -> tuple[str, str]:
     """Extract WebVTT voice tags and conservative ``Name: text`` prefixes."""
     import re
@@ -271,9 +296,11 @@ def parse_one(path, xlsx_max_mb, sample_rows, merge_cues=1):
         return _parse_srt(path, merge_cues=merge_cues), "transcript-etl"
     if ext == ".vtt":
         return _parse_vtt(path, merge_cues=merge_cues), "transcript-etl"
+    if ext == ".json":
+        return _parse_ai_dial_json(path), "ai-dial-json"
     return None, "skipped"
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", required=True)
     ap.add_argument("--out", required=True)
@@ -283,7 +310,7 @@ def main():
                     help="comma-separated extensions (no dot) to include")
     ap.add_argument("--merge-cues", type=int, default=1,
                     help="join N consecutive same-speaker VTT/SRT cues into one chunk (default: 1 = per-cue)")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     allow = {"." + e.strip().lower().lstrip(".") for e in a.formats.split(",") if e.strip()}
     os.makedirs(a.out, exist_ok=True)
     manifest = []

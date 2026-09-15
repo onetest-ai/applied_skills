@@ -74,6 +74,28 @@ def load_taxonomy(taxonomy_path):
     return categories, eval_config
 
 
+def load_probe_evals(taxonomy_path):
+    """Return list of probe eval rows from taxonomy.probe_evals[], or []."""
+    d = json.loads(Path(taxonomy_path).read_text(encoding="utf-8"))
+    rows = []
+    for p in d.get("probe_evals", []):
+        rows.append({
+            "eval_id":                          p.get("eval_id", "PROBE_???"),
+            "category":                         p.get("category", "probe"),
+            "scope":                            p.get("scope", "probe"),
+            "question":                         p.get("question", ""),
+            "query_suffix":                     p.get("query_suffix", ""),
+            "expected_answer_must_contain":     p.get("expected_answer_must_contain",
+                                                     p.get("expected_must_contain", "")),
+            "expected_answer_must_not_contain": p.get("expected_answer_must_not_contain",
+                                                     p.get("expected_must_not_contain", "")),
+            "ground_truth_source":              p.get("ground_truth_source", ""),
+            "notes":                            p.get("notes", ""),
+            "min_items":                        p.get("min_items", 1),
+        })
+    return rows
+
+
 def _product(raw):
     """Normalize UNRESOLVED → CROSS-PRODUCT."""
     p = (raw or "").strip()
@@ -353,6 +375,10 @@ def main(argv=None):
         rows = load_from_db(args.db, taxo)
     else:
         rows = generate_evals(args.extractions, args.taxonomy)
+
+    # Append probe evals from taxonomy (corpus-specific TDD probes)
+    if Path(args.taxonomy).exists():
+        rows.extend(load_probe_evals(args.taxonomy))
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w", newline="", encoding="utf-8") as f:

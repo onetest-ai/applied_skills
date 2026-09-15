@@ -57,7 +57,7 @@ def _derive_query_terms(must_have_raw):
     return " ".join(deduped[:8])
 
 
-def build_rubric(row):
+def build_rubric(row, brain_context=None):
     question = row["question"]
     category = row["category"]
     scope = row["scope"]
@@ -76,6 +76,14 @@ def build_rubric(row):
     threshold = max(1, n_facts - 1)
 
     rubric = "Question: {}\nCategory: {} | Scope: {}\n".format(question, category, scope)
+    if brain_context:
+        goal = brain_context.get("goal", "")
+        audience = brain_context.get("audience", "")
+        if goal or audience:
+            rubric = (
+                "Brain goal: {}\nAudience: {}\n\n".format(goal, audience)
+                + rubric
+            )
     if min_items == 0:
         rubric += (
             "This is a NO-HALLUCINATION eval. The answer must acknowledge absence of data.\n"
@@ -118,7 +126,15 @@ def main(argv=None):
     parser.add_argument("--brain-url", default="http://localhost:8002")
     parser.add_argument("--context-js", required=True,
                         help="Path to load_brain_context.js (becomes file:// var)")
+    parser.add_argument("--taxonomy", default=None,
+                        help="Optional taxonomy JSON with brain_context for persona injection")
     args = parser.parse_args(argv)
+
+    brain_context = None
+    if args.taxonomy:
+        import json as _json
+        _taxo = _json.loads(Path(args.taxonomy).read_text(encoding="utf-8"))
+        brain_context = _taxo.get("brain_context")
 
     js_path = Path(args.context_js).resolve()
     js_file_ref = f"file://{js_path}"
@@ -143,7 +159,7 @@ def main(argv=None):
         tests.append({
             "description": f"[{row['eval_id']}] {row['category']} | {row['scope']} | {row['question'][:60]}",
             "vars": vars_,
-            "assert": [{"type": "llm-rubric", "value": build_rubric(row)}],
+            "assert": [{"type": "llm-rubric", "value": build_rubric(row, brain_context=brain_context)}],
             "metadata": {
                 "eval_id": row["eval_id"],
                 "category": row["category"],
@@ -152,8 +168,12 @@ def main(argv=None):
             },
         })
 
+    desc = f"Brain evals — {len(tests)} adversarial tests · judge: Sonnet 4.6"
+    if brain_context and brain_context.get("goal"):
+        desc = "{} | {}".format(desc, brain_context["goal"])
+
     config = {
-        "description": f"Brain evals — {len(tests)} adversarial tests · judge: Sonnet 4.6",
+        "description": desc,
         "prompts": [PROMPT_TEMPLATE],
         "providers": PROVIDERS,
         "defaultTest": {
