@@ -167,7 +167,7 @@ import json
 d = json.load(open('$EVAL_RESULTS'))
 r = d['results']['results']
 total = len(r); passed = sum(1 for x in r if x.get('success'))
-print(f'PASS: {passed}/{total} ({round(100*passed/total)}%)')
+print(f'PASS: {passed}/{total} ({round(100*passed/total) if total else 0}%)')
 "
 fi
 echo "Full results: $EVAL_RESULTS"
