@@ -34,7 +34,6 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SRC="$HERE/skills"
 TARGET="all"; SCOPE_HOME=""; MODE="copy"; DRYRUN=""; ROOT="$PWD"; ONLY=""; BUNDLE=""; OPTIONAL=""
 DEPS=""; VENV=""; MCP=""
 
@@ -71,7 +70,9 @@ PY
   ONLY=",$LIST,"
 fi
 
-[ -d "$SRC" ] || { echo "error: skills/ not found next to install.sh (run from a repo checkout)"; exit 1; }
+# Skills live inside their bundle: bundles/<name>/skills/ (default bundle: brain).
+SRC="$HERE/bundles/${BUNDLE:-brain}/skills"
+[ -d "$SRC" ] || { echo "error: bundle skills dir not found ($SRC) — run from a repo checkout"; exit 1; }
 [ -n "$SCOPE_HOME" ] && ROOT="$HOME"
 
 # resolve one target -> its dest base, honoring project vs --user scope
@@ -106,7 +107,7 @@ for tgt in $TARGETS; do
   done
 done
 echo "done: $count skill install(s) ($MODE). Restart the host session to load the skills."
-case " $TARGETS " in *" claude "*) echo "claude: or install the plugin — claude plugin marketplace add onetest-ai/applied_skills && claude plugin install applied-skills@onetest-ai";; esac
+case " $TARGETS " in *" claude "*) echo "claude: or install the plugin — claude plugin marketplace add onetest-ai/applied_skills && claude plugin install brain@applied-ai";; esac
 
 # --deps: an isolated venv for the skills' Python deps, PROJECT-LOCAL and living
 # inside each host dir (<root>/.claude/venv, …) — never global, never the project's own env.

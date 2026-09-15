@@ -1,0 +1,20 @@
+---
+description: Turn ambient grounding mode on or off (or check its status) for this project. When on, every prompt gets a short reminder to ground factual/numeric claims in the Brain via a UserPromptSubmit hook. Use when the user asks to enable/disable/check "ambient mode" for kb.
+allowed-tools: Read Write(*/.claude/kb/state.json) Bash(mkdir *)
+arguments: [action]
+---
+
+Manage ambient mode for **$action** (`on`, `off`, or `status`), stored project-scoped at `.claude/kb/state.json`.
+
+1. **Resolve the state file.** It lives at `${CLAUDE_PROJECT_DIR:-.}/.claude/kb/state.json`. If the `.claude/kb/` directory does not exist yet, create it with `mkdir -p`.
+
+2. **Act on $action:**
+   - `on` → write `.claude/kb/state.json` as `{"ambient": true, "since": "<iso8601 timestamp>"}`, creating `.claude/kb/` first if needed. Confirm to the user that ambient mode is now **on**.
+   - `off` → write `.claude/kb/state.json` as `{"ambient": false}`. Confirm ambient mode is now **off**.
+   - `status` → read `.claude/kb/state.json` (if present) and report the current `ambient` value (on/off), or "off" (default) if the file is missing. Also mention that the SessionStart health line reflects the current Brain connection, independent of this toggle.
+
+3. **Explain the effect.** Ambient mode is **project-scoped** (state lives under this project's `.claude/kb/`, not globally). Toggling `ambient` here does not retroactively change anything already said:
+   - The `UserPromptSubmit` hook reads this file on the *next* prompt you submit — so `on`/`off` takes effect starting with your next message.
+   - The `SessionStart` health line reflects Brain reachability at the *next* session start, not this setting.
+
+4. **Report** the state file's final contents (or current value for `status`) back to the user in one line.

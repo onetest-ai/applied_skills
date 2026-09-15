@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "sh ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/health-line.sh", "timeout": 10 }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/ambient-reminder.sh", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}

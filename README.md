@@ -33,6 +33,15 @@ Retrieval is **hybrid**: BM25 (FTS5) + vector (sqlite-vec) fused by **Reciprocal
 
 Vector RAG cannot return correct numbers; raw text-to-SQL returns *confident wrong* numbers. A governed semantic layer over deterministic SQL benchmarks far higher and fails by honest refusal. These skills implement that split, plus the operational guardrails (provenance, entity conformance, silent-gap auditing) that make it hold up in production.
 
+## Two plugins
+
+This repository is the **`applied-ai`** marketplace, listing exactly two self-contained plugins:
+
+- **`brain`** (`bundles/brain/`, skills surface as `/brain:*`): Builds, maintains, and deploys the Brain — the local knowledge engine (RAG + taxonomy graph + deterministic marts) served over a governed MCP. Also installable as the `brain` skills-bundle.
+- **`kb`** (`bundles/kb/`, skills surface as `/kb:*`): Interrogates and authors with the Brain — a knowledge-worker companion providing cited answers and Markdown deliverables.
+
+Install either or both depending on your role.
+
 ## Install
 
 Every host reads the standard `SKILL.md` format, so install is a copy (or symlink) — no translation.
@@ -81,10 +90,11 @@ git clone git@github.com:onetest-ai/applied_skills.git && cd applied_skills
 
 Restart the host session after installing so it loads the skills.
 
-**Claude plugin (alternative):** this repo is also a plugin marketplace —
+**Claude plugin (alternative):** this repo is the `applied-ai` plugin marketplace —
 ```bash
 claude plugin marketplace add onetest-ai/applied_skills
-claude plugin install applied-skills@onetest-ai
+claude plugin install brain@applied-ai # Build/maintain/deploy the Brain (/brain:*)
+claude plugin install kb@applied-ai    # Interrogate/author (/kb:*)
 ```
 (Don't combine the plugin and the copy/symlink install — pick one, or the skills load twice.)
 
