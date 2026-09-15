@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -49,6 +50,27 @@ class TestHealthLine(unittest.TestCase):
             self.assertIn("brain", out)
             self.assertIn("chunks", out)
             self.assertIn("1", res.stdout)   # one chunk
+
+    def test_reports_sqlite3_unavailable_when_db_found_but_sqlite3_missing(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = Path(d) / "knowledge.sqlite"
+            build_fixture_db(db)
+
+            sh_path = shutil.which("sh")
+            self.assertIsNotNone(sh_path, "sh must be resolvable to build the fixture PATH")
+
+            bin_dir = Path(d) / "bin"
+            bin_dir.mkdir()
+            (bin_dir / "sh").symlink_to(sh_path)
+
+            res = run_script(
+                SCRIPTS / "health-line.sh",
+                {"BRAIN_DB": str(db), "PATH": str(bin_dir)},
+            )
+            self.assertEqual(res.returncode, 0)
+            out = res.stdout.lower()
+            self.assertIn("sqlite3", out)
+            self.assertIn("unavailable", out)
 
     def test_quiet_message_when_no_db(self):
         with tempfile.TemporaryDirectory() as d:

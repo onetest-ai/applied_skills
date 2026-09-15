@@ -61,3 +61,5 @@ The Brain may be deployed in the agent's own namespace or in a plugin namespace:
 - Use whichever namespace answers: `mcp__brain__*` (shared) or `mcp__plugin_<plugin>_brain__*` (scoped).
 
 This doctrine applies uniformly regardless of namespace.
+
+The `verifier` subagent is dispatched with whichever active Brain MCP tools are available (`mcp__brain__*` or `mcp__plugin_brain_brain__*`) and operates read-only.

@@ -1,6 +1,6 @@
 ---
 description: Detect whether a Brain MCP server is reachable, report its status, or walk the user through registering one via mcp-config. Use when the user asks to connect, reconnect, or check the Brain connection for kb.
-allowed-tools: mcp__brain__health mcp__plugin_brain_brain__health Bash Read
+allowed-tools: mcp__brain__health mcp__plugin_brain_brain__health Bash(./brain *) Read
 ---
 
 Detect and (if needed) help the user register the Brain that `kb` grounds itself in.
