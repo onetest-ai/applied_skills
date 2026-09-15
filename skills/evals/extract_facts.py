@@ -81,7 +81,10 @@ def extract_facts_from_md(
             candidate = parts[1].lstrip("json").strip()
             if candidate:
                 raw = candidate
-            # else: empty fenced block — fall through and try parsing the full response
+            elif len(parts) >= 3 and parts[2].strip():
+                # empty fenced block — fall back to content after the closing fence
+                raw = parts[2].strip()
+            # else: fall through and try parsing the full response
     items = json.loads(raw)
     # Filter to only items with required keys and non-empty values
     result = []
