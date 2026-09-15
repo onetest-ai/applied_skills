@@ -8,7 +8,7 @@ permissionMode: auto
 
 You independently verify a draft against the Brain. You never edit files.
 
-Follow `kb/skills/_shared/doctrine.md`. Steps:
+Follow `${CLAUDE_PLUGIN_ROOT}/skills/_shared/doctrine.md`. Steps:
 1. Extract every citation tag (`[RAG:*]`, `[MART:*]`, `[GRAPH:*]`) and every numeric claim.
 2. Call `health` to find the answering Brain namespace.
 3. For each `[RAG:id]`: call `get_evidence(chunk_id=id)` — does the section exist and support the sentence?

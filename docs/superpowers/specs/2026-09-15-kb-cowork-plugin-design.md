@@ -19,7 +19,7 @@ It is the **consumer/knowledge-worker** counterpart to the Brain's existing
 |---|---|---|
 | Role | build / maintain / deploy the Brain | interrogate + author over it |
 | Skills | the pipeline & maintenance skills | ask, explore, challenge, brief, report, mode, connect |
-| MCP | **ships** the Brain MCP server | **consumes** it (health-detected) |
+| MCP | bundles the pipeline; the Brain MCP is **registered separately** (`./brain mcp-config`, stdio) | **consumes** it (health-detected) |
 | Support | — | shared doctrine, `verifier` subagent, ambient hooks |
 
 `kb` reads and composes only. It never writes `knowledge.sqlite`, never runs the
@@ -72,9 +72,12 @@ implementation in `semantic_core.py`) with **seven tools**. Every tool returns a
 The doctrine for an answering agent already exists at
 `bundles/brain/BUILDING-AGENTS.md` — `kb` distills it rather than reinventing it.
 
-The Brain may be registered as a standalone `brain` MCP server (tools
-`mcp__brain__*`) or via the `brain`/`applied-skills` plugin
-(`mcp__plugin_<plugin>_brain__*`). `kb` detects which namespace answers via
+The Brain MCP server is registered out-of-band, not declared in any plugin
+manifest: `./brain mcp-config` writes a stdio config (venv interpreter +
+resolved `BRAIN_*` env) for the local store. Depending on how that config is
+merged, the Brain answers as a standalone `brain` MCP server (tools
+`mcp__brain__*`) or under the `brain` plugin's scoped namespace
+(`mcp__plugin_brain_brain__*`). `kb` detects which namespace answers via
 `health` and documents both.
 
 ## 4. Architecture

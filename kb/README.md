@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-kb requires a reachable Brain MCP server providing fact queries, graph traversal, and data access. See [bundles/brain/README.md](../bundles/brain/README.md) for setup.
+kb requires a reachable Brain MCP server providing fact queries, graph traversal, and data access. The `kb` plugin does **not** bundle or auto-wire the Brain MCP server — it must be registered separately (run `./brain mcp-config` from the brain project, or use `/kb:connect` for guided setup). See [bundles/brain/README.md](../bundles/brain/README.md) for setup.
 
 ## Skills
 

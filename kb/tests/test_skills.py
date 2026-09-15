@@ -71,6 +71,11 @@ class TestBriefSkill(unittest.TestCase, SkillContractMixin):
             required_tokens=["_shared/authoring.md", "verifier", "docs/kb/", "Sources"],
         )
 
+    def test_brief_does_not_allow_write(self):
+        path = KB_ROOT / "skills" / "brief" / "SKILL.md"
+        fm = parse_frontmatter(read_text(path))
+        self.assertNotIn("Write", fm.get("allowed-tools", ""))
+
 
 class TestReportSkill(unittest.TestCase, SkillContractMixin):
     def test_report_contract(self):
@@ -79,6 +84,11 @@ class TestReportSkill(unittest.TestCase, SkillContractMixin):
             required_tokens=["_shared/authoring.md", "verifier", "docs/kb/",
                              "Table of Contents", "Sources"],
         )
+
+    def test_report_does_not_allow_write(self):
+        path = KB_ROOT / "skills" / "report" / "SKILL.md"
+        fm = parse_frontmatter(read_text(path))
+        self.assertNotIn("Write", fm.get("allowed-tools", ""))
 
 
 class TestModeSkill(unittest.TestCase, SkillContractMixin):
