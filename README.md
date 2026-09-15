@@ -35,9 +35,9 @@ Vector RAG cannot return correct numbers; raw text-to-SQL returns *confident wro
 
 ## Two plugins
 
-This repository includes two complementary plugins:
+This repository is itself the **`applied-skills`** umbrella plugin/marketplace. It ships the **brain bundle** (`bundles/brain/`) — build, maintain, and deploy the Brain, the local knowledge engine (RAG + taxonomy graph + deterministic marts) served over a governed MCP — and it also hosts a second, separate plugin:
 
-- **`brain`**: Builds, maintains, and deploys the Brain — the local knowledge engine (RAG + taxonomy graph + deterministic marts) served over a governed MCP.
+- **`applied-skills`**: Builds, maintains, and deploys the Brain (via the `brain` bundle).
 - **`kb`**: Interrogates and authors with the Brain — a knowledge-worker companion providing cited answers and Markdown deliverables.
 
 Install either or both depending on your role.
@@ -93,7 +93,7 @@ Restart the host session after installing so it loads the skills.
 **Claude plugin (alternative):** this repo is also a plugin marketplace —
 ```bash
 claude plugin marketplace add onetest-ai/applied_skills
-claude plugin install brain@onetest-ai          # Build/maintain/deploy
+claude plugin install applied-skills@onetest-ai # Build/maintain/deploy (brain bundle)
 claude plugin install kb@onetest-ai             # Interrogate/author
 ```
 (Don't combine the plugin and the copy/symlink install — pick one, or the skills load twice.)

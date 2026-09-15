@@ -7,9 +7,9 @@
   },
   "plugins": [
     {
-      "name": "brain",
+      "name": "applied-skills",
       "source": "./",
-      "description": "Build, maintain, and deploy the Brain — a local, truthful knowledge engine (RAG + taxonomy graph + deterministic marts) served over a governed MCP.",
+      "description": "Document/graph/tabular data pipeline: corpus-taxonomy-extraction, cognee, tabular-semantic-layer, hybrid-retrieval.",
       "version": "0.1.0"
     },
     {

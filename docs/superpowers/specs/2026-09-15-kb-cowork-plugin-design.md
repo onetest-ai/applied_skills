@@ -11,13 +11,13 @@ Brain** — interrogate it and co-author cited deliverables from it — without 
 undoing the Brain's core truth guarantee (*meaning is agentic, numbers are
 computed; every claim is cited or honestly "not modeled"*).
 
-It is the **consumer/knowledge-worker** counterpart to the Brain's existing
-**producer/maintainer** tooling. The two ship as separate plugins in the one
-`onetest-ai` marketplace:
+It is the **consumer/knowledge-worker** counterpart to the existing
+**producer/maintainer** tooling in the `applied-skills` umbrella plugin. The two
+ship as separate plugins in the one `onetest-ai` marketplace:
 
-| | `brain` (repositioned from `applied-skills`) | `kb` (new) |
+| | `applied-skills` (umbrella; ships the brain bundle) | `kb` (new) |
 |---|---|---|
-| Role | build / maintain / deploy the Brain | interrogate + author over it |
+| Role | build / maintain / deploy the Brain (via the `brain` bundle) | interrogate + author over it |
 | Skills | the pipeline & maintenance skills | ask, explore, challenge, brief, report, mode, connect |
 | MCP | bundles the pipeline; the Brain MCP is **registered separately** (`./brain mcp-config`, stdio) | **consumes** it (health-detected) |
 | Support | — | shared doctrine, `verifier` subagent, ambient hooks |
@@ -46,7 +46,7 @@ Brain's build/venv scripts, and never asserts a number the Brain did not compute
   excellent *source*; anything that builds HTML decks lives elsewhere and can pull
   from the Brain via its MCP.
 - **No brain-building or maintenance.** Creating, updating, and deploying the Brain
-  stays with the `brain` plugin's own skills.
+  stays with the `applied-skills` plugin's own skills (the `brain` bundle).
 - **No writes to the store** and no raw-SQL surface. `kb` uses only the governed
   FastMCP tools.
 - **No orchestration-at-scale** (large multi-agent fan-out). `kb` is an interactive
@@ -76,9 +76,9 @@ The Brain MCP server is registered out-of-band, not declared in any plugin
 manifest: `./brain mcp-config` writes a stdio config (venv interpreter +
 resolved `BRAIN_*` env) for the local store. Depending on how that config is
 merged, the Brain answers as a standalone `brain` MCP server (tools
-`mcp__brain__*`) or under the `brain` plugin's scoped namespace
-(`mcp__plugin_brain_brain__*`). `kb` detects which namespace answers via
-`health` and documents both.
+`mcp__brain__*`) or, if registered under the `applied-skills` umbrella plugin,
+under that plugin's scoped namespace (`mcp__plugin_applied-skills_brain__*`).
+`kb` detects which namespace answers via `health` and documents both.
 
 ## 4. Architecture
 
@@ -260,20 +260,20 @@ kb/                                  # the new plugin root
   `mcp__plugin_<plugin>_brain__*`); the doctrine and `/kb:connect` document both,
   and skills detect the answering namespace via `health`.
 
-## 7. Companion change: reposition `applied-skills` → `brain`
+## 7. Companion change considered and rejected: rename `applied-skills` → `brain`
 
-Separable from the `kb` work; low-risk, documentation/manifest only.
+An earlier draft of this spec proposed renaming the umbrella plugin
+`applied-skills` → `brain` to line up its identity with the Brain it builds.
+That rename was **considered and rejected**: the bundle at `bundles/brain/`
+already owns the name "brain", and the umbrella plugin is a collection (it
+ships the `brain` bundle *and* the new `kb` plugin), so a plugin named `brain`
+would collide with — and be confused for — the bundle. The umbrella plugin
+stays `applied-skills` in both `.claude-plugin/marketplace.json` and
+`.claude-plugin/plugin.json`.
 
-- Rename the plugin `applied-skills` → `brain` in `.claude-plugin/marketplace.json`
-  and `.claude-plugin/plugin.json`.
-- Tighten its description to **build / maintain / deploy the Brain**.
-- Update README wording to describe the two-plugin split.
-- **No change** to the skills themselves, the bundle, the MCP server, or the
-  npm/shell install tooling.
-
-*(Open consideration for spec review: renaming a published plugin id can affect
-existing installs. If backward-compatibility matters, keep `applied-skills` as an
-alias or defer the rename. Flagged, not decided.)*
+There is therefore **no manifest rename** as part of this work — the only
+manifest change is adding the `kb` plugin as a second `marketplace.json`
+entry (see §6).
 
 ## 8. Testing strategy
 
@@ -298,7 +298,7 @@ Reuses existing repo patterns (e.g. `mcp/brain/test_semantic_mcp.py`).
 - **Verifier cost:** re-querying every claim adds latency to authoring. Acceptable
   because it is the truth guarantee and runs only on emit; can be scoped to
   numbers-only if it proves heavy.
-- **Plugin rename impact** (§7) — decide alias vs. clean rename vs. defer.
+- **Plugin naming** (§7) — rename considered and rejected; umbrella stays `applied-skills`.
 - **Markdown output location** default (`docs/kb/`) vs. vault — confirmed
   configurable; confirm the default at review.
 
@@ -310,4 +310,4 @@ Reuses existing repo patterns (e.g. `mcp/brain/test_semantic_mcp.py`).
 4. Authoring pipeline + `/kb:brief`, `/kb:report` + sources sidecar.
 5. Ambient mode: `/kb:mode`, `/kb:connect`, hooks + scripts.
 6. Tests (hooks, citation contract, plugin validity; optional integration).
-7. Companion: reposition `applied-skills` → `brain`.
+7. Companion: rename considered and rejected (§7) — `applied-skills` stays as the umbrella plugin.

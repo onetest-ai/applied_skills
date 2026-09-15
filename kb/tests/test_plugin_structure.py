@@ -68,16 +68,16 @@ class TestDoctrineAndVerifier(unittest.TestCase):
         self.assertNotIn("Edit", fm["tools"])
 
 
-class TestBrainRepositioning(unittest.TestCase):
-    def test_marketplace_has_brain_and_kb(self):
+class TestUmbrellaAndKbPlugins(unittest.TestCase):
+    def test_marketplace_has_applied_skills_and_kb(self):
         market = load_json(REPO_ROOT / ".claude-plugin" / "marketplace.json")
         names = {p["name"] for p in market["plugins"]}
-        self.assertIn("brain", names)
+        self.assertIn("applied-skills", names)
         self.assertIn("kb", names)
 
-    def test_root_plugin_json_is_brain(self):
+    def test_root_plugin_json_is_applied_skills(self):
         manifest = load_json(REPO_ROOT / ".claude-plugin" / "plugin.json")
-        self.assertEqual(manifest["name"], "brain")
+        self.assertEqual(manifest["name"], "applied-skills")
 
 
 if __name__ == "__main__":
