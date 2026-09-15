@@ -54,6 +54,8 @@ Deps are torch-free (docling retired) and modest (~200 MB); `.pptx/.docx` also n
 ./brain source apply --plan source_plan.json
 ```
 
+**Dedupe by content before applying.** Folders synced from SharePoint/OneDrive/Drive routinely expose the *same file* at several relative paths (old flat layout + a nested "from Client…" hierarchy). Each distinct path becomes its own `source_id` and would be rendered and embedded again. The plan's **`duplicate_content`** array groups any SHA-256 that appears at more than one live path — review it with the user and keep a single canonical path (prefer the authoritative one) before `apply`; it is advisory and never auto-collapsed.
+
 For a deliberately selected single file use `source adopt --root <key> <relative-path>`. For a chat attachment use `source import <temporary-path> --root incoming --provenance '{...}'`. During the first full build, link final parsed documents to registry sources using `brain_sync.py seed --root-key <key> --manifest <parsed>/manifest.json --strict-sources`; for a visual pipeline that emits its own manifest, require the same `{source, md}` mapping. If multiple narrative roots feed one parsed corpus, generate one unambiguous combined manifest or seed them separately without overwriting prior links.
 
 **4. Configure the numbers lane (only if there are workbooks).** The narrative/graph lanes need no config, but the marts do: walk the user through editing `schema/families.<corpus>.json` to describe their workbooks (glob, layout, sheets, measures). Use `tabular-semantic-layer` (its `profile_workbooks.py` inspects real files) — this is the one step that genuinely needs their input. If they have no workbooks, skip and note the numbers lane will be empty.

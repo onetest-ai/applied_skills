@@ -244,6 +244,10 @@ def build_plan(con: sqlite3.Connection, config: dict[str, Any], root_filter: str
             raise ValueError(f"unknown source root: {root_filter}")
         rows = [r for r in rows if r["root_key"] == root_filter]
     roots_out, actions = [], []
+    # Same content (SHA-256) present at multiple live paths — the classic
+    # SharePoint/OneDrive/Drive sync artifact that would register (and render +
+    # embed) the same document several times. Advisory only; never auto-collapsed.
+    present_by_sha: dict[str, list[dict[str, str]]] = {}
     selected = [root_filter] if root_filter else sorted(config["roots"])
     for key in selected:
         spec = config["roots"][key]
@@ -267,6 +271,8 @@ def build_plan(con: sqlite3.Connection, config: dict[str, Any], root_filter: str
             disk_meta[rel] = (digest, size)
             if rel in new:
                 new_by_sha.setdefault(digest, []).append(rel)
+        for rel, (digest, _size) in disk_meta.items():
+            present_by_sha.setdefault(digest, []).append({"root_key": key, "relative_path": rel})
         moved_old, moved_new = set(), set()
         for digest, olds in missing_by_sha.items():
             news = new_by_sha.get(digest, [])
@@ -288,8 +294,10 @@ def build_plan(con: sqlite3.Connection, config: dict[str, Any], root_filter: str
             action = "remove_candidate" if spec["mode"] == "mirror" else "corrupt" if spec["mode"] == "managed" else "missing"
             actions.append({"action": action, "source_id": registered[rel]["source_id"], "root_key": key,
                             "relative_path": rel, "sha256": registered[rel]["source_sha256"]})
+    duplicates = [{"sha256": digest, "paths": sorted(paths, key=lambda p: (p["root_key"], p["relative_path"]))}
+                  for digest, paths in sorted(present_by_sha.items()) if len(paths) > 1]
     return {"version": 1, "created_at": utcnow(), "config_sha256": config_fingerprint(config["path"]),
-            "roots": roots_out, "actions": actions}
+            "roots": roots_out, "actions": actions, "duplicate_content": duplicates}
 
 
 def json_out(value: Any) -> None:

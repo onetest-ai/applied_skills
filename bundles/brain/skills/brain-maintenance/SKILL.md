@@ -87,6 +87,8 @@ Generate and inspect the canonical source plan:
 
 Do not interpret an unavailable root as an empty root.
 
+Before applying, check the plan's `duplicate_content` groups: a synced source tree (SharePoint/OneDrive/Drive) commonly presents the same SHA-256 at multiple live paths, which would register and re-embed the same document several times. Resolve duplicates with the human (keep one canonical path) before `apply`; `missing` at an old path after a re-sync is a warning under `import`, never an inferred deletion.
+
 ### 3. Materialize changed narrative sources
 
 For every added/changed narrative source:
