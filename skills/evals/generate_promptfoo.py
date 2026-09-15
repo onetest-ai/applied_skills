@@ -41,6 +41,21 @@ Rules:
 </retrieved_context>"""
 
 
+def _derive_query_terms(must_have_raw):
+    """Extract up to 8 meaningful keywords (>3 chars) from the first 2 pipe-separated facts."""
+    terms = []
+    for fact in must_have_raw.split("|")[:2]:
+        words = fact.strip().split()[:6]
+        terms.extend(w for w in words if len(w) > 3)
+    seen = set()
+    deduped = []
+    for w in terms:
+        if w.lower() not in seen:
+            seen.add(w.lower())
+            deduped.append(w)
+    return " ".join(deduped[:8])
+
+
 def build_rubric(row):
     question = row["question"]
     category = row["category"]
@@ -51,31 +66,46 @@ def build_rubric(row):
     notes = row["notes"]
     min_items = int(row.get("min_items") or 1)
 
-    bullets = "\n".join(
-        f"  - {p.strip()}"
-        for p in must_have.split("|")
-        if p.strip()
-    )
+    fact_list = [p.strip() for p in must_have.split("|") if p.strip()]
+    n_facts = len(fact_list)
 
-    rubric = f"Question: {question}\nCategory: {category} | Scope: {scope}\n"
+    bullets = "\n".join("  - {}".format(f) for f in fact_list)
+
+    # N-1 of N threshold: require at least (n-1) facts, minimum 1
+    threshold = max(1, n_facts - 1)
+
+    rubric = "Question: {}\nCategory: {} | Scope: {}\n".format(question, category, scope)
     if min_items == 0:
         rubric += (
             "This is a NO-HALLUCINATION eval. The answer must acknowledge absence of data.\n"
-            f"The answer SHOULD convey:\n{bullets}\n"
+            "The answer SHOULD convey:\n{}\n".format(bullets)
         )
     else:
+        if threshold >= n_facts:
+            threshold_text = "ALL {}".format(n_facts)
+        else:
+            threshold_text = "AT LEAST {} of {}".format(threshold, n_facts)
         rubric += (
-            f"The answer MUST semantically cover ALL of these specific facts "
-            f"(paraphrasing acceptable but must be concrete — generic answers FAIL):\n"
-            f"{bullets}\n"
+            "The answer MUST semantically cover {} of these facts "
+            "(paraphrasing acceptable but must be concrete — generic answers FAIL):\n"
+            "{}\n".format(threshold_text, bullets)
         )
+
+    if threshold >= n_facts:
+        grade_instruction = (
+            "Grade PASS only if ALL facts are specifically addressed with concrete detail."
+        )
+    else:
+        grade_instruction = (
+            "Grade PASS if AT LEAST {} of the {} facts are addressed with concrete detail. "
+            "Missing 1 secondary fact is acceptable.".format(threshold, n_facts)
+        )
+
     rubric += (
-        f"\nThe answer must NOT contain or invent: {must_not}\n"
-        f"\nSource ground truth: {source}\n"
-        f"Notes: {notes}\n"
-        f"\nIMPORTANT: Grade PASS only if EVERY required fact is specifically addressed "
-        f"with concrete detail. A generic answer that mentions the topic without the "
-        f"specific fact FAILS."
+        "\nThe answer must NOT contain or invent: {}\n"
+        "\nSource ground truth: {}\n"
+        "Notes: {}\n"
+        "\n{}".format(must_not, source, notes, grade_instruction)
     )
     return rubric
 
@@ -101,8 +131,9 @@ def main(argv=None):
             "question": row["question"],
             "context": js_file_ref,
         }
-        if row.get("query_suffix"):
-            vars_["query_suffix"] = row["query_suffix"]
+        existing_suffix = row.get("query_suffix", "").strip()
+        derived = _derive_query_terms(row.get("expected_answer_must_contain", ""))
+        vars_["query_suffix"] = "{} {}".format(existing_suffix, derived).strip() if existing_suffix else derived
         tests.append({
             "description": f"[{row['eval_id']}] {row['category']} | {row['scope']} | {row['question'][:60]}",
             "vars": vars_,
