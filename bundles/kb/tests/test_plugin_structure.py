@@ -5,8 +5,8 @@ import re
 import unittest
 from pathlib import Path
 
-KB_ROOT = Path(__file__).resolve().parents[1]          # .../kb
-REPO_ROOT = KB_ROOT.parent                             # repo root
+KB_ROOT = Path(__file__).resolve().parents[1]          # .../bundles/kb
+REPO_ROOT = KB_ROOT.parents[1]                          # .../bundles/kb -> bundles -> repo root
 
 
 def load_json(path: Path):
@@ -41,11 +41,14 @@ class TestPluginManifest(unittest.TestCase):
         self.assertNotIn("mcpServers", manifest)
 
     def test_marketplace_lists_kb(self):
+        # REPO_ROOT must be the actual repo root (holds the marketplace file)
+        self.assertTrue((REPO_ROOT / ".claude-plugin" / "marketplace.json").exists(),
+                        f"REPO_ROOT {REPO_ROOT} is not the repo root")
         market = load_json(REPO_ROOT / ".claude-plugin" / "marketplace.json")
         names = {p["name"] for p in market["plugins"]}
         self.assertIn("kb", names)
         kb_entry = next(p for p in market["plugins"] if p["name"] == "kb")
-        self.assertEqual(kb_entry["source"], "./kb")
+        self.assertEqual(kb_entry["source"], "./bundles/kb")
 
     def test_readme_exists(self):
         self.assertTrue((KB_ROOT / "README.md").is_file())
@@ -68,16 +71,20 @@ class TestDoctrineAndVerifier(unittest.TestCase):
         self.assertNotIn("Edit", fm["tools"])
 
 
-class TestUmbrellaAndKbPlugins(unittest.TestCase):
-    def test_marketplace_has_applied_skills_and_kb(self):
+class TestMarketplacePlugins(unittest.TestCase):
+    def test_marketplace_has_brain_and_kb(self):
         market = load_json(REPO_ROOT / ".claude-plugin" / "marketplace.json")
         names = {p["name"] for p in market["plugins"]}
-        self.assertIn("applied-skills", names)
+        self.assertIn("brain", names)
         self.assertIn("kb", names)
 
-    def test_root_plugin_json_is_applied_skills(self):
-        manifest = load_json(REPO_ROOT / ".claude-plugin" / "plugin.json")
-        self.assertEqual(manifest["name"], "applied-skills")
+    def test_no_root_plugin_json(self):
+        # the repo root is no longer a plugin; only the marketplace file remains
+        self.assertFalse((REPO_ROOT / ".claude-plugin" / "plugin.json").exists())
+
+    def test_brain_plugin_manifest_names_brain(self):
+        manifest = load_json(REPO_ROOT / "bundles" / "brain" / ".claude-plugin" / "plugin.json")
+        self.assertEqual(manifest["name"], "brain")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 ---
 description: Author a long-form structured report on a topic from the Brain — gather narrative, metrics, and relations; organize into sections with a Table of Contents; verify all claims; then propose the write to the human for approval. Emit to docs/kb/ with full Sources and a sources.json sidecar.
-allowed-tools: mcp__brain__search_knowledge mcp__brain__get_metric mcp__brain__get_taxonomy mcp__brain__find_related_content mcp__brain__get_evidence mcp__brain__list_metrics mcp__brain__health mcp__plugin_applied-skills_brain__search_knowledge mcp__plugin_applied-skills_brain__get_metric mcp__plugin_applied-skills_brain__get_taxonomy mcp__plugin_applied-skills_brain__find_related_content mcp__plugin_applied-skills_brain__get_evidence mcp__plugin_applied-skills_brain__list_metrics mcp__plugin_applied-skills_brain__health
+allowed-tools: mcp__brain__search_knowledge mcp__brain__get_metric mcp__brain__get_taxonomy mcp__brain__find_related_content mcp__brain__get_evidence mcp__brain__list_metrics mcp__brain__health mcp__plugin_brain_brain__search_knowledge mcp__plugin_brain_brain__get_metric mcp__plugin_brain_brain__get_taxonomy mcp__plugin_brain_brain__find_related_content mcp__plugin_brain_brain__get_evidence mcp__plugin_brain_brain__list_metrics mcp__plugin_brain_brain__health
 arguments: [subject]
 ---
 

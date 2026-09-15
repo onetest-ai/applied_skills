@@ -39,7 +39,6 @@ const HOSTS = {
 };
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const SRC = join(ROOT, "skills");
 const BUNDLES = join(ROOT, "bundles");
 
 function parseArgs(argv) {
@@ -157,7 +156,9 @@ function bundleSkills(name, withOptional) {
 
 function main() {
   const o = parseArgs(process.argv.slice(2));
-  if (!existsSync(SRC)) { console.error(`error: skills/ not found at ${SRC}`); process.exit(1); }
+  // Skills live inside their bundle: bundles/<name>/skills/ (default bundle: brain).
+  const SRC = join(BUNDLES, o.bundle || "brain", "skills");
+  if (!existsSync(SRC)) { console.error(`error: bundle skills dir not found at ${SRC}`); process.exit(1); }
   for (const t of o.targets) if (!HOSTS[t]) { console.error(`error: unknown target '${t}' (claude|dsh|copilot|codex)`); process.exit(2); }
 
   const allSkills = readdirSync(SRC).filter(n => statSync(join(SRC, n)).isDirectory());

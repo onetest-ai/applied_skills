@@ -35,10 +35,10 @@ Vector RAG cannot return correct numbers; raw text-to-SQL returns *confident wro
 
 ## Two plugins
 
-This repository is itself the **`applied-skills`** umbrella plugin/marketplace. It ships the **brain bundle** (`bundles/brain/`) — build, maintain, and deploy the Brain, the local knowledge engine (RAG + taxonomy graph + deterministic marts) served over a governed MCP — and it also hosts a second, separate plugin:
+This repository is the **`applied-ai`** marketplace, listing exactly two self-contained plugins:
 
-- **`applied-skills`**: Builds, maintains, and deploys the Brain (via the `brain` bundle).
-- **`kb`**: Interrogates and authors with the Brain — a knowledge-worker companion providing cited answers and Markdown deliverables.
+- **`brain`** (`bundles/brain/`, skills surface as `/brain:*`): Builds, maintains, and deploys the Brain — the local knowledge engine (RAG + taxonomy graph + deterministic marts) served over a governed MCP. Also installable as the `brain` skills-bundle.
+- **`kb`** (`bundles/kb/`, skills surface as `/kb:*`): Interrogates and authors with the Brain — a knowledge-worker companion providing cited answers and Markdown deliverables.
 
 Install either or both depending on your role.
 
@@ -90,11 +90,11 @@ git clone git@github.com:onetest-ai/applied_skills.git && cd applied_skills
 
 Restart the host session after installing so it loads the skills.
 
-**Claude plugin (alternative):** this repo is also a plugin marketplace —
+**Claude plugin (alternative):** this repo is the `applied-ai` plugin marketplace —
 ```bash
 claude plugin marketplace add onetest-ai/applied_skills
-claude plugin install applied-skills@onetest-ai # Build/maintain/deploy (brain bundle)
-claude plugin install kb@onetest-ai             # Interrogate/author
+claude plugin install brain@applied-ai # Build/maintain/deploy the Brain (/brain:*)
+claude plugin install kb@applied-ai    # Interrogate/author (/kb:*)
 ```
 (Don't combine the plugin and the copy/symlink install — pick one, or the skills load twice.)
 
