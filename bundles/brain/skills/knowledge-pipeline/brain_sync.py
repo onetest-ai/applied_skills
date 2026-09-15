@@ -28,8 +28,50 @@ Usage:
 import argparse, glob, hashlib, json, os, shutil, sqlite3, sys, time
 from pathlib import Path
 
+try:
+    import tomllib  # Python 3.11+ (stdlib)
+except ModuleNotFoundError:  # pragma: no cover - older interpreters
+    import tomli as tomllib
+
 KI = Path(__file__).resolve().parent.parent / "knowledge-index"
 sys.path.insert(0, str(KI))
+
+
+def ensure_meta(c):
+    """Durable key/value table for build-time facts (goal, audience). Created with
+    IF NOT EXISTS so it survives `knowledge_index.py index --reset` (which only drops
+    chunks/chunks_fts/chunks_vec) and older stores that predate it."""
+    c.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+
+
+def _read_goal_audience(db):
+    """Resolve <project> from the db path (<project>/schema/knowledge.sqlite) and read
+    the canonical goal (goal.txt) + audience (brain.toml [project].audience). Absent
+    files yield empty strings — never crash."""
+    project = Path(db).resolve().parent.parent
+    goal = ""
+    goal_txt = project / "goal.txt"
+    if goal_txt.is_file():
+        goal = goal_txt.read_text(encoding="utf-8").strip()
+    audience = ""
+    toml_path = project / "brain.toml"
+    if toml_path.is_file():
+        try:
+            data = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+            audience = str((data.get("project") or {}).get("audience", "") or "")
+        except Exception:
+            audience = ""
+    return goal, audience
+
+
+def write_meta(c, db):
+    """UPSERT goal + audience into meta (idempotent; re-seeding refreshes them)."""
+    ensure_meta(c)
+    goal, audience = _read_goal_audience(db)
+    for key, value in (("goal", goal), ("audience", audience)):
+        c.execute("INSERT INTO meta(key,value) VALUES(?,?) "
+                  "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+    return goal, audience
 
 
 def sha_file(p):
@@ -271,9 +313,12 @@ def cmd_seed(a):
         sid = links.get(doc) or (prior[0] if prior else None)
         c.execute("INSERT OR REPLACE INTO documents(doc_id,sha,bytes,mtime,updated_at,source_id) VALUES(?,?,?,?,?,?)",
                   (doc, m["sha"], m["bytes"], m["mtime"], ts, sid))
+    goal, audience = write_meta(c, a.db)
     c.commit()
     print(f"seeded documents with {len(now)} doc hashes -> {a.db}"
           + (f" ({len(unmanaged)} unmanaged)" if unmanaged else ""))
+    print(f"meta refreshed: goal={'set' if goal else 'empty'}, "
+          f"audience={'set' if audience else 'empty'}")
     c.close()
 
 
