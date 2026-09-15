@@ -76,7 +76,9 @@ def extract_facts_from_md(
     # Strip any accidental markdown fences
     raw = raw.strip()
     if raw.startswith("```"):
-        raw = raw.split("```", 2)[-1] if raw.count("```") >= 2 else raw
+        parts = raw.split("```", 2)
+        # parts: ["", "json\n[...]\n", "trailing text"]
+        raw = parts[1] if len(parts) >= 2 else parts[-1]
         raw = raw.lstrip("json").strip()
     items = json.loads(raw)
     # Filter to only items with required keys and non-empty values
