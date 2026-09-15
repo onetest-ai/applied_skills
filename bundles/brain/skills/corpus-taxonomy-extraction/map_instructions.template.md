@@ -8,6 +8,12 @@
 "{{GOAL}}"
 Keep terms relevant to that goal. Do NOT silently drop off-goal terms — list them in "demoted".
 
+## Audience lens (secondary emphasis — the goal remains the primary filter)
+"{{AUDIENCE}}"
+Favor intents/dimensions that this audience would ask about, and lean toward their vocabulary
+for names/descriptions. This only re-orders emphasis WITHIN what the goal keeps — never a second
+filter, and never a reason to drop a goal-relevant term. If the audience line is empty, ignore it.
+
 ## For EACH assigned parsed file
 The file starts with a `# SOURCE: <path>` line — use that exact value as `source`.
 Read the whole file, then emit ONE JSON file (schema below) to:
