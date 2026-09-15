@@ -62,5 +62,37 @@ class TestHealthLine(unittest.TestCase):
             self.assertIn("kb:connect", res.stdout)
 
 
+class TestAmbientReminder(unittest.TestCase):
+    def _run_with_state(self, ambient: bool):
+        with tempfile.TemporaryDirectory() as d:
+            state_dir = Path(d) / ".claude" / "kb"
+            state_dir.mkdir(parents=True)
+            (state_dir / "state.json").write_text(
+                '{"ambient": %s}' % ("true" if ambient else "false"),
+                encoding="utf-8",
+            )
+            return run_script(
+                SCRIPTS / "ambient-reminder.sh",
+                {"CLAUDE_PROJECT_DIR": d},
+            )
+
+    def test_emits_reminder_when_on(self):
+        res = self._run_with_state(True)
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("Brain", res.stdout)
+        self.assertIn("not modeled", res.stdout.lower())
+
+    def test_silent_when_off(self):
+        res = self._run_with_state(False)
+        self.assertEqual(res.returncode, 0)
+        self.assertEqual(res.stdout.strip(), "")
+
+    def test_silent_when_no_state_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            res = run_script(SCRIPTS / "ambient-reminder.sh", {"CLAUDE_PROJECT_DIR": d})
+            self.assertEqual(res.returncode, 0)
+            self.assertEqual(res.stdout.strip(), "")
+
+
 if __name__ == "__main__":
     unittest.main()
