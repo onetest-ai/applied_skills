@@ -393,8 +393,28 @@ def get_evidence(chunk_id: int, include_page_text: bool = True) -> dict[str, Any
     return result
 
 
+def _read_about(con: sqlite3.Connection) -> dict[str, str]:
+    """Read goal + audience from the durable `meta(key,value)` table. Degrades gracefully:
+    a store built before this change (no meta table) or an empty meta yields empty strings,
+    never an error."""
+    about = {"goal": "", "audience": ""}
+    if "meta" not in _present_tables(con):
+        return about
+    try:
+        for row in con.execute("SELECT key, value FROM meta WHERE key IN ('goal','audience')"):
+            if row["key"] in about:
+                about[row["key"]] = row["value"] or ""
+    except sqlite3.Error:
+        return {"goal": "", "audience": ""}
+    return about
+
+
 def health() -> dict[str, Any]:
-    """Return deployment and store health without exposing local filesystem paths."""
+    """Return deployment and store health without exposing local filesystem paths.
+
+    Includes an `about: {goal, audience}` block read from the durable `meta` table so
+    consumers (e.g. the kb plugin) can tune answer altitude/artifact style; empty strings
+    when the store predates the meta table or has no values recorded."""
     tables = ("chunks", "chunks_fts", "chunks_vec", "graph_nodes", "graph_edges", "chunk_topics", "facts")
     vector_extension = "available"
     try:
@@ -406,6 +426,7 @@ def health() -> dict[str, Any]:
         present = _present_tables(con)
         counts = {table: con.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] if table in present else None for table in tables}
         quick_check = con.execute("PRAGMA quick_check").fetchone()[0]
+        about = _read_about(con)
     empty_lanes = []
     if not counts.get("chunks"):
         empty_lanes.append("narrative")
@@ -420,4 +441,5 @@ def health() -> dict[str, Any]:
         "counts": counts,
         "empty_lanes": empty_lanes,
         "knowledge_version": os.getenv("BRAIN_KNOWLEDGE_VERSION", "unversioned"),
+        "about": about,
     }

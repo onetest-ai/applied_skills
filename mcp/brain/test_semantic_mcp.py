@@ -43,8 +43,13 @@ def build_fixture(root: Path) -> dict[str, Path]:
             CREATE TABLE graph_edges(source TEXT, target TEXT, rel TEXT);
             CREATE TABLE chunk_topics(chunk_id INT, category_id TEXT, category_label TEXT, kind TEXT);
             CREATE TABLE related(chunk_id INT, related_id INT, score REAL);
+            CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);
             """
         )
+        con.executemany("INSERT INTO meta VALUES(?,?)", [
+            ("goal", "optimize call-center operations"),
+            ("audience", "ops managers and workforce planners"),
+        ])
         con.executemany("INSERT INTO facts VALUES(?,?,?,?,?,?,?)", [
             ("commercial", "revenue", "overall", "All", "2024-01", 100.0, "report.xlsx"),
             ("commercial", "revenue", "region", "North", "2024-01", 40.0, "report.xlsx"),
@@ -164,6 +169,21 @@ class SemanticCoreTests(FixtureCase):
         self.assertEqual(result["status"], expected)
         self.assertEqual(result["knowledge_version"], "fixture-v1")
         self.assertNotIn(str(self.fx["root"]), json.dumps(result))
+        self.assertEqual(result["about"]["goal"], "optimize call-center operations")
+        self.assertEqual(result["about"]["audience"], "ops managers and workforce planners")
+
+    def test_health_about_degrades_without_meta_table(self):
+        # A store built before the meta table must still return about with empty strings.
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.execute("DROP TABLE meta")
+        result = core.health()
+        self.assertEqual(result["about"], {"goal": "", "audience": ""})
+
+    def test_health_about_empty_when_meta_has_no_values(self):
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.execute("DELETE FROM meta")
+        result = core.health()
+        self.assertEqual(result["about"], {"goal": "", "audience": ""})
 
 
 @unittest.skipUnless(Client is not None, "fastmcp is not installed")
