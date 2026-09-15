@@ -115,13 +115,13 @@ Ensure the SQLite file exists before visual assembly so `vision_assemble.py --db
 
 ### Phase 1 — render and route every narrative document
 
-For every PDF/PPT/PPTX/DOC/DOCX, choose an asset root that cannot collide with another source. The current renderer derives the final slug from the **basename only**; two files such as `a/report.pdf` and `b/report.pdf` would otherwise overwrite each other. Use separate source-relative parent roots (or first establish globally unique basenames), and record the resulting render directory:
+For every PDF/PPT/PPTX/DOC/DOCX, render into a shared asset root. The renderer now derives the slug from the **full source-relative path** (dir + stem), so `a/report.pdf` and `b/report.pdf` produce distinct render dirs and can no longer overwrite each other — pass the source-relative path as `--doc`. (A bare basename still slugs as before, so pass the path, not just the filename.) Record the resulting render directory:
 
 ```bash
-ASSET_ROOT="$PROJECT/assets/$SOURCE_PARENT_KEY"
+ASSET_ROOT="$PROJECT/assets"
 "$PY" "$SKILLS/visual-parse/render_pages.py" \
-  --doc "$SOURCE" --out "$ASSET_ROOT" --dpi 150
-# actual render dir: $ASSET_ROOT/<kebab-source-basename>
+  --doc "$SOURCE_RELATIVE_PATH" --out "$ASSET_ROOT" --dpi 150
+# actual render dir: $ASSET_ROOT/<kebab-of-source-relative-path>
 ```
 
 `render_pages.py` performs the routing decision per page and writes `pages.json` with:
