@@ -1,31 +1,41 @@
 """
 Corpus-agnostic adversarial eval CSV generator.
-Reads *_extraction.json files from --extractions dir, emits eval CSV.
+Reads *_extraction.json files from --extractions dir and a taxonomy JSON,
+emits eval CSV.
 
 Usage:
-  python generate_evals.py --extractions <dir> --out <csv_path>
+  python generate_evals.py --extractions <dir> --taxonomy <taxonomy.json> --out <csv_path>
+
+The taxonomy JSON must contain an intent_taxonomy.eval_config dict mapping
+category name → {eval_type, question, query_suffix}.  Example:
+  {
+    "intent_taxonomy": {
+      "l1": ["ActionItem", ...],
+      "eval_config": {
+        "ActionItem": {"eval_type": "recall", "question": "...", "query_suffix": "..."},
+        ...
+      }
+    }
+  }
 """
 import argparse
 import csv
 import json
-import sys
+import warnings
 from collections import defaultdict
 from pathlib import Path
 
-CATEGORIES = [
-    "ActionItem", "IntegrationPoint", "KnowledgeGap",
-    "ProcessObservation", "QualityRisk", "TestStrategy", "TransitionDependency",
-]
+DEFAULT_QUERY_SUFFIX = "specific details findings decisions evidence"
+DEFAULT_TAXONOMY = Path(__file__).parent / "taxonomy.default.json"
 
-EVAL_TYPES = {
-    "ActionItem":           ("recall",         "What action items were identified?"),
-    "QualityRisk":          ("recall",         "What quality risks were identified?"),
-    "KnowledgeGap":         ("recall",         "What knowledge gaps were identified?"),
-    "TestStrategy":         ("faithfulness",   "What testing strategies were discussed?"),
-    "ProcessObservation":   ("faithfulness",   "What process observations were made?"),
-    "IntegrationPoint":     ("completeness",   "What integration points were identified?"),
-    "TransitionDependency": ("completeness",   "What transition dependencies were identified?"),
-}
+
+def load_taxonomy(taxonomy_path):
+    """Return (categories_list, eval_config_dict) from taxonomy JSON."""
+    d = json.loads(Path(taxonomy_path).read_text(encoding="utf-8"))
+    it = d.get("intent_taxonomy", {})
+    categories = it.get("l1", [])
+    eval_config = it.get("eval_config", {})
+    return categories, eval_config
 
 
 def _product(raw):
@@ -51,26 +61,158 @@ def load_extractions(extractions_dir):
     return result
 
 
-def generate_evals(extractions_dir):
-    """Generate list of eval dicts from extraction JSONs."""
+def load_from_db(db_path, taxonomy_path=None):
+    """Generate eval rows by reading chunk_topics + chunks from a knowledge SQLite.
+
+    No extraction JSON files required. Categories come from chunk_topics.category_label.
+    taxonomy_path (optional): if given, load eval_config for question/query_suffix overrides.
+    Returns list of eval row dicts with the same schema as generate_evals().
+    """
+    import sqlite3
+
+    eval_config = {}
+    if taxonomy_path:
+        _, eval_config = load_taxonomy(taxonomy_path)
+
+    c = sqlite3.connect(db_path)
+
+    categories = [
+        r[0] for r in c.execute(
+            "SELECT DISTINCT category_label FROM chunk_topics ORDER BY category_label"
+        ).fetchall()
+    ]
+
+    rows = []
+    eval_counter = 1
+
+    for cat in categories:
+        cfg = eval_config.get(cat, {})
+        question_tmpl = cfg.get("question", "What {} content was discussed?".format(cat))
+        query_suffix = cfg.get("query_suffix", "")
+
+        chunk_rows = c.execute(
+            "SELECT c.source, c.text FROM chunk_topics ct "
+            "JOIN chunks c ON c.id = ct.chunk_id "
+            "WHERE ct.category_label = ? "
+            "AND COALESCE(c.status, 'ACTIVE') = 'ACTIVE' "
+            "ORDER BY c.source, c.ord LIMIT 15",
+            (cat,),
+        ).fetchall()
+
+        if not chunk_rows:
+            continue
+
+        # Group by source
+        by_slug = {}
+        for source, text in chunk_rows:
+            slug = source.replace(".vtt.md", "").replace(".srt.md", "").replace(".md", "")
+            # strip to basename for brevity
+            slug = slug.split("/")[-1].split("\\")[-1]
+            by_slug.setdefault(slug, []).append(text)
+
+        # Single-session evals: up to 3 sources
+        for slug, texts in list(by_slug.items())[:3]:
+            snippets = [t[:60].strip() for t in texts[:2] if t.strip()]
+            if not snippets:
+                continue
+            rows.append({
+                "eval_id": "E{:03d}".format(eval_counter),
+                "category": cat,
+                "scope": "single-session",
+                "question": "{} (source: {})".format(question_tmpl, slug),
+                "query_suffix": query_suffix,
+                "expected_answer_must_contain": " | ".join(snippets),
+                "expected_answer_must_not_contain": "hallucinated,invented,fabricated",
+                "ground_truth_source": slug,
+                "notes": "db-mode | {}".format(cat),
+                "min_items": 1,
+            })
+            eval_counter += 1
+
+        # Cross-session eval when >= 2 sources
+        if len(by_slug) >= 2:
+            all_snippets = []
+            seen = set()
+            for slug, texts in list(by_slug.items())[:5]:
+                for t in texts[:2]:
+                    s = t[:60].strip()
+                    if s and s not in seen:
+                        seen.add(s)
+                        all_snippets.append(s)
+            if len(all_snippets) >= 2:
+                rows.append({
+                    "eval_id": "E{:03d}".format(eval_counter),
+                    "category": cat,
+                    "scope": "cross-session",
+                    "question": question_tmpl,
+                    "query_suffix": query_suffix,
+                    "expected_answer_must_contain": " | ".join(all_snippets[:3]),
+                    "expected_answer_must_not_contain": "hallucinated,invented,fabricated",
+                    "ground_truth_source": ",".join(list(by_slug.keys())[:3]),
+                    "notes": "db-mode | cross-session",
+                    "min_items": 2,
+                })
+                eval_counter += 1
+
+    # No-hallucination evals: first 3 categories
+    for cat in categories[:3]:
+        rows.append({
+            "eval_id": "E{:03d}".format(eval_counter),
+            "category": "no-hallucination",
+            "scope": "cross-session",
+            "question": "What are the exact numeric KPIs defined for {} items?".format(cat),
+            "query_suffix": DEFAULT_QUERY_SUFFIX,
+            "expected_answer_must_contain": "not established | not found | no evidence",
+            "expected_answer_must_not_contain": "specific percentage,exact figure",
+            "ground_truth_source": "none",
+            "notes": "no-hallucination | {}".format(cat),
+            "min_items": 0,
+        })
+        eval_counter += 1
+
+    c.close()
+    return rows
+
+
+def generate_evals(extractions_dir, taxonomy_path):
+    """Generate list of eval dicts from extraction JSONs and taxonomy."""
+    categories, eval_config = load_taxonomy(taxonomy_path)
     all_exts = load_extractions(extractions_dir)
     if not all_exts:
         return []
 
-    # Group by category
+    # Group by category; warn on extractions whose category is absent from taxonomy
     by_cat = defaultdict(list)
+    unknown_cats: set = set()
     for slug, ext in all_exts:
         cat = ext.get("category", "")
-        if cat in CATEGORIES:
+        if cat in categories:
             by_cat[cat].append((slug, ext))
+        elif cat:
+            unknown_cats.add(cat)
+    for cat in sorted(unknown_cats):
+        warnings.warn(
+            f"Category '{cat}' in extractions not found in taxonomy l1 — skipped. "
+            f"Add it to your taxonomy JSON to generate evals for it.",
+            stacklevel=2,
+        )
 
     rows = []
     eval_counter = 1
 
     for cat, items in by_cat.items():
-        eval_type, base_q = EVAL_TYPES.get(cat, ("recall", f"What {cat} items were found?"))
+        cfg = eval_config.get(cat, {})
+        if not cfg:
+            warnings.warn(
+                f"Category '{cat}' has no eval_config entry in taxonomy — "
+                f"using generic fallbacks. Add eval_config.{cat} to your taxonomy JSON.",
+                stacklevel=2,
+            )
+        eval_type = cfg.get("eval_type", "recall")
+        base_q = cfg.get("question", f"What {cat} items were found?")
+        query_suffix = cfg.get("query_suffix", DEFAULT_QUERY_SUFFIX)
 
-        # Single-session evals: one per source slug (up to 5 per category)
+        # Single-session evals: one per source slug (up to 3 per category)
         by_slug = defaultdict(list)
         for slug, ext in items:
             by_slug[slug].append(ext)
@@ -87,6 +229,7 @@ def generate_evals(extractions_dir):
                 "category": cat,
                 "scope": "single-session",
                 "question": question,
+                "query_suffix": query_suffix,
                 "expected_answer_must_contain": " | ".join(facts[:2]),
                 "expected_answer_must_not_contain": "hallucinated,invented,fabricated",
                 "ground_truth_source": slug,
@@ -110,6 +253,7 @@ def generate_evals(extractions_dir):
                 "category": cat,
                 "scope": "cross-session",
                 "question": base_q,
+                "query_suffix": query_suffix,
                 "expected_answer_must_contain": " | ".join(all_facts[:3]),
                 "expected_answer_must_not_contain": "hallucinated,invented,fabricated",
                 "ground_truth_source": ",".join(slugs[:3]),
@@ -118,13 +262,14 @@ def generate_evals(extractions_dir):
             })
             eval_counter += 1
 
-    # No-hallucination evals: one per category asking about non-existent data
-    for cat in CATEGORIES[:3]:
+    # No-hallucination evals: one per category actually present in corpus (not taxonomy order)
+    for cat in list(by_cat.keys())[:3]:
         rows.append({
             "eval_id": f"E{eval_counter:03d}",
             "category": "no-hallucination",
             "scope": "cross-session",
             "question": f"What are the exact numeric KPIs defined for {cat} items?",
+            "query_suffix": eval_config.get(cat, {}).get("query_suffix", DEFAULT_QUERY_SUFFIX),
             "expected_answer_must_contain": "not established | not found | no evidence",
             "expected_answer_must_not_contain": "specific percentage,exact figure",
             "ground_truth_source": "none",
@@ -137,25 +282,42 @@ def generate_evals(extractions_dir):
 
 
 FIELDNAMES = [
-    "eval_id", "category", "scope", "question",
+    "eval_id", "category", "scope", "question", "query_suffix",
     "expected_answer_must_contain", "expected_answer_must_not_contain",
     "ground_truth_source", "notes", "min_items",
 ]
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Generate adversarial eval CSV from extraction JSONs")
-    parser.add_argument("--extractions", required=True, help="Dir containing *_extraction.json files")
-    parser.add_argument("--out", required=True, help="Output CSV path")
+    parser = argparse.ArgumentParser(
+        description="Generate adversarial eval CSV from extraction JSONs or knowledge DB"
+    )
+    parser.add_argument("--extractions", help="Dir containing *_extraction.json files")
+    parser.add_argument("--db",          help="Path to knowledge.sqlite (chunk_topics + chunks)")
+    parser.add_argument("--taxonomy",    default=str(DEFAULT_TAXONOMY),
+                        help="Taxonomy JSON with intent_taxonomy.eval_config (default: {})".format(
+                            DEFAULT_TAXONOMY.name))
+    parser.add_argument("--out",         required=True, help="Output CSV path")
     args = parser.parse_args(argv)
 
-    rows = generate_evals(args.extractions)
+    if args.db and args.extractions:
+        parser.error("--db and --extractions are mutually exclusive — use one or the other")
+    if not args.db and not args.extractions:
+        parser.error("one of --db or --extractions is required")
+
+    if args.db:
+        # Optional taxonomy for question/query_suffix overrides; None = use generic fallbacks
+        taxo = args.taxonomy if Path(args.taxonomy).exists() else None
+        rows = load_from_db(args.db, taxo)
+    else:
+        rows = generate_evals(args.extractions, args.taxonomy)
+
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
         writer.writeheader()
         writer.writerows(rows)
-    print(f"Written {len(rows)} evals → {args.out}")
+    print("Written {} evals -> {}".format(len(rows), args.out))
     return rows
 
 

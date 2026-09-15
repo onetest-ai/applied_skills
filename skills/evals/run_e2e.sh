@@ -4,7 +4,7 @@
 #   --corpus   /path/to/vtt/dir \
 #   --work     /tmp/primo_e2e \
 #   --brain-port 8003 \
-#   --taxonomy /path/to/taxonomy.json \
+#   [--taxonomy /path/to/taxonomy.json]   # default: skills/evals/taxonomy.default.json \
 #   [--extractions /path/to/extraction_jsons]
 set -euo pipefail
 
@@ -17,6 +17,7 @@ SKILL_EVALS="$REPO/skills/evals"
 MCP_BRAIN="$REPO/mcp/brain"
 
 CORPUS=""; WORK=""; PORT=8003; TAXONOMY=""; EXTRACTIONS=""
+DEFAULT_TAXONOMY="$HERE/taxonomy.default.json"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -29,9 +30,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -z "$CORPUS" ]]   && { echo "ERROR: --corpus required"; exit 1; }
-[[ -z "$WORK" ]]     && { echo "ERROR: --work required"; exit 1; }
-[[ -z "$TAXONOMY" ]] && { echo "ERROR: --taxonomy required"; exit 1; }
+[[ -z "$CORPUS" ]] && { echo "ERROR: --corpus required"; exit 1; }
+[[ -z "$WORK" ]]   && { echo "ERROR: --work required"; exit 1; }
+[[ -z "$TAXONOMY" ]] && TAXONOMY="$DEFAULT_TAXONOMY"
+[[ ! -f "$TAXONOMY" ]] && { echo "ERROR: taxonomy not found: $TAXONOMY"; exit 1; }
 
 DB="$WORK/knowledge.sqlite"
 PARSED="$WORK/parsed"
@@ -103,10 +105,21 @@ curl -sf "http://localhost:$PORT/healthz" > /dev/null || { echo "Brain failed to
 echo "  brain running at http://localhost:$PORT (PID $BRAIN_PID)"
 
 echo "=== Stage 5: Generate evals ==="
-EXT_DIR="${EXTRACTIONS:-$PARSED}"
-"$VENV" "$SKILL_EVALS/generate_evals.py" \
-  --extractions "$EXT_DIR" \
-  --out         "$EVAL_CSV"
+if [[ -n "$EXTRACTIONS" ]]; then
+  "$VENV" "$SKILL_EVALS/generate_evals.py" \
+    --extractions "$EXTRACTIONS" \
+    --taxonomy    "$TAXONOMY" \
+    --out         "$EVAL_CSV"
+else
+  # No --extractions provided: generate directly from the classified knowledge DB.
+  # taxonomy.json is optional — if present, it overrides question/query_suffix per category.
+  TAXO_ARG=""
+  [[ -f "$TAXONOMY" ]] && TAXO_ARG="--taxonomy $TAXONOMY"
+  "$VENV" "$SKILL_EVALS/generate_evals.py" \
+    --db       "$DB" \
+    $TAXO_ARG \
+    --out      "$EVAL_CSV"
+fi
 
 BRAIN_URL="http://localhost:$PORT" \
 "$VENV" "$SKILL_EVALS/generate_promptfoo.py" \
