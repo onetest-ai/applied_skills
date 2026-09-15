@@ -26,6 +26,20 @@ from pathlib import Path
 
 def kebab(s): return re.sub(r"[^a-z0-9]+", "-", str(s).lower()).strip("-") or "doc"
 
+def doc_slug(doc_path):
+    """Asset slug for --doc, derived from its FULL given path (dir + stem), not just the
+    basename — so `a/report.pdf` and `b/report.pdf` land in distinct asset dirs instead of
+    overwriting each other. Each path component is kebabed individually and joined with
+    `__` (a sequence kebab() never itself produces, since it strips underscores) so a `-`
+    inside one component can't be confused with a directory boundary. A bare filename with
+    no directory component (or one passed as a plain basename) yields the same slug as
+    before, so single-flat-directory setups are unaffected."""
+    norm = os.path.normpath(doc_path).replace("\\", "/")
+    d, base = os.path.split(norm)
+    stem = os.path.splitext(base)[0]
+    parts = [p for p in d.split("/") if p and p != "."]
+    return "__".join(kebab(p) for p in parts + [stem]) or "doc"
+
 def soffice_bin():
     for c in ("soffice", "libreoffice", "/opt/homebrew/bin/soffice",
               "/Applications/LibreOffice.app/Contents/MacOS/soffice"):
@@ -74,7 +88,7 @@ def main():
     import pymupdf
 
     pdf, tmp = to_pdf(a.doc)
-    slug = kebab(os.path.splitext(os.path.basename(a.doc))[0])
+    slug = doc_slug(a.doc)
     outdir = os.path.join(a.out, slug)
     os.makedirs(outdir, exist_ok=True)
     doc = pymupdf.open(pdf)

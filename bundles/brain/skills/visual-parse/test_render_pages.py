@@ -13,6 +13,25 @@ assert SPEC.loader
 SPEC.loader.exec_module(R)
 
 
+class DocSlugTests(unittest.TestCase):
+    def test_distinct_parent_dirs_produce_distinct_slugs(self):
+        self.assertNotEqual(R.doc_slug("a/report.pdf"), R.doc_slug("b/report.pdf"))
+
+    def test_bare_basename_matches_prior_basename_only_behavior(self):
+        self.assertEqual(R.doc_slug("report.pdf"), R.kebab("report"))
+
+    def test_deep_relative_paths_preserved_and_distinct(self):
+        s1 = R.doc_slug("corpus/2024/q1/report.pdf")
+        s2 = R.doc_slug("corpus/2024/q2/report.pdf")
+        self.assertNotEqual(s1, s2)
+        self.assertTrue(s1.endswith("__report"))
+
+    def test_dash_in_component_does_not_collide_with_dir_boundary(self):
+        # "a-b/report" and "a/b-report" would collide under a naive path->kebab
+        # collapse; the `__` join between components keeps them distinct.
+        self.assertNotEqual(R.doc_slug("a-b/report.pdf"), R.doc_slug("a/b-report.pdf"))
+
+
 class LibreOfficeRenderIsolationTests(unittest.TestCase):
     def test_to_pdf_uses_unique_profile_and_returns_temp_pdf(self):
         with tempfile.TemporaryDirectory() as td:
