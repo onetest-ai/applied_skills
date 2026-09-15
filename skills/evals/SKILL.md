@@ -26,7 +26,7 @@ python skills/evals/generate_evals.py \
 python skills/evals/generate_promptfoo.py \
   --csv /tmp/evals.csv \
   --out /tmp/promptfooconfig.yaml \
-  --brain-url http://localhost:8002 \
+  --brain-url http://localhost:8003 \
   --context-js skills/evals/load_brain_context.js
 ```
 

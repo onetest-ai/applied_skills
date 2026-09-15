@@ -48,11 +48,18 @@ def make_db():
 
 
 def _install_sqlite_vec_stub():
-    if "sqlite_vec" not in sys.modules:
-        stub = types.ModuleType("sqlite_vec")
-        stub.load = lambda con: None
-        stub.serialize_float32 = lambda v: bytes(4 * len(v))
-        sys.modules["sqlite_vec"] = stub
+    if "sqlite_vec" in sys.modules:
+        return
+    # Only install the stub when the real sqlite_vec is unavailable.
+    try:
+        import sqlite_vec as _real  # noqa: F401
+        return  # real extension loaded — no stub needed
+    except ImportError:
+        pass
+    stub = types.ModuleType("sqlite_vec")
+    stub.load = lambda con: None
+    stub.serialize_float32 = lambda v: bytes(4 * len(v))
+    sys.modules["sqlite_vec"] = stub
 
 
 # Install immediately so module-level ``import sqlite_vec`` in knowledge_index
@@ -132,7 +139,7 @@ def _patch_knowledge_index_for_no_ext(monkeypatch):
     import re as _re
 
     def _safe_search(c, model, query, k, as_of=None, latest_only=False,
-                     source_contains=None, tag=None):
+                     source_contains=None, tag=None, tag_boost=None):
         chunk_cols = {row[1] for row in c.execute("PRAGMA table_info(chunks)")}
         clauses, params = ki._search_filter(as_of, latest_only, source_contains, tag)
         where = (" AND " + " AND ".join(clauses)) if clauses else ""
@@ -143,6 +150,18 @@ def _patch_knowledge_index_for_no_ext(monkeypatch):
             "WHERE chunks_fts MATCH ?" + where + " ORDER BY bm25(chunks_fts) LIMIT ?",
             (fts_q, *params, ki.POOL))]
         score = {rid: 0.6 / (ki.RRF_K + rank) for rank, rid in enumerate(fts, 1)}
+        # Apply tag_boost: add RRF bonus for chunks matching the boost tag
+        if tag_boost:
+            has_ct = c.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='chunk_topics'"
+            ).fetchone()
+            if has_ct:
+                for rid in list(score):
+                    if c.execute(
+                        "SELECT 1 FROM chunk_topics WHERE chunk_id=? AND category_label=? LIMIT 1",
+                        (rid, tag_boost)
+                    ).fetchone():
+                        score[rid] += ki.W_VEC / (ki.RRF_K + 1)
         top = sorted(score, key=score.get, reverse=True)[:k]
         out = []
         for rid in top:

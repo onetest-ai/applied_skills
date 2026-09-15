@@ -3,7 +3,6 @@ import csv
 import sys
 import yaml
 from pathlib import Path
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import generate_promptfoo as GP
@@ -11,7 +10,7 @@ import generate_promptfoo as GP
 
 def _write_csv(tmp_path, rows):
     fieldnames = [
-        "eval_id", "category", "scope", "question",
+        "eval_id", "category", "scope", "question", "query_suffix",
         "expected_answer_must_contain", "expected_answer_must_not_contain",
         "ground_truth_source", "notes", "min_items",
     ]
@@ -27,6 +26,7 @@ def _sample_row(**kw):
     base = {
         "eval_id": "E001", "category": "recall", "scope": "single-session",
         "question": "What action items were identified?",
+        "query_suffix": "owners decisions commitments",
         "expected_answer_must_contain": "logging | monitoring",
         "expected_answer_must_not_contain": "hallucinated",
         "ground_truth_source": "abc123", "notes": "ActionItem", "min_items": "1",
@@ -75,3 +75,30 @@ def test_llm_rubric_assertion_present(tmp_path):
     cfg = yaml.safe_load(out.read_text())
     for test in cfg["tests"]:
         assert any(a["type"] == "llm-rubric" for a in test["assert"])
+
+
+def test_query_suffix_forwarded_to_vars(tmp_path):
+    csv_path = _write_csv(tmp_path, [_sample_row(query_suffix="owners decisions commitments")])
+    out = tmp_path / "config.yaml"
+    js = tmp_path / "ctx.js"
+    js.write_text("module.exports = async function() { return {output: 'x'}; }")
+    GP.main(["--csv", csv_path, "--out", str(out),
+             "--brain-url", "http://localhost:8002",
+             "--context-js", str(js)])
+    cfg = yaml.safe_load(out.read_text())
+    for test in cfg["tests"]:
+        assert test["vars"].get("query_suffix") == "owners decisions commitments"
+
+
+def test_missing_query_suffix_not_in_vars(tmp_path):
+    # Row with empty query_suffix should not inject the key into vars at all
+    csv_path = _write_csv(tmp_path, [_sample_row(query_suffix="")])
+    out = tmp_path / "config.yaml"
+    js = tmp_path / "ctx.js"
+    js.write_text("module.exports = async function() { return {output: 'x'}; }")
+    GP.main(["--csv", csv_path, "--out", str(out),
+             "--brain-url", "http://localhost:8002",
+             "--context-js", str(js)])
+    cfg = yaml.safe_load(out.read_text())
+    for test in cfg["tests"]:
+        assert "query_suffix" not in test["vars"]

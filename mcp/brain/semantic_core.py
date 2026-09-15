@@ -237,7 +237,7 @@ def get_metric(
 def search_knowledge(
     query: str, limit: int = 5, as_of: str | None = None,
     latest_only: bool = False, source_contains: str | None = None,
-    tag: str | None = None,
+    tag: str | None = None, tag_boost: str | None = None,
 ) -> dict[str, Any]:
     """Hybrid BM25+vector retrieval for narrative evidence, never authoritative figures."""
     limit = _bounded_limit(limit)
@@ -250,8 +250,8 @@ def search_knowledge(
     import knowledge_index as knowledge
 
     with _readonly_connection(vectors=True) as con:
-        if any((as_of, latest_only, source_contains, tag)):
-            result = knowledge.search(con, knowledge.DEFAULT_MODEL, query, limit, as_of, latest_only, source_contains, tag)
+        if any((as_of, latest_only, source_contains, tag, tag_boost)):
+            result = knowledge.search(con, knowledge.DEFAULT_MODEL, query, limit, as_of, latest_only, source_contains, tag, tag_boost)
         else:
             result = knowledge.search(con, knowledge.DEFAULT_MODEL, query, limit)
     hits = [

@@ -1,44 +1,44 @@
 /**
  * Generic dynamic context fetcher for promptfoo vars.
- * Fetches from any brain REST shim at BRAIN_URL (default: http://localhost:8002).
+ * Fetches from any brain REST shim at BRAIN_URL (default: http://localhost:8003).
  * Two complementary queries per question to improve recall.
  * promptfoo calls this with (varName, prompt, otherVars) and expects { output: string }.
+ *
+ * otherVars recognised:
+ *   BRAIN_URL     — override brain endpoint (env var fallback: BRAIN_URL)
+ *   tag           — tagBoost: RRF bonus for chunks matching tag (does not exclude untagged)
+ *   query_suffix  — corpus-specific terms appended to the secondary query
+ *                   (default: 'specific details findings decisions evidence')
  */
 module.exports = async function (varName, prompt, otherVars) {
   const question = String(otherVars.question || '').trim();
   if (!question) return { error: 'question must be resolved before brain context' };
 
-  const brainUrl = (otherVars.BRAIN_URL || process.env.BRAIN_URL || 'http://localhost:8002')
+  const brainUrl = (otherVars.BRAIN_URL || process.env.BRAIN_URL || 'http://localhost:8003')
     .replace(/\/$/, '');
 
+  const tag = otherVars.tag || undefined;
+  const querySuffix = String(otherVars.query_suffix || 'specific details findings decisions evidence');
+
   async function fetchChunks(query, limit) {
+    const body = { query, limit };
+    if (tag) body.tagBoost = tag;
     const res = await fetch(`${brainUrl}/api/v1/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, limit }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    if (data[0] && !data[0].text) console.warn(`load_brain_context: unexpected response shape`, Object.keys(data[0]));
     const text = (data[0] && data[0].text) ? data[0].text : '';
     return text.split('\n\n---\n\n').filter(Boolean);
   }
 
-  function specificsQuery(q) {
-    const lower = q.toLowerCase();
-    if (lower.includes('action item'))   return q + ' owners decisions commitments requests';
-    if (lower.includes('knowledge gap')) return q + ' unknown unresolved missing information';
-    if (lower.includes('quality risk'))  return q + ' defect error failure blocker';
-    if (lower.includes('test strategy')) return q + ' approach tooling scripts plan baseline';
-    if (lower.includes('integration'))   return q + ' system dependency API connection';
-    if (lower.includes('transition'))    return q + ' handover migration cutover dependency';
-    if (lower.includes('process'))       return q + ' workflow pipeline intake steps';
-    return q + ' specific details findings decisions';
-  }
-
   try {
     const results = await Promise.all([
-      fetchChunks(question, 50),
-      fetchChunks(specificsQuery(question), 30),
+      fetchChunks(question, 50),                                 // primary: broad semantic match
+      fetchChunks(`${question} ${querySuffix}`, 30),             // secondary: steer toward concrete facts
     ]);
     const [primary, secondary] = results;
 

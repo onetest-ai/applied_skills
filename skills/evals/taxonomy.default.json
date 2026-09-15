@@ -1,0 +1,22 @@
+{
+  "intent_taxonomy": {
+    "l1": [
+      "ActionItem",
+      "IntegrationPoint",
+      "KnowledgeGap",
+      "ProcessObservation",
+      "QualityRisk",
+      "TestStrategy",
+      "TransitionDependency"
+    ],
+    "eval_config": {
+      "ActionItem":           {"eval_type": "recall",       "question": "What action items were identified?",            "query_suffix": "owners assigned decisions commitments"},
+      "KnowledgeGap":         {"eval_type": "recall",       "question": "What knowledge gaps were identified?",          "query_suffix": "unknown unresolved missing unclear"},
+      "QualityRisk":          {"eval_type": "recall",       "question": "What quality risks were identified?",           "query_suffix": "risk failure concern issue"},
+      "TestStrategy":         {"eval_type": "faithfulness", "question": "What testing strategies were discussed?",       "query_suffix": "approach plan coverage validation"},
+      "ProcessObservation":   {"eval_type": "faithfulness", "question": "What process observations were made?",          "query_suffix": "workflow steps procedure observed"},
+      "IntegrationPoint":     {"eval_type": "completeness", "question": "What integration points were identified?",      "query_suffix": "dependency connection interface interaction"},
+      "TransitionDependency": {"eval_type": "completeness", "question": "What transition dependencies were identified?", "query_suffix": "dependency handover prerequisite sequence"}
+    }
+  }
+}

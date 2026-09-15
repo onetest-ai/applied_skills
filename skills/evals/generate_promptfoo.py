@@ -97,12 +97,15 @@ def main(argv=None):
 
     tests = []
     for row in rows:
+        vars_ = {
+            "question": row["question"],
+            "context": js_file_ref,
+        }
+        if row.get("query_suffix"):
+            vars_["query_suffix"] = row["query_suffix"]
         tests.append({
             "description": f"[{row['eval_id']}] {row['category']} | {row['scope']} | {row['question'][:60]}",
-            "vars": {
-                "question": row["question"],
-                "context": js_file_ref,
-            },
+            "vars": vars_,
             "assert": [{"type": "llm-rubric", "value": build_rubric(row)}],
             "metadata": {
                 "eval_id": row["eval_id"],

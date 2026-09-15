@@ -240,6 +240,7 @@ def search_knowledge(
     latest_only: Annotated[bool, SkipValidation, Field(description="Exclude chunks marked SUPERSEDED")] = False,
     source_contains: Annotated[str | None, SkipValidation, Field(description="Optional literal source-path substring")] = None,
     tag: Annotated[str | None, SkipValidation, Field(description="Optional exact taxonomy tag")] = None,
+    tag_boost: Annotated[str | None, SkipValidation, Field(description="Optional taxonomy tag for RRF score boost (does not exclude untagged chunks)")] = None,
 ) -> dict | ToolResult:
     """Search narrative evidence with hybrid BM25+vector retrieval and source citations.
 
@@ -254,12 +255,12 @@ def search_knowledge(
     if not isinstance(latest_only, bool):
         return _error_result("search_knowledge", "invalid_arguments", "latest_only must be a boolean")
     optional = []
-    for field, value in (("as_of", as_of), ("source_contains", source_contains), ("tag", tag)):
+    for field, value in (("as_of", as_of), ("source_contains", source_contains), ("tag", tag), ("tag_boost", tag_boost)):
         valid, error = _optional_string("search_knowledge", field, value)
         if error:
             return error
         optional.append(valid)
-    return _safe_call("search_knowledge", _search_knowledge, valid_query, valid_limit, optional[0], latest_only, optional[1], optional[2])
+    return _safe_call("search_knowledge", _search_knowledge, valid_query, valid_limit, optional[0], latest_only, optional[1], optional[2], optional[3])
 
 
 @mcp.tool(tags={"temporal", "facts"})
@@ -397,10 +398,14 @@ async def search_shim(request: Request) -> JSONResponse:
         limit = max(1, min(int(body.get("limit") or 15), 100))
     except (TypeError, ValueError):
         limit = 15
+    tag_boost_raw = body.get("tagBoost")
+    tag_boost, tag_boost_err = _optional_string("search_shim", "tagBoost", tag_boost_raw)
+    if tag_boost_err:
+        return JSONResponse({"error": f"tagBoost must be a string"}, status_code=400)
     result = _safe_call(
         "search_knowledge", _search_knowledge, query, limit,
         body.get("asOf"), bool(body.get("latestOnly", False)),
-        body.get("sourceContains"), body.get("tag"),
+        body.get("sourceContains"), body.get("tag"), tag_boost,
     )
     # _safe_call returns a dict with key "hits" (list of chunk dicts)
     hits = []

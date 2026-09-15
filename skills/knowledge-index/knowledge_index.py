@@ -356,7 +356,7 @@ def _search_filter(as_of=None, latest_only=False, source_contains=None, tag=None
         params.append(tag)
     return clauses, params
 
-def search(c, model, query, k, as_of=None, latest_only=False, source_contains=None, tag=None):
+def search(c, model, query, k, as_of=None, latest_only=False, source_contains=None, tag=None, tag_boost=None):
     qv = embed(model, [query])[0]
     chunk_cols = {row[1] for row in c.execute("PRAGMA table_info(chunks)")}
     if as_of and not {"valid_from", "valid_to"}.issubset(chunk_cols):
@@ -385,6 +385,16 @@ def search(c, model, query, k, as_of=None, latest_only=False, source_contains=No
     for w, lst in ((W_FTS, fts), (W_VEC, vec)):
         for rank, rid in enumerate(lst, 1):
             score[rid] = score.get(rid, 0.0) + w / (RRF_K + rank)
+    # tag_boost: add a fractional RRF bonus for chunks matching the tag — does NOT exclude untagged chunks
+    if tag_boost and _has(c, "chunk_topics") and score:
+        ids = list(score.keys())
+        placeholders = ",".join("?" * len(ids))
+        boosted = {r[0] for r in c.execute(
+            f"SELECT chunk_id FROM chunk_topics WHERE category_label=? AND chunk_id IN ({placeholders})",
+            (tag_boost, *ids),
+        )}
+        for rid in boosted:
+            score[rid] += W_VEC / (RRF_K + 1)
     top = sorted(score, key=score.get, reverse=True)[:k]
     out = []
     for rid in top:

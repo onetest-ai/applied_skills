@@ -27,7 +27,7 @@ batch_*.json
 .codex/
 .dsh/
 .github/
-
+docs
 # Eval output artifacts — generated per-run, not committed
 evals/temporal_cross_session.csv
 retrieval-results.json
