@@ -7,8 +7,11 @@ Reads consolidate.py output (+ the raw map dir for demoted terms) and writes:
 
 Usage: emit_taxonomy.py --consolidated <file> --map-dir <dir> --out-json <f> --out-md <f> --goal "<text>"
 """
-import argparse, glob, json, os, re
+import argparse, glob, json, os, re, sys
 from collections import Counter
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from flags import near_duplicate_labels, off_axis_l1
 
 def norm(s):
     s = (s or "").lower().strip()
@@ -78,14 +81,35 @@ def main():
         except Exception:
             pass
 
+    l1_labels = [c["canonical_guess"] for c in l1]
+
+    # ---- review flags (advisory only; taxonomy above is unchanged) ----
+    dup_groups = near_duplicate_labels(l1_labels)
+    off_axis = [{"label": lbl, "reason": r}
+                for lbl in l1_labels
+                for r in [off_axis_l1(lbl)] if r]
+    review_flags = {
+        "near_duplicate_l1_groups": dup_groups,
+        "off_axis_l1_candidates": off_axis,
+        "note": "Advisory only, tuned for recall (false positives expected). "
+                "A human prompt, not a gate: nothing here auto-merges or "
+                "auto-removes taxonomy entries.",
+    }
+
     out = {"goal": a.goal, "summary": con["summary"],
-           "intent_taxonomy": {"l1": [c["canonical_guess"] for c in l1],
+           "intent_taxonomy": {"l1": l1_labels,
                                "tree": {k: [x["canonical_guess"] for x in v] for k, v in tree.items()},
                                "unassigned_l2": [c["canonical_guess"] for c in unassigned]},
            "metrics": metrics,
            "entities": {k: [c["canonical_guess"] for c in v] for k, v in ents.items()},
-           "demoted": demoted.most_common()}
+           "demoted": demoted.most_common(),
+           "review_flags": review_flags}
     json.dump(out, open(a.out_json, "w"), indent=2)
+
+    if dup_groups or off_axis:
+        print(f"review flags: {len(dup_groups)} near-duplicate L1 group(s), "
+              f"{len(off_axis)} off-axis L1 candidate(s) — see taxonomy_v0.md §5",
+              file=sys.stderr)
 
     # ---- markdown ----
     L = []
@@ -133,6 +157,19 @@ def main():
     if demoted:
         L.append("\n## 4. Demoted (seen but off-goal — not deleted)\n")
         L.append(", ".join(f"{d} ({n})" for d, n in demoted.most_common(40)))
+
+    if dup_groups or off_axis:
+        L.append("\n## 5. Review flags (advisory — human gate, not applied)\n")
+        L.append("> Heuristic, tuned for recall: expect false positives. Nothing here "
+                  "auto-merges or auto-removes taxonomy entries; use it as a checklist.\n")
+        if dup_groups:
+            L.append("\n**Near-duplicate L1 labels — consider merging:**\n")
+            for g in dup_groups:
+                L.append(f"  - {g}")
+        if off_axis:
+            L.append("\n**Off-axis L1 candidates — consider demoting/removing:**\n")
+            for f in off_axis:
+                L.append(f"  - **{f['label']}** — {f['reason']}")
 
     open(a.out_md, "w").write("\n".join(L) + "\n")
     print(f"wrote {a.out_json} and {a.out_md}")
