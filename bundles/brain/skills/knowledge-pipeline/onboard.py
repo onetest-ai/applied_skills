@@ -83,6 +83,11 @@ def cmd_scan(a):
     print(f"  present: {', '.join(ok) or 'none'}")
     print(f"  MISSING: {', '.join(missing) or 'none'}"
           + (f"   →  pip install {' '.join(missing)}" if missing else ""))
+    # LibreOffice `soffice` is a SYSTEM dep (not pip): .pptx/.docx rendering
+    # silently fails without it. Check PATH and warn — PDFs need only pymupdf.
+    import shutil
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    print(f"  soffice (LibreOffice, for .pptx/.docx): {soffice or 'MISSING'}")
     if docs is not None:
         nar, rep, oth = _scan_docs(docs)
         print(f"\n== corpus scan: {docs} ==")
@@ -94,6 +99,10 @@ def cmd_scan(a):
             print("  ⚠ no narrative docs found — the RAG/taxonomy lanes will be empty.")
         if not rep:
             print("  ⚠ no reporting spreadsheets — the numeric (marts) lane will be empty.")
+        office = [p for p in nar if p.suffix.lower() in {".pptx", ".ppt", ".docx", ".doc"}]
+        if office and not soffice:
+            print(f"  ⚠ {len(office)} Office doc(s) (.pptx/.docx) but LibreOffice `soffice` "
+                  "is MISSING — these will fail to render. Install LibreOffice first.")
     return 0
 
 
@@ -288,6 +297,25 @@ def cmd_verify(a):
             empty.append(lane)
         flag = " ⚠ EMPTY" if primary in (None, 0) else ""
         print(f"  {lane:18s} {'  '.join(parts)}{flag}")
+
+    # Classification completeness: batch validation only proves the DISPATCHED
+    # chunks came back — it never checks coverage of the whole population. A
+    # build can look "complete" with a large share of chunks carrying no topic,
+    # silently degrading taxonomy-routed answers. Surface it here.
+    total = count("chunks")
+    unclassified = None
+    if total and "chunk_topics" in tables:
+        try:
+            unclassified = con.execute(
+                "SELECT COUNT(*) FROM chunks c "
+                "WHERE NOT EXISTS (SELECT 1 FROM chunk_topics t WHERE t.chunk_id = c.id)"
+            ).fetchone()[0]
+        except Exception:
+            unclassified = None
+    if unclassified is not None and total:
+        pct = 100.0 * unclassified / total
+        warn = " ⚠ high — review the classification pass" if pct > 10 else ""
+        print(f"  {'unclassified':18s} {unclassified}/{total} chunks ({pct:.1f}%){warn}")
 
     # smoke retrieval
     if count("chunks"):

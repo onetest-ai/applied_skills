@@ -209,6 +209,15 @@ def build_status(profile: dict[str, Any]) -> dict[str, Any]:
         tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         counts = {table: con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                   for table in ("sources", "documents", "chunks", "chunk_topics", "facts", "related") if table in tables}
+        # Classification coverage: chunks carrying no topic. Batch validation only
+        # proves dispatched chunks returned; it never checks whole-population
+        # coverage, so surface the unclassified share for the human gate.
+        unclassified_chunks = None
+        if "chunks" in tables and "chunk_topics" in tables and counts.get("chunks"):
+            unclassified_chunks = con.execute(
+                "SELECT COUNT(*) FROM chunks c "
+                "WHERE NOT EXISTS (SELECT 1 FROM chunk_topics t WHERE t.chunk_id = c.id)"
+            ).fetchone()[0]
         registered_kinds = ({r["source_id"]: r["source_kind"] for r in con.execute("SELECT source_id,source_kind FROM sources")}
                             if "sources" in tables else {})
     actions = Counter(item["action"] for item in source_plan["actions"])
@@ -271,6 +280,12 @@ def build_status(profile: dict[str, Any]) -> dict[str, Any]:
         "strict_source_error": strict_error,
         "unmanaged_documents": unmanaged,
         "store_counts": counts,
+        "classification_coverage": {
+            "chunks": counts.get("chunks"),
+            "unclassified_chunks": unclassified_chunks,
+            "unclassified_pct": (round(100.0 * unclassified_chunks / counts["chunks"], 1)
+                                 if unclassified_chunks is not None and counts.get("chunks") else None),
+        },
         "empty_required_lanes": empty_required_lanes,
         "classification": {"required_after_apply": bool(narrative_work or parsed_delta["added"] or parsed_delta["changed"]), "chunk_ids": "from sync_plan.json after apply"},
         "deployment": {"enabled": bool(profile["deployment"].get("enabled", False)), "preview_only": True,
