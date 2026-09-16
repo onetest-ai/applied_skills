@@ -5,9 +5,10 @@ One portable file, no server (pattern lifted from github.com/arozumenko/wikis:
 BM25 + vector, Reciprocal Rank Fusion). Torch-free embeddings via fastembed/onnx.
 Feed it parser/plain Markdown; it chunks, embeds, and serves hybrid recall.
 
-  index  --db K.sqlite --corpus DIR [--model M] [--max-chars N] [--reset]
-  search        --db K.sqlite --query "..." [--k 8] [--json]
+  index         --db K.sqlite --corpus DIR [--model M] [--max-chars N] [--reset]
+  search        --db K.sqlite --query "..." [--k 8] [--json] [--full | --chars N]
   temporal-load --db K.sqlite --ledger temporal.json
+  sources       --db K.sqlite [--like SUBSTR] [--json]
 
 Deps: sqlite-vec, fastembed  (pip install sqlite-vec fastembed).
 Lives in the SAME sqlite file as the numeric marts + graph tables, so one
@@ -441,10 +442,38 @@ def cmd_search(a):
             r["note"] = np(r["source"], r.get("ord", 0), r.get("title"))
     if a.json:
         print(json.dumps(res, indent=2)); return
+    # snippet length: --full prints the whole chunk, --chars N overrides the default cap
+    # (N=0 is honored, not treated as unset).
+    chars = getattr(a, "chars", None)
+    limit = None if getattr(a, "full", False) else (240 if chars is None else chars)
     print(f"query: {res['query']}  (fts={res['fts_hits']} vec={res['vec_hits']})\n")
     for r in res["results"]:
+        text = ' '.join(r['text'].split())
+        snippet = text if limit is None else text[:limit]
         print(f"[{r['score']}] {r['source'][:55]}" + (f"\n   vault: {r['note']}.md" if r.get("note") else "")
-              + f"\n   {' '.join(r['text'].split())[:240]}\n")
+              + f"\n   {snippet}\n")
+
+def sources_list(c, like=None):
+    """Distinct indexed source docs with chunk counts — a catalog so callers don't have
+    to guess filename substrings via search. Optional `like` substring filter."""
+    if not _has(c, "chunks"):
+        return []
+    sql = "SELECT source, COUNT(*) FROM chunks"
+    params = ()
+    if like:
+        sql += " WHERE source LIKE ?"; params = (f"%{like}%",)
+    sql += " GROUP BY source ORDER BY source"
+    return [{"source": s, "chunks": n} for s, n in c.execute(sql, params)]
+
+def cmd_sources(a):
+    rows = sources_list(connect(a.db), a.like)
+    if a.json:
+        print(json.dumps({"sources": rows, "count": len(rows)}, indent=2)); return
+    if not rows:
+        print("(no indexed sources)"); return
+    for r in rows:
+        print(f"{r['chunks']:>6}  {r['source']}")
+    print(f"\n{len(rows)} source(s), {sum(r['chunks'] for r in rows)} chunk(s)")
 
 def cmd_temporal_load(a):
     from temporal_memory import load_ledger
@@ -528,6 +557,8 @@ if __name__ == "__main__":
             p.add_argument("--delete", help="comma list of source relpaths to remove from the index")
         elif name == "search":
             p.add_argument("--query", required=True); p.add_argument("--k", type=int, default=8); p.add_argument("--json", action="store_true")
+            p.add_argument("--full", action="store_true", help="print the full chunk text (no snippet cap)")
+            p.add_argument("--chars", type=int, help="snippet length cap in chars (default 240; ignored with --full)")
             p.add_argument("--as-of", help="event-time cutoff (ISO date or timestamp)")
             p.add_argument("--latest-only", action="store_true", help="exclude SUPERSEDED chunks")
             p.add_argument("--source-contains", help="safe literal source-path substring")
@@ -549,7 +580,13 @@ if __name__ == "__main__":
             p.add_argument("--evals", required=True, help="CSV with eval_id,query,expected_sources")
             p.add_argument("--k", type=int, default=5)
             p.add_argument("--output", help="optional JSON report path")
+    # `sources`: catalog of indexed docs (chunks table only; no model/embeddings needed).
+    ps = sub.add_parser("sources")
+    ps.add_argument("--db", required=True)
+    ps.add_argument("--like", help="substring filter on source path")
+    ps.add_argument("--json", action="store_true")
     a = ap.parse_args()
     {"index": cmd_index, "search": cmd_search, "related": cmd_related,
      "temporal-load": cmd_temporal_load, "supersede": cmd_supersede,
-     "add-edge": cmd_add_edge, "benchmark": cmd_benchmark}[a.cmd](a)
+     "add-edge": cmd_add_edge, "benchmark": cmd_benchmark,
+     "sources": cmd_sources}[a.cmd](a)

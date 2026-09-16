@@ -64,14 +64,47 @@ def _read_goal_audience(db):
     return goal, audience
 
 
+def read_meta(c, key):
+    """Current value of a meta key, or '' (also '' for a store that predates the table)."""
+    if not _has(c, "meta"):
+        return ""
+    row = c.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+    return (row[0] if row else "") or ""
+
+
 def write_meta(c, db):
-    """UPSERT goal + audience into meta (idempotent; re-seeding refreshes them)."""
+    """UPSERT goal + audience into meta (idempotent; re-seeding refreshes them).
+    Returns (goal, audience, drift) where `drift` is the PRIOR goal when it was non-empty
+    and differs from the new one, else None — a changed goal silently reshapes the whole
+    taxonomy, so callers surface it."""
     ensure_meta(c)
     goal, audience = _read_goal_audience(db)
+    prior_goal = read_meta(c, "goal")
+    drift = prior_goal if (prior_goal and prior_goal != goal) else None
     for key, value in (("goal", goal), ("audience", audience)):
         c.execute("INSERT INTO meta(key,value) VALUES(?,?) "
                   "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
-    return goal, audience
+    return goal, audience, drift
+
+
+def enforce_goal(goal, drift, *, require, context):
+    """Governance gate. Always flags goal DRIFT (reshapes taxonomy). Empty goal = an
+    ungoverned store (no analytical scope recorded): warn, or — under `require` — refuse
+    with exit 3. Returns True when the goal is present."""
+    if drift is not None:
+        print(f"⚠️  GOAL DRIFT ({context}): goal changed from {drift!r} to {goal!r} — this "
+              f"reshapes the whole taxonomy; re-run extraction if the taxonomy should follow.",
+              file=sys.stderr)
+    if not goal:
+        msg = (f"meta.goal is empty ({context}): the store records no analytical goal — "
+               f"it is ungoverned.")
+        if require:
+            print(f"❌ {msg} Refusing to proceed (--require-goal). Write goal.txt and re-run.",
+                  file=sys.stderr)
+            sys.exit(3)
+        print(f"⚠️  {msg} Set goal.txt to govern it.", file=sys.stderr)
+        return False
+    return True
 
 
 def sha_file(p):
@@ -235,6 +268,13 @@ def cmd_plan(a):
 
 def cmd_apply(a):
     import knowledge_index as K
+    # Governance gate BEFORE any embedding/publish work: refuse to publish an ungoverned
+    # store when --require-goal is set. (goal is resolvable from goal.txt without the DB.)
+    pre_goal, _ = _read_goal_audience(a.db)
+    if a.require_goal and not pre_goal:
+        print("❌ meta.goal is empty (apply): refusing to publish an ungoverned store "
+              "(--require-goal). Write goal.txt and re-run.", file=sys.stderr)
+        sys.exit(3)
     if not a.no_snapshot and os.path.exists(a.db):
         snap = f"{a.db}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
         shutil.copy2(a.db, snap)
@@ -268,6 +308,7 @@ def cmd_apply(a):
             sid = links.get(doc) or (prior[0] if prior else None)
             c.execute("INSERT OR REPLACE INTO synced_files(doc_id,sha,bytes,mtime,updated_at,source_id) VALUES(?,?,?,?,?,?)",
                       (doc, m["sha"], m["bytes"], m["mtime"], ts, sid))
+        goal, audience, drift = write_meta(c, a.db)   # apply is a publish path: re-assert governance
         c.commit()
     except Exception as e:
         c.rollback(); c.close()
@@ -298,11 +339,29 @@ def cmd_apply(a):
         print("  → Haiku agents → classify_write.py (incremental) → build_graph.py → to_obsidian.py --clean")
     else:
         print("no doc changes — RAG lane already current.")
+    # surface governance (hard --require-goal fail already handled up front)
+    enforce_goal(goal, drift, require=False, context="apply")
+
+
+def cmd_about(a):
+    """Print the store's recorded analytical goal + audience (the governance record)."""
+    c = sqlite3.connect(a.db)
+    goal, audience = read_meta(c, "goal"), read_meta(c, "audience")
+    c.close()
+    print(f"goal:     {goal or '(unset — ungoverned store)'}")
+    print(f"audience: {audience or '(unset)'}")
 
 
 def cmd_seed(a):
     """Record the current parsed corpus's hashes into `documents` WITHOUT re-embedding
     — run once right after a full build so later plan/apply can compute deltas."""
+    # Governance gate up front (before any work), mirroring cmd_apply: refuse to seed an
+    # ungoverned store when --require-goal is set. (goal is resolvable from goal.txt.)
+    pre_goal, _ = _read_goal_audience(a.db)
+    if a.require_goal and not pre_goal:
+        print("❌ meta.goal is empty (seed): refusing to seed an ungoverned store "
+              "(--require-goal). Write goal.txt and re-run.", file=sys.stderr)
+        sys.exit(3)
     import knowledge_index as K
     c = K.connect(a.db)
     K._ensure_schema(c, a.dim)  # migrate legacy brain_sync documents→synced_files if needed
@@ -315,13 +374,14 @@ def cmd_seed(a):
         sid = links.get(doc) or (prior[0] if prior else None)
         c.execute("INSERT OR REPLACE INTO synced_files(doc_id,sha,bytes,mtime,updated_at,source_id) VALUES(?,?,?,?,?,?)",
                   (doc, m["sha"], m["bytes"], m["mtime"], ts, sid))
-    goal, audience = write_meta(c, a.db)
+    goal, audience, drift = write_meta(c, a.db)
     c.commit()
     print(f"seeded documents with {len(now)} doc hashes -> {a.db}"
           + (f" ({len(unmanaged)} unmanaged)" if unmanaged else ""))
     print(f"meta refreshed: goal={'set' if goal else 'empty'}, "
           f"audience={'set' if audience else 'empty'}")
     c.close()
+    enforce_goal(goal, drift, require=False, context="seed")  # hard --require-goal fail handled up front
 
 
 def cmd_rollback(a):
@@ -336,10 +396,10 @@ def cmd_rollback(a):
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("plan", "apply", "seed", "rollback"):
+    for name in ("plan", "apply", "seed", "rollback", "about"):
         p = sub.add_parser(name)
         p.add_argument("--db", required=True)
-        if name != "rollback":
+        if name not in ("rollback", "about"):
             p.add_argument("--parsed", required=True, help="dir of parsed *.md (the RAG corpus)")
             p.add_argument("--model", default="BAAI/bge-small-en-v1.5")
             p.add_argument("--dim", type=int, default=384)
@@ -347,12 +407,16 @@ def main():
             p.add_argument("--manifest", help="parse manifest (default: <parsed>/manifest.json)")
             p.add_argument("--root-key", help="source registry root key for manifest source paths")
             p.add_argument("--strict-sources", action="store_true", help="reject parsed docs not linked to active registered sources")
+        if name in ("seed", "apply"):
+            p.add_argument("--require-goal", action="store_true",
+                           help="refuse (exit 3) to seed/publish a store whose meta.goal is empty — governance gate")
         if name == "apply":
             p.add_argument("--out", help="where to write sync_plan.json (default: next to the db)")
             p.add_argument("--no-snapshot", action="store_true")
             p.add_argument("--no-related", action="store_true", help="skip rebuilding the semantic related layer")
     a = ap.parse_args()
-    {"plan": cmd_plan, "apply": cmd_apply, "seed": cmd_seed, "rollback": cmd_rollback}[a.cmd](a)
+    {"plan": cmd_plan, "apply": cmd_apply, "seed": cmd_seed, "rollback": cmd_rollback,
+     "about": cmd_about}[a.cmd](a)
 
 
 if __name__ == "__main__":

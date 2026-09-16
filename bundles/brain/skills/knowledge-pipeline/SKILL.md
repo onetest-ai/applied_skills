@@ -120,7 +120,11 @@ python .../corpus-taxonomy-extraction/to_obsidian.py --db "$DB" --out <project>/
 #    seed also UPSERTs the durable meta table (goal from goal.txt, audience from
 #    brain.toml [project].audience) that health() exposes as `about`. Re-run seed
 #    (no rebuild needed) whenever the goal or audience changes to refresh meta.
-python .../knowledge-pipeline/brain_sync.py seed --db "$DB" --parsed <project>/parsed
+#    GOVERNANCE: pass --require-goal to seed/apply to REFUSE (exit 3) an ungoverned
+#    store (empty meta.goal); a changed goal is flagged as GOAL DRIFT (it reshapes the
+#    whole taxonomy). `apply` (publish path) also refreshes meta, so a build can't ship
+#    ungoverned. Inspect the recorded goal/audience anytime with `./brain about`.
+python .../knowledge-pipeline/brain_sync.py seed --db "$DB" --parsed <project>/parsed --require-goal
 ```
 Chunk ids are deterministic (`f(source, section-ordinal)`), so an unchanged document with unchanged section boundaries keeps its ids across rebuilds. During an update, changed documents are delete-then-reindexed and their new chunk ids are explicitly reclassified; unchanged documents keep their tags/graph edges.
 Result: one `knowledge.sqlite` — `chunks`/`chunks_fts`/`chunks_vec` (a chunk = a section = an Obsidian note), `chunk_topics` (real per-section taxonomy tags via low-tier agents), `facts` (marts), `graph_nodes`/`graph_edges` (taxonomy vertices + `subclass_of` + `about` edges to chunks). Check the `build_marts` audit (`--strict` in CI). The vault is generated from the store, so notes, retrieval chunks, tags, and graph all reference the same ids.

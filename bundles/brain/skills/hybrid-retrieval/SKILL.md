@@ -28,9 +28,9 @@ This is the *retrieval* half; the store is produced by the **build** skills (`kn
 2. **Classify each** by the metric's `source_type` (from the metric catalog / taxonomy):
    - `computable` → marts. `stated` → RAG. `both` → marts + reconcile. Pure narrative → RAG. Category/relation → graph.
 3. **Retrieve** (all against the one `<project>/schema/knowledge.sqlite`):
-   - Marts: `python query.py --db knowledge.sqlite --catalog <project>/schema/metrics.<corpus>.json --metric <m> [--grain --entity|--entity-like --month|--months]`. `--list` for governed metrics; `--sql` for aggregates/joins.
+   - Marts: `python query.py --db knowledge.sqlite --catalog <project>/schema/metrics.<corpus>.json --metric <m> [--grain --entity|--entity-like --month|--months]`. `--list` for governed metrics; `--describe <m>` for a metric's spec + `definition`/provenance; `--sql` for aggregates/joins. A REPORTED composite metric (occupancy, AHT, service level) carries a `definition` — cite it and never reconstruct the value from primitives.
    - RAG: `python knowledge_index.py search --db knowledge.sqlite --query "..." [--k 8] [--json]` (BM25+vector RRF; returns cited chunks).
-   - Graph: `--sql "SELECT … FROM graph_nodes JOIN graph_edges …"` (taxonomy L1↔L2, entity kinds; recursive CTE for multi-hop).
+   - Graph: `--sql "SELECT … FROM graph_nodes JOIN graph_edges …"` (taxonomy L1↔L2 via `subclass_of`, entity kinds; **problem→capability traceability via `addressed_by`** when a capability taxonomy is layered in; recursive CTE for multi-hop).
 4. **Reconcile** `both`-class: report the computed value as authoritative; note the stated value and any gap.
 5. **Compose** one answer: tag each fact `[MART: file]`, `[NARRATIVE]`, or `[STATED: doc]`.
 
@@ -54,6 +54,8 @@ python query.py --db "$DB" --sql "SELECT sum(value) FROM facts WHERE family='<f>
 python knowledge_index.py search --db "$DB" --query "why did X change" --k 8
 # taxonomy graph — L2 children of an L1
 python query.py --db "$DB" --sql "SELECT n.label FROM graph_nodes n JOIN graph_edges e ON e.source=n.id WHERE e.rel='subclass_of' AND e.target='billing_disputes'"
+# problem -> capability traceability — which capability/pillar addresses an intent (a JOIN, not narrative synthesis)
+python query.py --db "$DB" --sql "SELECT cap.label FROM graph_nodes i JOIN graph_edges e ON e.source=i.id AND e.rel='addressed_by' JOIN graph_nodes cap ON cap.id=e.target WHERE i.label='Billing Disputes'"
 ```
 
 ## Output shape
