@@ -281,10 +281,15 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     #     → N Haiku subagents read classify/{{instructions,vocab,batch_k}} → write classify/result_k.json
     "$PY" "{CTE/'classify_write.py'}" --db "$DB" --results "{proj/'classify'}"
 
-    # 6 · numeric marts (Excel → facts) into the SAME db   [edit {fam.name} first!]
+    # 6 · temporal fact intake (docs + transcripts → evidence-backed assertions)
+    "$PY" "{KI/'fact_prep.py'}" --db "$DB" --out "{proj/'facts'}"
+    # 🤖 dispatch low-tier agents: read facts/instructions.md + facts/batch_*.json → facts/result_*.json
+    "$PY" "{KI/'fact_write.py'}" --db "$DB" --results "{proj/'facts'}" --report "{proj/'facts'/'fact_intake_report.json'}" --apply
+
+    # 7 · numeric marts (Excel → facts) into the SAME db   [edit {fam.name} first!]
     "$PY" "{TSL/'build_marts.py'}" --root "{rep_s}" --config "{fam}" --out-dir "{proj/'marts'}" --db "$DB" --strict
 
-    # 7 · Obsidian vault = a VIEW of the store
+    # 8 · Obsidian vault = a VIEW of the store
     "$PY" "{CTE/'to_obsidian.py'}" --db "$DB" --out "{proj/'vault'}"
 
     # verify the built store

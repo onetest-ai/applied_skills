@@ -63,6 +63,25 @@ class OnboardSourceConfigTests(unittest.TestCase):
             self.assertIn("ops managers", plan)
             self.assertIn("Audience", plan)
 
+    def test_run_script_includes_fact_intake_stage(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            docs = root / "docs"; docs.mkdir()
+            project = root / "brain"
+            result = subprocess.run([
+                sys.executable, str(SCRIPT), "scaffold",
+                "--project", str(project), "--goal", "test goal",
+                "--docs", str(docs),
+            ], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            plan = (project / "BRAIN.md").read_text()
+            self.assertIn("fact_prep.py", plan)
+            self.assertIn("fact_write.py", plan)
+            self.assertIn("--apply", plan)
+            # fact intake runs after narrative indexing/classify, before verify.
+            self.assertLess(plan.index("classify_write.py"), plan.index("fact_prep.py"))
+            self.assertLess(plan.index("fact_write.py"), plan.index("verify --db"))
+
     def test_scaffold_does_not_overwrite_existing_brain_toml(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td); project = root / "brain"; project.mkdir()
