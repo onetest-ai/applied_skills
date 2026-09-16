@@ -4,7 +4,7 @@ import sys
 import unittest
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent / "skills" / "tabular-semantic-layer"
 sys.path.insert(0, str(HERE))
 
 try:
