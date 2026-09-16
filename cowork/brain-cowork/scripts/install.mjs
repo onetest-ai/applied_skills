@@ -180,6 +180,7 @@ const copyDir = (src, dst) => {
   mkdirSync(dst, { recursive: true });
   for (const entry of readdirSync(src, { withFileTypes: true })) {
     if (entry.name === "brain-librarian" && src.endsWith("skills")) continue; // already stamped above
+    if (entry.name === ".env") continue; // never copy credentials into dist
     const s = join(src, entry.name);
     const d = join(dst, entry.name);
     if (entry.isDirectory()) copyDir(s, d);
