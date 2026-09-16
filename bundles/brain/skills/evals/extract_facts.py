@@ -17,7 +17,8 @@ from pathlib import Path
 
 _EXTRACT_PROMPT_TEMPLATE = """\
 You are a fact-extraction assistant. Given a meeting transcript in Markdown format \
-and a list of taxonomy categories, extract verbatim quotes that belong to each category.
+and a list of taxonomy categories, extract the most informative verbatim quotes \
+that belong to each category.
 
 ## Taxonomy categories
 {categories}
@@ -26,12 +27,21 @@ and a list of taxonomy categories, extract verbatim quotes that belong to each c
 {transcript}
 
 ## Instructions
-- For each category, find 1-3 SHORT verbatim (or near-verbatim) quotes from the transcript \
-that clearly belong to that category.
-- A quote must be a complete thought or sentence fragment that makes sense on its own.
-- Skip a category if nothing in the transcript matches it.
-- Return ONLY a JSON array.  No markdown fences, no commentary.
-- Schema for each item: {{"category": "<category>", "verbatim_quote": "<quote>"}}
+- For each category, find 1-3 verbatim quotes from the transcript that clearly belong \
+to that category.
+- QUALITY BAR — every quote must pass this test: could a new team member read this \
+quote alone and learn something concrete? If not, skip it.
+  GOOD: "we need to migrate from AEM to Contentful by end of Q1 — SRC has approved the budget"
+  GOOD: "the publish button gives an error when mandatory fields are empty — reproduced in ACC"
+  GOOD: "assign the logging task to Rafael by Friday"
+  BAD: "we as a Scrum master" (fragment — no concrete information)
+  BAD: "can you be able to reproduce it now?" (question — no fact stated)
+  BAD: "I will share you the links" (vague — no subject, no context)
+- A quote must contain: WHO or WHAT, plus a concrete action, decision, risk, or finding.
+- Prefer longer complete sentences over short fragments — 15-60 words is ideal.
+- Skip a category if no quote meets the quality bar.
+- Return ONLY a JSON array. No markdown fences, no commentary.
+- Schema: {{"category": "<category>", "verbatim_quote": "<quote>"}}
 - Example: [{{"category": "ActionItem", "verbatim_quote": "assign the logging task to Rafael by Friday"}}]
 """
 

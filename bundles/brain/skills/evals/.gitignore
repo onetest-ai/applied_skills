@@ -1,0 +1,7 @@
+# Generated artifacts — contain verbatim quotes from client transcripts (sensitive)
+*_extraction.json
+evals.csv
+evals_*.csv
+promptfooconfig.yaml
+results.json
+extractions/
