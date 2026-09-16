@@ -23,7 +23,10 @@ CREATE TABLE IF NOT EXISTS memory_assertions(
   source TEXT NOT NULL,
   segment_id TEXT NOT NULL,
   authority INTEGER NOT NULL DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'asserted'
+  status TEXT NOT NULL DEFAULT 'asserted',
+  evidence TEXT,
+  sentiment TEXT,
+  stance TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_memory_fact
   ON memory_assertions(entity, predicate, asserted_at);
@@ -70,6 +73,10 @@ def ensure_schema(con: sqlite3.Connection) -> None:
     # preserves the caller's outer transaction (if any).
     for stmt in (s.strip() for s in SCHEMA.split(";") if s.strip()):
         con.execute(stmt)
+    cols = {r[1] for r in con.execute("PRAGMA table_info(memory_assertions)")}
+    for col, decl in (("evidence", "TEXT"), ("sentiment", "TEXT"), ("stance", "TEXT")):
+        if col not in cols:
+            con.execute(f"ALTER TABLE memory_assertions ADD COLUMN {col} {decl}")
 
 
 def _insert_immutable(con: sqlite3.Connection, table: str, columns: list[str], values: list[Any]) -> None:
@@ -96,13 +103,14 @@ def load_ledger(con: sqlite3.Connection, ledger: dict[str, Any]) -> dict[str, in
             _insert_immutable(
                 con,
                 "memory_assertions",
-                ["assertion_id", "entity", "predicate", "value_json", "asserted_at", "ingested_at", "source", "segment_id", "authority", "status"],
+                ["assertion_id", "entity", "predicate", "value_json", "asserted_at", "ingested_at", "source", "segment_id", "authority", "status", "evidence", "sentiment", "stance"],
                 [
                     item["assertion_id"], item["entity"], item["predicate"],
                     json.dumps(item["value"], sort_keys=True, separators=(",", ":")),
                     _timestamp(item["asserted_at"]), _timestamp(item["ingested_at"]),
                     item["source"], item["segment_id"], int(item.get("authority", 0)),
                     item.get("status", "asserted"),
+                    item.get("evidence", ""), item.get("sentiment", "neutral"), item.get("stance", ""),
                 ],
             )
         assertions = {
