@@ -1,0 +1,4 @@
+.env
+dist/
+brain.config.json
+.claude-plugin/plugin.json

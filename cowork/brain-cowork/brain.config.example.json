@@ -1,0 +1,10 @@
+{
+  "brainName": "my-project-brain",
+  "displayName": "My Project Brain",
+  "mcpEndpoint": "https://my-mcp-endpoint.example.com/mcp",
+  "apiKeyEnvVar": "MY_BRAIN_API_KEY",
+  "port": 4318,
+  "codemie": {
+    "gatewayUrl": "https://codemie.lab.epam.com"
+  }
+}
