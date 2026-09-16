@@ -85,7 +85,10 @@ def run(con, results, aliases, embed_fn, judge_fn, high, low, now_iso, apply=Fal
     T.ensure_schema(con)
     existing = list({(r[0], r[1]) for r in con.execute(
         "SELECT DISTINCT entity, predicate FROM memory_assertions")})
+    existing_ids = {r[0] for r in con.execute("SELECT assertion_id FROM memory_assertions")}
     bands = {"exact": 0, "auto": 0, "review": 0, "distinct": 0}
+    merge_items = []
+    review_count = 0
 
     # Pass 1: parse + canonicalize every item into a candidate assertion.
     assertions = []
@@ -100,13 +103,29 @@ def run(con, results, aliases, embed_fn, judge_fn, high, low, now_iso, apply=Fal
             print(f"[warn] chunk {cid} not found", file=sys.stderr); continue
         source, event_date, speaker = row
         (ce, cp), band = resolve_key(ent_in, pred_in, existing, aliases, embed_fn, high, low, model)
-        if band == "review" and strict_merges:
-            ce, cp = FS.canon_key(ent_in, pred_in, aliases)  # hold: treat as distinct pending review
+        if band == "review":
+            # Spec §7.1 / decision #4: the review band is DISTINCT by default and
+            # is NEVER auto-merged — --strict-merges only makes it more prominent
+            # in the audit report, it does not change the merge decision.
+            own_key = FS.canon_key(ent_in, pred_in, aliases)
+            merge_items.append({"from": [own_key[0], own_key[1]],
+                                 "to": [ce, cp], "band": "review"})
+            ce, cp = own_key
+            review_count += 1
+        elif band == "auto":
+            own_key = FS.canon_key(ent_in, pred_in, aliases)
+            merge_items.append({"from": [own_key[0], own_key[1]],
+                                 "to": [ce, cp], "band": "auto"})
         bands[band] += 1
         if (ce, cp) not in existing:
             existing.append((ce, cp))
         asserted_at = T._timestamp(event_date) if event_date else now_iso
         aid = FS.assertion_id(ce, cp, value, source, f"chunk:{cid}")
+        if aid in existing_ids:
+            # Already ingested (idempotent re-onboard): drop before linking/ledger
+            # so a re-run with reworded evidence never triggers the content-mismatch
+            # raise in temporal_memory._insert_immutable.
+            continue
         sentiment = it.get("sentiment", "neutral")
         if sentiment not in FS.SENTIMENTS:
             sentiment = "neutral"
@@ -116,24 +135,42 @@ def run(con, results, aliases, embed_fn, judge_fn, high, low, now_iso, apply=Fal
             "segment_id": f"chunk:{cid}", "evidence": it.get("evidence", ""),
             "sentiment": sentiment, "stance": it.get("stance", "")})
 
+    if strict_merges and review_count:
+        print(f"[strict-merges] {review_count} review-band pairs left distinct "
+              "(needs human alias decision)", file=sys.stderr)
+
     # Pass 2: link in chronological order so a later fact supersedes an earlier one
     # even within the same batch. Priors = DB rows + in-batch assertions seen so far.
     assertions.sort(key=lambda a: a["asserted_at"])
     priors_cache = {}
     all_auto, disagreements = [], []
+    supersede_items = []
+    prior_by_id = {}
     for a in assertions:
         key = (a["entity"], a["predicate"])
         if key not in priors_cache:
             priors_cache[key] = find_priors(con, *key)  # DB priors, once per key
+        for p in priors_cache[key]:
+            prior_by_id[p["assertion_id"]] = {"value": p["value"], "entity": key[0], "predicate": key[1]}
         auto, dis = plan_links(a["assertion_id"], a["value"], a["asserted_at"], priors_cache[key])
+        for new_id, _rel, prior_id in auto:
+            prior_info = prior_by_id.get(prior_id, {})
+            supersede_items.append({
+                "new_id": new_id, "prior_id": prior_id,
+                "entity": key[0], "predicate": key[1],
+                "new_value": a["value"], "prior_value": prior_info.get("value")})
         all_auto += auto; disagreements += dis
         priors_cache[key].append({"assertion_id": a["assertion_id"],
                                   "value": a["value"], "asserted_at": a["asserted_at"]})
     judged, unresolved = judge_disagreements(disagreements, judge_fn)
+    judge_items = [{"new_id": rel[0], "prior_id": rel[2], "relation": rel[1]} for rel in judged]
     links = all_auto + judged
     report = {"assertions": len(assertions), "merges": bands,
               "auto_supersedes": len(all_auto),
-              "judge": {"resolved": len(judged), "unresolved": len(unresolved)}}
+              "judge": {"resolved": len(judged), "unresolved": len(unresolved)},
+              "merge_items": merge_items,
+              "supersede_items": supersede_items,
+              "judge_items": judge_items}
     if apply:
         ledger = FS.build_ledger(assertions, links)
         T.load_ledger(con, ledger); con.commit()
