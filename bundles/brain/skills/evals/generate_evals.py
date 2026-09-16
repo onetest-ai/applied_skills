@@ -68,14 +68,6 @@ def _query_suffix_from_fact(verbatim_quote: str) -> str:
     return " ".join(deduped[:8])
 
 
-def _question_from_fact(verbatim_quote: str, slug: str) -> str:
-    """Build a retrieval-friendly question from a verbatim fact and source slug."""
-    suffix = _query_suffix_from_fact(verbatim_quote)
-    if suffix:
-        return f"What was discussed about {suffix} (source: {slug})?"
-    return f"What was discussed in this meeting (source: {slug})?"
-
-
 def load_taxonomy(taxonomy_path):
     """Return (categories_list, eval_config_dict) from taxonomy JSON."""
     d = json.loads(Path(taxonomy_path).read_text(encoding="utf-8"))
@@ -304,9 +296,10 @@ def generate_evals(extractions_dir, taxonomy_path):
             if not facts:
                 continue
             product = exts[0].get("product", "CROSS-PRODUCT")
-            # Derive question and query_suffix from the primary verbatim fact
             primary_fact = facts[0]
-            question = _question_from_fact(primary_fact, slug)
+            # Use the category question template for the human-facing question;
+            # _query_suffix_from_fact is for BM25 retrieval only, not the question text.
+            question = f"{base_q} (source: {slug})"
             fact_suffix = _query_suffix_from_fact(primary_fact)
             rows.append({
                 "eval_id": f"E{eval_counter:03d}",
@@ -332,10 +325,10 @@ def generate_evals(extractions_dir, taxonomy_path):
                 all_facts.append(fact)
         if len(all_facts) >= 2:
             slugs = list({s for s, _ in items})
-            # Cross-session: derive question and query from combined fact keywords
+            # Cross-session: use the category template for the question;
+            # keyword suffix is for retrieval only.
             cross_suffix = _query_suffix_from_fact(" ".join(all_facts[:2]))
-            cross_q = (f"What was discussed about {cross_suffix}?"
-                       if cross_suffix else base_q)
+            cross_q = base_q
             rows.append({
                 "eval_id": f"E{eval_counter:03d}",
                 "category": cat,
