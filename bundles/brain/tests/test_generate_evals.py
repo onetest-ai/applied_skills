@@ -183,7 +183,7 @@ def test_bad_taxonomy_path_raises(tmp_path):
          "--taxonomy", str(tmp_path / "nonexistent.json"),
          "--out", str(tmp_path / "out.csv")],
         capture_output=True,
-        cwd=str(Path(__file__).resolve().parents[1]),
+        cwd=str(Path(__file__).resolve().parent.parent / "skills" / "evals"),
     )
     assert result.returncode != 0
 
@@ -402,7 +402,7 @@ def test_from_db_and_extractions_together_raises(tmp_path):
          "--extractions", str(tmp_path),
          "--out", out],
         capture_output=True,
-        cwd=str(Path(__file__).resolve().parents[1]),
+        cwd=str(Path(__file__).resolve().parent.parent / "skills" / "evals"),
     )
     assert result.returncode != 0, "Should fail when both --db and --extractions are given"
 

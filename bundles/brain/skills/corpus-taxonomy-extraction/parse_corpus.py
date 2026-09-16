@@ -280,15 +280,38 @@ def _parse_ai_dial_json(path):
     return "\n\n".join(parts)
 
 
+# Capitalised words that commonly precede a colon at the start of a caption but
+# are NOT speaker names — kept lowercase for case-insensitive matching. Without
+# this guard "Note: ...", "Today: ...", "Warning: ..." get misread as speakers,
+# polluting the speaker markers that drive speaker-scoped search.
+_NON_SPEAKER_PREFIXES = frozenset({
+    "note", "notes", "today", "tomorrow", "yesterday", "ok", "okay", "yes", "no",
+    "so", "well", "actually", "right", "first", "second", "third", "next", "then",
+    "step", "warning", "error", "caution", "important", "update", "summary",
+    "question", "answer", "action", "agenda", "topic", "example", "tip", "re",
+    "subject", "from", "to", "date", "time", "edit", "ps", "aside", "recap",
+})
+
+
 def _speaker_and_text(text: str) -> tuple[str, str]:
-    """Extract WebVTT voice tags and conservative ``Name: text`` prefixes."""
+    """Extract WebVTT voice tags and conservative ``Name: text`` prefixes.
+
+    The ``Name:`` fallback (used by SRT and by VTT cues without <v> tags) only
+    fires for name-shaped prefixes: one to three capitalised words, letters and
+    name punctuation only, and whose lead word is not a common sentence-opening
+    word (see ``_NON_SPEAKER_PREFIXES``).
+    """
     import re
     voice = re.match(r"\s*<v(?:\.[^ >]+)*\s+([^>]+)>\s*(.*)", text, flags=re.I | re.S)
     if voice:
         return voice.group(1).strip(), re.sub(r"</?v[^>]*>", "", voice.group(2)).strip()
-    labelled = re.match(r"\s*([A-Z][\w .'-]{1,48}):\s+(.+)", text, flags=re.S)
+    labelled = re.match(
+        r"\s*([A-Z][A-Za-z'’.-]*(?:\s+[A-Z][A-Za-z'’.-]*){0,2}):\s+(.+)", text, flags=re.S)
     if labelled:
-        return labelled.group(1).strip(), labelled.group(2).strip()
+        name = labelled.group(1).strip()
+        lead = name.split()[0].lower().strip(".'’-")
+        if lead not in _NON_SPEAKER_PREFIXES:
+            return name, labelled.group(2).strip()
     return "", re.sub(r"</?v[^>]*>", "", text).strip()
 
 

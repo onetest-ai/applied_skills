@@ -10,6 +10,9 @@ venv/
 # Superpowers SDD workspace (ledgers, briefs, review packages — scratch)
 .superpowers/
 
+# Local task tracking (Brain feedback follow-ups — not shipped in the toolkit)
+/tasks/
+
 # Brain build artifacts — never commit a built brain into the toolkit repo
 # (these are created in a CONSUMING project, but guard against building inside a checkout)
 *.sqlite

@@ -5,7 +5,7 @@ import sys
 import openpyxl
 
 
-SKILL_DIR = Path(__file__).resolve().parents[1]
+SKILL_DIR = Path(__file__).resolve().parent.parent / "skills" / "corpus-taxonomy-extraction"
 
 
 def _load(name, filename):

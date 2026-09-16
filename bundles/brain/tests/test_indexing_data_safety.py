@@ -18,7 +18,7 @@ many chunks each) to mirror the "folders will be huge and loss of data is not an
 option" production constraint.
 
 Run:
-    pytest skills/knowledge-index/tests/test_indexing_data_safety.py -v
+    pytest bundles/brain/tests/test_indexing_data_safety.py -v
 """
 import sys
 from pathlib import Path

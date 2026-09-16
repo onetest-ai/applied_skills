@@ -3,7 +3,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parents[1]
+HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from temporal_memory import current_fact, load_ledger, question_status  # noqa: E402
 

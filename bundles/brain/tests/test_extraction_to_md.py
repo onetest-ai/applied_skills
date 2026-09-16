@@ -1,7 +1,7 @@
 """TDD red-phase tests for extraction_to_md.serialize_one().
 
 The module extraction_to_md does NOT exist yet — import will fail (red).
-Run: python -m pytest skills/knowledge-index/tests/test_extraction_to_md.py -v
+Run: python -m pytest bundles/brain/tests/test_extraction_to_md.py -v
 """
 import subprocess
 import sys
@@ -113,7 +113,7 @@ def test_cli_two_dir_interface(tmp_path):
     fixture_file = input_dir / "test_abc12345_extraction.json"
     fixture_file.write_text(json.dumps(FIXTURE), encoding="utf-8")
 
-    script = str(pathlib.Path(__file__).resolve().parents[1] / "extraction_to_md.py")
+    script = str(pathlib.Path(__file__).resolve().parent.parent / "skills" / "knowledge-index" / "extraction_to_md.py")
     result = subprocess.run(
         [sys.executable, script, "--input", str(input_dir), "--out", str(out_dir)],
         capture_output=True,

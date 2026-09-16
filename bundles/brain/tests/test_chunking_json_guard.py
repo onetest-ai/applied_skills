@@ -1,7 +1,7 @@
 """TDD red-phase tests for JSON guard in chunking.sections().
 
 The JSON guard does NOT exist yet in chunking.sections() — tests must fail (red).
-Run: python -m pytest skills/knowledge-index/tests/test_chunking_json_guard.py -v
+Run: python -m pytest bundles/brain/tests/test_chunking_json_guard.py -v
 """
 import sys
 import pathlib

@@ -1,7 +1,7 @@
 """TDD red-phase tests for VTT/SRT parsing in parse_corpus.parse_one().
 
 SRT and VTT support does NOT exist yet in parse_one() — tests must fail (red).
-Run: python -m pytest skills/corpus-taxonomy-extraction/tests/test_parse_corpus_transcripts.py -v
+Run: python -m pytest bundles/brain/tests/test_parse_corpus_transcripts.py -v
 """
 import os
 import sys
@@ -201,3 +201,37 @@ def test_srt_merge_cues_groups_same_speaker(tmp_path):
     content, _ = parse_one(str(p), 20, 8, merge_cues=2)
     headings = [l for l in content.splitlines() if l.startswith("## ")]
     assert len(headings) == 2, "Expected 2 headings, got %d:\n%s" % (len(headings), content)
+
+
+# ---------------------------------------------------------------------------
+# Speaker prefix must NOT over-match common sentence-leading words (bug #3).
+# "Note:", "Today:", "Warning:" etc. are not speakers — only real names are.
+# ---------------------------------------------------------------------------
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize("lead", ["Note", "Today", "Warning", "Update", "Summary",
+                                   "Question", "Action", "Okay", "Actually"])
+def test_srt_common_word_prefix_is_not_a_speaker(tmp_path, lead):
+    path = tmp_path / "meeting.srt"
+    path.write_text(
+        "1\n00:00:01,000 --> 00:00:03,000\n%s: the migration is on track.\n" % lead,
+        encoding="utf-8",
+    )
+    content, _ = parse_one(str(path), 20, 8)
+    assert "<!-- speaker: %s -->" % lead not in content, "'%s:' misread as a speaker" % lead
+    assert "— %s" % lead not in content
+    # the full text (including the leading word) must be preserved in the body
+    assert "%s: the migration is on track." % lead in content
+
+
+def test_srt_real_name_prefix_still_extracted(tmp_path):
+    """Guard against over-correction: genuine 'Name:' prefixes must still work."""
+    path = tmp_path / "meeting.srt"
+    path.write_text(
+        "1\n00:00:01,000 --> 00:00:03,000\nMaria Gomez: Use Gatling for the baseline.\n",
+        encoding="utf-8",
+    )
+    content, _ = parse_one(str(path), 20, 8)
+    assert "<!-- speaker: Maria Gomez -->" in content
+    assert "— Maria Gomez" in content

@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent / "skills" / "knowledge-pipeline"
 SCRIPT = HERE / "onboard.py"
 
 # Import onboard module directly so we can test internal helpers without subprocess.

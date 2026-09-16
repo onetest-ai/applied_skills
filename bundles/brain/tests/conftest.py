@@ -1,13 +1,24 @@
-"""Session-level fixtures for knowledge-index tests.
+"""Bundle-level test fixtures for the brain plugin.
+
+Per the Agent Skills standard a skill directory contains only SKILL.md plus the
+resources loaded at runtime; tests are development artifacts and live here at the
+bundle root (matching bundles/kb/tests/), not inside the skill directories.
+
+Because the tests still exercise the skill scripts directly, this conftest puts
+every skill's source directory on sys.path so a test can ``import parse_corpus``,
+``import knowledge_index`` etc. regardless of which skill it belongs to. The only
+cross-skill duplicate module is ``chunking.py`` (corpus-taxonomy-extraction and
+knowledge-index ship byte-identical copies), so import order is irrelevant.
+
+It also carries the knowledge-index sqlite_vec shim (moved here verbatim):
 
 The ``connect()`` function in knowledge_index calls
 ``sqlite3.Connection.enable_load_extension`` and uses the ``vec0`` virtual table
 module from sqlite_vec.  Both require the sqlite_vec shared library which is
 unavailable in many CPython builds (macOS system Python, most CI images).
 
-The vector search functionality is NOT exercised by any test in this package
-(tests use ``monkeypatch`` to stub ``embed()`` and do not verify ANN results).
-This conftest:
+The vector search functionality is NOT exercised by any test (tests use
+``monkeypatch`` to stub ``embed()`` and do not verify ANN results). This conftest:
 
 1. Injects a no-op ``sqlite_vec`` stub into ``sys.modules`` before collection.
 2. Monkey-patches ``knowledge_index.connect`` to skip ``enable_load_extension``.
@@ -20,8 +31,17 @@ This conftest:
 import sqlite3
 import sys
 import types
+from pathlib import Path
 
 import pytest
+
+# --- put every skill's source dir on sys.path so tests can import the scripts ---
+_SKILLS_ROOT = Path(__file__).resolve().parent.parent / "skills"
+for _skill_dir in sorted(_SKILLS_ROOT.iterdir()):
+    if _skill_dir.is_dir():
+        _p = str(_skill_dir)
+        if _p not in sys.path:
+            sys.path.insert(0, _p)
 
 
 def make_db():

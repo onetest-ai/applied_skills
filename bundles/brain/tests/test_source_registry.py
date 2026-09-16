@@ -8,7 +8,7 @@ import unittest
 from argparse import Namespace
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent / "skills" / "knowledge-pipeline"
 SPEC = importlib.util.spec_from_file_location("source_registry", HERE / "source_registry.py")
 R = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
