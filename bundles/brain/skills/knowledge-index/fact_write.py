@@ -48,3 +48,21 @@ def plan_links(new_id, new_value, new_at, priors):
                                   "new_value": new_value, "prior_value": p["value"]})
         # new_at < prior: no link; recency resolution in current_fact handles it
     return auto, disagreements
+
+
+def judge_disagreements(disagreements, judge_fn):
+    links, unresolved = [], []
+    for d in disagreements:
+        try:
+            verdict = judge_fn(d)
+            rel = verdict.get("relation")
+        except Exception as exc:  # noqa: BLE001 — judge failures must not abort intake
+            print(f"[warn] judge failed for {d['new_id']}->{d['prior_id']}: {exc}", file=sys.stderr)
+            unresolved.append(d); continue
+        if rel in ("supersedes", "contradicts"):
+            links.append((d["new_id"], rel, d["prior_id"]))
+        elif rel == "keep_both":
+            pass
+        else:
+            unresolved.append(d)
+    return links, unresolved
