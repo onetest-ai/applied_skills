@@ -12,7 +12,7 @@ import {
   copyFileSync, existsSync, mkdirSync, readdirSync,
   readFileSync, rmSync, unlinkSync, writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { platform } from "node:os";
 import { spawnSync } from "node:child_process";
 
@@ -34,19 +34,24 @@ if (!brainName)  fail("--brain-name required");
 if (!pluginJson) fail("--plugin-json required");
 if (!outPath)    fail("--out required");
 
+// Resolve to absolute paths so zip (which runs with cwd=stageDir) can find them
+const absPluginDir  = resolve(pluginDir);
+const absPluginJson = resolve(pluginJson);
+const absOutPath    = resolve(outPath);
+
 if (!/^[a-z][a-z0-9-]*$/.test(brainName))
   fail(`--brain-name must be kebab-case (lowercase letters, digits, hyphens): got "${brainName}"`);
 
 // Read + stamp SKILL.md in memory only — never touch the source file
-const skillSrcPath = join(pluginDir, "skills", "brain-librarian", "SKILL.md");
+const skillSrcPath = join(absPluginDir, "skills", "brain-librarian", "SKILL.md");
 if (!existsSync(skillSrcPath)) fail(`SKILL.md not found at ${skillSrcPath}`);
 const skillSrc = readFileSync(skillSrcPath, "utf8");
 if (!/^name: brain-librarian$/m.test(skillSrc))
   fail("SKILL.md is missing 'name: brain-librarian' — template may be corrupted");
 const stampedSkill = skillSrc.replace(/^name: brain-librarian$/m, `name: ${brainName}`);
 
-// Build staging dir next to the output ZIP
-const stageDir = outPath.replace(/\.zip$/, "") + "-stage";
+// Build staging dir next to the output ZIP (absolute path)
+const stageDir = absOutPath.replace(/\.zip$/i, "") + "-stage";
 mkdirSync(stageDir, { recursive: true });
 
 const copyDir = (src, dst) => {
@@ -55,6 +60,7 @@ const copyDir = (src, dst) => {
     if (entry.name === "brain-librarian" && src.endsWith("skills")) continue; // stamped separately
     if (entry.name === ".env" || entry.name.startsWith(".env.")) continue; // never copy credentials
     if (entry.name === "brain.config.json") continue; // never copy config
+    if (entry.name === ".DS_Store" || entry.name === "Thumbs.db") continue; // OS metadata
     const s = join(src, entry.name);
     const d = join(dst, entry.name);
     if (entry.isDirectory()) copyDir(s, d);
@@ -67,14 +73,14 @@ const copyDir = (src, dst) => {
 const stageSkillDir = join(stageDir, "skills", brainName);
 mkdirSync(stageSkillDir, { recursive: true });
 writeFileSync(join(stageSkillDir, "SKILL.md"), stampedSkill);
-copyDir(join(pluginDir, "skills"), join(stageDir, "skills"));
+copyDir(join(absPluginDir, "skills"), join(stageDir, "skills"));
 
 // docs/
-if (existsSync(join(pluginDir, "docs")))
-  copyDir(join(pluginDir, "docs"), join(stageDir, "docs"));
+if (existsSync(join(absPluginDir, "docs")))
+  copyDir(join(absPluginDir, "docs"), join(stageDir, "docs"));
 
 // README.md
-const readmeSrc = join(pluginDir, "README.md");
+const readmeSrc = join(absPluginDir, "README.md");
 if (existsSync(readmeSrc)) copyFileSync(readmeSrc, join(stageDir, "README.md"));
 
 // .claude-plugin/plugin.json — augment with mcpServers + userConfig so the
@@ -82,7 +88,7 @@ if (existsSync(readmeSrc)) copyFileSync(readmeSrc, join(stageDir, "README.md"));
 const stagePlugin = join(stageDir, ".claude-plugin");
 mkdirSync(stagePlugin, { recursive: true });
 
-const configPath = join(pluginDir, "brain.config.json");
+const configPath = join(absPluginDir, "brain.config.json");
 let mcpEndpoint = "";
 let apiKeyEnvVar = "BRAIN_API_KEY";
 if (existsSync(configPath)) {
@@ -100,7 +106,7 @@ if (existsSync(configPath)) {
   if (cfg.apiKeyEnvVar) apiKeyEnvVar = cfg.apiKeyEnvVar;
 }
 
-const basePlugin = JSON.parse(readFileSync(pluginJson, "utf8"));
+const basePlugin = JSON.parse(readFileSync(absPluginJson, "utf8"));
 
 if (mcpEndpoint) {
   // Declare the MCP server — key injected from userConfig secure storage.
@@ -125,7 +131,7 @@ if (mcpEndpoint) {
 writeFileSync(join(stagePlugin, "plugin.json"), JSON.stringify(basePlugin, null, 2) + "\n");
 
 // Remove any existing output ZIP so we always produce a fresh archive (not a merge)
-if (existsSync(outPath)) unlinkSync(outPath);
+if (existsSync(absOutPath)) unlinkSync(absOutPath);
 
 // Zip from staging dir — cross-platform: PowerShell on Windows, zip on macOS/Linux
 let result;
@@ -134,11 +140,11 @@ if (platform() === "win32") {
   // Compress-Archive with wildcards silently drops dotfiles in PowerShell 5.1 on Windows 10.
   const psCmd = [
     "Add-Type -AssemblyName System.IO.Compression.FileSystem;",
-    `[System.IO.Compression.ZipFile]::CreateFromDirectory('${stageDir}', '${outPath}')`,
+    `[System.IO.Compression.ZipFile]::CreateFromDirectory('${stageDir}', '${absOutPath}')`,
   ].join(" ");
   result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", psCmd], { stdio: "inherit" });
 } else {
-  result = spawnSync("zip", ["-r", outPath, "."], { cwd: stageDir, stdio: "inherit" });
+  result = spawnSync("zip", ["-r", absOutPath, "."], { cwd: stageDir, stdio: "inherit" });
 }
 
 // Clean up staging dir only after checking exit code so failures are diagnosable
