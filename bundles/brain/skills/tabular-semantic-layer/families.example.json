@@ -5,9 +5,12 @@
     "division": {"north east": "Northeast", "n.e.": "Northeast"}
   },
   "rollups": [
-    {"_note": "weighted aggregate region->division; weight a rate metric by a count metric",
+    {"_note": "weighted aggregate region->division by PREFIX; weight a rate metric by a count metric",
      "family": "example_tolerant", "from": "region", "to": "division", "weight": "n_records",
-     "map_prefix": {"NW": "Northwest", "NE": "Northeast"}}
+     "map_prefix": {"NW": "Northwest", "NE": "Northeast"}},
+    {"_note": "weighted aggregate branch->division by an EXPLICIT crosswalk (arbitrary, non-prefixable). Inline dict here; or set crosswalk to a path to a JSON {branch: division} (resolved relative to this config).",
+     "family": "example_long", "from": "branch", "to": "division", "weight": "n_records",
+     "crosswalk": {"Gardena": "Pacific", "Chicago": "Central"}}
   ],
   "derived": [
     {"_note": "ratio metric = numerator/denominator at a grain, computed + cited <derived>; div-by-zero and missing-operand yield no row (honest). scale optional (e.g. 100 for a percent).",

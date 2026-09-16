@@ -277,6 +277,57 @@ def _month_range(start, end):
         if m > 12: m, y = 1, y + 1
     return out
 
+def _load_crosswalk(spec_val, config_path=None):
+    """Resolve a rollup `crosswalk` to a case-insensitive {entity_lower: parent} dict.
+    Accepts an inline {entity: parent} dict, or a path to such a JSON (resolved relative
+    to the config file when not absolute). None/empty -> {}."""
+    if not spec_val:
+        return {}
+    mapping = spec_val
+    if isinstance(spec_val, str):
+        path = spec_val
+        if config_path and not os.path.isabs(path):
+            path = os.path.join(os.path.dirname(os.path.abspath(config_path)), path)
+        with open(path) as f:
+            mapping = json.load(f)
+    return {str(k).strip().lower(): v for k, v in mapping.items()}
+
+def apply_rollups(df, cfg, config_path=None):
+    """Append weighted rollups: aggregate a finer grain up to a coarser one (e.g. NPS
+    region -> division), weighting rate metrics by a count metric (never a naive mean).
+    Config: rollups: [{family, from, to, weight, map_prefix?, crosswalk?}] — map the fine
+    entity to its coarse parent by string PREFIX (map_prefix, when the parent is encoded in
+    the code) OR by an explicit lookup (crosswalk: an inline {entity:parent} dict or a path
+    to such a JSON — for arbitrary hierarchies like branch->division that aren't prefixable).
+    Derived rows carry source_file="<rollup>"."""
+    import pandas as pd
+    for spec in cfg.get("rollups", []):
+        sub = df[(df.family == spec["family"]) & (df.grain == spec["from"])].copy()
+        if sub.empty: continue
+        pref = spec.get("map_prefix", {})
+        xwalk = _load_crosswalk(spec.get("crosswalk"), config_path)   # {entity_lower: parent}
+        def to_coarse(e):
+            if xwalk and str(e).strip().lower() in xwalk:             # explicit lookup wins
+                return xwalk[str(e).strip().lower()]
+            for p, v in pref.items():
+                if str(e).upper().startswith(p.upper()): return v
+            return None
+        sub["coarse"] = sub["entity"].map(to_coarse)
+        sub = sub[sub["coarse"].notna()]
+        wm = spec["weight"]
+        w = sub[sub.metric == wm][["entity","month","value"]].rename(columns={"value":"wt"})
+        rate = sub[sub.metric != wm].merge(w, on=["entity","month"], how="left")
+        rate["wt"] = rate["wt"].fillna(0.0); rate["wv"] = rate["value"] * rate["wt"]
+        g = rate.groupby(["coarse","metric","month"]).agg(wvsum=("wv","sum"), wsum=("wt","sum")).reset_index()
+        g = g[g.wsum > 0]
+        rows = [(spec["family"], r.metric, spec["to"], r.coarse, r.month, r.wvsum / r.wsum, "<rollup>")
+                for r in g.itertuples()]
+        gw = sub[sub.metric == wm].groupby(["coarse","month"]).agg(value=("value","sum")).reset_index()
+        rows += [(spec["family"], wm, spec["to"], r.coarse, r.month, r.value, "<rollup>") for r in gw.itertuples()]
+        if rows:
+            df = pd.concat([df, pd.DataFrame(rows, columns=df.columns)], ignore_index=True)
+    return df
+
 def apply_derived(df, cfg):
     """Append derived/ratio metrics: metricC = numerator / denominator at a grain,
     computed deterministically and cited "<derived>" (never a hand-precomputed source
@@ -416,30 +467,7 @@ def main():
     df = pd.DataFrame(all_facts, columns=["family","metric","grain","entity","month","value","source_file"])
     df = df.drop_duplicates(subset=["family","metric","grain","entity","month"], keep="last").reset_index(drop=True)
 
-    # weighted rollups: aggregate a finer grain up to a coarser one (e.g. NPS region -> division),
-    # weighting rate metrics by a count metric. Config: rollups: [{family, from, to, weight, map_prefix}]
-    for spec in cfg.get("rollups", []):
-        sub = df[(df.family == spec["family"]) & (df.grain == spec["from"])].copy()
-        if sub.empty: continue
-        pref = spec["map_prefix"]
-        def to_coarse(e):
-            for p, v in pref.items():
-                if str(e).upper().startswith(p.upper()): return v
-            return None
-        sub["coarse"] = sub["entity"].map(to_coarse)
-        sub = sub[sub["coarse"].notna()]
-        wm = spec["weight"]
-        w = sub[sub.metric == wm][["entity","month","value"]].rename(columns={"value":"wt"})
-        rate = sub[sub.metric != wm].merge(w, on=["entity","month"], how="left")
-        rate["wt"] = rate["wt"].fillna(0.0); rate["wv"] = rate["value"] * rate["wt"]
-        g = rate.groupby(["coarse","metric","month"]).agg(wvsum=("wv","sum"), wsum=("wt","sum")).reset_index()
-        g = g[g.wsum > 0]
-        rows = [(spec["family"], r.metric, spec["to"], r.coarse, r.month, r.wvsum / r.wsum, "<rollup>")
-                for r in g.itertuples()]
-        gw = sub[sub.metric == wm].groupby(["coarse","month"]).agg(value=("value","sum")).reset_index()
-        rows += [(spec["family"], wm, spec["to"], r.coarse, r.month, r.value, "<rollup>") for r in gw.itertuples()]
-        df = pd.concat([df, pd.DataFrame(rows, columns=df.columns)], ignore_index=True)
-
+    df = apply_rollups(df, cfg, a.config)
     df = apply_derived(df, cfg)
 
     pq = os.path.join(a.out_dir, "facts.parquet")

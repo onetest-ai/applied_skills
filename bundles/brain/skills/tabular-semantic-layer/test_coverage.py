@@ -101,5 +101,41 @@ class DerivedMetricsTests(unittest.TestCase):
         self.assertEqual(float(out[out.metric == "pct"].value.iloc[0]), 25.0)
 
 
+@unittest.skipUnless(_DEPS, "requires pandas + openpyxl")
+class RollupCrosswalkTests(unittest.TestCase):
+    def _df(self, rows):
+        return pd.DataFrame(rows, columns=["family", "metric", "grain", "entity", "month", "value", "source_file"])
+
+    def test_load_crosswalk_inline_case_insensitive(self):
+        xw = B._load_crosswalk({"Gardena": "Central", "chicago ": "Central"})
+        self.assertEqual(xw.get("gardena"), "Central")
+        self.assertEqual(xw.get("chicago"), "Central")  # trimmed + lowered
+
+    def test_load_crosswalk_none_is_empty(self):
+        self.assertEqual(B._load_crosswalk(None), {})
+
+    def test_crosswalk_rollup_is_weighted_not_naive(self):
+        rows = [("nps", "score", "branch", "Gardena", "2026-01", 50.0, "f"),
+                ("nps", "n", "branch", "Gardena", "2026-01", 100.0, "f"),
+                ("nps", "score", "branch", "Chicago", "2026-01", 70.0, "f"),
+                ("nps", "n", "branch", "Chicago", "2026-01", 300.0, "f")]
+        cfg = {"rollups": [{"family": "nps", "from": "branch", "to": "division", "weight": "n",
+                            "crosswalk": {"Gardena": "Central", "Chicago": "Central"}}]}
+        out = B.apply_rollups(self._df(rows), cfg)
+        div = out[out.grain == "division"]
+        # weighted (50*100+70*300)/400 = 65, NOT the naive mean 60
+        self.assertAlmostEqual(float(div[div.metric == "score"].value.iloc[0]), 65.0)
+        self.assertEqual(float(div[div.metric == "n"].value.iloc[0]), 400.0)
+        self.assertTrue((div.source_file == "<rollup>").all())
+
+    def test_map_prefix_still_works(self):
+        rows = [("nps", "score", "branch", "Gardena", "2026-01", 50.0, "f"),
+                ("nps", "n", "branch", "Gardena", "2026-01", 100.0, "f")]
+        cfg = {"rollups": [{"family": "nps", "from": "branch", "to": "division", "weight": "n",
+                            "map_prefix": {"Gar": "West"}}]}
+        out = B.apply_rollups(self._df(rows), cfg)
+        self.assertEqual(sorted(out[out.grain == "division"].entity.unique()), ["West"])
+
+
 if __name__ == "__main__":
     unittest.main()
