@@ -23,7 +23,9 @@ Every advertised tool property carries a concrete primitive schema, with a `null
 | `get_taxonomy` | Explore taxonomy nodes, edges, and tagged sections |
 | `find_related_content` | Read precomputed semantic neighbors |
 | `get_evidence` | Inspect one cited section and optional page/table text |
-| `health` | Check knowledge lanes and deployed knowledge version |
+| `health` | Check knowledge lanes and deployed knowledge version; also returns `about: {goal, audience}` |
+
+`health` additionally returns an `about` object — `{"goal": <str>, "audience": <str>}` — read from the store's durable `meta` table (seeded from `goal.txt` and `brain.toml` `[project].audience`). Consumers such as the `kb` plugin use it to tune answer altitude and authored-artifact style. Stores built before the `meta` table (or with no values recorded) return empty strings, never an error.
 
 `brain_mcp.py` is retained temporarily as the legacy stdio implementation. New integrations should use `fastmcp_server.py`.
 

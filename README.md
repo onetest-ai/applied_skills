@@ -16,22 +16,33 @@ docs ─▶ corpus-taxonomy-extraction ─▶ Markdown + taxonomy_v0 + graph  �
                                             (all orchestrated by knowledge-pipeline)
 ```
 
-Retrieval is **hybrid**: BM25 (FTS5) + vector (sqlite-vec) fused by **Reciprocal Rank Fusion** — pattern from [arozumenko/wikis](https://github.com/arozumenko/wikis). One file, moves anywhere. The RAG embedder (fastembed/onnx) needs no PyTorch; note the `docling` parser does pull torch (see Dependencies).
+Retrieval is **hybrid**: BM25 (FTS5) + vector (sqlite-vec) fused by **Reciprocal Rank Fusion** — pattern from [arozumenko/wikis](https://github.com/arozumenko/wikis). One file, moves anywhere. The whole toolkit is **torch-free** (the RAG embedder is fastembed/onnx; docling is retired) — see Dependencies.
 
 ## Skills
 
 | Skill | Role | Key idea |
 |---|---|---|
-| **corpus-taxonomy-extraction** | build | Goal-directed taxonomy induction (intent classes + entities + metric inventory) from a mixed corpus (PDF/PPTX/XLSX via Docling/pypdf). Also emits the taxonomy **graph** (`build_graph.py`) and an **Obsidian vault** (`to_obsidian.py`). |
+| **corpus-taxonomy-extraction** | build | Goal-directed taxonomy induction (intent classes + entities + metric inventory) from a mixed corpus (PDF/PPTX/DOCX/XLSX via pymupdf + LibreOffice). Also emits the taxonomy **graph** (`build_graph.py`) and an **Obsidian vault** (`to_obsidian.py`), and flags near-duplicate / off-axis categories for human review. |
+| **visual-parse** | build | Page routing + visual understanding: renders slide/diagram pages, flags the visual ones, and VLM-transcribes them (with deterministic table-grid extraction) so meaning on slides isn't lost. |
 | **knowledge-index** | build | Local hybrid RAG over Markdown → SQLite **FTS5 + sqlite-vec, RRF-fused**. Torch-free embeddings (fastembed/onnx). The narrative lane. |
 | **tabular-semantic-layer** | build | Config-driven ETL of large/heterogeneous Excel → normalized `facts` in the same SQLite + a governed metric catalog. Four layouts, weighted rollups, build audit (`--strict`). |
 | **hybrid-retrieval** | answer | Routes each sub-question — numbers→marts SQL, narrative→RRF RAG, relations→graph JOINs — over the one SQLite; reconciles `both`; composes one cited answer. |
-| **knowledge-pipeline** | orchestrate | Create the store (index+marts+graph) and answer, with guided onboarding and source registration. |
+| **knowledge-pipeline** | orchestrate | Create the store (index+marts+graph) and answer, with guided onboarding (goal · audience · deployment target) and source registration. |
 | **brain-maintenance** | maintain/release | Read-only maintenance planning plus agent-owned, gated updates, verification, and optional external project-adapter deployment. |
+| **obsidian-vault** | navigate | Browse/answer from the generated Obsidian vault — the human-readable view of the store (numbers still come from the MCP, never vault prose). |
 
 ## Why this exists
 
 Vector RAG cannot return correct numbers; raw text-to-SQL returns *confident wrong* numbers. A governed semantic layer over deterministic SQL benchmarks far higher and fails by honest refusal. These skills implement that split, plus the operational guardrails (provenance, entity conformance, silent-gap auditing) that make it hold up in production.
+
+## Two plugins
+
+This repository is the **`applied-ai`** marketplace, listing exactly two self-contained plugins:
+
+- **`brain`** (`bundles/brain/`, skills surface as `/brain:*`): Builds, maintains, and deploys the Brain — the local knowledge engine (RAG + taxonomy graph + deterministic marts) served over a governed MCP. Also installable as the `brain` skills-bundle. Guided onboarding captures three drivers up front — the **goal** (scopes taxonomy), the **audience** (who consumes the KB — drives taxonomy emphasis and how `kb` answers), and the **deployment target** (`local` vs `hosted-mcp`).
+- **`kb`** (`bundles/kb/`, skills surface as `/kb:*`): Interrogates and authors with the Brain — a knowledge-worker companion. It ships no MCP of its own; it consumes the Brain MCP and enforces the same truth contract (cited or "not modeled"; numbers only from marts). Skills: `ask`, `explore`, `challenge` (interrogate); `brief`, `report` (cited Markdown, human-gated writes); `mode` (opt-in ambient grounding), `connect`. It reads the goal + audience from the Brain (`health().about`) to tune answer altitude and artifact style.
+
+Install either or both depending on your role.
 
 ## Install
 
@@ -81,10 +92,11 @@ git clone git@github.com:onetest-ai/applied_skills.git && cd applied_skills
 
 Restart the host session after installing so it loads the skills.
 
-**Claude plugin (alternative):** this repo is also a plugin marketplace —
+**Claude plugin (alternative):** this repo is the `applied-ai` plugin marketplace —
 ```bash
 claude plugin marketplace add onetest-ai/applied_skills
-claude plugin install applied-skills@onetest-ai
+claude plugin install brain@applied-ai # Build/maintain/deploy the Brain (/brain:*)
+claude plugin install kb@applied-ai    # Interrogate/author (/kb:*)
 ```
 (Don't combine the plugin and the copy/symlink install — pick one, or the skills load twice.)
 

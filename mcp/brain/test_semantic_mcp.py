@@ -43,8 +43,13 @@ def build_fixture(root: Path) -> dict[str, Path]:
             CREATE TABLE graph_edges(source TEXT, target TEXT, rel TEXT);
             CREATE TABLE chunk_topics(chunk_id INT, category_id TEXT, category_label TEXT, kind TEXT);
             CREATE TABLE related(chunk_id INT, related_id INT, score REAL);
+            CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);
             """
         )
+        con.executemany("INSERT INTO meta VALUES(?,?)", [
+            ("goal", "optimize call-center operations"),
+            ("audience", "ops managers and workforce planners"),
+        ])
         con.executemany("INSERT INTO facts VALUES(?,?,?,?,?,?,?)", [
             ("commercial", "revenue", "overall", "All", "2024-01", 100.0, "report.xlsx"),
             ("commercial", "revenue", "region", "North", "2024-01", 40.0, "report.xlsx"),
@@ -164,6 +169,21 @@ class SemanticCoreTests(FixtureCase):
         self.assertEqual(result["status"], expected)
         self.assertEqual(result["knowledge_version"], "fixture-v1")
         self.assertNotIn(str(self.fx["root"]), json.dumps(result))
+        self.assertEqual(result["about"]["goal"], "optimize call-center operations")
+        self.assertEqual(result["about"]["audience"], "ops managers and workforce planners")
+
+    def test_health_about_degrades_without_meta_table(self):
+        # A store built before the meta table must still return about with empty strings.
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.execute("DROP TABLE meta")
+        result = core.health()
+        self.assertEqual(result["about"], {"goal": "", "audience": ""})
+
+    def test_health_about_empty_when_meta_has_no_values(self):
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.execute("DELETE FROM meta")
+        result = core.health()
+        self.assertEqual(result["about"], {"goal": "", "audience": ""})
 
 
 @unittest.skipUnless(Client is not None, "fastmcp is not installed")
@@ -203,32 +223,47 @@ class FastMCPContractTests(FixtureCase):
                         self.assertIn(expected_type, advertised, f"{tool_name}.{field} missing concrete type")
                         if schema.get("default", object()) is None:
                             self.assertIn("null", advertised, f"{tool_name}.{field} has invalid null default")
+                # A successful data result stays a normal (non-error) MCP result.
                 result = await client.call_tool("get_metric", {"name": "revenue", "grain": "overall"})
+                self.assertFalse(result.is_error)
                 self.assertEqual(result.data["rows"][0]["value"], 100.0)
-                invalid = await client.call_tool("get_metric", {"name": "revenue", "limit": 200})
-                self.assertFalse(invalid.is_error)
+                # An honest not_modeled ("no data") answer is NOT a failure: it must stay a
+                # normal, non-error result even though it is not a data row.
+                not_modeled = await client.call_tool("get_metric", {"name": "revenue", "entity": "does-not-exist"})
+                self.assertFalse(not_modeled.is_error)
+                self.assertEqual(not_modeled.data["status"], "not_modeled")
+                # Genuine errors now surface as MCP isError=true, while still carrying the
+                # structured how_to_fix guidance in BOTH structured data and text content so
+                # clients that only check isError AND clients that read the body both see it.
+                invalid = await client.call_tool("get_metric", {"name": "revenue", "limit": 200}, raise_on_error=False)
+                self.assertTrue(invalid.is_error)
                 self.assertEqual(invalid.data["status"], "error")
                 self.assertEqual(invalid.data["error"]["code"], "invalid_arguments")
                 self.assertIn("limit", invalid.data["how_to_fix"])
-                missing_anchor = await client.call_tool("find_related_content", {})
-                self.assertFalse(missing_anchor.is_error)
+                self.assertIn("how_to_fix", invalid.content[0].text)
+                missing_anchor = await client.call_tool("find_related_content", {}, raise_on_error=False)
+                self.assertTrue(missing_anchor.is_error)
                 self.assertEqual(missing_anchor.data["status"], "error")
                 self.assertIn("chunk_id", missing_anchor.data["how_to_fix"])
-                missing_required = await client.call_tool("get_evidence", {})
-                self.assertFalse(missing_required.is_error)
+                missing_required = await client.call_tool("get_evidence", {}, raise_on_error=False)
+                self.assertTrue(missing_required.is_error)
                 self.assertEqual(missing_required.data["error"]["code"], "invalid_arguments")
-                unknown_metric = await client.call_tool("get_metric", {"name": "not-a-metric"})
-                self.assertFalse(unknown_metric.is_error)
+                # raise_on_error defaults to True, so a genuine error raises for clients that
+                # rely on exceptions - the failure is never silently reported as success.
+                with self.assertRaises(Exception):
+                    await client.call_tool("get_evidence", {})
+                unknown_metric = await client.call_tool("get_metric", {"name": "not-a-metric"}, raise_on_error=False)
+                self.assertTrue(unknown_metric.is_error)
                 self.assertEqual(unknown_metric.data["status"], "error")
-                unknown_tool = await client.call_tool("definitely_not_a_tool", {})
-                self.assertFalse(unknown_tool.is_error)
+                unknown_tool = await client.call_tool("definitely_not_a_tool", {}, raise_on_error=False)
+                self.assertTrue(unknown_tool.is_error)
                 unknown_payload = unknown_tool.data or json.loads(unknown_tool.content[0].text)
                 self.assertEqual(unknown_payload["status"], "error")
                 self.assertEqual(unknown_payload["error"]["code"], "unknown_tool")
                 self.assertIn("not available", unknown_payload["error"]["message"])
                 for legacy, replacement in fastmcp_server._LEGACY_TOOLS.items():
-                    legacy_result = await client.call_tool(legacy, {})
-                    self.assertFalse(legacy_result.is_error, legacy)
+                    legacy_result = await client.call_tool(legacy, {}, raise_on_error=False)
+                    self.assertTrue(legacy_result.is_error, legacy)
                     legacy_payload = legacy_result.data or json.loads(legacy_result.content[0].text)
                     self.assertEqual(legacy_payload["error"]["code"], "legacy_tool", legacy)
                     self.assertIn(replacement, legacy_payload["how_to_fix"], legacy)
@@ -247,19 +282,20 @@ class FastMCPContractTests(FixtureCase):
                     ("get_evidence", {"chunk_id": 1, "include_page_text": "yes"}),
                 )
                 for tool_name, arguments in malformed_cases:
-                    malformed = await client.call_tool(tool_name, arguments)
-                    self.assertFalse(malformed.is_error, (tool_name, arguments))
+                    malformed = await client.call_tool(tool_name, arguments, raise_on_error=False)
+                    self.assertTrue(malformed.is_error, (tool_name, arguments))
                     self.assertEqual(malformed.data["status"], "error", (tool_name, arguments))
                     self.assertEqual(malformed.data["error"]["code"], "invalid_arguments")
                     self.assertTrue(malformed.data["how_to_fix"])
                 with patch.object(fastmcp_server, "_get_evidence", side_effect=PermissionError("denied /secret/local/path")):
-                    hidden_path = await client.call_tool("get_evidence", {"chunk_id": 1})
-                self.assertFalse(hidden_path.is_error)
+                    hidden_path = await client.call_tool("get_evidence", {"chunk_id": 1}, raise_on_error=False)
+                self.assertTrue(hidden_path.is_error)
                 self.assertEqual(hidden_path.data["error"]["code"], "not_configured")
                 self.assertNotIn("secret/local/path", json.dumps(hidden_path.data))
+                self.assertNotIn("secret/local/path", hidden_path.content[0].text)
                 with patch.object(fastmcp_server, "_search_knowledge", side_effect=ModuleNotFoundError("missing /secret/module")):
-                    hidden_dependency = await client.call_tool("search_knowledge", {"query": "alpha"})
-                self.assertFalse(hidden_dependency.is_error)
+                    hidden_dependency = await client.call_tool("search_knowledge", {"query": "alpha"}, raise_on_error=False)
+                self.assertTrue(hidden_dependency.is_error)
                 self.assertEqual(hidden_dependency.data["error"]["code"], "dependency_unavailable")
                 self.assertNotIn("secret/module", json.dumps(hidden_dependency.data))
                 for tool_name, attribute in (
@@ -283,8 +319,8 @@ class FastMCPContractTests(FixtureCase):
                         "get_evidence": {"chunk_id": 1},
                     }.get(tool_name, {})
                     with patch.object(fastmcp_server, attribute, side_effect=RuntimeError("secret /private/path")):
-                        unhandled = await client.call_tool(tool_name, arguments)
-                    self.assertFalse(unhandled.is_error, tool_name)
+                        unhandled = await client.call_tool(tool_name, arguments, raise_on_error=False)
+                    self.assertTrue(unhandled.is_error, tool_name)
                     self.assertEqual(unhandled.data["error"]["code"], "internal_error", tool_name)
                     self.assertNotIn("private/path", json.dumps(unhandled.data), tool_name)
             self.assertIn("Never send limit above 100", fastmcp_server.INSTRUCTIONS)
@@ -489,6 +525,47 @@ class RestShimLimitTests(FixtureCase):
                         self.assertEqual(search_calls, [15])  # fallback to default
 
         asyncio.run(run())
+
+
+@unittest.skipIf(Client is None, "fastmcp not installed")
+class TestFinalizeErrorFlags(unittest.TestCase):
+    """Unit-level checks for the isError promotion, independent of a live client."""
+
+    def test_tagged_error_becomes_iserror_and_marker_is_stripped(self):
+        import fastmcp_server as fs
+        err = fs._error_result("search_knowledge", "invalid_arguments",
+                               "query is required", how_to_fix="Provide a non-empty query")
+        result = fs._finalize_error_flags(err.to_mcp_result())
+        self.assertIsInstance(result, fs.CallToolResult)
+        self.assertTrue(result.isError)
+        # the private marker must never reach the client
+        self.assertFalse((result.meta or {}).get(fs._ERROR_META_KEY))
+        # actionable guidance survives for body-reading clients (structured + text)
+        text_blob = " ".join(getattr(c, "text", "") for c in (result.content or []))
+        blob = json.dumps(result.structuredContent or {}) + text_blob
+        self.assertIn("query is required", blob)
+        self.assertIn("Provide a non-empty query", blob)
+
+    def test_untagged_result_stays_non_error(self):
+        import fastmcp_server as fs
+        # An ok/not_modeled result reaches _finalize_error_flags as a CallToolResult
+        # with no error marker (a successful ToolResult otherwise converts to a plain
+        # (content, structured) tuple, which the function also leaves untouched).
+        ok = fs.CallToolResult(content=[fs.TextContent(type="text", text='{"status": "not_modeled"}')])
+        result = fs._finalize_error_flags(ok)
+        self.assertFalse(bool(result.isError))
+        # a non-CallToolResult (successful tuple form) passes through unchanged
+        passthrough = fs._finalize_error_flags(([fs.TextContent(type="text", text="ok")], {"status": "ok"}))
+        self.assertIsInstance(passthrough, tuple)
+
+    def test_legacy_tool_call_is_iserror_with_fix(self):
+        import fastmcp_server as fs
+        err = fs._error_result("search", "legacy_tool", "Legacy tool 'search' was removed.",
+                               how_to_fix="Retry with search_knowledge.")
+        result = fs._finalize_error_flags(err.to_mcp_result())
+        self.assertTrue(result.isError)
+        blob = json.dumps(result.structuredContent or {})
+        self.assertIn("search_knowledge", blob)
 
 
 if __name__ == "__main__":

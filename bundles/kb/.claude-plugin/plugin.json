@@ -1,0 +1,8 @@
+{
+  "name": "kb",
+  "description": "Cowork with the Brain: interrogate the knowledge base and co-author cited Markdown deliverables, with every claim traceable or honestly 'not modeled'.",
+  "version": "0.1.0",
+  "author": { "name": "onetest-ai" },
+  "homepage": "https://github.com/onetest-ai/applied_skills",
+  "keywords": ["knowledge-base", "rag", "citations", "analyst", "brain", "mcp"]
+}

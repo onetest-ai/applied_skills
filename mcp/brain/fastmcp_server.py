@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import argparse
 import hmac
+import json
 import os
 from typing import Annotated, Any
 
 from fastmcp import FastMCP
 from fastmcp.server.middleware.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools.tool import ToolResult
+from mcp.types import CallToolResult, TextContent
 from pydantic import Field, SkipValidation
 from starlette.middleware import Middleware as ASGIMiddleware
 from starlette.requests import Request
@@ -36,9 +38,11 @@ This server exposes a private knowledge brain through safe semantic tools.
 Route narrative questions to search_knowledge, exact figures to get_metric, taxonomy
 questions to get_taxonomy, and source inspection to get_evidence. Never infer a number
 from narrative text: every numeric claim must come from get_metric and cite source_file.
-If a tool returns status=not_modeled, report the gap instead of guessing. If a tool
-returns status=error, follow how_to_fix and retry with corrected arguments; the result is
-a normal MCP response so gateways do not turn recoverable tool mistakes into HTTP 500.
+If a tool returns status=not_modeled, that is an honest "no data" answer, not a failure:
+report the gap instead of guessing. Genuine failures (invalid arguments, internal errors)
+are returned as MCP error results (isError=true) that still carry status=error, an error
+code/message, how_to_fix, and retryable; follow how_to_fix and retry with corrected
+arguments. Failures stay structured MCP results rather than opaque HTTP 500s.
 
 IMPORTANT RESULT-LIMIT CONTRACT: every tool argument named limit accepts integers from
 1 through 100 inclusive. Never send limit above 100. Prefer narrow filters. If more
@@ -63,27 +67,37 @@ _LEGACY_TOOLS = {
 
 
 class FailSafeFastMCP(FastMCP):
-    """Ensure even failures before tool middleware become normal MCP results."""
+    """Ensure genuine failures become structured MCP error results (isError=true).
+
+    Real clients (CodeMie/Copilot Studio) only check the MCP isError flag, so a genuine
+    tool error must set it - otherwise the call is rendered as a green SUCCESS. Errors
+    still keep their actionable payload (status/code/message/how_to_fix/retryable) in the
+    result content for body-reading clients. The fail-safe property is preserved: a bug in
+    a tool must never crash the transport with an opaque HTTP 500 - it becomes an isError
+    result with a message instead of an unhandled exception.
+    """
 
     async def _call_tool_mcp(self, key: str, arguments: dict[str, Any]):
         try:
-            return await super()._call_tool_mcp(key, arguments)
+            return _finalize_error_flags(await super()._call_tool_mcp(key, arguments))
         except Exception:
             # Tool lookup and other protocol-adapter failures happen before on_call_tool
-            # middleware. Keep them out of MCP isError/HTTP 500 as well.
+            # middleware. Surface them as structured isError results too, never HTTP 500.
             if key in _LEGACY_TOOLS:
                 replacement = _LEGACY_TOOLS[key]
-                return _error_result(
+                error = _error_result(
                     key,
                     "legacy_tool",
                     f"Legacy tool '{key}' was removed. Use {replacement} instead.",
                     how_to_fix=f"Retry with {replacement}. See the migration table in mcp/brain/README.md.",
-                ).to_mcp_result()
-            return _error_result(
-                key,
-                "unknown_tool" if key not in _TOOL_FIXES else "internal_error",
-                f"Tool '{key}' is not available." if key not in _TOOL_FIXES else "The tool could not complete the request safely.",
-            ).to_mcp_result()
+                )
+            else:
+                error = _error_result(
+                    key,
+                    "unknown_tool" if key not in _TOOL_FIXES else "internal_error",
+                    f"Tool '{key}' is not available." if key not in _TOOL_FIXES else "The tool could not complete the request safely.",
+                )
+            return _finalize_error_flags(error.to_mcp_result())
 
 
 mcp = FailSafeFastMCP(
@@ -91,8 +105,9 @@ mcp = FailSafeFastMCP(
     version="1.0.0",
     instructions=INSTRUCTIONS,
     mask_error_details=True,
-    # Tool functions validate inputs themselves so mistakes can be returned as normal,
-    # actionable results instead of protocol errors that gateways may turn into HTTP 500.
+    # Tool functions validate inputs themselves so mistakes can be returned as structured,
+    # actionable isError results with a stable payload, instead of raw protocol errors that
+    # gateways may turn into opaque HTTP 500s that hide the how_to_fix guidance.
     strict_input_validation=False,
 )
 
@@ -109,6 +124,12 @@ _TOOL_FIXES = {
 }
 
 
+# Private marker carried on error ToolResults so _finalize_error_flags can flip the MCP
+# CallToolResult.isError flag after FastMCP has converted the ToolResult. It never reaches
+# the client: _finalize_error_flags strips it while setting isError.
+_ERROR_META_KEY = "brain/is_error"
+
+
 def _error_result(tool: str, code: str, message: str, *, how_to_fix: str | None = None) -> ToolResult:
     payload = {
         "status": "error",
@@ -116,13 +137,39 @@ def _error_result(tool: str, code: str, message: str, *, how_to_fix: str | None 
         "how_to_fix": how_to_fix or _TOOL_FIXES.get(tool, "Correct the tool arguments or server configuration, then retry."),
         "retryable": code in {"invalid_arguments", "not_configured", "dependency_unavailable"},
     }
-    # Deliberately return a normal MCP result (isError=false). Some gateways translate
-    # MCP tool errors into HTTP 500 and hide the actionable explanation from the model.
-    return ToolResult(structured_content=payload)
+    # Genuine errors must surface as MCP isError=true so every client (even ones that only
+    # check the flag) sees the failure. The structured payload is kept in BOTH the JSON text
+    # content and structured_content so body-reading clients still get actionable guidance.
+    # The meta marker tags this result for _finalize_error_flags; it is removed before send.
+    return ToolResult(
+        content=[TextContent(type="text", text=json.dumps(payload))],
+        structured_content=payload,
+        meta={_ERROR_META_KEY: True},
+    )
+
+
+def _finalize_error_flags(result: Any) -> Any:
+    """Flip CallToolResult.isError=true for results _error_result tagged, then drop the tag.
+
+    A legitimate not_modeled/ok result is never tagged, so it stays a normal (non-error)
+    MCP result. Non-CallToolResult results (plain content or a (content, structured) tuple
+    from successful tools) are untouched.
+    """
+    if isinstance(result, CallToolResult) and result.meta and result.meta.pop(_ERROR_META_KEY, None):
+        result.isError = True
+        if not result.meta:
+            result.meta = None
+    return result
 
 
 class SafeToolErrorsMiddleware(Middleware):
-    """Convert all tool exceptions into structured, actionable, non-error results."""
+    """Convert tool exceptions into structured, actionable error results.
+
+    Each _error_result carries a meta marker so FailSafeFastMCP._call_tool_mcp promotes it
+    to an MCP isError=true result while preserving the how_to_fix payload. This keeps the
+    fail-safe property (no exception escapes to become an opaque HTTP 500) while making
+    genuine failures visible to clients that only inspect the isError flag.
+    """
 
     async def on_call_tool(self, context: MiddlewareContext, call_next: CallNext) -> ToolResult:
         tool = context.message.name
