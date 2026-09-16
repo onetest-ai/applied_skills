@@ -27,3 +27,24 @@ def resolve_key(entity, predicate, existing_keys, aliases, embed_fn,
     if best_sim >= low:
         return best_key, "review"
     return cand, "distinct"
+
+
+def find_priors(con, entity, predicate):
+    rows = con.execute(
+        "SELECT assertion_id, value_json, asserted_at FROM memory_assertions "
+        "WHERE entity=? AND predicate=? ORDER BY asserted_at", (entity, predicate)).fetchall()
+    return [{"assertion_id": r[0], "value": json.loads(r[1]), "asserted_at": r[2]} for r in rows]
+
+
+def plan_links(new_id, new_value, new_at, priors):
+    auto, disagreements = [], []
+    for p in priors:
+        if p["value"] == new_value:
+            continue
+        if new_at > p["asserted_at"]:
+            auto.append((new_id, "supersedes", p["assertion_id"]))
+        elif new_at == p["asserted_at"]:
+            disagreements.append({"new_id": new_id, "prior_id": p["assertion_id"],
+                                  "new_value": new_value, "prior_value": p["value"]})
+        # new_at < prior: no link; recency resolution in current_fact handles it
+    return auto, disagreements
