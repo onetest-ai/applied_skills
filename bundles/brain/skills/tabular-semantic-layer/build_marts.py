@@ -267,6 +267,123 @@ def load_wide_month(rows, family, grain, dim_type, dim_header, measures, dim_map
                         facts.append((family["name"], m, grain, ent, colmonth[j], val))
     return facts, {"reason": None if facts else "no month-banner columns matched measures"}
 
+def _month_range(start, end):
+    """Inclusive monthly range over 'YYYY-MM' strings."""
+    ys, ms = map(int, start.split("-")); ye, me = map(int, end.split("-"))
+    out, y, m = [], ys, ms
+    while (y, m) <= (ye, me):
+        out.append(f"{y:04d}-{m:02d}")
+        m += 1
+        if m > 12: m, y = 1, y + 1
+    return out
+
+def _load_crosswalk(spec_val, config_path=None):
+    """Resolve a rollup `crosswalk` to a case-insensitive {entity_lower: parent} dict.
+    Accepts an inline {entity: parent} dict, or a path to such a JSON (resolved relative
+    to the config file when not absolute). None/empty -> {}."""
+    if not spec_val:
+        return {}
+    mapping = spec_val
+    if isinstance(spec_val, str):
+        path = spec_val
+        if config_path and not os.path.isabs(path):
+            path = os.path.join(os.path.dirname(os.path.abspath(config_path)), path)
+        with open(path) as f:
+            mapping = json.load(f)
+    return {str(k).strip().lower(): v for k, v in mapping.items()}
+
+def apply_rollups(df, cfg, config_path=None):
+    """Append weighted rollups: aggregate a finer grain up to a coarser one (e.g. NPS
+    region -> division), weighting rate metrics by a count metric (never a naive mean).
+    Config: rollups: [{family, from, to, weight, map_prefix?, crosswalk?}] — map the fine
+    entity to its coarse parent by string PREFIX (map_prefix, when the parent is encoded in
+    the code) OR by an explicit lookup (crosswalk: an inline {entity:parent} dict or a path
+    to such a JSON — for arbitrary hierarchies like branch->division that aren't prefixable).
+    Derived rows carry source_file="<rollup>"."""
+    import pandas as pd
+    for spec in cfg.get("rollups", []):
+        sub = df[(df.family == spec["family"]) & (df.grain == spec["from"])].copy()
+        if sub.empty: continue
+        pref = spec.get("map_prefix", {})
+        xwalk = _load_crosswalk(spec.get("crosswalk"), config_path)   # {entity_lower: parent}
+        def to_coarse(e):
+            if xwalk and str(e).strip().lower() in xwalk:             # explicit lookup wins
+                return xwalk[str(e).strip().lower()]
+            for p, v in pref.items():
+                if str(e).upper().startswith(p.upper()): return v
+            return None
+        sub["coarse"] = sub["entity"].map(to_coarse)
+        sub = sub[sub["coarse"].notna()]
+        wm = spec["weight"]
+        w = sub[sub.metric == wm][["entity","month","value"]].rename(columns={"value":"wt"})
+        rate = sub[sub.metric != wm].merge(w, on=["entity","month"], how="left")
+        rate["wt"] = rate["wt"].fillna(0.0); rate["wv"] = rate["value"] * rate["wt"]
+        g = rate.groupby(["coarse","metric","month"]).agg(wvsum=("wv","sum"), wsum=("wt","sum")).reset_index()
+        g = g[g.wsum > 0]
+        rows = [(spec["family"], r.metric, spec["to"], r.coarse, r.month, r.wvsum / r.wsum, "<rollup>")
+                for r in g.itertuples()]
+        gw = sub[sub.metric == wm].groupby(["coarse","month"]).agg(value=("value","sum")).reset_index()
+        rows += [(spec["family"], wm, spec["to"], r.coarse, r.month, r.value, "<rollup>") for r in gw.itertuples()]
+        if rows:
+            df = pd.concat([df, pd.DataFrame(rows, columns=df.columns)], ignore_index=True)
+    return df
+
+def apply_derived(df, cfg):
+    """Append derived/ratio metrics: metricC = numerator / denominator at a grain,
+    computed deterministically and cited "<derived>" (never a hand-precomputed source
+    cell). Config: derived: [{family, metric, grain, numerator, denominator, scale?}].
+    Honest by construction: operands are inner-joined on (entity, month) so a MISSING
+    operand yields NO row, and denominator==0 rows are dropped — never a fabricated value."""
+    import pandas as pd
+    for spec in cfg.get("derived", []):
+        fam, grain = spec["family"], spec["grain"]
+        base = df[(df.family == fam) & (df.grain == grain)]
+        num = base[base.metric == spec["numerator"]][["entity", "month", "value"]].rename(columns={"value": "num"})
+        den = base[base.metric == spec["denominator"]][["entity", "month", "value"]].rename(columns={"value": "den"})
+        if num.empty or den.empty:
+            continue
+        merged = num.merge(den, on=["entity", "month"], how="inner")
+        merged = merged[merged["den"] != 0]
+        scale = spec.get("scale", 1.0)
+        rows = [(fam, spec["metric"], grain, r.entity, r.month, (r.num / r.den) * scale, "<derived>")
+                for r in merged.itertuples()]
+        if rows:
+            df = pd.concat([df, pd.DataFrame(rows, columns=df.columns)], ignore_index=True)
+    return df
+
+def coverage_report(df, cfg):
+    """Completeness against the observed grid (+ an optional expected roster). Distinct
+    from build_audit (per-file PARSE health): this catches an entity/month that never
+    appeared at all — the disappearing-division / missing-month silent gap.
+    - intra_family_holes: an entity present in some of a family/grain's months but absent
+      in others (e.g. a division that stops appearing after Jan). Detected with NO config.
+    - expected_violations: months/entities named in cfg['coverage'] that are wholly absent
+      (e.g. a month whose source file was never produced/ingested). Needs config.
+    Also returns the grains each family carries (grain visibility)."""
+    expected = cfg.get("coverage", {})
+    grains, holes, violations = [], [], []
+    fam_grains = {}
+    for (fam, grain), g in df.groupby(["family", "grain"]):
+        months = sorted(m for m in g["month"].dropna().unique())
+        ents = sorted(e for e in g["entity"].dropna().unique())
+        present = set(zip(g["entity"], g["month"]))
+        ent_holes = {e: miss for e in ents
+                     if (miss := [m for m in months if (e, m) not in present])}
+        exp = expected.get(fam) or expected.get("*")
+        if exp:
+            exp_months = _month_range(*exp["month_range"]) if exp.get("month_range") else list(exp.get("months", []))
+            miss_m = [m for m in exp_months if m not in set(months)]
+            if miss_m: violations.append({"family": fam, "grain": grain, "missing_months": miss_m})
+            miss_e = [e for e in exp.get("entities", []) if e not in set(ents)]
+            if miss_e: violations.append({"family": fam, "grain": grain, "missing_entities": miss_e})
+        grains.append({"family": fam, "grain": grain, "n_months": len(months),
+                       "month_span": [months[0], months[-1]] if months else [],
+                       "n_entities": len(ents), "holes": ent_holes})
+        fam_grains.setdefault(fam, []).append(grain)
+        if ent_holes: holes.append({"family": fam, "grain": grain, "holes": ent_holes})
+    return {"grains": grains, "family_grains": fam_grains,
+            "intra_family_holes": holes, "expected_violations": violations}
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", required=True)
@@ -350,29 +467,10 @@ def main():
     df = pd.DataFrame(all_facts, columns=["family","metric","grain","entity","month","value","source_file"])
     df = df.drop_duplicates(subset=["family","metric","grain","entity","month"], keep="last").reset_index(drop=True)
 
-    # weighted rollups: aggregate a finer grain up to a coarser one (e.g. NPS region -> division),
-    # weighting rate metrics by a count metric. Config: rollups: [{family, from, to, weight, map_prefix}]
-    for spec in cfg.get("rollups", []):
-        sub = df[(df.family == spec["family"]) & (df.grain == spec["from"])].copy()
-        if sub.empty: continue
-        pref = spec["map_prefix"]
-        def to_coarse(e):
-            for p, v in pref.items():
-                if str(e).upper().startswith(p.upper()): return v
-            return None
-        sub["coarse"] = sub["entity"].map(to_coarse)
-        sub = sub[sub["coarse"].notna()]
-        wm = spec["weight"]
-        w = sub[sub.metric == wm][["entity","month","value"]].rename(columns={"value":"wt"})
-        rate = sub[sub.metric != wm].merge(w, on=["entity","month"], how="left")
-        rate["wt"] = rate["wt"].fillna(0.0); rate["wv"] = rate["value"] * rate["wt"]
-        g = rate.groupby(["coarse","metric","month"]).agg(wvsum=("wv","sum"), wsum=("wt","sum")).reset_index()
-        g = g[g.wsum > 0]
-        rows = [(spec["family"], r.metric, spec["to"], r.coarse, r.month, r.wvsum / r.wsum, "<rollup>")
-                for r in g.itertuples()]
-        gw = sub[sub.metric == wm].groupby(["coarse","month"]).agg(value=("value","sum")).reset_index()
-        rows += [(spec["family"], wm, spec["to"], r.coarse, r.month, r.value, "<rollup>") for r in gw.itertuples()]
-        df = pd.concat([df, pd.DataFrame(rows, columns=df.columns)], ignore_index=True)
+    df = apply_rollups(df, cfg, a.config)
+    df = apply_derived(df, cfg)
+    # defensive: a rollup/derived metric configured at a grain already present would collide
+    df = df.drop_duplicates(subset=["family","metric","grain","entity","month"], keep="last").reset_index(drop=True)
 
     pq = os.path.join(a.out_dir, "facts.parquet")
     try: df.to_parquet(pq, index=False)
@@ -398,6 +496,30 @@ def main():
         cov = df.groupby(["family","grain"]).agg(
             facts=("value","size"), months=("month","nunique"), entities=("entity","nunique")).reset_index()
         print("\ncoverage:\n" + cov.to_string(index=False), file=sys.stderr)
+
+    # coverage matrix — completeness against the observed grid (+ optional expected roster).
+    # Catches the silent gap build_audit CANNOT: an entity/month that never appeared.
+    covrep = coverage_report(df, cfg) if len(df) else {"grains": [], "family_grains": {},
+                                                       "intra_family_holes": [], "expected_violations": []}
+    with open(os.path.join(a.out_dir, "coverage.json"), "w") as f:
+        json.dump(covrep, f, indent=2)
+    if covrep["family_grains"]:
+        print("\ngrains per family:", file=sys.stderr)
+        for fam, gs in sorted(covrep["family_grains"].items()):
+            print(f"   - {fam}: {', '.join(sorted(gs))}", file=sys.stderr)
+    holes = covrep["intra_family_holes"]
+    if holes:
+        print(f"\n⚠️  {len(holes)} family/grain(s) with COVERAGE HOLES (entity present some months, missing others):", file=sys.stderr)
+        for h in holes:
+            for e, miss in h["holes"].items():
+                print(f"   - {h['family']}/{h['grain']}: '{e}' missing {len(miss)} month(s): {', '.join(miss)}", file=sys.stderr)
+    viols = covrep["expected_violations"]
+    if viols:
+        print(f"\n❌ {len(viols)} EXPECTED-ROSTER violation(s) (configured months/entities wholly absent):", file=sys.stderr)
+        for v in viols:
+            what = f"missing_months={v['missing_months']}" if "missing_months" in v else f"missing_entities={v['missing_entities']}"
+            print(f"   - {v['family']}/{v['grain']}: {what}", file=sys.stderr)
+    print(f"\ncoverage -> {os.path.join(a.out_dir,'coverage.json')}", file=sys.stderr)
     if benigns:
         print(f"\nℹ️  {len(benigns)} expected-empty (allow_zero) — not failures:", file=sys.stderr)
         for x in benigns: print(f"   - {x['family']} [{x['file']}]: {x['reason']}", file=sys.stderr)
@@ -408,8 +530,9 @@ def main():
         print(f"\n❌ {len(zeros)} ZERO-FACT units — a globbed file yielded NOTHING (likely a silent gap):", file=sys.stderr)
         for x in zeros: print(f"   - {x['family']}/{x['unit']} [{x['file']}]: {x['reason']}", file=sys.stderr)
     print(f"\naudit -> {os.path.join(a.out_dir,'build_audit.json')}", file=sys.stderr)
-    if a.strict and (zeros or partials):
-        print(f"\nSTRICT: failing build ({len(zeros)} zero/error, {len(partials)} partial; {len(benigns)} benign ignored).", file=sys.stderr)
+    if a.strict and (zeros or partials or viols):
+        print(f"\nSTRICT: failing build ({len(zeros)} zero/error, {len(partials)} partial, "
+              f"{len(viols)} expected-roster violation(s); {len(benigns)} benign ignored).", file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":

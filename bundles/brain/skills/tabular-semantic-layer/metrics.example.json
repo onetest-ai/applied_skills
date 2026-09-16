@@ -1,7 +1,14 @@
 {
   "_comment": "TEMPLATE — copy to your PROJECT (not the skill), e.g. <project>/schema/metrics.<corpus>.json. The governed layer: friendly metric -> (family, metric) in the facts mart, consumed by the hybrid-retrieval skill's query.py.",
+  "_comment_definition": "Optional `definition` (a.k.a. provenance): state what the metric measures, what's included/excluded, and whether it is REPORTED (ingested cell) or COMPUTED. Surfaced by query.py --list/--describe and MCP. Required-in-spirit for reported composite metrics (occupancy, AHT, service level) so answerers never silently reconstruct them from primitives.",
   "metrics": {
     "some_ratio": {"family": "example_long", "metric": "some_ratio", "unit": "ratio", "desc": "what it means"},
-    "calls_offered": {"family": "example_matrix", "metric": "calls_offered", "unit": "count", "grain": "overall"}
+    "calls_offered": {"family": "example_matrix", "metric": "calls_offered", "unit": "count", "grain": "overall"},
+    "occupancy_pct": {"family": "workforce_mom", "metric": "occupancy_pct", "unit": "percent", "grain": "overall",
+      "desc": "agent occupancy",
+      "definition": "REPORTED by the WFM vendor — do NOT reconstruct from answered×AHT÷staffed-hours (definition includes ACW/hold per vendor; a naive recompute diverges). Reported value is authoritative."},
+    "calls_per_customer": {"family": "example_long", "metric": "calls_per_customer", "unit": "ratio", "grain": "branch",
+      "desc": "calls per customer",
+      "definition": "DERIVED (governed) = calls / customers at branch grain, computed in the semantic layer (source_file <derived>); not a hand-precomputed cell."}
   }
 }
