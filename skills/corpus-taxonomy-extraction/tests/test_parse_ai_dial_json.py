@@ -12,10 +12,10 @@ AI_DIAL_JSON = {
             "id": "conversations/abc123",
             "name": "ALBATROS_EMAILS",
             "messages": [
-                {"role": "user",     "content": "Who is Carola?"},
-                {"role": "assistant","content": "Carola Albers is the DevSecOps Manager for D2C portfolio."},
-                {"role": "user",     "content": "What is D2B HS?"},
-                {"role": "assistant","content": "D2B HS stands for Direct-to-Business Health Systems. Status: 100% Migrated."},
+                {"role": "user",     "content": "Who is Alex?"},
+                {"role": "assistant","content": "Alex Rivera is the Platform Lead for the Alpha portfolio."},
+                {"role": "user",     "content": "What is the Beta stream?"},
+                {"role": "assistant","content": "Beta stream handles platform integrations. Status: 100% Migrated."},
             ]
         }
     ],
@@ -31,8 +31,8 @@ def test_ai_dial_json_parse_returns_markdown(tmp_path):
     result = parse_corpus._parse_ai_dial_json(str(json_file))
 
     assert result is not None
-    assert "Carola" in result
-    assert "D2B HS" in result
+    assert "Alex" in result
+    assert "Beta stream" in result
 
 
 def test_ai_dial_json_only_includes_assistant_content(tmp_path):
@@ -41,7 +41,7 @@ def test_ai_dial_json_only_includes_assistant_content(tmp_path):
     json_file.write_text(json.dumps(AI_DIAL_JSON), encoding="utf-8")
 
     result = parse_corpus._parse_ai_dial_json(str(json_file))
-    assert "DevSecOps Manager for D2C portfolio" in result
+    assert "Platform Lead for the Alpha portfolio" in result
 
 
 def test_ai_dial_json_parse_corpus_accepts_json_format(tmp_path):
@@ -60,4 +60,4 @@ def test_ai_dial_json_parse_corpus_accepts_json_format(tmp_path):
     md_files = list(out_dir.glob("*.md"))
     assert len(md_files) == 1
     content = md_files[0].read_text()
-    assert "Carola" in content
+    assert "Alex" in content

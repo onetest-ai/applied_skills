@@ -36,7 +36,7 @@ Instantiate `vision_prep.py` to batch the **flagged, uncached** pages (image pat
 Per page in order: the VLM Markdown (flagged) or the text layer (text page), under a `## p<NN> · <title>` heading with the image marker. Internal `#`/`##` are demoted; deeper VLM headings and max-size splitting may still yield multiple downstream chunks for one page, all inheriting its image. Writes the `page_render` cache when `--db` is given. Extracted `p<NN>.tables.md` grids remain factual asset sidecars (served by `get_evidence`) and are not appended to parsed Markdown.
 
 ## How the classifier / retrieval change
-Nothing in the classifier or retriever changes — they just get **faithful input** instead of fragments. The classify agent now sees `North Star Vision & Service Design Blueprint / Future State Architecture / …` instead of `EPAM Proprietary & Confidential. 4`, so tagging, embeddings, and the related layer all improve for free. For genuinely visual edge cases, `get_evidence` returns the page asset path for a capable local client to open and reason over multimodally.
+Nothing in the classifier or retriever changes — they just get **faithful input** instead of fragments. The classify agent now sees `North Star Vision & Service Design Blueprint / Future State Architecture / …` instead of `Confidential — Page 4`, so tagging, embeddings, and the related layer all improve for free. For genuinely visual edge cases, `get_evidence` returns the page asset path for a capable local client to open and reason over multimodally.
 
 ## Deps
 `pymupdf` (render + text + `find_tables`) — torch-free. **LibreOffice `soffice`** (system dep) for .pptx/.docx. A cheap vision model for the transcription step (like the taxonomy/classify agents — meaning is agentic).

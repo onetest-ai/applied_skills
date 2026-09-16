@@ -259,7 +259,12 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     DB="{db}"
     PY="{py}"          # the brain venv interpreter (BRAIN_PY)
 
-    # 1 · parse narrative docs → Markdown (pymupdf text; visual pages via visual-parse)
+    # 1a · parse transcripts → Markdown (VTT/SRT corpora only — skip if no transcripts)
+    #      --merge-cues joins same-speaker cues into speaker turns; omitting it produces
+    #      ~25k single-line chunks that agents classify as [] and retrieval quality collapses.
+    "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats vtt,srt --merge-cues 10
+
+    # 1b · parse narrative docs → Markdown (pymupdf text; visual pages via visual-parse)
     "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats pptx,docx,pdf
 
     # 2 · 🤖 induce taxonomy (map→reduce→judge→emit) → taxonomy/taxonomy_v0.json
@@ -272,7 +277,7 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     "$PY" "{CTE/'build_graph.py'}" --taxonomy "{proj/'taxonomy'/'taxonomy_v0.json'}" --db "$DB"
 
     # 5 · 🤖 per-section tags — prep, dispatch Haiku subagents, write
-    "$PY" "{CTE/'classify_prep.py'}" --db "$DB" --taxonomy "{proj/'taxonomy'/'taxonomy_v0.json'}" --out "{proj/'classify'}" --batches 5
+    "$PY" "{CTE/'classify_prep.py'}" --db "$DB" --taxonomy "{proj/'taxonomy'/'taxonomy_v0.json'}" --out "{proj/'classify'}" --batches 25
     #     → N Haiku subagents read classify/{{instructions,vocab,batch_k}} → write classify/result_k.json
     "$PY" "{CTE/'classify_write.py'}" --db "$DB" --results "{proj/'classify'}"
 

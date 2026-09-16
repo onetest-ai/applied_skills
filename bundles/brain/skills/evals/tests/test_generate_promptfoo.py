@@ -182,17 +182,17 @@ def test_build_persona_block_empty_without_brain_context():
 def test_build_persona_block_with_persona_and_stakeholders():
     # When brain_context has persona + stakeholders, block must contain both.
     brain_context = {
-        "persona": "You are a Solution Architect I at EPAM.",
+        "persona": "You are a Solution Architect I.",
         "stakeholders": {
-            "Sanjeev Patil": "Client-Side Coordinator",
-            "Carola Albers": "DevSecOps Manager D2C",
+            "Jordan Lee": "Client-Side Coordinator",
+            "Alex Rivera": "Platform Lead",
         },
     }
     result = GP.build_persona_block(brain_context)
     assert "Solution Architect" in result, "persona text must appear in block"
-    assert "Sanjeev Patil" in result, "stakeholder names must appear in block"
-    assert "Carola Albers" in result, "all stakeholders must appear in block"
-    assert "DevSecOps Manager" in result, "stakeholder roles must appear in block"
+    assert "Jordan Lee" in result, "stakeholder names must appear in block"
+    assert "Alex Rivera" in result, "all stakeholders must appear in block"
+    assert "Platform Lead" in result, "stakeholder roles must appear in block"
 
 
 def test_prompt_template_without_taxonomy_is_unchanged(tmp_path):
@@ -216,12 +216,12 @@ def test_prompt_template_with_taxonomy_injects_project_context(tmp_path):
     import json
     taxonomy = {
         "brain_context": {
-            "goal": "Omniscient Project Assistant",
-            "audience": "New EPAM engineers",
-            "persona": "You are Solution Architect I at EPAM.",
+            "goal": "Project Knowledge Assistant",
+            "audience": "New engineers onboarding",
+            "persona": "You are Solution Architect I.",
             "stakeholders": {
-                "Sanjeev Patil": "Client-Side Coordinator",
-                "Carola Albers": "DevSecOps Manager D2C",
+                "Jordan Lee": "Client-Side Coordinator",
+                "Alex Rivera": "Platform Lead",
             },
         }
     }
@@ -239,7 +239,7 @@ def test_prompt_template_with_taxonomy_injects_project_context(tmp_path):
     prompt = cfg["prompts"][0]
     assert "<project_context>" in prompt, "taxonomy with persona must inject <project_context> block"
     assert "Solution Architect" in prompt, "persona text must appear in the prompt"
-    assert "Sanjeev Patil" in prompt, "stakeholder names must appear in the prompt"
+    assert "Jordan Lee" in prompt, "stakeholder names must appear in the prompt"
     assert "<question>" in prompt, "<question> tag must still be present after injection"
     assert prompt.index("<project_context>") < prompt.index("<question>"), (
         "<project_context> must appear before <question> in the prompt"
@@ -254,7 +254,7 @@ def test_generate_promptfoo_vars_include_derived_suffix(tmp_path):
         "eval_id": "E001", "category": "team_roster", "scope": "single-session",
         "question": "Who led the technology stream?",
         "query_suffix": "",
-        "expected_answer_must_contain": "Technology stream led by Rafael | CX led by Bill Gastrock | Business process stream Claudia",
+        "expected_answer_must_contain": "Technology stream led by Morgan | CX led by Dana Chen | Business process stream Riley",
         "expected_answer_must_not_contain": "hallucinated",
         "ground_truth_source": "Sep09.vtt.md", "notes": "db-mode", "min_items": "1",
     }]

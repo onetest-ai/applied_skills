@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # E2E pipeline: VTT corpus → parsed MD → knowledge.sqlite → taxonomy → brain → evals
-# Usage: bash skills/evals/run_e2e.sh \
+# Usage: bash bundles/brain/skills/evals/run_e2e.sh \
 #   --corpus   /path/to/vtt/dir \
 #   --work     /tmp/primo_e2e \
 #   --brain-port 8003 \
-#   [--taxonomy /path/to/taxonomy.json]   # default: skills/evals/taxonomy.default.json \
+#   [--taxonomy /path/to/taxonomy.json]   # default: bundles/brain/skills/evals/taxonomy.default.json \
 #   [--extractions /path/to/extraction_jsons]
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd "$HERE/../.." && pwd)"
+REPO="$(cd "$HERE/../../../.." && pwd)"
 VENV="$REPO/.claude/venv/bin/python3"
 SKILL_TAXO="$REPO/bundles/brain/skills/corpus-taxonomy-extraction"
 SKILL_KI="$REPO/bundles/brain/skills/knowledge-index"
-SKILL_EVALS="$REPO/skills/evals"
+SKILL_EVALS="$HERE"
 MCP_BRAIN="$REPO/mcp/brain"
 
 CORPUS=""; WORK=""; PORT=8003; TAXONOMY=""; EXTRACTIONS=""
@@ -48,9 +48,10 @@ mkdir -p "$PARSED" "$CLASSIFY_DIR"
 echo "=== Stage 1: Parse VTT corpus ==="
 t0=$SECONDS
 "$VENV" "$SKILL_TAXO/parse_corpus.py" \
-  --corpus "$CORPUS" \
-  --out    "$PARSED" \
-  --formats vtt,srt
+  --corpus     "$CORPUS" \
+  --out        "$PARSED" \
+  --formats    vtt,srt \
+  --merge-cues 10
 echo "  done in $((SECONDS - t0))s — $(ls "$PARSED"/*.md 2>/dev/null | wc -l) markdown files"
 
 echo "=== Stage 2: Index into knowledge.sqlite ==="
@@ -66,7 +67,8 @@ t0=$SECONDS
 "$VENV" "$SKILL_TAXO/classify_prep.py" \
   --db       "$DB" \
   --taxonomy "$TAXONOMY" \
-  --out      "$CLASSIFY_DIR"
+  --out      "$CLASSIFY_DIR" \
+  --batches  25
 echo "  done in $((SECONDS - t0))s — $(ls "$CLASSIFY_DIR"/batch_*.json 2>/dev/null | wc -l) batches"
 
 echo "=== Stage 3b: Taxonomy — classify agents (run manually or via Claude) ==="
@@ -77,23 +79,25 @@ echo ""
 echo "  Press ENTER when result_*.json files are ready, or Ctrl-C to stop."
 read -r
 
-echo "=== Stage 3c: Taxonomy — classify_write + build_graph ==="
+echo "=== Stage 3c: Taxonomy — build_graph + classify_write ==="
 t0=$SECONDS
-"$VENV" "$SKILL_TAXO/classify_write.py" \
-  --db      "$DB" \
-  --results "$CLASSIFY_DIR"
 "$VENV" "$SKILL_TAXO/build_graph.py" \
   --taxonomy "$TAXONOMY" \
   --db       "$DB"
+"$VENV" "$SKILL_TAXO/classify_write.py" \
+  --db      "$DB" \
+  --results "$CLASSIFY_DIR"
 echo "  done in $((SECONDS - t0))s"
 
 echo "=== Stage 3.5: Extract verbatim facts from parsed MD (gold standard) ==="
 EXTRACT_OUT="$WORK/extractions"
-if "$VENV" "$SKILL_EVALS/extract_facts.py" \
+"$VENV" "$SKILL_EVALS/extract_facts.py" \
     --parsed   "$PARSED" \
     --taxonomy "$TAXONOMY" \
-    --out      "$EXTRACT_OUT" 2>&1 | tee /tmp/extract_facts.log; then
-  n_files=$(ls "$EXTRACT_OUT"/*_extraction.json 2>/dev/null | wc -l)
+    --out      "$EXTRACT_OUT" 2>&1 | tee /tmp/extract_facts.log
+extract_rc=${PIPESTATUS[0]}; true   # 'true' keeps set -e happy without clobbering PIPESTATUS
+if [[ "$extract_rc" -eq 0 ]]; then
+  n_files=$(ls "$EXTRACT_OUT"/*_extraction.json 2>/dev/null | wc -l | tr -d ' ')
   echo "  $n_files extraction files written to $EXTRACT_OUT"
   if [[ "$n_files" -eq 0 ]]; then
     echo "  WARNING: extract_facts.py wrote 0 extraction files — Stage 5 will use DB-mode"
@@ -101,7 +105,7 @@ if "$VENV" "$SKILL_EVALS/extract_facts.py" \
     [[ -z "$EXTRACTIONS" ]] && EXTRACTIONS="$EXTRACT_OUT"
   fi
 else
-  echo "  WARNING: extract_facts.py failed (no AWS creds?) — Stage 5 will use DB-mode"
+  echo "  WARNING: extract_facts.py failed (exit $extract_rc, no AWS creds?) — Stage 5 will use DB-mode"
 fi
 
 echo "=== Stage 4: Start brain server ==="
@@ -109,7 +113,15 @@ BRAIN_PID=""
 cleanup() { [[ -n "$BRAIN_PID" ]] && kill "$BRAIN_PID" 2>/dev/null || true; }
 trap cleanup EXIT
 
-BRAIN_DB="$DB" PORT="$PORT" BRAIN_SKILLS="$REPO/bundles/brain/skills" \
+# Resolve skills dir: use sibling dir when installed (.claude/skills/evals → .claude/skills),
+# fall back to bundle source tree layout.
+if [[ -d "$HERE/../corpus-taxonomy-extraction" ]]; then
+  BRAIN_SKILLS="$HERE/.."
+else
+  BRAIN_SKILLS="$REPO/bundles/brain/skills"
+fi
+
+BRAIN_DB="$DB" PORT="$PORT" BRAIN_SKILLS="$BRAIN_SKILLS" \
   "$VENV" "$MCP_BRAIN/fastmcp_server.py" --transport http &
 BRAIN_PID=$!
 
@@ -166,7 +178,7 @@ echo "  done in $((SECONDS - t0))s"
 echo ""
 echo "=== Results ==="
 if [[ -f "$EVAL_RESULTS" ]]; then
-  python3 - "$EVAL_RESULTS" <<'PYEOF'
+  "$VENV" - "$EVAL_RESULTS" <<'PYEOF'
 import json, sys
 d = json.load(open(sys.argv[1]))
 r = d['results']['results']

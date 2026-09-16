@@ -31,7 +31,11 @@ batch_*.json
 .dsh/
 .github/
 docs
+# Local environment overrides — never commit (paths are machine-specific)
+.env
+
 # Eval output artifacts — generated per-run, not committed
 evals/temporal_cross_session.csv
 retrieval-results.json
 retrieval-results.html
+.idea/.gitignore

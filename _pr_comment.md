@@ -89,7 +89,7 @@ query_suffix = eval_config.get("query_suffix", DEFAULT_QUERY_SUFFIX)
 
 **Recommendation**:
 - [ ] In DB-mode `generate_evals.py`, derive query_suffix from first N chunks for the category (hybrid approach) instead of pure taxonomy defaults
-- [ ] Document in `skills/evals/SKILL.md` which mode is "canonical" for your project
+- [ ] Document in `bundles/brain/skills/evals/SKILL.md` which mode is "canonical" for your project
 
 ---
 
@@ -165,7 +165,7 @@ parent_heading = "FastMCP"
 
 #### **7. Two-Path Pipeline Design Not Documented**
 
-**Status**: `skills/evals/SKILL.md` and `run_e2e.sh` don't explain why VTT/SRT ≠ PDF/XLSX.
+**Status**: `bundles/brain/skills/evals/SKILL.md` and `run_e2e.sh` don't explain why VTT/SRT ≠ PDF/XLSX.
 
 **Recommendation**:
 - [ ] Add section to `SKILL.md`:

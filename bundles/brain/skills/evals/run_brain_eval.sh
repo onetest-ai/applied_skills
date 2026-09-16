@@ -5,11 +5,11 @@
 #   ./run_brain_eval.sh --db <path/to/knowledge.sqlite> \
 #                       --config <path/to/promptfooconfig.yaml> \
 #                       [--port 9100] \
-#                       [--env <path/to/.env>]        # default: kt-docs/brain/.env
+#                       [--env <path/to/.env>]        # or set BRAIN_ENV_FILE
 #                       [--max-concurrency 4]
 #
 # What it does:
-#   1. Sources .env (default: ~/projects/kt-docs/brain/.env) for AWS creds
+#   1. Sources .env (set BRAIN_ENV_FILE env var, or pass --env) for AWS creds
 #   2. Starts the brain FastMCP server on --port
 #   3. Runs: BRAIN_URL=http://localhost:<port> npx promptfoo@0.123.0 eval
 #   4. Kills the brain server on exit
@@ -20,12 +20,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 
 BRAIN_PYTHON="$REPO_ROOT/.claude/venv/bin/python"
 BRAIN_SCRIPT="$REPO_ROOT/.claude/mcp/brain/fastmcp_server.py"
 BRAIN_SKILLS="$REPO_ROOT/.claude/skills"
-DEFAULT_ENV="$HOME/projects/kt-docs/brain/.env"
+DEFAULT_ENV="${BRAIN_ENV_FILE:-}"
 
 # Defaults
 PORT=9100
@@ -50,6 +50,11 @@ done
 [[ -z "$CONFIG" ]] && { echo "ERROR: --config is required"; exit 1; }
 [[ ! -f "$DB" ]]   && { echo "ERROR: DB not found: $DB"; exit 1; }
 [[ ! -f "$CONFIG" ]] && { echo "ERROR: config not found: $CONFIG"; exit 1; }
+[[ ! -f "$BRAIN_SCRIPT" ]] && {
+  echo "ERROR: brain server not found: $BRAIN_SCRIPT"
+  echo "  Run: ./install.sh --bundle brain --mcp   (installs the FastMCP server)"
+  exit 1
+}
 
 # Source AWS credentials
 if [[ -f "$ENV_FILE" ]]; then

@@ -28,7 +28,9 @@ def main():
     a = ap.parse_args()
     c = sqlite3.connect(a.db)
     if a.reset:
-        c.executescript("DROP TABLE IF EXISTS chunk_topics; DELETE FROM graph_edges WHERE rel='about';")
+        tables_now = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        ge_clause = "DELETE FROM graph_edges WHERE rel='about';" if "graph_edges" in tables_now else ""
+        c.executescript(f"DROP TABLE IF EXISTS chunk_topics; {ge_clause}")
     c.executescript("""
       CREATE TABLE IF NOT EXISTS chunk_topics(chunk_id INT, category_id TEXT, category_label TEXT, kind TEXT);
       CREATE INDEX IF NOT EXISTS idx_ct_chunk ON chunk_topics(chunk_id);
@@ -54,6 +56,12 @@ def main():
         )
         for cid in stale:
             del results[cid]
+    # graph_edges must exist — created by build_graph.py, which must run before classify_write.py
+    tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "graph_edges" not in tables:
+        import sys
+        print("ERROR: graph_edges table not found — run build_graph.py before classify_write.py", file=sys.stderr)
+        sys.exit(1)
     # incremental: clear only these chunks' existing tags/edges before re-inserting
     for cid in results:
         c.execute("DELETE FROM chunk_topics WHERE chunk_id=?", (cid,))

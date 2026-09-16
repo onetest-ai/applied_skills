@@ -7,24 +7,24 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 BRAIN_CTX = {
-    "goal": "Omniscient Project Assistant for Philips D2C/D2B onboarding",
-    "audience": "New EPAM engineers onboarding to Philips D2C/D2B projects",
+    "goal": "Project Knowledge Assistant for onboarding",
+    "audience": "New engineers onboarding to platform projects",
 }
 
 MINIMAL_ROW = {
     "eval_id": "PROBE_001",
     "category": "PeopleOwnership",
     "scope": "probe",
-    "question": "Who is Carola and what is her role?",
-    "query_suffix": "Carola DevSecOps",
-    "expected_answer_must_contain": "Albers Carola | DevSecOps",
+    "question": "Who is Alex and what is her role?",
+    "query_suffix": "Alex Platform Lead",
+    "expected_answer_must_contain": "Rivera Alex | Platform Lead",
     "expected_answer_must_not_contain": "not established",
-    "ground_truth_source": "philips_owners.xlsx",
+    "ground_truth_source": "stakeholders.xlsx",
     "notes": "TDD probe",
     "min_items": "1",
 }
 
-PHILIPS_TAXONOMY = {
+SAMPLE_TAXONOMY = {
     "brain_context": BRAIN_CTX,
     "intent_taxonomy": {"l1": ["ActionItem"], "eval_config": {}},
     "probe_evals": [],
@@ -34,15 +34,15 @@ PHILIPS_TAXONOMY = {
 def test_brain_context_goal_appears_in_rubric():
     import generate_promptfoo
     rubric = generate_promptfoo.build_rubric(MINIMAL_ROW, brain_context=BRAIN_CTX)
-    assert "Philips D2C/D2B" in rubric
-    assert "New EPAM engineers" in rubric
+    assert "Project Knowledge Assistant" in rubric
+    assert "New engineers" in rubric
 
 
 def test_brain_context_goal_in_prompt_template(tmp_path):
     import generate_promptfoo
 
-    taxo_path = tmp_path / "taxonomy.philips.json"
-    taxo_path.write_text(json.dumps(PHILIPS_TAXONOMY), encoding="utf-8")
+    taxo_path = tmp_path / "taxonomy.sample.json"
+    taxo_path.write_text(json.dumps(SAMPLE_TAXONOMY), encoding="utf-8")
 
     csv_path = tmp_path / "evals.csv"
     with csv_path.open("w", newline="") as f:
@@ -63,4 +63,4 @@ def test_brain_context_goal_in_prompt_template(tmp_path):
     ])
 
     content = out_yaml.read_text()
-    assert "D2C/D2B" in content or "Philips" in content
+    assert "Project Knowledge Assistant" in content or "New engineers" in content
