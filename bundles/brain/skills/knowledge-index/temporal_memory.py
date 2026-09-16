@@ -24,9 +24,9 @@ CREATE TABLE IF NOT EXISTS memory_assertions(
   segment_id TEXT NOT NULL,
   authority INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'asserted',
-  evidence TEXT,
-  sentiment TEXT,
-  stance TEXT
+  evidence TEXT DEFAULT '',
+  sentiment TEXT DEFAULT 'neutral',
+  stance TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_memory_fact
   ON memory_assertions(entity, predicate, asserted_at);
@@ -74,7 +74,9 @@ def ensure_schema(con: sqlite3.Connection) -> None:
     for stmt in (s.strip() for s in SCHEMA.split(";") if s.strip()):
         con.execute(stmt)
     cols = {r[1] for r in con.execute("PRAGMA table_info(memory_assertions)")}
-    for col, decl in (("evidence", "TEXT"), ("sentiment", "TEXT"), ("stance", "TEXT")):
+    for col, decl in (("evidence", "TEXT DEFAULT ''"),
+                      ("sentiment", "TEXT DEFAULT 'neutral'"),
+                      ("stance", "TEXT DEFAULT ''")):
         if col not in cols:
             con.execute(f"ALTER TABLE memory_assertions ADD COLUMN {col} {decl}")
 

@@ -50,6 +50,7 @@ def main(argv=None):
     rows = con.execute(
         f"SELECT id, source, title, substr(text,1,?), speaker, event_date FROM chunks{clause} ORDER BY id",
         params).fetchall()
+    con.close()
     if a.sources:
         exts = tuple("." + s.strip().lower().lstrip(".") for s in a.sources.split(",") if s.strip())
         rows = [r for r in rows if str(r[1]).lower().endswith(exts)]
@@ -62,7 +63,8 @@ def main(argv=None):
         items = [{"id": r[0], "source": r[1], "title": r[2],
                   "event_date": r[5], "speaker": r[4],
                   "preview": " ".join((r[3] or "").split())} for r in batch]
-        json.dump(items, open(os.path.join(a.out, f"batch_{k}.json"), "w"), indent=1)
+        with open(os.path.join(a.out, f"batch_{k}.json"), "w") as bf:
+            json.dump(items, bf, indent=1)
     print(f"prepared {len(rows)} chunks -> {a.out}")
 
 

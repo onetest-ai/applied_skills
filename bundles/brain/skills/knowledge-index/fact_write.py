@@ -6,7 +6,8 @@ import fact_schema as FS
 
 def _cos(a, b):
     dot = sum(x * y for x, y in zip(a, b))
-    na = math.sqrt(sum(x * x for x in a)); nb = math.sqrt(sum(y * y for y in b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
     return dot / (na * nb) if na and nb else 0.0
 
 
@@ -103,29 +104,29 @@ def run(con, results, aliases, embed_fn, judge_fn, high, low, now_iso, apply=Fal
             print(f"[warn] chunk {cid} not found", file=sys.stderr); continue
         source, event_date, speaker = row
         (ce, cp), band = resolve_key(ent_in, pred_in, existing, aliases, embed_fn, high, low, model)
+        merge_target = (ce, cp)  # for auto/review this is the nearest existing key
         if band == "review":
             # Spec §7.1 / decision #4: the review band is DISTINCT by default and
             # is NEVER auto-merged — --strict-merges only makes it more prominent
             # in the audit report, it does not change the merge decision.
-            own_key = FS.canon_key(ent_in, pred_in, aliases)
-            merge_items.append({"from": [own_key[0], own_key[1]],
-                                 "to": [ce, cp], "band": "review"})
-            ce, cp = own_key
-            review_count += 1
-        elif band == "auto":
-            own_key = FS.canon_key(ent_in, pred_in, aliases)
-            merge_items.append({"from": [own_key[0], own_key[1]],
-                                 "to": [ce, cp], "band": "auto"})
-        bands[band] += 1
-        if (ce, cp) not in existing:
-            existing.append((ce, cp))
+            ce, cp = FS.canon_key(ent_in, pred_in, aliases)
         asserted_at = T._timestamp(event_date) if event_date else now_iso
         aid = FS.assertion_id(ce, cp, value, source, f"chunk:{cid}")
         if aid in existing_ids:
-            # Already ingested (idempotent re-onboard): drop before linking/ledger
-            # so a re-run with reworded evidence never triggers the content-mismatch
-            # raise in temporal_memory._insert_immutable.
+            # Already ingested (idempotent re-onboard): drop BEFORE counting/linking/
+            # ledger so a re-run with reworded evidence never triggers the
+            # content-mismatch raise in temporal_memory._insert_immutable, and the
+            # audit counts reflect only newly-ingested facts.
             continue
+        bands[band] += 1
+        if band in ("review", "auto"):
+            own_key = FS.canon_key(ent_in, pred_in, aliases)
+            merge_items.append({"from": [own_key[0], own_key[1]],
+                                "to": [merge_target[0], merge_target[1]], "band": band})
+            if band == "review":
+                review_count += 1
+        if (ce, cp) not in existing:
+            existing.append((ce, cp))
         sentiment = it.get("sentiment", "neutral")
         if sentiment not in FS.SENTIMENTS:
             sentiment = "neutral"
@@ -165,9 +166,13 @@ def run(con, results, aliases, embed_fn, judge_fn, high, low, now_iso, apply=Fal
     judged, unresolved = judge_disagreements(disagreements, judge_fn)
     judge_items = [{"new_id": rel[0], "prior_id": rel[2], "relation": rel[1]} for rel in judged]
     links = all_auto + judged
+    n_super = sum(1 for j in judge_items if j["relation"] == "supersedes")
+    n_contra = sum(1 for j in judge_items if j["relation"] == "contradicts")
+    n_keep = len(disagreements) - len(judged) - len(unresolved)  # judged keep_both → no link
     report = {"assertions": len(assertions), "merges": bands,
               "auto_supersedes": len(all_auto),
-              "judge": {"resolved": len(judged), "unresolved": len(unresolved)},
+              "judge": {"supersedes": n_super, "contradicts": n_contra,
+                        "keep_both": n_keep, "unresolved": len(unresolved)},
               "merge_items": merge_items,
               "supersede_items": supersede_items,
               "judge_items": judge_items}
@@ -220,7 +225,10 @@ def main(argv=None):
     aliases = json.load(open(a.aliases)) if a.aliases else {}
     judge = _bedrock_judge(a.model)
     con = sqlite3.connect(a.db)
-    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    # Second-precision (microsecond=0) so the no-event_date fallback compares
+    # consistently against date-derived asserted_at values (which carry no
+    # microseconds) in plan_links' lexicographic timestamp ordering.
+    now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     report = run(con, a.results, aliases, KI.embed, judge, a.merge_high, a.merge_low,
                  now_iso, apply=a.apply, strict_merges=a.strict_merges, model=a.model)
     if a.report:
