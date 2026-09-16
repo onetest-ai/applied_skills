@@ -1,6 +1,6 @@
 {
   "name": "applied-skills",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Generic AI skills for truthful data pipelines over documents, knowledge graphs, and tabular reporting. Installs into Claude Code, DeepSeek Harness (dsh), GitHub Copilot, and Codex — same SKILL.md format everywhere.",
   "type": "module",
   "engines": { "node": ">=18" },
