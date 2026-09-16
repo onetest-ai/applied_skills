@@ -43,7 +43,7 @@ http.createServer((req, res) => {
   }
   let key;
   try { key = readSecret(); }
-  catch (e) { res.writeHead(503); return res.end(JSON.stringify({ error: e.message })); }
+  catch (e) { res.writeHead(503, { "content-type": "application/json" }); return res.end(JSON.stringify({ error: e.message })); }
 
   const headers = {};
   for (const [k, v] of Object.entries(req.headers))
@@ -52,7 +52,7 @@ http.createServer((req, res) => {
   headers["x-api-key"] = key;
 
   const up = https.request(
-    { hostname: target.hostname, port: 443, path: target.pathname, method: req.method, headers },
+    { hostname: target.hostname, port: Number(target.port) || 443, path: target.pathname + (target.search || ""), method: req.method, headers },
     (u) => {
       const h = {};
       for (const [k, v] of Object.entries(u.headers))
@@ -65,7 +65,7 @@ http.createServer((req, res) => {
     if (!res.headersSent) res.writeHead(502);
     res.end(JSON.stringify({ error: "upstream unavailable", detail: e.code || e.message }));
   });
-  req.on("aborted", () => up.destroy());
+  req.on("close", () => up.destroy());
   req.pipe(up);
 }).listen(port, host, () =>
   console.log(`Brain MCP bridge listening at http://${host}:${port}/mcp → ${mcpEndpoint}`)
