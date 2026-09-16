@@ -299,7 +299,7 @@ def generate_evals(extractions_dir, taxonomy_path):
             primary_fact = facts[0]
             # Use the category question template for the human-facing question;
             # _query_suffix_from_fact is for BM25 retrieval only, not the question text.
-            question = f"{base_q} (source: {slug})"
+            question = base_q
             fact_suffix = _query_suffix_from_fact(primary_fact)
             rows.append({
                 "eval_id": f"E{eval_counter:03d}",
