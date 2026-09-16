@@ -25,6 +25,27 @@ def test_vtt_single_digit_hour_cue_is_not_dropped(tmp_path):
     )
 
 
+def test_vtt_idless_cues_same_timestamp_are_not_merged(tmp_path):
+    """Two cues WITHOUT ids that share a start timestamp must stay separate.
+
+    Regression test for fix: the UUID-merge base used the timestamp when a cue
+    had no id, so distinct id-less cues starting at the same time collapsed into
+    one. Id-less cues now get a unique base per block and never merge.
+    """
+    vtt = tmp_path / "idless.vtt"
+    vtt.write_text(
+        "WEBVTT\n\n"
+        "00:00:01.000 --> 00:00:02.000\nFirst caption here.\n\n"
+        "00:00:01.000 --> 00:00:03.000\nSecond caption here.\n",
+        encoding="utf-8",
+    )
+    from parse_corpus import _parse_vtt
+    out = _parse_vtt(str(vtt))
+    headings = [l for l in out.splitlines() if l.startswith("## ")]
+    assert len(headings) == 2, f"id-less same-ts cues merged: {out!r}"
+    assert "First caption here." in out and "Second caption here." in out
+
+
 def test_json_skip_writes_manifest_entry(tmp_path):
     """A .json file without 'history' key must produce a 'skipped' manifest entry.
 

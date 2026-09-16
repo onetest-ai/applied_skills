@@ -146,7 +146,8 @@ def _parse_srt(path, merge_cues=1):
     """SRT -> headed Markdown. Each numbered cue block -> one ## heading.
     merge_cues>1 joins consecutive same-speaker cues into speaker turns."""
     import re
-    text = open(path, encoding="utf-8", errors="replace").read()
+    with open(path, encoding="utf-8", errors="replace") as f:
+        text = f.read()
     # Split on blank lines between cue blocks
     blocks = re.split(r"\n\s*\n", text.strip())
     groups = []
@@ -182,14 +183,15 @@ def _parse_vtt(path, merge_cues=1):
     """WebVTT -> headed Markdown. Multi-line cues (same UUID prefix) merged.
     merge_cues>1 joins consecutive same-speaker UUID groups into speaker turns."""
     import re
-    text = open(path, encoding="utf-8", errors="replace").read()
+    with open(path, encoding="utf-8", errors="replace") as f:
+        text = f.read()
     lines_out = []
     # Remove WEBVTT header and NOTE blocks
     body = re.sub(r"^WEBVTT.*?\n", "", text, flags=re.MULTILINE)
     blocks = re.split(r"\n\s*\n", body.strip())
     merged = {}  # base_id -> {"ts": str, "text": [str], "speaker": str}
     order = []
-    for block in blocks:
+    for block_idx, block in enumerate(blocks):
         rows = [r.strip() for r in block.strip().splitlines() if r.strip()]
         if not rows:
             continue
@@ -205,8 +207,11 @@ def _parse_vtt(path, merge_cues=1):
             if not cue_text:
                 continue
             speaker, cue_text = _speaker_and_text(cue_text)
-            # Merge by UUID base (strip trailing -N suffix)
-            base = re.sub(r"-\d+$", "", cue_id or ts)
+            # Multi-line cues sharing a UUID base (ids "uuid-0", "uuid-1", …) merge
+            # by stripping the trailing -N fragment counter. Id-less cues get a
+            # unique base per block so distinct cues that happen to share a start
+            # timestamp are never collapsed together.
+            base = re.sub(r"-\d+$", "", cue_id) if cue_id else "__cue_%d__" % block_idx
             if base not in merged:
                 merged[base] = {"ts": ts, "text": [], "speaker": speaker}
                 order.append(base)
@@ -250,7 +255,8 @@ def _parse_ai_dial_json(path):
     Returns a Markdown string, or None if the file is not AI DIAL format or has no usable content.
     """
     import json as _json
-    d = _json.loads(open(path, encoding="utf-8").read())
+    with open(path, encoding="utf-8", errors="replace") as f:
+        d = _json.loads(f.read())
     if not isinstance(d, dict) or "history" not in d:
         return None
     parts = []
