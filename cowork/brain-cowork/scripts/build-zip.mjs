@@ -36,8 +36,10 @@ if (!outPath)    fail("--out required");
 // Read + stamp SKILL.md in memory only — never touch the source file
 const skillSrcPath = join(pluginDir, "skills", "brain-librarian", "SKILL.md");
 if (!existsSync(skillSrcPath)) fail(`SKILL.md not found at ${skillSrcPath}`);
-const stampedSkill = readFileSync(skillSrcPath, "utf8")
-  .replace(/^name: brain-librarian$/m, `name: ${brainName}`);
+const skillSrc = readFileSync(skillSrcPath, "utf8");
+if (!/^name: brain-librarian$/m.test(skillSrc))
+  fail("SKILL.md is missing 'name: brain-librarian' — template may be corrupted");
+const stampedSkill = skillSrc.replace(/^name: brain-librarian$/m, `name: ${brainName}`);
 
 // Build staging dir next to the output ZIP
 const stageDir = outPath.replace(/\.zip$/, "") + "-stage";
@@ -47,7 +49,8 @@ const copyDir = (src, dst) => {
   mkdirSync(dst, { recursive: true });
   for (const entry of readdirSync(src, { withFileTypes: true })) {
     if (entry.name === "brain-librarian" && src.endsWith("skills")) continue; // stamped separately
-    if (entry.name === ".env") continue; // never copy credentials
+    if (entry.name === ".env" || entry.name.startsWith(".env.")) continue; // never copy credentials
+    if (entry.name === "brain.config.json") continue; // never copy config
     const s = join(src, entry.name);
     const d = join(dst, entry.name);
     if (entry.isDirectory()) copyDir(s, d);

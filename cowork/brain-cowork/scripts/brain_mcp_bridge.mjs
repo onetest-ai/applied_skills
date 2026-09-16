@@ -38,12 +38,17 @@ http.createServer((req, res) => {
     return res.end('{"status":"ok"}');
   }
   if (req.url !== "/mcp") {
-    res.writeHead(404);
-    return res.end();
+    res.writeHead(404, { "content-type": "application/json" });
+    return res.end(JSON.stringify({ error: "not found", hint: "endpoint is /mcp" }));
   }
   let key;
   try { key = readSecret(); }
-  catch (e) { res.writeHead(503, { "content-type": "application/json" }); return res.end(JSON.stringify({ error: e.message })); }
+  catch (e) {
+    res.writeHead(503, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: e.message }));
+    req.resume(); // drain body so keep-alive connection stays usable
+    return;
+  }
 
   const headers = {};
   for (const [k, v] of Object.entries(req.headers))

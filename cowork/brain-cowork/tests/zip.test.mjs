@@ -25,18 +25,27 @@ function scaffold(base) {
     "# Brain Librarian",
   ].join("\n"));
 
-  // docs/
+  // docs/ — include a nested .env to exercise the copyDir exclusion filter
   const docsDir = join(base, "docs");
   mkdirSync(docsDir, { recursive: true });
   writeFileSync(join(docsDir, "ONBOARDING.md"), "# Onboarding\n");
   writeFileSync(join(docsDir, "SECURITY.md"), "# Security\n");
   writeFileSync(join(docsDir, "ACCEPTANCE_TEST.md"), "# Acceptance test\n");
+  writeFileSync(join(docsDir, ".env"), "NESTED_SECRET=leak\n"); // must be excluded from ZIP
 
   // README.md
   writeFileSync(join(base, "README.md"), "# Brain Cowork Plugin\n");
 
+  // scripts/ — must never appear in ZIP
+  const scriptsDir = join(base, "scripts");
+  mkdirSync(scriptsDir, { recursive: true });
+  writeFileSync(join(scriptsDir, "install.mjs"), "// installer\n");
+
   // .env (must never appear in ZIP)
   writeFileSync(join(base, ".env"), "MY_KEY=secret\n");
+
+  // .env.local variant (must also never appear in ZIP)
+  writeFileSync(join(base, ".env.local"), "MY_KEY=local-secret\n");
 
   // brain.config.json (must never appear in ZIP)
   writeFileSync(join(base, "brain.config.json"), JSON.stringify({
@@ -168,5 +177,52 @@ describe("brain-cowork ZIP e2e", () => {
     const entries = zipEntries(zipPath);
     const found = entries.filter(e => e.includes("credentials.env"));
     assert.deepEqual(found, [], `ZIP contains credentials: ${found.join(", ")}`);
+  });
+
+  it("ZIP does not contain nested .env inside docs/", () => {
+    const entries = zipEntries(zipPath);
+    const found = entries.filter(e => e === ".env" || e.endsWith("/.env") || e.includes("/.env."));
+    assert.deepEqual(found, [], `ZIP contains .env files: ${found.join(", ")}`);
+  });
+
+  it("ZIP does not contain scripts/ directory (scaffold has scripts/install.mjs)", () => {
+    const entries = zipEntries(zipPath);
+    const found = entries.filter(e => e.startsWith("scripts/"));
+    assert.deepEqual(found, [], `ZIP contains scripts/: ${found.join(", ")}`);
+  });
+
+  it("build-zip.mjs fails with non-zero exit when SKILL.md lacks name: brain-librarian", () => {
+    const badDir = mkdtempSync(join(tmpdir(), "brain-cowork-bad-"));
+    const badOutDir = mkdtempSync(join(tmpdir(), "brain-cowork-bad-out-"));
+    try {
+      const skillDir = join(badDir, "skills", "brain-librarian");
+      mkdirSync(skillDir, { recursive: true });
+      writeFileSync(join(skillDir, "SKILL.md"), "---\nname: something-else\n---\n");
+      const pluginJsonPath = join(badOutDir, "plugin.json");
+      writeFileSync(pluginJsonPath, JSON.stringify({ name: "x", displayName: "X", version: "1.0.0" }));
+      const result = spawnSync("node", [
+        buildZipScript,
+        "--plugin-dir", badDir,
+        "--brain-name", "test-brain",
+        "--plugin-json", pluginJsonPath,
+        "--out", join(badOutDir, "test.zip"),
+      ], { encoding: "utf8" });
+      assert.notEqual(result.status, 0, "Expected non-zero exit for corrupted SKILL.md");
+      assert.match(result.stderr, /brain-librarian/);
+    } finally {
+      rmSync(badDir, { recursive: true, force: true });
+      rmSync(badOutDir, { recursive: true, force: true });
+    }
+  });
+
+  it("build-zip.mjs fails with non-zero exit when required --brain-name arg is missing", () => {
+    const result = spawnSync("node", [
+      buildZipScript,
+      "--plugin-dir", pluginDir,
+      "--plugin-json", join(outDir, "plugin.json"),
+      "--out", join(outDir, "test.zip"),
+    ], { encoding: "utf8" });
+    assert.notEqual(result.status, 0, "Expected non-zero exit for missing --brain-name");
+    assert.match(result.stderr, /--brain-name/);
   });
 });

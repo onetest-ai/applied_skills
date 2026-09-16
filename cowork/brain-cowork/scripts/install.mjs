@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import {
-  chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync,
+  chmodSync, copyFileSync, existsSync, mkdirSync,
   readFileSync, renameSync, writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -35,6 +35,7 @@ for (const [f, v] of [["brainName", brainName], ["displayName", displayName],
 
 if (!/^https:\/\//.test(mcpEndpoint)) fail("mcpEndpoint must be an HTTPS URL");
 if (!/^[a-z][a-z0-9-]*$/.test(brainName)) fail("brainName must be kebab-case (lowercase letters, digits, hyphens)");
+if (/[/\\]/.test(displayName)) fail("displayName must not contain path separators (/ or \\)");
 
 // Step 1: Validate CodeMie Gateway
 const configLibrary = join(home, "Library", "Application Support", "Claude-3p", "configLibrary");
@@ -140,10 +141,6 @@ writeFileSync(pluginJsonPath, JSON.stringify({
 }, null, 2) + "\n");
 console.log(`✓ Generated ${pluginJsonPath}`);
 
-// Stamp SKILL.md (source file untouched — only the dist copy gets brainName)
-const skillSrc = readFileSync(join(pluginDir, "skills", "brain-librarian", "SKILL.md"), "utf8");
-const stampedSkill = skillSrc.replace(/^name: brain-librarian$/m, `name: ${brainName}`);
-
 // Step 8: Bootstrap + kickstart LaunchAgent
 const domain = `gui/${process.getuid()}`;
 spawnSync("launchctl", ["bootout", domain, plistPath]);
@@ -165,40 +162,17 @@ spawnSync("osascript", ["-e", 'tell application "Claude" to quit']);
 spawnSync("open", ["-a", "Claude"]);
 console.log("✓ Claude Desktop restarted");
 
-// Step 11: Build dist ZIP via staging dir (never mutates source tree)
+// Step 11: Build dist ZIP — delegate to build-zip.mjs (single source of truth)
 const distDir = join(pluginDir, "dist");
 mkdirSync(distDir, { recursive: true });
 const zipPath = join(distDir, `${brainName}-1.0.0.zip`);
-const stageDir = join(distDir, "_stage");
-mkdirSync(stageDir, { recursive: true });
-// Copy files into staging dir
-const stageSkillDir = join(stageDir, "skills", "brain-librarian");
-mkdirSync(stageSkillDir, { recursive: true });
-writeFileSync(join(stageSkillDir, "SKILL.md"), stampedSkill);
-// copy other dirs/files
-const copyDir = (src, dst) => {
-  mkdirSync(dst, { recursive: true });
-  for (const entry of readdirSync(src, { withFileTypes: true })) {
-    if (entry.name === "brain-librarian" && src.endsWith("skills")) continue; // already stamped above
-    if (entry.name === ".env") continue; // never copy credentials into dist
-    const s = join(src, entry.name);
-    const d = join(dst, entry.name);
-    if (entry.isDirectory()) copyDir(s, d);
-    else copyFileSync(s, d);
-  }
-};
-copyDir(join(pluginDir, "skills"), join(stageDir, "skills"));
-if (existsSync(join(pluginDir, "docs"))) copyDir(join(pluginDir, "docs"), join(stageDir, "docs"));
-const readmeSrc = join(pluginDir, "README.md");
-if (existsSync(readmeSrc)) copyFileSync(readmeSrc, join(stageDir, "README.md"));
-const stagePluginJson = join(stageDir, ".claude-plugin");
-mkdirSync(stagePluginJson, { recursive: true });
-copyFileSync(pluginJsonPath, join(stagePluginJson, "plugin.json"));
-const zipResult = spawnSync("zip", ["-r", zipPath, "."], { cwd: stageDir, stdio: "inherit" });
-if (zipResult.status !== 0) fail("Failed to create dist ZIP");
-// clean up stage dir
-spawnSync("rm", ["-rf", stageDir]);
-console.log(`✓ ZIP → ${zipPath}`);
+execFileSync("node", [
+  join(scriptDir, "build-zip.mjs"),
+  "--plugin-dir", pluginDir,
+  "--brain-name", brainName,
+  "--plugin-json", pluginJsonPath,
+  "--out", zipPath,
+], { stdio: "inherit" });
 console.log("");
 console.log(`✓ ${displayName} installed. Upload ${zipPath} in Customize → Plugins → Add.`);
 console.log(`  Then open Cowork and run: /${brainName}`);

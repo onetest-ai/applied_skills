@@ -27,6 +27,8 @@ rl.on("line", line => {
   if (lineResolve) { const r = lineResolve; lineResolve = null; r(line); }
   else lineQueue.push(line);
 });
+// Resolve any pending readLine() when stdin closes (Ctrl+D, pipe EOF, aborted prompt)
+rl.on("close", () => { if (lineResolve) { const r = lineResolve; lineResolve = null; r(""); } });
 
 function readLine() {
   if (lineQueue.length) return Promise.resolve(lineQueue.shift());
