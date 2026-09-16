@@ -10,7 +10,8 @@
 #
 # Usage:
 #   ./brain which                 # print the resolved skills / python / db
-#   ./brain search "<question>" [k]
+#   ./brain search "<question>" [k] [--full|--chars N|--json]
+#   ./brain sources [--like SUBSTR] [--json]   # catalog of indexed source docs
 #   ./brain sql "SELECT … FROM facts …"
 #   ./brain verify ["<smoke query>"]
 #   ./brain plan   <parsed-dir>      # what changed since last build (added/changed/deleted)
@@ -86,7 +87,12 @@ print(json.dumps({"mcpServers": {"brain": {
 }}}, indent=2))
 PY
     ;;
-  search) need_db; "$PY" "$SKILLS/knowledge-index/knowledge_index.py" search --db "$DB" --query "${1:?question}" --k "${2:-5}";;
+  search)
+    need_db; q="${1:?question}"; shift
+    k=5; if [[ "${1:-}" =~ ^[0-9]+$ ]]; then k="$1"; shift; fi   # optional positional k; keeps back-compat
+    "$PY" "$SKILLS/knowledge-index/knowledge_index.py" search --db "$DB" --query "$q" --k "$k" "$@"  # extra flags (--full/--chars/--json) pass through
+    ;;
+  sources) need_db; "$PY" "$SKILLS/knowledge-index/knowledge_index.py" sources --db "$DB" "$@";;
   sql)    need_db; "$PY" "$SKILLS/hybrid-retrieval/query.py" --db "$DB" --sql "${1:?SQL}";;
   verify) need_db; "$PY" "$SKILLS/knowledge-pipeline/onboard.py" verify --db "$DB" ${1:+--query "$1"};;
   py)     "$PY" "$@";;
