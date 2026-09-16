@@ -28,7 +28,9 @@ def main():
     a = ap.parse_args()
     c = sqlite3.connect(a.db)
     if a.reset:
-        c.executescript("DROP TABLE IF EXISTS chunk_topics; DELETE FROM graph_edges WHERE rel='about';")
+        tables_now = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        ge_clause = "DELETE FROM graph_edges WHERE rel='about';" if "graph_edges" in tables_now else ""
+        c.executescript(f"DROP TABLE IF EXISTS chunk_topics; {ge_clause}")
     c.executescript("""
       CREATE TABLE IF NOT EXISTS chunk_topics(chunk_id INT, category_id TEXT, category_label TEXT, kind TEXT);
       CREATE INDEX IF NOT EXISTS idx_ct_chunk ON chunk_topics(chunk_id);
@@ -40,6 +42,26 @@ def main():
         try: data = json.load(open(rf))
         except Exception as e: print("skip", rf, e); continue
         results.update({int(cid): labels for cid, labels in data.items()})
+    # Detect stale batch files BEFORE any deletions: chunk IDs that no longer exist in the DB.
+    # Happens when --reset re-indexes after chunking param changes or corpus edits.
+    live_ids = {r[0] for r in c.execute("SELECT id FROM chunks")}
+    stale = [cid for cid in results if cid not in live_ids]
+    if stale:
+        import sys
+        print(
+            f"WARNING: {len(stale)} chunk ID(s) in result files not found in chunks table "
+            f"— batch files are stale (re-run classify_prep after re-indexing). "
+            f"Stale IDs will be skipped.",
+            file=sys.stderr,
+        )
+        for cid in stale:
+            del results[cid]
+    # graph_edges must exist — created by build_graph.py, which must run before classify_write.py
+    tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "graph_edges" not in tables:
+        import sys
+        print("ERROR: graph_edges table not found — run build_graph.py before classify_write.py", file=sys.stderr)
+        sys.exit(1)
     # incremental: clear only these chunks' existing tags/edges before re-inserting
     for cid in results:
         c.execute("DELETE FROM chunk_topics WHERE chunk_id=?", (cid,))
@@ -47,6 +69,7 @@ def main():
     # resolve each label against the graph: id -> (label, kind, parent_id)
     node = {i: (lbl, kind, par) for i, lbl, kind, par in
             c.execute("SELECT id,label,kind,parent FROM graph_nodes")}
+
     n_assign, n_l2, n_chunks, skipped = 0, 0, 0, 0
     for cid, labels in results.items():
         n_chunks += 1

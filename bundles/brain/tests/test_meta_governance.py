@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent / "skills" / "knowledge-pipeline"
 sys.path.insert(0, str(HERE))
 import brain_sync as B  # noqa: E402
 

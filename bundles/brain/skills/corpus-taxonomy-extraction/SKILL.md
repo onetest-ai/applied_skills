@@ -53,6 +53,20 @@ goal + corpus + optional seed taxonomy
 - PDF → PyMuPDF text layer; PPTX/DOCX → soffice→PDF→PyMuPDF; XLSX → openpyxl `read_only` structure dump. (Visual/diagram pages → the `visual-parse` skill.)
 - **Taxonomy pass = narrative/summary formats only (`--formats pptx,docx,pdf`).** Do NOT parse the big numeric workbooks — they explode into tens of MB of useless number-grid markdown and belong to the deterministic numeric lane, not here.
 
+**VTT/SRT corpora — two-pass approach:**
+
+VTT and SRT (meeting transcripts) are parsed separately from the taxonomy induction pass because raw cue fragments produce noise-heavy taxonomy. Use PDFs/slides for taxonomy induction; use VTT/SRT for the knowledge index:
+
+```bash
+# Taxonomy pass — narrative docs only (PDFs, slides)
+python parse_corpus.py --corpus <docs> --out <project>/map_parsed --formats pptx,docx,pdf
+
+# Knowledge-index pass — transcripts (separate output dir, --merge-cues required)
+python parse_corpus.py --corpus <docs> --out <project>/parsed --formats vtt,srt --merge-cues 10
+```
+
+`--merge-cues 10` joins up to 10 consecutive same-speaker cues into one speaker-turn paragraph before chunking. **Omitting it produces ~25k single-line chunks averaging 79 chars — classification agents correctly return `[]` for nearly all of them and retrieval quality collapses.** Always pass `--merge-cues N > 1` for VTT/SRT.
+
 ### 2. Map — low-tier subagents (Haiku), one batch per subagent
 Instantiate `map_instructions.template.md` (shipped with this skill): replace `{{GOAL}}` with the run's goal, `{{MAP_DIR}}` with the run's map-output dir, and `{{AUDIENCE}}` with the project audience (`brain.toml` `[project].audience`, or the store's `health().about.audience`; leave it empty if none); write it to the run dir as `map_instructions.md`. The audience is a **secondary** emphasis lens — it re-orders which goal-relevant intents/dimensions to favor and nudges vocabulary; the goal stays the primary filter and audience never drops a goal-relevant term. Dispatch subagents (model: haiku) that read that instantiated file + their assigned parsed files and write one JSON per source into the map dir. The bulk document context lives and dies inside each subagent — the orchestrator only sees compact JSON. Extract `intent_classes`, `metrics` (with `source_type`), `entities`; each item carries `evidence` (≤200-char quote), `source`, `confidence`. Give any anchor taxonomy doc its own subagent.
 
