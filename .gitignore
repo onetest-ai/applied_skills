@@ -10,6 +10,9 @@ venv/
 # Superpowers SDD workspace (ledgers, briefs, review packages — scratch)
 .superpowers/
 
+# Local task tracking (Brain feedback follow-ups — not shipped in the toolkit)
+/tasks/
+
 # Brain build artifacts — never commit a built brain into the toolkit repo
 # (these are created in a CONSUMING project, but guard against building inside a checkout)
 *.sqlite
@@ -22,3 +25,20 @@ knowledge.sqlite*
 sync_plan.json
 result_*.json
 batch_*.json
+
+# Host-specific MCP install directories — each host clones its own venv/server copy
+# The pattern matches any directory starting with a dot that has a /mcp subdir
+# (e.g. .claude/, .codex/, .dsh/, .github/ when used as an MCP host)
+.claude/
+.codex/
+.dsh/
+.github/
+docs
+# Local environment overrides — never commit (paths are machine-specific)
+.env
+
+# Eval output artifacts — generated per-run, not committed
+evals/temporal_cross_session.csv
+retrieval-results.json
+retrieval-results.html
+.idea/.gitignore

@@ -54,28 +54,274 @@ def parse_office_pymupdf(path):
         shutil.rmtree(profile, ignore_errors=True)
         shutil.rmtree(tmp, ignore_errors=True)
 
-def parse_xlsx_structure(path, sample_rows):
-    """Large-workbook structure dump: sheet names, header row, a few sample rows.
-    Constant-memory via openpyxl read_only. This is a MAP for 'what is in here',
-    not the numeric source of truth (that path is openpyxl->Parquet->SQLite)."""
+def parse_xlsx_structure(path, sample_rows=None):
+    """Workbook text dump with one Markdown section per non-empty data row.
+
+    ``sample_rows`` limits each sheet when it is a positive integer. ``None`` or
+    zero reads the full sheet.  This remains a narrative map of workbook content;
+    governed numeric answers still come from the tabular semantic layer.
+    """
     import openpyxl
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
     out = []
     for ws in wb.worksheets:
-        out.append(f"\n\n## sheet: {ws.title}  (dims={ws.dimensions})")
+        try:
+            dims = ws.calculate_dimension(force=True)
+        except (AttributeError, TypeError, ValueError):
+            dims = "unknown"
         rows = []
         for i, row in enumerate(ws.iter_rows(values_only=True)):
-            rows.append(row)
-            if i >= sample_rows:
+            if sample_rows and i >= sample_rows:
                 break
-        for r in rows:
-            cells = [("" if c is None else str(c)) for c in r]
-            if any(cells):
-                out.append("| " + " | ".join(cells) + " |")
-    wb.close()
-    return "".join(out)
+            cells = ["" if value is None else " ".join(str(value).split()) for value in row]
+            rows.append((i + 1, cells))
 
-def parse_one(path, xlsx_max_mb, sample_rows):
+        nonempty = [(number, cells) for number, cells in rows if any(cells)]
+        if not nonempty:
+            continue
+
+        # Reporting sheets often have one or two decorative rows above the real
+        # header. The densest text row in the first ten non-empty rows is a stable
+        # deterministic approximation and works for ordinary single-table sheets.
+        candidates = nonempty[:10]
+        header_number, headers = max(
+            candidates,
+            key=lambda item: (
+                sum(bool(cell) for cell in item[1]),
+                sum(bool(cell) and not cell.replace(".", "", 1).isdigit() for cell in item[1]),
+            ),
+        )
+        labels = [header or f"Column {i + 1}" for i, header in enumerate(headers)]
+        out.append(
+            f"\n\n## sheet: {ws.title} · schema  (dims={dims})\n\n"
+            + "Columns: " + "; ".join(label for label in labels if label) + "\n"
+        )
+
+        for row_number, cells in nonempty:
+            if row_number <= header_number:
+                continue
+            fields = []
+            for i, value in enumerate(cells):
+                if not value:
+                    continue
+                label = labels[i] if i < len(labels) else f"Column {i + 1}"
+                fields.append(f"- {label}: {value}")
+            if fields:
+                out.append(
+                    f"\n\n## sheet: {ws.title} · row {row_number}  (dims={dims})\n\n"
+                    + "\n".join(fields) + "\n"
+                )
+    wb.close()
+    return "".join(out).rstrip() + "\n"
+
+def _merge_speaker_turns(groups, merge_cues):
+    """Merge consecutive same-speaker cue groups into turns.
+
+    Each group is {"ts": str, "speaker": str, "text": str}.
+    Returns list of same shape where consecutive same-speaker groups within
+    the merge_cues budget are joined (text concatenated with a space).
+    merge_cues=1 returns a copy of groups unchanged.
+    """
+    if merge_cues <= 1 or not groups:
+        return list(groups)
+    turns = []
+    buf_ts = groups[0]["ts"]
+    buf_speaker = groups[0]["speaker"]
+    buf_texts = [groups[0]["text"]]
+    for g in groups[1:]:
+        same_speaker = (g["speaker"] == buf_speaker) or (not g["speaker"] and not buf_speaker)
+        within_budget = len(buf_texts) < merge_cues
+        if same_speaker and within_budget:
+            buf_texts.append(g["text"])
+        else:
+            turns.append({"ts": buf_ts, "speaker": buf_speaker, "text": " ".join(buf_texts)})
+            buf_ts = g["ts"]
+            buf_speaker = g["speaker"]
+            buf_texts = [g["text"]]
+    turns.append({"ts": buf_ts, "speaker": buf_speaker, "text": " ".join(buf_texts)})
+    return turns
+
+
+def _parse_srt(path, merge_cues=1):
+    """SRT -> headed Markdown. Each numbered cue block -> one ## heading.
+    merge_cues>1 joins consecutive same-speaker cues into speaker turns."""
+    import re
+    with open(path, encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    # Split on blank lines between cue blocks
+    blocks = re.split(r"\n\s*\n", text.strip())
+    groups = []
+    for block in blocks:
+        rows = [r.strip() for r in block.strip().splitlines() if r.strip()]
+        if not rows:
+            continue
+        # First line is sequence number, second is timestamp, rest is text
+        i = 0
+        if rows[i].isdigit():
+            i += 1
+        if i < len(rows) and re.match(r"\d{1,2}:\d{2}:\d{2},\d+ --> ", rows[i]):
+            ts = rows[i].split("-->")[0].strip()  # start timestamp
+            cue_text = " ".join(rows[i+1:])
+            if cue_text.strip():
+                speaker, cue_text = _speaker_and_text(cue_text)
+                # Format: MM:SS from HH:MM:SS,mmm
+                parts = ts.split(":")
+                label = "%s:%s" % (parts[1], parts[2].split(",")[0])
+                groups.append({"ts": label, "speaker": speaker, "text": cue_text.strip()})
+
+    turns = _merge_speaker_turns(groups, merge_cues)
+
+    lines = []
+    for seq, turn in enumerate(turns, 1):
+        who = (" — %s" % turn["speaker"]) if turn["speaker"] else ""
+        marker = ("<!-- speaker: %s -->\n\n" % turn["speaker"]) if turn["speaker"] else ""
+        lines.append("\n## %s%s (cue %d)\n\n%s%s\n" % (turn["ts"], who, seq, marker, turn["text"]))
+    return "\n".join(lines)
+
+
+def _parse_vtt(path, merge_cues=1):
+    """WebVTT -> headed Markdown. Multi-line cues (same UUID prefix) merged.
+    merge_cues>1 joins consecutive same-speaker UUID groups into speaker turns."""
+    import re
+    with open(path, encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    lines_out = []
+    # Remove WEBVTT header and NOTE blocks
+    body = re.sub(r"^WEBVTT.*?\n", "", text, flags=re.MULTILINE)
+    blocks = re.split(r"\n\s*\n", body.strip())
+    merged = {}  # base_id -> {"ts": str, "text": [str], "speaker": str}
+    order = []
+    for block_idx, block in enumerate(blocks):
+        rows = [r.strip() for r in block.strip().splitlines() if r.strip()]
+        if not rows:
+            continue
+        # Detect cue block: first line is ID or timestamp
+        i = 0
+        cue_id = None
+        if i < len(rows) and not re.match(r"\d{1,2}:\d{2}[\d:\.]+\s+-->", rows[i]):
+            cue_id = rows[i]
+            i += 1
+        if i < len(rows) and re.match(r"[\d:\.]+\s+-->", rows[i]):
+            ts = rows[i].split("-->")[0].strip()
+            cue_text = " ".join(rows[i+1:]).strip()
+            if not cue_text:
+                continue
+            speaker, cue_text = _speaker_and_text(cue_text)
+            # Multi-line cues sharing a UUID base (ids "uuid-0", "uuid-1", …) merge
+            # by stripping the trailing -N fragment counter. Id-less cues get a
+            # unique base per block so distinct cues that happen to share a start
+            # timestamp are never collapsed together.
+            base = re.sub(r"-\d+$", "", cue_id) if cue_id else "__cue_%d__" % block_idx
+            if base not in merged:
+                merged[base] = {"ts": ts, "text": [], "speaker": speaker}
+                order.append(base)
+            elif speaker and not merged[base]["speaker"]:
+                merged[base]["speaker"] = speaker
+            merged[base]["text"].append(cue_text)
+
+    # Build UUID-group list
+    groups = []
+    for base in order:
+        entry = merged[base]
+        full_text = " ".join(entry["text"]).strip()
+        if full_text:
+            groups.append({"ts": entry["ts"], "speaker": entry["speaker"], "text": full_text})
+
+    # Merge consecutive same-speaker groups into turns
+    turns = _merge_speaker_turns(groups, merge_cues)
+
+    seq = 0
+    for turn in turns:
+        seq += 1
+        ts = turn["ts"]
+        # MM:SS from HH:MM:SS[.mmm] -- strip fractional, split on colon, take last two parts
+        parts = ts.split(".")[0].split(":")
+        if len(parts) >= 2:
+            label = "%s:%s" % (parts[-2].zfill(2), parts[-1].zfill(2))
+        else:
+            label = ts[:5]
+        speaker = turn["speaker"]
+        who = (" — %s" % speaker) if speaker else ""
+        marker = ("<!-- speaker: %s -->\n\n" % speaker) if speaker else ""
+        lines_out.append("\n## %s%s (cue %d)\n\n%s%s\n" % (label, who, seq, marker, turn["text"]))
+    return "\n".join(lines_out)
+
+
+def _parse_ai_dial_json(path):
+    """AI DIAL conversation JSON → Markdown of assistant messages.
+
+    Format: {history: [{name: str, messages: [{role, content}]}]}
+    Only assistant messages with ≥50 chars are included.
+    Returns a Markdown string, or None if the file is not AI DIAL format or has no usable content.
+    """
+    import json as _json
+    with open(path, encoding="utf-8", errors="replace") as f:
+        d = _json.loads(f.read())
+    if not isinstance(d, dict) or "history" not in d:
+        return None
+    parts = []
+    for conv in d.get("history", []):
+        name = conv.get("name", "conversation")
+        conv_parts = []
+        for msg in conv.get("messages", []):
+            if msg.get("role") == "assistant":
+                raw = msg.get("content") or ""
+                if isinstance(raw, list):
+                    # Handle both plain strings and structured content blocks
+                    # {"type": "text", "text": "..."} as used by Anthropic API exports
+                    parts_raw = []
+                    for p in raw:
+                        if isinstance(p, str):
+                            parts_raw.append(p)
+                        elif isinstance(p, dict) and p.get("text"):
+                            parts_raw.append(str(p["text"]))
+                    raw = " ".join(parts_raw)
+                content = raw.strip()
+                if len(content) >= 50:
+                    conv_parts.append(content)
+        if conv_parts:
+            parts.append(f"# {name}\n\n" + "\n\n---\n\n".join(conv_parts))
+    if not parts:
+        return None
+    return "\n\n".join(parts)
+
+
+# Capitalised words that commonly precede a colon at the start of a caption but
+# are NOT speaker names — kept lowercase for case-insensitive matching. Without
+# this guard "Note: ...", "Today: ...", "Warning: ..." get misread as speakers,
+# polluting the speaker markers that drive speaker-scoped search.
+_NON_SPEAKER_PREFIXES = frozenset({
+    "note", "notes", "today", "tomorrow", "yesterday", "ok", "okay", "yes", "no",
+    "so", "well", "actually", "right", "first", "second", "third", "next", "then",
+    "step", "warning", "error", "caution", "important", "update", "summary",
+    "question", "answer", "action", "agenda", "topic", "example", "tip", "re",
+    "subject", "from", "to", "date", "time", "edit", "ps", "aside", "recap",
+})
+
+
+def _speaker_and_text(text: str) -> tuple[str, str]:
+    """Extract WebVTT voice tags and conservative ``Name: text`` prefixes.
+
+    The ``Name:`` fallback (used by SRT and by VTT cues without <v> tags) only
+    fires for name-shaped prefixes: one to three capitalised words, letters and
+    name punctuation only, and whose lead word is not a common sentence-opening
+    word (see ``_NON_SPEAKER_PREFIXES``).
+    """
+    import re
+    voice = re.match(r"\s*<v(?:\.[^ >]+)*\s+([^>]+)>\s*(.*)", text, flags=re.I | re.S)
+    if voice:
+        return voice.group(1).strip(), re.sub(r"</?v[^>]*>", "", voice.group(2)).strip()
+    labelled = re.match(
+        r"\s*([A-Z][A-Za-z'’.-]*(?:\s+[A-Z][A-Za-z'’.-]*){0,2}):\s+(.+)", text, flags=re.S)
+    if labelled:
+        name = labelled.group(1).strip()
+        lead = name.split()[0].lower().strip(".'’-")
+        if lead not in _NON_SPEAKER_PREFIXES:
+            return name, labelled.group(2).strip()
+    return "", re.sub(r"</?v[^>]*>", "", text).strip()
+
+
+def parse_one(path, xlsx_max_mb, sample_rows, merge_cues=1):
     ext = os.path.splitext(path)[1].lower()
     size_mb = os.path.getsize(path) / 1e6
     if ext in (".pptx", ".docx", ".ppt", ".doc"):
@@ -83,18 +329,30 @@ def parse_one(path, xlsx_max_mb, sample_rows):
     if ext == ".pdf":
         return parse_pdf_pymupdf(path), "pymupdf"
     if ext in (".xlsx", ".xlsm"):
-        return parse_xlsx_structure(path, sample_rows), "openpyxl-structure"
+        # Small workbooks are useful narrative/entity sources and are cheap to
+        # read in full. Large reporting books stay bounded to a structural sample;
+        # their complete numeric data belongs in the deterministic facts lane.
+        row_limit = None if size_mb <= xlsx_max_mb else sample_rows
+        return parse_xlsx_structure(path, row_limit), "openpyxl-structure"
+    if ext == ".srt":
+        return _parse_srt(path, merge_cues=merge_cues), "transcript-etl"
+    if ext == ".vtt":
+        return _parse_vtt(path, merge_cues=merge_cues), "transcript-etl"
+    if ext == ".json":
+        return _parse_ai_dial_json(path), "ai-dial-json"
     return None, "skipped"
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--xlsx-max-mb", type=float, default=20.0)
     ap.add_argument("--sample-rows", type=int, default=8)
-    ap.add_argument("--formats", default="pptx,docx,pdf,xlsx,xlsm",
+    ap.add_argument("--formats", default="pptx,docx,pdf,xlsx,xlsm,vtt,srt,json",
                     help="comma-separated extensions (no dot) to include")
-    a = ap.parse_args()
+    ap.add_argument("--merge-cues", type=int, default=1,
+                    help="join N consecutive same-speaker VTT/SRT cues into one chunk (default: 1 = per-cue)")
+    a = ap.parse_args(argv)
     allow = {"." + e.strip().lower().lstrip(".") for e in a.formats.split(",") if e.strip()}
     os.makedirs(a.out, exist_ok=True)
     manifest = []
@@ -108,8 +366,9 @@ def main():
             if ext not in allow:
                 continue
             try:
-                md, method = parse_one(src, a.xlsx_max_mb, a.sample_rows)
-                if md is None:
+                md, method = parse_one(src, a.xlsx_max_mb, a.sample_rows, merge_cues=a.merge_cues)
+                if not md:
+                    manifest.append({"source": rel, "skipped": True, "method": method})
                     continue
                 safe = rel.replace(os.sep, "__") + ".md"
                 outp = os.path.join(a.out, safe)

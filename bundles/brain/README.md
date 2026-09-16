@@ -301,7 +301,7 @@ For a chat attachment, the host materializes a temporary file and the operator/a
 
 ```bash
 ./brain source import /temporary/attachment.pdf --root incoming \
-  --description "September CEC update" \
+  --description "September project update" \
   --provenance '{"attachment_id":"…","conversation_id":"…"}'
 ```
 
@@ -369,7 +369,7 @@ The **goal string is a noise filter** — extraction is scoped to the analytical
 `taxonomy_v0.json` is a **project artifact** — it lives in the consuming project (with `families.<corpus>.json`, the goal, the built store), **never in the store or the skills**. It is *loaded into* the store as `graph_nodes` by `build_graph`, but the source-of-truth JSON stays a file so it can be reviewed, versioned, and hand-edited.
 
 ### How the visual/VLM parse affects it
-The parse stack now transcribes visual pages (flows, timelines, diagrams) via `visual-parse` instead of dropping them to fragments. Since induction reads `parsed/`, **its input is now richer** — concepts that previously lived only on slides ("North Star Vision & Service Design Blueprint", phase/framework/capability names) become visible to the map step, so a freshly-induced taxonomy covers **more**. Consequence:
+The parse stack now transcribes visual pages (flows, timelines, diagrams) via `visual-parse` instead of dropping them to fragments. Since induction reads `parsed/`, **its input is now richer** — concepts that previously lived only on slides ("ProjectAlpha Vision & Service Design Blueprint", phase/framework/capability names) become visible to the map step, so a freshly-induced taxonomy covers **more**. Consequence:
 
 - A **from-scratch build** captures visual concepts automatically (induction reads the VLM-enriched `parsed/`).
 - An **existing brain whose taxonomy predates the visual parse under-covers** those concepts — visible as visual-page chunks that classify leaves **untagged** (no matching L1). That's the signal it's time to refresh the taxonomy.

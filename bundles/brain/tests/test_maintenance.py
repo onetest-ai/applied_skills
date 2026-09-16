@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent / "skills" / "brain-maintenance"
 SPEC = importlib.util.spec_from_file_location("maintenance", HERE / "maintenance.py")
 M = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
@@ -39,7 +39,7 @@ class MaintenancePlanTests(unittest.TestCase):
               byte_size INTEGER,media_type TEXT,source_kind TEXT,display_name TEXT,description TEXT,
               provenance_json TEXT,state TEXT,created_at TEXT,updated_at TEXT,last_seen_at TEXT,removed_at TEXT,
               UNIQUE(root_key,relative_path));
-            CREATE TABLE documents(doc_id TEXT PRIMARY KEY,sha TEXT,bytes INT,mtime REAL,updated_at TEXT,source_id TEXT);
+            CREATE TABLE synced_files(doc_id TEXT PRIMARY KEY,sha TEXT,bytes INT,mtime REAL,updated_at TEXT,source_id TEXT);
             CREATE TABLE chunks(id INTEGER PRIMARY KEY,source TEXT);
             CREATE TABLE chunk_topics(chunk_id INT);
             CREATE TABLE facts(value REAL);
@@ -50,7 +50,7 @@ class MaintenancePlanTests(unittest.TestCase):
             con.execute("INSERT INTO sources VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         ("s1","docs","a.pdf",source_sha,6,"application/pdf","narrative","a.pdf",None,"{}","active","now","now","now",None))
             st = (self.project / "parsed" / "a.pdf.md").stat()
-            con.execute("INSERT INTO documents VALUES(?,?,?,?,?,?)",("a.pdf.md",parsed_sha,st.st_size,st.st_mtime,"now","s1"))
+            con.execute("INSERT INTO synced_files VALUES(?,?,?,?,?,?)",("a.pdf.md",parsed_sha,st.st_size,st.st_mtime,"now","s1"))
         self.profile = self.project / "brain-maintenance.toml"
         self.profile.write_text('''version = 1
 [project]

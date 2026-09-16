@@ -18,6 +18,8 @@ Every advertised tool property carries a concrete primitive schema, with a `null
 | `list_metrics` | Discover governed metrics, units, grains, and periods |
 | `get_metric` | Read exact `facts` rows with `source_file` citations |
 | `search_knowledge` | Hybrid BM25 + vector narrative retrieval |
+| `get_current_fact` | Current or as-of mutable fact with retained history |
+| `get_question_status` | Open/resolved question linked across meeting sources |
 | `get_taxonomy` | Explore taxonomy nodes, edges, and tagged sections |
 | `find_related_content` | Read precomputed semantic neighbors |
 | `get_evidence` | Inspect one cited section and optional page/table text |

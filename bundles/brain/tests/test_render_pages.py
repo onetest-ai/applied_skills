@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent / "skills" / "visual-parse"
 SPEC = importlib.util.spec_from_file_location("render_pages", HERE / "render_pages.py")
 R = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader

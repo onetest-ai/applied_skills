@@ -165,11 +165,11 @@ def ensure_schema(con: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_sources_root_state ON sources(root_key,state);
         CREATE INDEX IF NOT EXISTS idx_sources_sha ON sources(source_sha256);
         """)
-        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='documents'").fetchone():
-            cols = {r[1] for r in con.execute("PRAGMA table_info(documents)")}
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='synced_files'").fetchone():
+            cols = {r[1] for r in con.execute("PRAGMA table_info(synced_files)")}
             if "source_id" not in cols:
-                con.execute("ALTER TABLE documents ADD COLUMN source_id TEXT")
-            con.execute("CREATE INDEX IF NOT EXISTS idx_documents_source_id ON documents(source_id)")
+                con.execute("ALTER TABLE synced_files ADD COLUMN source_id TEXT")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_synced_files_source_id ON synced_files(source_id)")
         con.execute("INSERT OR REPLACE INTO brain_schema VALUES(?,?,?)", ("source-registry", SCHEMA_VERSION, now))
 
 
@@ -329,10 +329,10 @@ def cmd_get(a) -> None:
         if not row: raise KeyError(f"unknown source_id: {a.source_id}")
         result = dict(row)
         docs = []
-        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='documents'").fetchone():
-            cols = {r[1] for r in con.execute("PRAGMA table_info(documents)")}
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='synced_files'").fetchone():
+            cols = {r[1] for r in con.execute("PRAGMA table_info(synced_files)")}
             if "source_id" in cols:
-                for d in con.execute("SELECT doc_id FROM documents WHERE source_id=? ORDER BY doc_id", (a.source_id,)):
+                for d in con.execute("SELECT doc_id FROM synced_files WHERE source_id=? ORDER BY doc_id", (a.source_id,)):
                     chunks = con.execute("SELECT COUNT(*) FROM chunks WHERE source=?", (d[0],)).fetchone()[0] if con.execute("SELECT 1 FROM sqlite_master WHERE name='chunks'").fetchone() else 0
                     docs.append({"doc_id": d[0], "chunks": chunks})
         result["documents"] = docs
@@ -473,11 +473,11 @@ def cmd_remove(a) -> None:
         missing = [sid for sid, row in zip(a.source_id, rows) if not row]
         if missing: raise KeyError("unknown source_id(s): " + ", ".join(missing))
         impacts = []
-        have_docs = con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='documents'").fetchone()
-        doc_cols = {r[1] for r in con.execute("PRAGMA table_info(documents)")} if have_docs else set()
+        have_docs = con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='synced_files'").fetchone()
+        doc_cols = {r[1] for r in con.execute("PRAGMA table_info(synced_files)")} if have_docs else set()
         have_chunks = bool(con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chunks'").fetchone())
         for row in rows:
-            docs = con.execute("SELECT doc_id FROM documents WHERE source_id=?", (row["source_id"],)).fetchall() if "source_id" in doc_cols else []
+            docs = con.execute("SELECT doc_id FROM synced_files WHERE source_id=?", (row["source_id"],)).fetchall() if "source_id" in doc_cols else []
             chunks = sum(con.execute("SELECT COUNT(*) FROM chunks WHERE source=?", (d[0],)).fetchone()[0] for d in docs) if have_chunks else 0
             impacts.append({"source_id": row["source_id"], "source": f"{row['root_key']}:{row['relative_path']}", "documents": len(docs), "chunks": chunks})
         json_out({"will_tombstone": impacts})
@@ -533,10 +533,10 @@ def cmd_migrate(a) -> None:
         for item in manifest:
             src_rel, doc_id = normalize_rel(item["source"]), normalize_rel(item["md"])
             path = _resolved_inside(config["roots"][a.root]["path"], src_rel)
-            if not con.execute("SELECT 1 FROM documents WHERE doc_id=?", (doc_id,)).fetchone():
+            if not con.execute("SELECT 1 FROM synced_files WHERE doc_id=?", (doc_id,)).fetchone():
                 raise ValueError(f"documents row not found: {doc_id}")
             row = register(con, a.root, src_rel, path, commit=False)
-            con.execute("UPDATE documents SET source_id=? WHERE doc_id=?", (row["source_id"], doc_id))
+            con.execute("UPDATE synced_files SET source_id=? WHERE doc_id=?", (row["source_id"], doc_id))
             mapped.append({"source_id": row["source_id"], "doc_id": doc_id})
         con.commit()
     except Exception:

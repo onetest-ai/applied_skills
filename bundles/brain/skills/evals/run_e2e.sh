@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+# E2E pipeline: VTT corpus → parsed MD → knowledge.sqlite → taxonomy → brain → evals
+# Usage: bash bundles/brain/skills/evals/run_e2e.sh \
+#   --corpus   /path/to/vtt/dir \
+#   --work     /tmp/project_e2e \
+#   --brain-port 8003 \
+#   [--taxonomy /path/to/taxonomy.json]   # default: bundles/brain/skills/evals/taxonomy.default.json \
+#   [--extractions /path/to/extraction_jsons]
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$HERE/../../../.." && pwd)"
+VENV="$REPO/.claude/venv/bin/python3"
+SKILL_TAXO="$REPO/bundles/brain/skills/corpus-taxonomy-extraction"
+SKILL_KI="$REPO/bundles/brain/skills/knowledge-index"
+SKILL_EVALS="$HERE"
+MCP_BRAIN="$REPO/mcp/brain"
+
+CORPUS=""; WORK=""; PORT=8003; TAXONOMY=""; EXTRACTIONS=""
+DEFAULT_TAXONOMY="$HERE/taxonomy.default.json"
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --corpus)      CORPUS="$2";      shift 2 ;;
+    --work)        WORK="$2";        shift 2 ;;
+    --brain-port)  PORT="$2";        shift 2 ;;
+    --taxonomy)    TAXONOMY="$2";    shift 2 ;;
+    --extractions) EXTRACTIONS="$2"; shift 2 ;;
+    *) echo "Unknown arg: $1"; exit 1 ;;
+  esac
+done
+
+[[ -z "$CORPUS" ]] && { echo "ERROR: --corpus required"; exit 1; }
+[[ -z "$WORK" ]]   && { echo "ERROR: --work required"; exit 1; }
+[[ -z "$TAXONOMY" ]] && TAXONOMY="$DEFAULT_TAXONOMY"
+[[ ! -f "$TAXONOMY" ]] && { echo "ERROR: taxonomy not found: $TAXONOMY"; exit 1; }
+
+DB="$WORK/knowledge.sqlite"
+PARSED="$WORK/parsed"
+CLASSIFY_DIR="$WORK/classify"
+EVAL_CSV="$WORK/evals.csv"
+EVAL_YAML="$WORK/promptfooconfig.yaml"
+EVAL_RESULTS="$WORK/results.json"
+JS="$SKILL_EVALS/load_brain_context.js"
+
+mkdir -p "$PARSED" "$CLASSIFY_DIR"
+
+echo "=== Stage 1: Parse VTT corpus ==="
+t0=$SECONDS
+"$VENV" "$SKILL_TAXO/parse_corpus.py" \
+  --corpus     "$CORPUS" \
+  --out        "$PARSED" \
+  --formats    vtt,srt \
+  --merge-cues 10
+echo "  done in $((SECONDS - t0))s — $(ls "$PARSED"/*.md 2>/dev/null | wc -l) markdown files"
+
+echo "=== Stage 2: Index into knowledge.sqlite ==="
+t0=$SECONDS
+"$VENV" "$SKILL_KI/knowledge_index.py" index \
+  --db     "$DB" \
+  --corpus "$PARSED" \
+  --reset
+echo "  done in $((SECONDS - t0))s"
+
+echo "=== Stage 3: Taxonomy — classify_prep ==="
+t0=$SECONDS
+"$VENV" "$SKILL_TAXO/classify_prep.py" \
+  --db       "$DB" \
+  --taxonomy "$TAXONOMY" \
+  --out      "$CLASSIFY_DIR" \
+  --batches  25
+echo "  done in $((SECONDS - t0))s — $(ls "$CLASSIFY_DIR"/batch_*.json 2>/dev/null | wc -l) batches"
+
+echo "=== Stage 3b: Taxonomy — classify agents (run manually or via Claude) ==="
+echo "  Batches at: $CLASSIFY_DIR"
+echo "  Run each batch agent then continue with Stage 3c."
+echo "  Expected output: $CLASSIFY_DIR/result_*.json"
+echo ""
+echo "  Press ENTER when result_*.json files are ready, or Ctrl-C to stop."
+read -r || true  # tolerates non-interactive/CI stdin
+
+echo "=== Stage 3c: Taxonomy — build_graph + classify_write ==="
+t0=$SECONDS
+"$VENV" "$SKILL_TAXO/build_graph.py" \
+  --taxonomy "$TAXONOMY" \
+  --db       "$DB"
+"$VENV" "$SKILL_TAXO/classify_write.py" \
+  --db      "$DB" \
+  --results "$CLASSIFY_DIR"
+echo "  done in $((SECONDS - t0))s"
+
+echo "=== Stage 3.5: Extract verbatim facts from parsed MD (gold standard) ==="
+EXTRACT_OUT="$WORK/extractions"
+extract_rc=0
+"$VENV" "$SKILL_EVALS/extract_facts.py" \
+    --parsed   "$PARSED" \
+    --taxonomy "$TAXONOMY" \
+    --out      "$EXTRACT_OUT" 2>&1 | tee /tmp/extract_facts.log || extract_rc=${PIPESTATUS[0]}
+if [[ "$extract_rc" -eq 0 ]]; then
+  n_files=$(ls "$EXTRACT_OUT"/*_extraction.json 2>/dev/null | wc -l | tr -d ' ')
+  echo "  $n_files extraction files written to $EXTRACT_OUT"
+  if [[ "$n_files" -eq 0 ]]; then
+    echo "  WARNING: extract_facts.py wrote 0 extraction files — Stage 5 will use DB-mode"
+  else
+    [[ -z "$EXTRACTIONS" ]] && EXTRACTIONS="$EXTRACT_OUT"
+  fi
+else
+  echo "  WARNING: extract_facts.py failed (exit $extract_rc, no AWS creds?) — Stage 5 will use DB-mode"
+fi
+
+echo "=== Stage 4: Start brain server ==="
+BRAIN_PID=""
+cleanup() { [[ -n "$BRAIN_PID" ]] && kill "$BRAIN_PID" 2>/dev/null || true; }
+trap cleanup EXIT
+
+# Resolve skills dir: use sibling dir when installed (.claude/skills/evals → .claude/skills),
+# fall back to bundle source tree layout.
+if [[ -d "$HERE/../corpus-taxonomy-extraction" ]]; then
+  BRAIN_SKILLS="$HERE/.."
+else
+  BRAIN_SKILLS="$REPO/bundles/brain/skills"
+fi
+
+BRAIN_DB="$DB" PORT="$PORT" BRAIN_SKILLS="$BRAIN_SKILLS" \
+  "$VENV" "$MCP_BRAIN/fastmcp_server.py" --transport http &
+BRAIN_PID=$!
+
+# Wait for health — accept 200 (healthy) or 503 (degraded-but-running, e.g. sqlite-vec absent)
+for i in $(seq 1 20); do
+  status=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PORT/healthz" 2>/dev/null)
+  [[ "$status" == "200" || "$status" == "503" ]] && break
+  sleep 1
+done
+status=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PORT/healthz" 2>/dev/null)
+[[ "$status" == "200" || "$status" == "503" ]] || { echo "Brain failed to start"; exit 1; }
+echo "  brain running at http://localhost:$PORT (PID $BRAIN_PID)"
+
+echo "=== Stage 5: Generate evals ==="
+if [[ -n "$EXTRACTIONS" ]]; then
+  "$VENV" "$SKILL_EVALS/generate_evals.py" \
+    --extractions "$EXTRACTIONS" \
+    --taxonomy    "$TAXONOMY" \
+    --out         "$EVAL_CSV"
+else
+  # No --extractions provided: generate directly from the classified knowledge DB.
+  # taxonomy.json is optional — if present, it overrides question/query_suffix per category.
+  TAXO_ARGS=()
+  [[ -f "$TAXONOMY" ]] && TAXO_ARGS=(--taxonomy "$TAXONOMY")
+  "$VENV" "$SKILL_EVALS/generate_evals.py" \
+    --db       "$DB" \
+    "${TAXO_ARGS[@]}" \
+    --out      "$EVAL_CSV"
+fi
+
+BRAIN_URL="http://localhost:$PORT" \
+"$VENV" "$SKILL_EVALS/generate_promptfoo.py" \
+  --csv        "$EVAL_CSV" \
+  --out        "$EVAL_YAML" \
+  --brain-url  "http://localhost:$PORT" \
+  --context-js "$JS"
+
+echo "=== Stage 6: Run evals ==="
+# Verify brain is still alive before spending eval tokens
+kill -0 "$BRAIN_PID" 2>/dev/null || { echo "ERROR: brain process died before eval stage"; exit 1; }
+http_pre=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PORT/healthz" 2>/dev/null)
+[[ "$http_pre" == "200" || "$http_pre" == "503" ]] || { echo "ERROR: brain not responding (HTTP $http_pre) before eval stage"; exit 1; }
+t0=$SECONDS
+(cd "$(dirname "$EVAL_YAML")" && \
+  AWS_REGION=us-east-1 \
+  npx promptfoo@0.123.0 eval \
+    --config "$(basename "$EVAL_YAML")" \
+    --no-cache \
+    --max-concurrency 3 \
+    --output "$EVAL_RESULTS"
+)
+echo "  done in $((SECONDS - t0))s"
+
+echo ""
+echo "=== Results ==="
+if [[ -f "$EVAL_RESULTS" ]]; then
+  "$VENV" - "$EVAL_RESULTS" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+r = d['results']['results']
+total = len(r); passed = sum(1 for x in r if x.get('success'))
+print(f'PASS: {passed}/{total} ({round(100*passed/total) if total else 0}%)')
+PYEOF
+fi
+echo "Full results: $EVAL_RESULTS"

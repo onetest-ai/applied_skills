@@ -42,7 +42,7 @@ def brain_py():
             return str(c)
     return sys.executable
 
-NARRATIVE_EXT = {".pdf", ".pptx", ".ppt", ".docx", ".doc", ".md", ".txt"}
+NARRATIVE_EXT = {".pdf", ".pptx", ".ppt", ".docx", ".doc", ".md", ".txt", ".vtt", ".srt"}
 REPORTING_EXT = {".xlsx", ".xlsm", ".xls", ".csv"}
 
 # module -> pip name (for the preflight message). All torch-free (docling retired).
@@ -150,7 +150,7 @@ def cmd_scaffold(a):
                  'include = ["**/*"]']
         if docs:
             lines += ["", "[sources.roots.docs]", f"path = {json.dumps(docs_path)}", f"mode = {json.dumps(a.docs_mode)}",
-                      'include = ["**/*.pdf", "**/*.ppt", "**/*.pptx", "**/*.doc", "**/*.docx"]']
+                      'include = ["**/*.pdf", "**/*.ppt", "**/*.pptx", "**/*.doc", "**/*.docx", "**/*.vtt", "**/*.srt", "**/*.json"]']
         if reporting:
             lines += ["", "[sources.roots.reporting]", f"path = {json.dumps(reporting_path)}", f"mode = {json.dumps(a.reporting_mode)}",
                       'include = ["**/*.xlsx", "**/*.xlsm", "**/*.xls"]']
@@ -259,7 +259,12 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     DB="{db}"
     PY="{py}"          # the brain venv interpreter (BRAIN_PY)
 
-    # 1 · parse narrative docs → Markdown (pymupdf text; visual pages via visual-parse)
+    # 1a · parse transcripts → Markdown (VTT/SRT corpora only — skip if no transcripts)
+    #      --merge-cues joins same-speaker cues into speaker turns; omitting it produces
+    #      ~25k single-line chunks that agents classify as [] and retrieval quality collapses.
+    "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats vtt,srt --merge-cues 10
+
+    # 1b · parse narrative docs → Markdown (pymupdf text; visual pages via visual-parse)
     "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats pptx,docx,pdf
 
     # 2 · 🤖 induce taxonomy (map→reduce→judge→emit) → taxonomy/taxonomy_v0.json
@@ -272,14 +277,19 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     "$PY" "{CTE/'build_graph.py'}" --taxonomy "{proj/'taxonomy'/'taxonomy_v0.json'}" --db "$DB"
 
     # 5 · 🤖 per-section tags — prep, dispatch Haiku subagents, write
-    "$PY" "{CTE/'classify_prep.py'}" --db "$DB" --taxonomy "{proj/'taxonomy'/'taxonomy_v0.json'}" --out "{proj/'classify'}" --batches 5
+    "$PY" "{CTE/'classify_prep.py'}" --db "$DB" --taxonomy "{proj/'taxonomy'/'taxonomy_v0.json'}" --out "{proj/'classify'}" --batches 25
     #     → N Haiku subagents read classify/{{instructions,vocab,batch_k}} → write classify/result_k.json
     "$PY" "{CTE/'classify_write.py'}" --db "$DB" --results "{proj/'classify'}"
 
-    # 6 · numeric marts (Excel → facts) into the SAME db   [edit {fam.name} first!]
+    # 6 · temporal fact intake (docs + transcripts → evidence-backed assertions)
+    "$PY" "{KI/'fact_prep.py'}" --db "$DB" --out "{proj/'facts'}"
+    # 🤖 dispatch low-tier agents: read facts/instructions.md + facts/batch_*.json → facts/result_*.json
+    "$PY" "{KI/'fact_write.py'}" --db "$DB" --results "{proj/'facts'}" --report "{proj/'facts'/'fact_intake_report.json'}" --apply
+
+    # 7 · numeric marts (Excel → facts) into the SAME db   [edit {fam.name} first!]
     "$PY" "{TSL/'build_marts.py'}" --root "{rep_s}" --config "{fam}" --out-dir "{proj/'marts'}" --db "$DB" --strict
 
-    # 7 · Obsidian vault = a VIEW of the store
+    # 8 · Obsidian vault = a VIEW of the store
     "$PY" "{CTE/'to_obsidian.py'}" --db "$DB" --out "{proj/'vault'}"
 
     # verify the built store

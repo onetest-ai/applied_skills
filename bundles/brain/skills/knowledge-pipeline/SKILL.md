@@ -1,11 +1,11 @@
 ---
 name: knowledge-pipeline
-description: Orchestrator — turn a document + data corpus into ONE local knowledge.sqlite (chunks+FTS+vector, numeric marts, taxonomy graph) and answer questions over it truthfully. Use when the user wants to "build the knowledge base", "index this corpus", "set up retrieval", "create a brain", "get started / onboard", or "answer questions over these docs+spreadsheets". Runs a guided onboarding wizard for first-time setup. Composes corpus-taxonomy-extraction, knowledge-index, tabular-semantic-layer, hybrid-retrieval. Local, portable, no server.
+description: Orchestrator — turn a mixed corpus (documents, transcripts, spreadsheets) into ONE local knowledge.sqlite (chunks+FTS+vector, numeric marts, taxonomy graph) and answer questions over it truthfully. Use when the user wants to "build the knowledge base", "index this corpus", "set up retrieval", "create a brain", "get started / onboard", or "answer questions over these docs+spreadsheets+transcripts". Runs a guided onboarding wizard for first-time setup. Composes corpus-taxonomy-extraction, knowledge-index, tabular-semantic-layer, hybrid-retrieval. Local, portable, no server.
 ---
 
 # Knowledge Pipeline (orchestrator)
 
-One entry point that turns a mixed corpus (documents + reporting spreadsheets) into a single portable **`knowledge.sqlite`** and answers questions over it. Composes the build + retrieval skills; the store is one file (no server), so it moves anywhere (.dsh / Claude / Copilot / Codex / CI).
+One entry point that turns a mixed corpus (documents + transcripts + reporting spreadsheets) into a single portable **`knowledge.sqlite`** and answers questions over it. Composes the build + retrieval skills; the store is one file (no server), so it moves anywhere (.dsh / Claude / Copilot / Codex / CI).
 
 **Core principle (unchanged across the toolchain):** *meaning is agentic, numbers are computed.* RAG never emits a figure; the marts never guess. Every answer is cited or an honest "not modeled."
 
@@ -16,7 +16,7 @@ When the user wants to **create a brain** / "get started" / doesn't yet have a p
 **1. Ask, one at a time (skip any the user already answered):**
 - **Goal** — the single analytical goal that scopes everything (the noise filter). *"What are you trying to get out of this corpus?"* (e.g. "optimize call-center operations and introduce an AI workforce"). Don't proceed without it — it drives taxonomy + demotion.
 - **Audience** — *"Who will consume the KB — which roles/personas?"* (e.g. "call-center ops managers and workforce planners"). Optional but valuable: it's a secondary lens that refines taxonomy emphasis and drives how the `kb` plugin sets answer altitude/vocabulary and authored-artifact tone/depth. Distinct from the deployment target (that's distribution/infra). Recorded in `brain.toml` `[project].audience`.
-- **Docs** — folder of narrative documents (PDF/PPTX/DOCX).
+- **Docs** — folder of narrative documents (PDF/PPTX/DOCX) and/or transcripts (VTT/SRT). VTT/SRT corpora require `--merge-cues N` at parse time (see Build step 1a).
 - **Reporting** — folder of the numeric workbooks (XLSX/XLSM), if any. May be the same folder or none (then the numbers lane stays empty — that's fine).
 - **Project dir** — where the brain + configs live (default: `./<name>-brain`).
 - **Source-root semantics** — for each supplied folder decide with the user:
@@ -86,7 +86,11 @@ Re-runnable: `onboard.py scan --docs <dir>` is a standalone preflight; re-runnin
 ## Build (run once per corpus; re-run to refresh)
 ```bash
 DB=<project>/schema/knowledge.sqlite
-# 1. parse docs → Markdown. TEXT pages via pymupdf (torch-free):
+# 1a. parse transcripts → Markdown (VTT/SRT corpora — use --merge-cues to join same-speaker cues into speaker turns):
+#     WARNING: omitting --merge-cues produces one chunk per cue (~50-100 chars each), which agents
+#     classify as empty [] and retrieval quality degrades severely. Always pass --merge-cues N > 1 for VTT/SRT.
+python .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats vtt,srt --merge-cues 10
+# 1b. parse narrative docs → Markdown. TEXT pages via pymupdf (torch-free):
 python .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf
 # 1v. VISUAL/diagram/table pages (slide decks, flows, timelines) — the visual-parse skill:
 python .../visual-parse/render_pages.py --doc <deck.pdf> --out <project>/assets     # PNG + text + table grids; flag visual pages
@@ -99,7 +103,10 @@ python .../knowledge-index/knowledge_index.py index --db "$DB" --corpus <project
 # 4. taxonomy graph (vertices = L1/L2) into the SAME db
 python .../corpus-taxonomy-extraction/build_graph.py --taxonomy <project>/taxonomy/taxonomy_v0.json --db "$DB"
 # 5. per-section taxonomy tags — LOW-TIER AGENTS (meaning is agentic), not a script:
-python .../corpus-taxonomy-extraction/classify_prep.py --db "$DB" --taxonomy <project>/taxonomy/taxonomy_v0.json --out <project>/classify --batches 5
+python .../corpus-taxonomy-extraction/classify_prep.py --db "$DB" --taxonomy <project>/taxonomy/taxonomy_v0.json --out <project>/classify --batches 25
+#    --batches controls chunks-per-agent: too few batches → agent hits context limit and writes nothing.
+#    Rule of thumb: ceil(total_chunks / 1000) batches. Default 25 handles corpora up to ~25k chunks safely.
+#    Agents write result_k.json into the SAME <project>/classify/ dir as the batch files (not a subdir).
 #    → dispatch N Haiku subagents: each reads classify/{instructions,vocab,batch_k}.md/json → writes classify/result_k.json
 python .../corpus-taxonomy-extraction/classify_write.py --db "$DB" --results <project>/classify   # -> chunk_topics + graph 'about' edges
 # 5b. semantic 'related' layer — cosine kNN over the vectors we already store (no re-embed, no API)
