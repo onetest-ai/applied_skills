@@ -39,7 +39,16 @@ Read the whole file, then emit ONE JSON file (schema below) to:
 }
 
 ## Rules
-- INTENT CLASSES: if the corpus contains an explicit taxonomy (e.g. a taxonomy/compendium doc),
+- INTENT CLASSES: name the **reusable category** the discussion belongs to, not the specific
+  incident, ticket, or project being discussed. Ask: "what topic area does this belong to?"
+  not "what is this document about?".
+  WRONG: "Login Page Timeout Bug - Sprint 14 Regression" (a specific incident)
+  RIGHT: "Test Environment Management" (the reusable L1 category)
+  WRONG: "Project X Automation Scope Template Coverage" (a project artifact)
+  RIGHT: "Automation Scope & Coverage" (the reusable L1 category)
+  Target: 5–15 L1 categories per file maximum. If you find yourself naming more than 15,
+  you are being too specific — merge related topics under a broader L1.
+  If the corpus contains an explicit taxonomy (e.g. a taxonomy/compendium doc),
   capture it faithfully from tables — preserve exact names, keep parent↔child (L1↔L2) links.
 - METRICS & the truthfulness split:
   - `stated`     = a figure/target quoted in prose or a slide. Include the `value` and `period`.
