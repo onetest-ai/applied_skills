@@ -261,7 +261,15 @@ def _parse_ai_dial_json(path):
             if msg.get("role") == "assistant":
                 raw = msg.get("content") or ""
                 if isinstance(raw, list):
-                    raw = " ".join(str(p) for p in raw if isinstance(p, str))
+                    # Handle both plain strings and structured content blocks
+                    # {"type": "text", "text": "..."} as used by Anthropic API exports
+                    parts_raw = []
+                    for p in raw:
+                        if isinstance(p, str):
+                            parts_raw.append(p)
+                        elif isinstance(p, dict) and p.get("text"):
+                            parts_raw.append(str(p["text"]))
+                    raw = " ".join(parts_raw)
                 content = raw.strip()
                 if len(content) >= 50:
                     conv_parts.append(content)

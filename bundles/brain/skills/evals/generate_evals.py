@@ -359,11 +359,11 @@ def generate_evals(extractions_dir, taxonomy_path):
                 seen_facts.add(fact)
                 all_facts.append(fact)
         if len(all_facts) >= 2:
-            slugs = list({s for s, _ in items})
+            slugs = list(dict.fromkeys(s for s, _ in items))
             # Cross-session: derive question from combined facts across sessions.
             # keyword suffix is for retrieval only.
             cross_suffix = _query_suffix_from_fact(" ".join(all_facts[:2]))
-            combined_slug = "_".join(list({s for s, _ in items})[:2])
+            combined_slug = "_".join(slugs[:2])
             cross_q = _question_from_fact(" ".join(all_facts[:2]), combined_slug)
             rows.append({
                 "eval_id": f"E{eval_counter:03d}",
