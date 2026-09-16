@@ -9,6 +9,11 @@
      "family": "example_tolerant", "from": "region", "to": "division", "weight": "n_records",
      "map_prefix": {"NW": "Northwest", "NE": "Northeast"}}
   ],
+  "derived": [
+    {"_note": "ratio metric = numerator/denominator at a grain, computed + cited <derived>; div-by-zero and missing-operand yield no row (honest). scale optional (e.g. 100 for a percent).",
+     "family": "example_long", "metric": "calls_per_customer", "grain": "branch",
+     "numerator": "calls", "denominator": "customers"}
+  ],
   "coverage": {
     "_note": "OPTIONAL expected roster per family — build emits coverage.json and flags absent months/entities; --strict fails on a violation. Intra-family holes (an entity missing some months) are auto-detected with NO config. Use '*' for a default across families.",
     "example_matrix": {"month_range": ["2026-01", "2026-07"]},

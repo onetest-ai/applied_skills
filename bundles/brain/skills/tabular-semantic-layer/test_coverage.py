@@ -64,5 +64,42 @@ class CoverageReportTests(unittest.TestCase):
         self.assertEqual(rep["expected_violations"], [])
 
 
+@unittest.skipUnless(_DEPS, "requires pandas + openpyxl")
+class DerivedMetricsTests(unittest.TestCase):
+    def _df(self, rows):
+        return pd.DataFrame(rows, columns=["family", "metric", "grain", "entity", "month", "value", "source_file"])
+
+    CFG = {"derived": [{"family": "cv", "metric": "calls_per_customer", "grain": "branch",
+                        "numerator": "calls", "denominator": "customers"}]}
+
+    def test_ratio_computed_and_cited_derived(self):
+        rows = [("cv", "calls", "branch", "Chicago", "2026-01", 100.0, "f"),
+                ("cv", "customers", "branch", "Chicago", "2026-01", 25.0, "f")]
+        out = B.apply_derived(self._df(rows), self.CFG)
+        d = out[out.metric == "calls_per_customer"]
+        self.assertEqual(len(d), 1)
+        self.assertEqual(float(d.value.iloc[0]), 4.0)
+        self.assertEqual(d.source_file.iloc[0], "<derived>")
+
+    def test_divide_by_zero_dropped(self):
+        rows = [("cv", "calls", "branch", "Gardena", "2026-01", 50.0, "f"),
+                ("cv", "customers", "branch", "Gardena", "2026-01", 0.0, "f")]
+        out = B.apply_derived(self._df(rows), self.CFG)
+        self.assertEqual(len(out[out.metric == "calls_per_customer"]), 0)  # honest, not inf
+
+    def test_missing_operand_yields_no_row(self):
+        rows = [("cv", "calls", "branch", "Reno", "2026-01", 30.0, "f")]  # no customers
+        out = B.apply_derived(self._df(rows), self.CFG)
+        self.assertEqual(len(out[out.metric == "calls_per_customer"]), 0)
+
+    def test_scale_applied(self):
+        rows = [("cv", "customers", "branch", "C", "2026-01", 25.0, "f"),
+                ("cv", "calls", "branch", "C", "2026-01", 100.0, "f")]
+        cfg = {"derived": [{"family": "cv", "metric": "pct", "grain": "branch",
+                            "numerator": "customers", "denominator": "calls", "scale": 100.0}]}
+        out = B.apply_derived(self._df(rows), cfg)
+        self.assertEqual(float(out[out.metric == "pct"].value.iloc[0]), 25.0)
+
+
 if __name__ == "__main__":
     unittest.main()

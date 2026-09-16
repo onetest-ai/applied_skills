@@ -277,6 +277,29 @@ def _month_range(start, end):
         if m > 12: m, y = 1, y + 1
     return out
 
+def apply_derived(df, cfg):
+    """Append derived/ratio metrics: metricC = numerator / denominator at a grain,
+    computed deterministically and cited "<derived>" (never a hand-precomputed source
+    cell). Config: derived: [{family, metric, grain, numerator, denominator, scale?}].
+    Honest by construction: operands are inner-joined on (entity, month) so a MISSING
+    operand yields NO row, and denominator==0 rows are dropped — never a fabricated value."""
+    import pandas as pd
+    for spec in cfg.get("derived", []):
+        fam, grain = spec["family"], spec["grain"]
+        base = df[(df.family == fam) & (df.grain == grain)]
+        num = base[base.metric == spec["numerator"]][["entity", "month", "value"]].rename(columns={"value": "num"})
+        den = base[base.metric == spec["denominator"]][["entity", "month", "value"]].rename(columns={"value": "den"})
+        if num.empty or den.empty:
+            continue
+        merged = num.merge(den, on=["entity", "month"], how="inner")
+        merged = merged[merged["den"] != 0]
+        scale = spec.get("scale", 1.0)
+        rows = [(fam, spec["metric"], grain, r.entity, r.month, (r.num / r.den) * scale, "<derived>")
+                for r in merged.itertuples()]
+        if rows:
+            df = pd.concat([df, pd.DataFrame(rows, columns=df.columns)], ignore_index=True)
+    return df
+
 def coverage_report(df, cfg):
     """Completeness against the observed grid (+ an optional expected roster). Distinct
     from build_audit (per-file PARSE health): this catches an entity/month that never
@@ -416,6 +439,8 @@ def main():
         gw = sub[sub.metric == wm].groupby(["coarse","month"]).agg(value=("value","sum")).reset_index()
         rows += [(spec["family"], wm, spec["to"], r.coarse, r.month, r.value, "<rollup>") for r in gw.itertuples()]
         df = pd.concat([df, pd.DataFrame(rows, columns=df.columns)], ignore_index=True)
+
+    df = apply_derived(df, cfg)
 
     pq = os.path.join(a.out_dir, "facts.parquet")
     try: df.to_parquet(pq, index=False)
