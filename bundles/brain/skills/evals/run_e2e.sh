@@ -77,7 +77,7 @@ echo "  Run each batch agent then continue with Stage 3c."
 echo "  Expected output: $CLASSIFY_DIR/result_*.json"
 echo ""
 echo "  Press ENTER when result_*.json files are ready, or Ctrl-C to stop."
-read -r
+read -r || true  # tolerates non-interactive/CI stdin
 
 echo "=== Stage 3c: Taxonomy — build_graph + classify_write ==="
 t0=$SECONDS
@@ -91,11 +91,11 @@ echo "  done in $((SECONDS - t0))s"
 
 echo "=== Stage 3.5: Extract verbatim facts from parsed MD (gold standard) ==="
 EXTRACT_OUT="$WORK/extractions"
+extract_rc=0
 "$VENV" "$SKILL_EVALS/extract_facts.py" \
     --parsed   "$PARSED" \
     --taxonomy "$TAXONOMY" \
-    --out      "$EXTRACT_OUT" 2>&1 | tee /tmp/extract_facts.log
-extract_rc=${PIPESTATUS[0]}; true   # 'true' keeps set -e happy without clobbering PIPESTATUS
+    --out      "$EXTRACT_OUT" 2>&1 | tee /tmp/extract_facts.log || extract_rc=${PIPESTATUS[0]}
 if [[ "$extract_rc" -eq 0 ]]; then
   n_files=$(ls "$EXTRACT_OUT"/*_extraction.json 2>/dev/null | wc -l | tr -d ' ')
   echo "  $n_files extraction files written to $EXTRACT_OUT"

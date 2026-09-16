@@ -150,7 +150,7 @@ def cmd_scaffold(a):
                  'include = ["**/*"]']
         if docs:
             lines += ["", "[sources.roots.docs]", f"path = {json.dumps(docs_path)}", f"mode = {json.dumps(a.docs_mode)}",
-                      'include = ["**/*.pdf", "**/*.ppt", "**/*.pptx", "**/*.doc", "**/*.docx"]']
+                      'include = ["**/*.pdf", "**/*.ppt", "**/*.pptx", "**/*.doc", "**/*.docx", "**/*.vtt", "**/*.srt", "**/*.json"]']
         if reporting:
             lines += ["", "[sources.roots.reporting]", f"path = {json.dumps(reporting_path)}", f"mode = {json.dumps(a.reporting_mode)}",
                       'include = ["**/*.xlsx", "**/*.xlsm", "**/*.xls"]']

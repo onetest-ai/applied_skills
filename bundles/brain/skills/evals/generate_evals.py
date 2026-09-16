@@ -70,6 +70,22 @@ def _natural_question(base_q: str, verbatim_quote: str) -> str:
     return f"{base_q} (re: {quote})"
 
 
+def _question_from_fact(verbatim_quote: str, source_slug: str) -> str:
+    """Derive a natural question purely from the verbatim fact and source slug.
+
+    Used in extraction mode so the question is grounded in the specific fact, not
+    the generic taxonomy label template.
+    Returns a question ending with '?' that contains keywords from the quote and
+    references the source slug.
+    E.g.: "What do we know about availability calendar scheduling from aug31_sync?"
+    """
+    keywords = _query_suffix_from_fact(verbatim_quote)
+    if keywords:
+        kw_phrase = " ".join(keywords.split()[:5])
+        return f"What do we know about {kw_phrase} from {source_slug}?"
+    return f"What was discussed in {source_slug}?"
+
+
 def _query_suffix_from_fact(verbatim_quote: str) -> str:
     """Extract searchable keywords from a verbatim quote for BM25 retrieval."""
     words = verbatim_quote.replace(",", " ").replace(".", " ").replace(";", " ").split()
@@ -316,9 +332,9 @@ def generate_evals(extractions_dir, taxonomy_path):
                 continue
             product = exts[0].get("product", "CROSS-PRODUCT")
             primary_fact = facts[0]
-            # Build a unique human-readable question grounded in the primary fact.
-            # base_q is the category template; the verbatim fact makes it distinct.
-            question = _natural_question(base_q, primary_fact)
+            # Derive question from the verbatim fact, not the taxonomy label template,
+            # so each eval is grounded in a specific retrievable claim.
+            question = _question_from_fact(primary_fact, slug)
             fact_suffix = _query_suffix_from_fact(primary_fact)
             rows.append({
                 "eval_id": f"E{eval_counter:03d}",
@@ -344,10 +360,11 @@ def generate_evals(extractions_dir, taxonomy_path):
                 all_facts.append(fact)
         if len(all_facts) >= 2:
             slugs = list({s for s, _ in items})
-            # Cross-session: use the category template for the question;
+            # Cross-session: derive question from combined facts across sessions.
             # keyword suffix is for retrieval only.
             cross_suffix = _query_suffix_from_fact(" ".join(all_facts[:2]))
-            cross_q = base_q
+            combined_slug = "_".join(list({s for s, _ in items})[:2])
+            cross_q = _question_from_fact(" ".join(all_facts[:2]), combined_slug)
             rows.append({
                 "eval_id": f"E{eval_counter:03d}",
                 "category": cat,

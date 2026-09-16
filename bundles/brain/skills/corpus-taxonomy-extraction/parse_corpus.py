@@ -259,7 +259,10 @@ def _parse_ai_dial_json(path):
         conv_parts = []
         for msg in conv.get("messages", []):
             if msg.get("role") == "assistant":
-                content = (msg.get("content") or "").strip()
+                raw = msg.get("content") or ""
+                if isinstance(raw, list):
+                    raw = " ".join(str(p) for p in raw if isinstance(p, str))
+                content = raw.strip()
                 if len(content) >= 50:
                     conv_parts.append(content)
         if conv_parts:
@@ -308,7 +311,7 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     ap.add_argument("--xlsx-max-mb", type=float, default=20.0)
     ap.add_argument("--sample-rows", type=int, default=8)
-    ap.add_argument("--formats", default="pptx,docx,pdf,xlsx,xlsm,vtt,srt",
+    ap.add_argument("--formats", default="pptx,docx,pdf,xlsx,xlsm,vtt,srt,json",
                     help="comma-separated extensions (no dot) to include")
     ap.add_argument("--merge-cues", type=int, default=1,
                     help="join N consecutive same-speaker VTT/SRT cues into one chunk (default: 1 = per-cue)")
@@ -327,7 +330,7 @@ def main(argv=None):
                 continue
             try:
                 md, method = parse_one(src, a.xlsx_max_mb, a.sample_rows, merge_cues=a.merge_cues)
-                if md is None:
+                if not md:
                     manifest.append({"source": rel, "skipped": True, "method": method})
                     continue
                 safe = rel.replace(os.sep, "__") + ".md"
