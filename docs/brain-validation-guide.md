@@ -12,7 +12,7 @@
 The repo `.env` holds machine-specific paths. Load it once at the start of each session:
 
 ```bash
-cd /Users/Karen_Florykian/projects/aipods/applied_skills-clean
+cd /path/to/applied-skills
 set -a && source .env && set +a
 ```
 
@@ -22,7 +22,7 @@ Verify:
 echo $VENV && echo $SKILLS && echo $SOURCES && echo $PROJECT
 ```
 
-### Step B — AWS Bedrock credentials (`~/projects/kt-docs/brain/.env`)
+### Step B — AWS Bedrock credentials (`~/projects/my-brain/.env`)
 
 Required for TC-4 (taxonomy classification) and TC-5 (evals). Contains three variables:
 
@@ -35,7 +35,7 @@ AWS_REGION=us-east-1
 Load and verify:
 
 ```bash
-set -a && source ~/projects/kt-docs/brain/.env && set +a
+set -a && source ~/projects/my-brain/.env && set +a
 unset AWS_SESSION_TOKEN          # IAM user key — must NOT have a session token
 
 echo "Key:    ${AWS_ACCESS_KEY_ID:0:8}..."
@@ -51,12 +51,12 @@ Set it by hand each session before running TC-4 or TC-5.
 For the VTT corpus (7 categories: QualityRisk, ActionItem, TestStrategy, …):
 
 ```bash
-TAXO=/Users/Karen_Florykian/projects/kt-docs/brain/taxonomy_v0.json
+TAXO=/path/to/taxonomy.json
 ```
 
 For a different corpus, point at its own taxonomy JSON instead.
 
-**Why the split:** credentials belong in `~/projects/kt-docs/brain/.env` (sensitive,
+**Why the split:** credentials belong in `~/projects/my-brain/.env` (sensitive,
 reused across projects). The taxonomy path belongs in the terminal (changes per session,
 project-specific). Steps TC-1 through TC-3 need only the repo `.env`; TC-4 and TC-5 need
 all three.
@@ -153,8 +153,8 @@ Then edit three lines to match your project paths:
 
 ```toml
 [runtime]
-python = "/Users/Karen_Florykian/projects/aipods/applied_skills-clean/.claude/venv/bin/python"
-skills = "/Users/Karen_Florykian/projects/aipods/applied_skills-clean/bundles/brain/skills"
+python = "/path/to/applied-skills/.claude/venv/bin/python"
+skills = "/path/to/applied-skills/bundles/brain/skills"
 ```
 
 **Summary of what scaffold creates vs what you create:**
@@ -272,7 +272,7 @@ $VENV $SKILLS/knowledge-pipeline/onboard.py verify \
 **What a healthy result looks like:**
 
 ```
-== store: /tmp/vtt-validation-brain/schema/knowledge.sqlite ==
+== store: /tmp/my-knowledge-brain/schema/knowledge.sqlite ==
   narrative (RAG)    chunks=N  chunks_fts=N  chunks_vec=N
   taxonomy graph     graph_nodes=—  graph_edges=—  chunk_topics=—   ⚠ EMPTY
   numbers (marts)    facts=—                                         ⚠ EMPTY
@@ -323,7 +323,7 @@ TC-4 and TC-5 need a taxonomy JSON. Before running either, set `$TAXO`.
 **For this validation run — reuse the existing file:**
 
 ```bash
-TAXO=/Users/Karen_Florykian/projects/kt-docs/brain/taxonomy_v0.json
+TAXO=/path/to/taxonomy.json
 echo $TAXO   # must NOT be empty — verify before running classify_prep
 ```
 
@@ -368,9 +368,9 @@ sed \
 Dispatch in a new Claude Code session — paste this prompt:
 
 ```
-Read /tmp/vtt-validation-brain/map/map_instructions.md, then read each .md file in
-/tmp/vtt-validation-brain/map_parsed/ and write one JSON per file to
-/tmp/vtt-validation-brain/map/ following the schema in the instructions.
+Read /tmp/my-knowledge-brain/map/map_instructions.md, then read each .md file in
+/tmp/my-knowledge-brain/map_parsed/ and write one JSON per file to
+/tmp/my-knowledge-brain/map/ following the schema in the instructions.
 ```
 
 Check: `ls "$PROJECT/map/"*.json | wc -l` must equal file count in `map_parsed/`.
@@ -404,7 +404,7 @@ Review `$PROJECT/taxonomy/taxonomy_v0.md` — the `review_flags` section is advi
 Set `TAXO` to the new file:
 
 ```bash
-TAXO="$PROJECT/taxonomy/taxonomy_v0.json"
+TAXO=/path/to/taxonomy.json"
 ```
 
 ---
@@ -413,7 +413,7 @@ TAXO="$PROJECT/taxonomy/taxonomy_v0.json"
 
 ```bash
 # 0. Load environment (once per session)
-cd /Users/Karen_Florykian/projects/aipods/applied_skills-clean
+cd /path/to/applied-skills
 set -a && source .env && set +a
 
 # 1. Scaffold the project workspace
@@ -447,7 +447,7 @@ $VENV $SKILLS/knowledge-pipeline/onboard.py verify \
   --query "action item"
 
 # 5. Set taxonomy (reuse existing — no rebuild needed for validation)
-TAXO=/Users/Karen_Florykian/projects/kt-docs/brain/taxonomy_v0.json
+TAXO=/path/to/taxonomy.json
 # To rebuild from scratch: see "Step 5 — Taxonomy" section above
 ```
 
@@ -599,12 +599,12 @@ by category (ActionItem, QualityRisk, etc.) can find relevant content. This is w
 
 Set `TAXO` to the existing taxonomy for this corpus — no rebuild needed:
 ```bash
-TAXO=/Users/Karen_Florykian/projects/kt-docs/brain/taxonomy_v0.json
+TAXO=/path/to/taxonomy.json
 ```
 
 Load AWS credentials:
 ```bash
-set -a && source ~/projects/kt-docs/brain/.env && set +a
+set -a && source ~/projects/my-brain/.env && set +a
 unset AWS_SESSION_TOKEN
 ```
 
@@ -646,16 +646,16 @@ unset AWS_SESSION_TOKEN
    open a new Claude Code session and paste this prompt, substituting the batch number:
 
    ```
-   Read /tmp/vtt-validation-brain/classify/instructions.md and
-   /tmp/vtt-validation-brain/classify/vocab.md.
+   Read /tmp/my-knowledge-brain/classify/instructions.md and
+   /tmp/my-knowledge-brain/classify/vocab.md.
 
-   Then read /tmp/vtt-validation-brain/classify/batch_0.json.
+   Then read /tmp/my-knowledge-brain/classify/batch_0.json.
 
    For each chunk in the batch: look at its title and preview, pick 0–3
    category names from vocab.md using your judgment, following the rules
    in instructions.md.
 
-   Write the result to /tmp/vtt-validation-brain/classify/result_0.json
+   Write the result to /tmp/my-knowledge-brain/classify/result_0.json
    in the exact schema from instructions.md.
 
    Do not write any Python or code. Do not ask questions.

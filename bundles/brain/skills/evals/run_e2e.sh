@@ -2,7 +2,7 @@
 # E2E pipeline: VTT corpus → parsed MD → knowledge.sqlite → taxonomy → brain → evals
 # Usage: bash bundles/brain/skills/evals/run_e2e.sh \
 #   --corpus   /path/to/vtt/dir \
-#   --work     /tmp/primo_e2e \
+#   --work     /tmp/project_e2e \
 #   --brain-port 8003 \
 #   [--taxonomy /path/to/taxonomy.json]   # default: bundles/brain/skills/evals/taxonomy.default.json \
 #   [--extractions /path/to/extraction_jsons]

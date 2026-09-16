@@ -13,15 +13,15 @@ TAXONOMY_L1 = ["ActionItem", "KnowledgeGap", "QualityRisk"]
 
 SAMPLE_MD = """# Meeting 2026-09-10
 
-Karen: We need to assign the logging task to Rafael by Friday.
-Rafael: There's a gap in our understanding of the retry logic.
-Karen: The deployment quality risk is that we haven't tested under load.
+Alex: We need to assign the logging task to Jordan by Friday.
+Jordan: There's a gap in our understanding of the retry logic.
+Alex: The deployment quality risk is that we haven't tested under load.
 """
 
 # A fake LLM that returns valid extraction JSON
 def _fake_llm(prompt: str) -> str:
     return json.dumps([
-        {"category": "ActionItem", "verbatim_quote": "assign the logging task to Rafael by Friday"},
+        {"category": "ActionItem", "verbatim_quote": "assign the logging task to Jordan by Friday"},
         {"category": "KnowledgeGap", "verbatim_quote": "gap in our understanding of the retry logic"},
         {"category": "QualityRisk", "verbatim_quote": "haven't tested under load"},
     ])

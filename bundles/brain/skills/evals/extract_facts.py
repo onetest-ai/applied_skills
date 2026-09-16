@@ -31,9 +31,9 @@ that belong to each category.
 to that category.
 - QUALITY BAR — every quote must pass this test: could a new team member read this \
 quote alone and learn something concrete? If not, skip it.
-  GOOD: "we need to migrate from AEM to Contentful by end of Q1 — SRC has approved the budget"
-  GOOD: "the publish button gives an error when mandatory fields are empty — reproduced in ACC"
-  GOOD: "assign the logging task to Rafael by Friday"
+  GOOD: "we need to migrate the legacy platform to the new CMS by end of Q1 — management has approved the budget"
+  GOOD: "the publish button gives an error when mandatory fields are empty — reproduced in staging"
+  GOOD: "assign the logging task to Jordan by Friday"
   BAD: "we as a Scrum master" (fragment — no concrete information)
   BAD: "can you be able to reproduce it now?" (question — no fact stated)
   BAD: "I will share you the links" (vague — no subject, no context)
@@ -42,7 +42,7 @@ quote alone and learn something concrete? If not, skip it.
 - Skip a category if no quote meets the quality bar.
 - Return ONLY a JSON array. No markdown fences, no commentary.
 - Schema: {{"category": "<category>", "verbatim_quote": "<quote>"}}
-- Example: [{{"category": "ActionItem", "verbatim_quote": "assign the logging task to Rafael by Friday"}}]
+- Example: [{{"category": "ActionItem", "verbatim_quote": "assign the logging task to Jordan by Friday"}}]
 """
 
 

@@ -167,9 +167,9 @@ def test_build_rubric_one_fact_requires_all():
 
 
 def test_derive_query_terms_extracts_keywords():
-    terms = GP._derive_query_terms("Technology stream led by Rafael | CX stream led by Bill")
+    terms = GP._derive_query_terms("Technology stream led by Jordan | CX stream led by Alex")
     assert "Technology" in terms or "technology" in terms.lower()
-    assert "Rafael" in terms or "rafael" in terms.lower()
+    assert "Jordan" in terms or "jordan" in terms.lower()
 
 
 def test_build_persona_block_empty_without_brain_context():

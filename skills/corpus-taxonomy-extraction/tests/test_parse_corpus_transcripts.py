@@ -97,19 +97,19 @@ def test_vtt_heading_count_equals_cue_count(vtt_path):
 
 def test_vtt_voice_tag_is_extracted_as_speaker(tmp_path):
     path = tmp_path / "2025-09-21-meeting.vtt"
-    path.write_text("WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n<v Karen>Use Gatling for the baseline.\n", encoding="utf-8")
+    path.write_text("WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n<v Alex>Use Gatling for the baseline.\n", encoding="utf-8")
     content, _ = parse_one(str(path), 20, 8)
-    assert "— Karen" in content
-    assert "<!-- speaker: Karen -->" in content
-    assert "<v Karen>" not in content
+    assert "— Alex" in content
+    assert "<!-- speaker: Alex -->" in content
+    assert "<v Alex>" not in content
 
 
 def test_srt_name_prefix_is_extracted_as_speaker(tmp_path):
     path = tmp_path / "meeting.srt"
-    path.write_text("1\n00:00:01,000 --> 00:00:03,000\nKaren: Use Gatling for the baseline.\n", encoding="utf-8")
+    path.write_text("1\n00:00:01,000 --> 00:00:03,000\nAlex: Use Gatling for the baseline.\n", encoding="utf-8")
     content, _ = parse_one(str(path), 20, 8)
-    assert "— Karen" in content
-    assert "<!-- speaker: Karen -->" in content
+    assert "— Alex" in content
+    assert "<!-- speaker: Alex -->" in content
 
 
 # ---------------------------------------------------------------------------

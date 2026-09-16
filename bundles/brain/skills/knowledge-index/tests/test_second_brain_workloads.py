@@ -54,7 +54,7 @@ def test_search_filters_temporal_source_tag_and_returns_context_metadata(tmp_pat
     corpus = tmp_path / "corpus"; corpus.mkdir()
     (corpus / "meetings").mkdir()
     (corpus / "meetings" / "2025-09-20.md").write_text(
-        "event_date: 2025-09-20\n\n# Project\n\n## Budget\n\n<!-- speaker: Karen -->\n\nalpha old budget", encoding="utf-8")
+        "event_date: 2025-09-20\n\n# Project\n\n## Budget\n\n<!-- speaker: Alex -->\n\nalpha old budget", encoding="utf-8")
     (corpus / "meetings" / "2025-09-21.md").write_text(
         "event_date: 2025-09-21\n\n# Project\n\n## Budget\n\n<!-- speaker: Marta -->\n\nalpha current budget", encoding="utf-8")
     con = index.connect(str(tmp_path / "knowledge.sqlite"))
