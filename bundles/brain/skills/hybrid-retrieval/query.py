@@ -10,7 +10,13 @@ Examples (db + catalog are project artifacts; names are the project's choice):
            --metric <metric> --grain <grain> --entity <NAME> --month 2026-06
   query.py --db <marts>/knowledge.sqlite --catalog <schema>/metrics.<corpus>.json \
            --metric <metric> --grain <grain> --months 2026-06,2026-07
+  query.py --db <marts>/knowledge.sqlite --catalog <schema>/metrics.<corpus>.json \
+           --describe <metric>                                # governed spec + definition/provenance
   query.py --db <marts>/knowledge.sqlite --sql "SELECT ..."   # raw escape hatch
+
+A metric's optional `definition`/`provenance` (in the catalog) is surfaced by --list,
+--describe, and as a leading `# <metric>: …` line on a query — so a REPORTED composite
+metric (e.g. occupancy) is never silently reconstructed from primitives.
 """
 import argparse, json, sys
 import sqlite3
@@ -20,6 +26,7 @@ def main():
     ap.add_argument("--db", required=True)
     ap.add_argument("--catalog")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--describe", help="print the full governed spec (incl. definition/provenance) for a metric")
     ap.add_argument("--metric")
     ap.add_argument("--grain")
     ap.add_argument("--entity")           # exact
@@ -40,12 +47,28 @@ def main():
     cat = json.load(open(a.catalog))["metrics"] if a.catalog else {}
     if a.list:
         for k, v in cat.items():
-            print(f"{k:26} {v['family']}.{v['metric']:24} {v.get('unit',''):8} {v.get('desc','')}")
+            defn = v.get("definition") or v.get("provenance")
+            print(f"{k:26} {v['family']}.{v['metric']:24} {v.get('unit',''):8} {v.get('desc','')}"
+                  + (f"\n{'':26} ↳ {defn}" if defn else ""))
+        return
+
+    if a.describe:
+        if a.describe not in cat:
+            print(f"unknown metric '{a.describe}'. Use --list.", file=sys.stderr); sys.exit(2)
+        spec = cat[a.describe]
+        if a.json:
+            print(json.dumps({"metric": a.describe, **spec}, indent=2)); return
+        for key in ("family", "metric", "unit", "grain", "desc", "definition", "provenance"):
+            if spec.get(key): print(f"{key:12} {spec[key]}")
         return
 
     if not a.metric or a.metric not in cat:
         print(f"unknown metric '{a.metric}'. Use --list.", file=sys.stderr); sys.exit(2)
     spec = cat[a.metric]
+    # provenance: surface a reported metric's definition so it isn't silently reconstructed
+    defn = spec.get("definition") or spec.get("provenance")
+    if defn and not a.json:
+        print(f"# {a.metric}: {defn}")
     where = [f"family = '{spec['family']}'", f"metric = '{spec['metric']}'"]
     if a.grain: where.append(f"grain = '{a.grain}'")
     if a.entity: where.append(f"entity = '{a.entity.replace(chr(39), chr(39)*2)}'")

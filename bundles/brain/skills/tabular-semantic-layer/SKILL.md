@@ -49,7 +49,9 @@ Emits long facts `(family, metric, grain, entity, month, value, source_file)` �
 Conforms dimension names, drops junk dim values (`#N/A`, `(blank)`…), stops at table boundaries, dedups (keep latest). Reports per-family coverage + the audit.
 
 ### metrics.json (the governed layer / contract)
-`metrics.json` maps each friendly metric → `(family, metric, unit, grain)`. It is the semantic-layer definition this build emits; the **`hybrid-retrieval`** skill's `query.py` consumes it at answer time (`--metric/--grain/--entity[-like]/--month[s]`, plus a `--sql` escape hatch). The model's job is metric+filter selection; correctness is the engine's.
+`metrics.json` maps each friendly metric → `(family, metric, unit, grain)`. It is the semantic-layer definition this build emits; the **`hybrid-retrieval`** skill's `query.py` consumes it at answer time (`--metric/--grain/--entity[-like]/--month[s]`, plus `--describe` and a `--sql` escape hatch). The model's job is metric+filter selection; correctness is the engine's.
+
+- **Provenance / `definition` (reported vs computed).** A metric may carry an optional `definition` (a.k.a. `provenance`) string stating what it measures, what's included/excluded, and whether it is **REPORTED** (a directly-ingested vendor cell) or **COMPUTED**. Surfaced by `query.py --list/--describe` and the MCP. **Reported composite metrics — occupancy, AHT, service level — must carry a `definition` and must NOT be silently reconstructed from primitives:** the layer ingests the authoritative reported value, and a naive recompute (e.g. occupancy ≈ answered×AHT÷staffed-hours) diverges because the vendor definition includes hold/ACW. Recording the definition is how an answerer tells "reported metric, don't rederive" from a data-quality bug.
 
 ## Truthfulness guarantees
 

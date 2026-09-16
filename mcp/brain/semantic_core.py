@@ -167,6 +167,7 @@ def list_metrics() -> dict[str, Any]:
             {
                 "name": name,
                 "description": spec.get("desc"),
+                "definition": spec.get("definition") or spec.get("provenance"),
                 "unit": spec.get("unit"),
                 "catalog_grain": spec.get("grain"),
                 **available,
@@ -226,6 +227,7 @@ def get_metric(
         "family": spec["family"],
         "unit": spec.get("unit"),
         "description": spec.get("desc"),
+        "definition": spec.get("definition") or spec.get("provenance"),
         "filters": filters,
         "rows": rows,
         "row_count": len(rows),

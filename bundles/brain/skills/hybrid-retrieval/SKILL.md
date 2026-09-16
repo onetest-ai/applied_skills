@@ -28,7 +28,7 @@ This is the *retrieval* half; the store is produced by the **build** skills (`kn
 2. **Classify each** by the metric's `source_type` (from the metric catalog / taxonomy):
    - `computable` → marts. `stated` → RAG. `both` → marts + reconcile. Pure narrative → RAG. Category/relation → graph.
 3. **Retrieve** (all against the one `<project>/schema/knowledge.sqlite`):
-   - Marts: `python query.py --db knowledge.sqlite --catalog <project>/schema/metrics.<corpus>.json --metric <m> [--grain --entity|--entity-like --month|--months]`. `--list` for governed metrics; `--sql` for aggregates/joins.
+   - Marts: `python query.py --db knowledge.sqlite --catalog <project>/schema/metrics.<corpus>.json --metric <m> [--grain --entity|--entity-like --month|--months]`. `--list` for governed metrics; `--describe <m>` for a metric's spec + `definition`/provenance; `--sql` for aggregates/joins. A REPORTED composite metric (occupancy, AHT, service level) carries a `definition` — cite it and never reconstruct the value from primitives.
    - RAG: `python knowledge_index.py search --db knowledge.sqlite --query "..." [--k 8] [--json]` (BM25+vector RRF; returns cited chunks).
    - Graph: `--sql "SELECT … FROM graph_nodes JOIN graph_edges …"` (taxonomy L1↔L2, entity kinds; recursive CTE for multi-hop).
 4. **Reconcile** `both`-class: report the computed value as authoritative; note the stated value and any gap.
