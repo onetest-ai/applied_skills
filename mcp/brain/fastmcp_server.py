@@ -420,9 +420,10 @@ async def search_shim(request: Request) -> JSONResponse:
     if not isinstance(result, dict):
         return JSONResponse({"error": "internal error"}, status_code=500)
     hits = result.get("hits", result.get("results", []))
+    # Exclude orig/ chunks — they are raw JSON dumps, not structured retrieval content.
+    # Do this before the emptiness check so all-orig results fall through to the fallback.
+    hits = [h for h in hits if not h.get("source", "").startswith("orig/")]
     if hits:
-        # Exclude orig/ chunks — they are raw JSON dumps, not structured retrieval content
-        hits = [h for h in hits if not h.get("source", "").startswith("orig/")]
         flat = [{"text": h.get("text", ""), "source": h.get("source", ""),
                  "title": h.get("section", h.get("title", "")),
                  "score": h.get("score", 0)} for h in hits]

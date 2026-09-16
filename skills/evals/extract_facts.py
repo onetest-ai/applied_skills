@@ -86,6 +86,8 @@ def extract_facts_from_md(
                 raw = parts[2].strip()
             # else: fall through and try parsing the full response
     items = json.loads(raw)
+    if not isinstance(items, list):
+        raise TypeError(f"expected JSON array from LLM, got {type(items).__name__}")
     # Filter to only items with required keys and non-empty values
     result = []
     for item in items:

@@ -285,8 +285,9 @@ def _temporal_operation(name: str, *args: Any) -> dict[str, Any]:
 
     with _readonly_connection() as con:
         required = {"memory_assertions", "memory_assertion_links", "memory_questions", "memory_answers"}
-        if not required.issubset(_present_tables(con)):
-            return {"status": "not_modeled", "missing_tables": sorted(required - _present_tables(con))}
+        present = _present_tables(con)
+        if not required.issubset(present):
+            return {"status": "not_modeled", "missing_tables": sorted(required - present)}
         return getattr(temporal_memory, name)(con, *args)
 
 

@@ -28,6 +28,17 @@ from pathlib import Path
 DEFAULT_QUERY_SUFFIX = "specific details findings decisions evidence"
 DEFAULT_TAXONOMY = Path(__file__).parent / "taxonomy.default.json"
 
+# Fixed no-hallucination probes — questions targeting data confirmed absent from any corpus.
+# Module-level so both load_from_db() and generate_evals() stay in sync.
+_NO_HALLUC = [
+    ("What are the contractor day rates or salary figures for the EPAM team members?",
+     "salary contractor rates team compensation", "no-hallucination | absent-salaries"),
+    ("What is the approved annual budget in EUR or USD for the performance testing engagement?",
+     "budget EUR USD annual approved financial cost", "no-hallucination | absent-budget"),
+    ("What Gatling Enterprise license fees or LoadRunner license costs are recorded?",
+     "Gatling LoadRunner license fee cost annual", "no-hallucination | absent-license-cost"),
+]
+
 _STOP_WORDS = frozenset({
     "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
     "of", "with", "by", "from", "that", "this", "which", "who", "what",
@@ -222,17 +233,9 @@ def load_from_db(db_path, taxonomy_path=None):
             })
             eval_counter += 1
 
-    # No-hallucination evals: fixed questions targeting data confirmed absent from any corpus.
+    # No-hallucination evals — use the module-level _NO_HALLUC constant.
     # Do NOT use per-category KPI questions — many categories (MetricOrKPI, MigrationStatus)
     # contain real numeric data and will correctly surface it, causing false failures.
-    _NO_HALLUC = [
-        ("What are the contractor day rates or salary figures for the EPAM team members?",
-         "salary contractor rates team compensation", "no-hallucination | absent-salaries"),
-        ("What is the approved annual budget in EUR or USD for the performance testing engagement?",
-         "budget EUR USD annual approved financial cost", "no-hallucination | absent-budget"),
-        ("What Gatling Enterprise license fees or LoadRunner license costs are recorded?",
-         "Gatling LoadRunner license fee cost annual", "no-hallucination | absent-license-cost"),
-    ]
     for question, suffix, notes in _NO_HALLUC:
         rows.append({
             "eval_id": "E{:03d}".format(eval_counter),
@@ -347,17 +350,9 @@ def generate_evals(extractions_dir, taxonomy_path):
             })
             eval_counter += 1
 
-    # No-hallucination evals: fixed questions targeting data confirmed absent from any corpus.
+    # No-hallucination evals — use the module-level _NO_HALLUC constant.
     # Do NOT use per-category KPI questions — many categories (MetricOrKPI, MigrationStatus)
     # contain real numeric data and will correctly surface it, causing false failures.
-    _NO_HALLUC = [
-        ("What are the contractor day rates or salary figures for the EPAM team members?",
-         "salary contractor rates team compensation", "no-hallucination | absent-salaries"),
-        ("What is the approved annual budget in EUR or USD for the performance testing engagement?",
-         "budget EUR USD annual approved financial cost", "no-hallucination | absent-budget"),
-        ("What Gatling Enterprise license fees or LoadRunner license costs are recorded?",
-         "Gatling LoadRunner license fee cost annual", "no-hallucination | absent-license-cost"),
-    ]
     for question, suffix, notes in _NO_HALLUC:
         rows.append({
             "eval_id": f"E{eval_counter:03d}",

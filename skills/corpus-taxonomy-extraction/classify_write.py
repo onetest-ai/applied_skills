@@ -40,14 +40,7 @@ def main():
         try: data = json.load(open(rf))
         except Exception as e: print("skip", rf, e); continue
         results.update({int(cid): labels for cid, labels in data.items()})
-    # incremental: clear only these chunks' existing tags/edges before re-inserting
-    for cid in results:
-        c.execute("DELETE FROM chunk_topics WHERE chunk_id=?", (cid,))
-        c.execute("DELETE FROM graph_edges WHERE rel='about' AND source=?", (f"chunk:{cid}",))
-    # resolve each label against the graph: id -> (label, kind, parent_id)
-    node = {i: (lbl, kind, par) for i, lbl, kind, par in
-            c.execute("SELECT id,label,kind,parent FROM graph_nodes")}
-    # Detect stale batch files: chunk IDs that no longer exist in the DB.
+    # Detect stale batch files BEFORE any deletions: chunk IDs that no longer exist in the DB.
     # Happens when --reset re-indexes after chunking param changes or corpus edits.
     live_ids = {r[0] for r in c.execute("SELECT id FROM chunks")}
     stale = [cid for cid in results if cid not in live_ids]
@@ -61,6 +54,13 @@ def main():
         )
         for cid in stale:
             del results[cid]
+    # incremental: clear only these chunks' existing tags/edges before re-inserting
+    for cid in results:
+        c.execute("DELETE FROM chunk_topics WHERE chunk_id=?", (cid,))
+        c.execute("DELETE FROM graph_edges WHERE rel='about' AND source=?", (f"chunk:{cid}",))
+    # resolve each label against the graph: id -> (label, kind, parent_id)
+    node = {i: (lbl, kind, par) for i, lbl, kind, par in
+            c.execute("SELECT id,label,kind,parent FROM graph_nodes")}
 
     n_assign, n_l2, n_chunks, skipped = 0, 0, 0, 0
     for cid, labels in results.items():

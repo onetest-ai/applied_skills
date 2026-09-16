@@ -95,7 +95,11 @@ if "$VENV" "$SKILL_EVALS/extract_facts.py" \
     --out      "$EXTRACT_OUT" 2>&1 | tee /tmp/extract_facts.log; then
   n_files=$(ls "$EXTRACT_OUT"/*_extraction.json 2>/dev/null | wc -l)
   echo "  $n_files extraction files written to $EXTRACT_OUT"
-  [[ -z "$EXTRACTIONS" ]] && EXTRACTIONS="$EXTRACT_OUT"
+  if [[ "$n_files" -eq 0 ]]; then
+    echo "  WARNING: extract_facts.py wrote 0 extraction files — Stage 5 will use DB-mode"
+  else
+    [[ -z "$EXTRACTIONS" ]] && EXTRACTIONS="$EXTRACT_OUT"
+  fi
 else
   echo "  WARNING: extract_facts.py failed (no AWS creds?) — Stage 5 will use DB-mode"
 fi

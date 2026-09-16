@@ -65,7 +65,7 @@ def section_records(md, max_chars=1600):
     for t, b, p, bc in blocks:
         if len(b) <= max_chars:
             out.append({"title": derive_title(t, b), "body": b, "parent_heading": p, "breadcrumb_path": bc}); continue
-        paras = [p for p in re.split(r"\n\s*\n", b) if p.strip()]
+        paras = [para for para in re.split(r"\n\s*\n", b) if para.strip()]
         cur, part = "", 1
         for para in paras:
             if len(cur) + len(para) + 2 > max_chars and cur:
