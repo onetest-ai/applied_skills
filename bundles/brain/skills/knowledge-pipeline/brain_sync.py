@@ -303,7 +303,9 @@ def cmd_apply(a):
 def cmd_seed(a):
     """Record the current parsed corpus's hashes into `documents` WITHOUT re-embedding
     — run once right after a full build so later plan/apply can compute deltas."""
-    c = sqlite3.connect(a.db)
+    import knowledge_index as K
+    c = K.connect(a.db)
+    K._ensure_schema(c, a.dim)  # migrate legacy brain_sync documents→synced_files if needed
     ensure_documents(c)
     now = scan(a.parsed)
     links, unmanaged = source_ids(c, a.parsed, a.manifest, a.root_key, a.strict_sources)

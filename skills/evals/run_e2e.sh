@@ -11,8 +11,8 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 VENV="$REPO/.claude/venv/bin/python3"
-SKILL_TAXO="$REPO/skills/corpus-taxonomy-extraction"
-SKILL_KI="$REPO/skills/knowledge-index"
+SKILL_TAXO="$REPO/bundles/brain/skills/corpus-taxonomy-extraction"
+SKILL_KI="$REPO/bundles/brain/skills/knowledge-index"
 SKILL_EVALS="$REPO/skills/evals"
 MCP_BRAIN="$REPO/mcp/brain"
 
@@ -109,7 +109,7 @@ BRAIN_PID=""
 cleanup() { [[ -n "$BRAIN_PID" ]] && kill "$BRAIN_PID" 2>/dev/null || true; }
 trap cleanup EXIT
 
-BRAIN_DB="$DB" PORT="$PORT" BRAIN_SKILLS="$REPO/skills" \
+BRAIN_DB="$DB" PORT="$PORT" BRAIN_SKILLS="$REPO/bundles/brain/skills" \
   "$VENV" "$MCP_BRAIN/fastmcp_server.py" --transport http &
 BRAIN_PID=$!
 
