@@ -5,7 +5,7 @@ description: Guided builder that generates a self-contained Claude Code plugin Z
 
 # Brain Plugin Builder
 
-You are a guided ZIP builder. Generate a self-contained Claude Code plugin for a Brain MCP project using only Bash — no repository dependency, no hardcoded paths.
+You are a guided ZIP builder. Generate a self-contained Claude Code plugin for a Brain MCP project. The build runs via a cross-platform Node.js script — no bash, no platform-specific tools required.
 
 ## Security rules — enforce without exception
 
@@ -32,62 +32,79 @@ Validate:
 
 ## How to build
 
-After confirmation, run the following Bash to build the ZIP entirely in a temp directory:
+After confirmation, run the following Node.js script via the Bash tool. It uses only Node.js built-ins — no external dependencies, works on macOS, Linux, and Windows:
 
-```bash
-BRAIN_NAME="{BRAIN_NAME}"
-DISPLAY_NAME="{DISPLAY_NAME}"
-MCP_ENDPOINT="{MCP_ENDPOINT}"
+```javascript
+node - <<'NODEEOF'
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const { spawnSync } = require("child_process");
 
-STAGE=$(mktemp -d)
-mkdir -p "$STAGE/.claude-plugin" "$STAGE/skills/$BRAIN_NAME"
+const BRAIN_NAME = "{BRAIN_NAME}";
+const DISPLAY_NAME = "{DISPLAY_NAME}";
+const MCP_ENDPOINT = "{MCP_ENDPOINT}";
 
-# Write plugin.json with mcpServers + userConfig
-cat > "$STAGE/.claude-plugin/plugin.json" <<PLUGINJSON
-{
-  "\$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
-  "name": "$BRAIN_NAME",
-  "displayName": "$DISPLAY_NAME",
-  "version": "1.0.0",
-  "description": "Brain knowledge assistant for $DISPLAY_NAME.",
-  "author": { "name": "Applied AI" },
-  "mcpServers": {
-    "$BRAIN_NAME": {
-      "type": "http",
-      "url": "$MCP_ENDPOINT",
-      "headers": { "X-API-Key": "\${user_config.apiKey}" }
+// Create temp staging dir using Node.js (cross-platform)
+const stage = fs.mkdtempSync(path.join(os.tmpdir(), "brain-plugin-"));
+fs.mkdirSync(path.join(stage, ".claude-plugin"), { recursive: true });
+fs.mkdirSync(path.join(stage, "skills", BRAIN_NAME), { recursive: true });
+
+// Write plugin.json
+fs.writeFileSync(path.join(stage, ".claude-plugin", "plugin.json"), JSON.stringify({
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  name: BRAIN_NAME,
+  displayName: DISPLAY_NAME,
+  version: "1.0.0",
+  description: `Brain knowledge assistant for ${DISPLAY_NAME}.`,
+  author: { name: "Applied AI" },
+  mcpServers: {
+    [BRAIN_NAME]: {
+      type: "http",
+      url: MCP_ENDPOINT,
+      headers: { "X-API-Key": "${user_config.apiKey}" }
     }
   },
-  "userConfig": {
-    "apiKey": {
-      "description": "API key for $DISPLAY_NAME MCP server",
-      "sensitive": true
-    }
+  userConfig: {
+    apiKey: { description: `API key for ${DISPLAY_NAME} MCP server`, sensitive: true }
   }
+}, null, 2) + "\n");
+
+// Write brain SKILL.md
+fs.writeFileSync(path.join(stage, "skills", BRAIN_NAME, "SKILL.md"), [
+  "---",
+  `name: ${BRAIN_NAME}`,
+  `description: Brain knowledge assistant for ${DISPLAY_NAME}.`,
+  "---",
+  "",
+  `# ${DISPLAY_NAME}`,
+  "",
+  `You are a knowledge assistant powered by the ${DISPLAY_NAME} Brain MCP server.`,
+  "Use the available MCP tools to answer questions with cited evidence from the knowledge base.",
+].join("\n") + "\n");
+
+// Build ZIP using platform-appropriate tool
+const out = path.join(process.cwd(), `${BRAIN_NAME}-1.0.0.zip`);
+if (fs.existsSync(out)) fs.unlinkSync(out);
+
+let result;
+if (process.platform === "win32") {
+  const psCmd = [
+    "Add-Type -AssemblyName System.IO.Compression.FileSystem;",
+    `[System.IO.Compression.ZipFile]::CreateFromDirectory('${stage}', '${out}')`,
+  ].join(" ");
+  result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", psCmd], { stdio: "inherit" });
+} else {
+  result = spawnSync("zip", ["-r", out, "."], { cwd: stage, stdio: "inherit" });
 }
-PLUGINJSON
 
-# Write a minimal SKILL.md for the brain itself
-cat > "$STAGE/skills/$BRAIN_NAME/SKILL.md" <<SKILLMD
----
-name: $BRAIN_NAME
-description: Brain knowledge assistant for $DISPLAY_NAME.
----
-
-# $DISPLAY_NAME
-
-You are a knowledge assistant powered by the $DISPLAY_NAME Brain MCP server.
-Use the available MCP tools to answer questions with cited evidence from the knowledge base.
-SKILLMD
-
-OUT="$(pwd)/${BRAIN_NAME}-1.0.0.zip"
-rm -f "$OUT"
-(cd "$STAGE" && zip -r "$OUT" .)
-rm -rf "$STAGE"
-echo "ZIP → $OUT"
+fs.rmSync(stage, { recursive: true, force: true });
+if (result.status !== 0) { console.error("ERROR: zip failed"); process.exit(1); }
+console.log(`ZIP → ${out}`);
+NODEEOF
 ```
 
-Replace `{BRAIN_NAME}`, `{DISPLAY_NAME}`, and `{MCP_ENDPOINT}` with the confirmed values before running. Do not substitute the `${user_config.apiKey}` template — it must stay as-is.
+Replace `{BRAIN_NAME}`, `{DISPLAY_NAME}`, and `{MCP_ENDPOINT}` with the confirmed values. The `${user_config.apiKey}` reference inside the JSON must stay as-is — do not expand it.
 
 ## What to tell the user after building
 

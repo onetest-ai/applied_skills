@@ -130,8 +130,12 @@ if (existsSync(outPath)) unlinkSync(outPath);
 // Zip from staging dir — cross-platform: PowerShell on Windows, zip on macOS/Linux
 let result;
 if (platform() === "win32") {
-  // Compress-Archive requires an absolute path and does not accept cwd — use join(stageDir, "*")
-  const psCmd = `Compress-Archive -Path "${join(stageDir, "*")}" -DestinationPath "${outPath}"`;
+  // ZipFile::CreateFromDirectory preserves directory structure including dotfile dirs (.claude-plugin/).
+  // Compress-Archive with wildcards silently drops dotfiles in PowerShell 5.1 on Windows 10.
+  const psCmd = [
+    "Add-Type -AssemblyName System.IO.Compression.FileSystem;",
+    `[System.IO.Compression.ZipFile]::CreateFromDirectory('${stageDir}', '${outPath}')`,
+  ].join(" ");
   result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", psCmd], { stdio: "inherit" });
 } else {
   result = spawnSync("zip", ["-r", outPath, "."], { cwd: stageDir, stdio: "inherit" });
