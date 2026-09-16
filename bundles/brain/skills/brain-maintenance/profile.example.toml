@@ -21,7 +21,7 @@ skills = ".dsh/skills"
 root_key = "docs"
 
 [classification]
-batches = 5
+batches = 25    # VTT corpora need 25 — 5 overflows agent context on large corpora
 max_labels = 3
 
 [marts]

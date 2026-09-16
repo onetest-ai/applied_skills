@@ -105,6 +105,15 @@ Use a fresh run directory for vision results. Never consume stale or partial `re
 
 For a genuinely text-only source, deterministic parsing is acceptable. Do not downgrade an existing visually enriched document to a text-only parse.
 
+**VTT/SRT sources require two separate parse passes** — `--merge-cues` only applies to transcripts and must not be passed for PDF/PPTX/DOCX:
+
+```bash
+# Pass 1 — transcripts only
+parse_corpus.py --corpus <root> --out parsed/ --formats vtt,srt --merge-cues 10
+# Pass 2 — narrative docs
+parse_corpus.py --corpus <root> --out parsed/ --formats pptx,docx,pdf
+```
+
 ### 4. Review and apply parsed-store delta
 
 ```bash
