@@ -235,8 +235,10 @@ def cmd_search(a):
             r["note"] = np(r["source"], r.get("ord", 0), r.get("title"))
     if a.json:
         print(json.dumps(res, indent=2)); return
-    # snippet length: --full prints the whole chunk, --chars N overrides the default cap.
-    limit = None if getattr(a, "full", False) else (getattr(a, "chars", None) or 240)
+    # snippet length: --full prints the whole chunk, --chars N overrides the default cap
+    # (N=0 is honored, not treated as unset).
+    chars = getattr(a, "chars", None)
+    limit = None if getattr(a, "full", False) else (240 if chars is None else chars)
     print(f"query: {res['query']}  (fts={res['fts_hits']} vec={res['vec_hits']})\n")
     for r in res["results"]:
         text = ' '.join(r['text'].split())

@@ -18,13 +18,15 @@ import build_graph as G  # noqa: E402
 
 
 class BuildAddressedByTests(unittest.TestCase):
-    NODES = {"billing_disputes": (), "delivery_issues": (), "self_service_portal": ()}
+    # capability ids are namespaced with CAP_PREFIX; intents are bare.
+    NODES = {"billing_disputes": (), "delivery_issues": (),
+             G.CAP_PREFIX + "self_service_portal": ()}
 
     def test_valid_pair_becomes_edge(self):
         edges, skipped = G.build_addressed_by(
             {"addressed_by": [{"intent": "Billing Disputes", "capability": "Self-Service Portal"}]},
             self.NODES)
-        self.assertEqual(edges, [("billing_disputes", "self_service_portal", "addressed_by")])
+        self.assertEqual(edges, [("billing_disputes", G.CAP_PREFIX + "self_service_portal", "addressed_by")])
         self.assertEqual(skipped, [])
 
     def test_unknown_endpoint_is_skipped_not_dangling(self):
@@ -37,7 +39,18 @@ class BuildAddressedByTests(unittest.TestCase):
     def test_accepts_bare_list(self):
         edges, _ = G.build_addressed_by(
             [{"intent": "Delivery Issues", "capability": "Self-Service Portal"}], self.NODES)
-        self.assertEqual(edges, [("delivery_issues", "self_service_portal", "addressed_by")])
+        self.assertEqual(edges, [("delivery_issues", G.CAP_PREFIX + "self_service_portal", "addressed_by")])
+
+    def test_shared_label_links_across_namespaces_not_a_self_loop(self):
+        # "Proactive Communications" exists as BOTH an intent and a capability.
+        nodes = {"proactive_communications": (), G.CAP_PREFIX + "proactive_communications": ()}
+        edges, skipped = G.build_addressed_by(
+            [{"intent": "Proactive Communications", "capability": "Proactive Communications"}], nodes)
+        self.assertEqual(edges, [("proactive_communications",
+                                  G.CAP_PREFIX + "proactive_communications", "addressed_by")])
+        self.assertEqual(skipped, [])
+        src, tgt, _ = edges[0]
+        self.assertNotEqual(src, tgt)  # distinct nodes, no self-loop
 
 
 class BuildGraphEndToEndTests(unittest.TestCase):
@@ -75,6 +88,22 @@ class BuildGraphEndToEndTests(unittest.TestCase):
                    JOIN graph_nodes cap ON cap.id=e.target
                    WHERE i.label='Billing Disputes'""")]
             self.assertEqual(hit, ["Self-Service Portal"])
+            c.close()
+
+    def test_shared_label_does_not_overwrite_intent_node(self):
+        # A label present in BOTH taxonomies must yield two distinct nodes with correct kinds,
+        # not a capability node clobbering the intent node (which would orphan about edges).
+        with tempfile.TemporaryDirectory() as td:
+            tax, cap, db = (os.path.join(td, n) for n in ("t.json", "c.json", "k.sqlite"))
+            json.dump({"intent_taxonomy": {"tree": {"Proactive Communications": []}}}, open(tax, "w"))
+            json.dump({"capability_taxonomy": {"tree": {"Proactive Communications": []}}}, open(cap, "w"))
+            r = subprocess.run([sys.executable, str(HERE / "build_graph.py"), "--taxonomy", tax,
+                                "--capabilities", cap, "--db", db], text=True, capture_output=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            c = sqlite3.connect(db)
+            kinds = dict(c.execute(
+                "SELECT kind, COUNT(*) FROM graph_nodes WHERE label='Proactive Communications' GROUP BY kind").fetchall())
+            self.assertEqual(kinds, {"intent_l1": 1, "capability_l1": 1})  # both survive, distinct
             c.close()
 
     def test_rebuild_is_idempotent_and_owns_addressed_by(self):

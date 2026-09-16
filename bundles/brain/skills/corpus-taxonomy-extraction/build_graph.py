@@ -23,12 +23,23 @@ import argparse, json, re, sqlite3
 
 def nid(s): return re.sub(r"[^a-z0-9]+", "_", str(s).lower()).strip("_") or "n"
 
-def add_tree(it, nodes, edges, kind_l1, kind_l2):
+# Capability ids live in a separate id namespace from intents: both taxonomies are induced
+# from the SAME corpus, so labels collide (e.g. "Proactive Communications" is both an intent
+# L1 and a vision pillar). Without this prefix the capability node would overwrite the intent
+# node (flipping its kind and orphaning its about/chunk_topics edges), and an intent→capability
+# link on a shared label would become a self-loop. `nid(intent)==CAP_PREFIX+nid(capability)`
+# can never collide, so intent and capability stay distinct nodes.
+CAP_PREFIX = "cap__"
+
+def add_tree(it, nodes, edges, kind_l1, kind_l2, id_prefix=""):
     """Ingest an intent-taxonomy-shaped block ({tree, l1, unassigned_l2}) as nodes +
-    subclass_of edges, tagged with the given L1/L2 kinds."""
+    subclass_of edges, tagged with the given L1/L2 kinds. `id_prefix` namespaces the node
+    ids (empty for intents, CAP_PREFIX for capabilities) so the two taxonomies never share
+    an id even when their labels collide."""
     def add(label, kind, parent=None):
-        i = nid(label); nodes[i] = (i, label, kind, nid(parent) if parent else None)
-        if parent: edges.append((i, nid(parent), "subclass_of"))
+        i = id_prefix + nid(label)
+        nodes[i] = (i, label, kind, (id_prefix + nid(parent)) if parent else None)
+        if parent: edges.append((i, id_prefix + nid(parent), "subclass_of"))
         return i
     for l1, kids in it.get("tree", {}).items():
         add(l1, kind_l1)
@@ -36,16 +47,17 @@ def add_tree(it, nodes, edges, kind_l1, kind_l2):
     for l1 in it.get("l1", []): add(l1, kind_l1)
     for l2 in it.get("unassigned_l2", []): add(l2, kind_l2)
 
-def build_addressed_by(links_doc, nodes):
+def build_addressed_by(links_doc, nodes, cap_prefix=CAP_PREFIX):
     """Resolve intent→capability link pairs to `addressed_by` edges. Accepts
     {"addressed_by": [{"intent","capability"}, ...]} or a bare list of such pairs.
-    Endpoints are matched by nid; a pair whose intent OR capability is not a known node
-    is skipped (returned separately) so the graph never carries a dangling edge."""
+    The intent is matched by nid, the capability by the namespaced id; a pair whose intent
+    OR capability is not a known node — or that would be a self-loop — is skipped (returned
+    separately) so the graph never carries a dangling or degenerate edge."""
     pairs = links_doc.get("addressed_by", links_doc) if isinstance(links_doc, dict) else links_doc
     edges, skipped = [], []
     for p in pairs or []:
-        si, tc = nid(p["intent"]), nid(p["capability"])
-        if si in nodes and tc in nodes:
+        si, tc = nid(p["intent"]), cap_prefix + nid(p["capability"])
+        if si in nodes and tc in nodes and si != tc:
             edges.append((si, tc, "addressed_by"))
         else:
             skipped.append((p.get("intent"), p.get("capability")))
@@ -69,7 +81,7 @@ def main():
     if a.capabilities:
         ctax = json.load(open(a.capabilities))
         ct = ctax.get("capability_taxonomy") or ctax.get("intent_taxonomy", {})
-        add_tree(ct, nodes, edges, "capability_l1", "capability_l2")
+        add_tree(ct, nodes, edges, "capability_l1", "capability_l2", id_prefix=CAP_PREFIX)
 
     # optional cross-links: intent --addressed_by--> capability
     addressed, skipped = ([], [])

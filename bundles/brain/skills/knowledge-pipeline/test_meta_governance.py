@@ -91,5 +91,19 @@ class AboutCommandTests(unittest.TestCase):
             self.assertIn("ungoverned", r.stdout)
 
 
+class SeedGateTests(unittest.TestCase):
+    def test_seed_requires_goal_fails_up_front(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = _project(td)                       # no goal.txt -> empty goal
+            parsed = Path(td) / "parsed"; parsed.mkdir()
+            r = subprocess.run([sys.executable, str(HERE / "brain_sync.py"), "seed",
+                                "--db", db, "--parsed", str(parsed), "--require-goal"],
+                               text=True, capture_output=True)
+            self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+            self.assertIn("ungoverned", r.stderr)
+            # gate fired BEFORE work: no store was created
+            self.assertFalse(Path(db).exists())
+
+
 if __name__ == "__main__":
     unittest.main()

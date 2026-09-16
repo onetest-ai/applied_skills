@@ -469,6 +469,8 @@ def main():
 
     df = apply_rollups(df, cfg, a.config)
     df = apply_derived(df, cfg)
+    # defensive: a rollup/derived metric configured at a grain already present would collide
+    df = df.drop_duplicates(subset=["family","metric","grain","entity","month"], keep="last").reset_index(drop=True)
 
     pq = os.path.join(a.out_dir, "facts.parquet")
     try: df.to_parquet(pq, index=False)

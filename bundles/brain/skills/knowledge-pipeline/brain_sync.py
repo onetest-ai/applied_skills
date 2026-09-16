@@ -355,6 +355,13 @@ def cmd_about(a):
 def cmd_seed(a):
     """Record the current parsed corpus's hashes into `documents` WITHOUT re-embedding
     — run once right after a full build so later plan/apply can compute deltas."""
+    # Governance gate up front (before any work), mirroring cmd_apply: refuse to seed an
+    # ungoverned store when --require-goal is set. (goal is resolvable from goal.txt.)
+    pre_goal, _ = _read_goal_audience(a.db)
+    if a.require_goal and not pre_goal:
+        print("❌ meta.goal is empty (seed): refusing to seed an ungoverned store "
+              "(--require-goal). Write goal.txt and re-run.", file=sys.stderr)
+        sys.exit(3)
     c = sqlite3.connect(a.db)
     ensure_documents(c)
     now = scan(a.parsed)
@@ -372,7 +379,7 @@ def cmd_seed(a):
     print(f"meta refreshed: goal={'set' if goal else 'empty'}, "
           f"audience={'set' if audience else 'empty'}")
     c.close()
-    enforce_goal(goal, drift, require=a.require_goal, context="seed")
+    enforce_goal(goal, drift, require=False, context="seed")  # hard --require-goal fail handled up front
 
 
 def cmd_rollback(a):
