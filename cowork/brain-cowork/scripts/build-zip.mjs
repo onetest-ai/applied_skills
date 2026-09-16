@@ -10,9 +10,10 @@
 //     --out <zip-path>
 import {
   copyFileSync, existsSync, mkdirSync, readdirSync,
-  readFileSync, writeFileSync,
+  readFileSync, rmSync, unlinkSync, writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { platform } from "node:os";
 import { spawnSync } from "node:child_process";
 
 function fail(msg) { console.error(`ERROR: ${msg}`); process.exit(1); }
@@ -32,6 +33,9 @@ if (!pluginDir)  fail("--plugin-dir required");
 if (!brainName)  fail("--brain-name required");
 if (!pluginJson) fail("--plugin-json required");
 if (!outPath)    fail("--out required");
+
+if (!/^[a-z][a-z0-9-]*$/.test(brainName))
+  fail(`--brain-name must be kebab-case (lowercase letters, digits, hyphens): got "${brainName}"`);
 
 // Read + stamp SKILL.md in memory only — never touch the source file
 const skillSrcPath = join(pluginDir, "skills", "brain-librarian", "SKILL.md");
@@ -58,8 +62,9 @@ const copyDir = (src, dst) => {
   }
 };
 
-// skills/ — stamped SKILL.md first, then the rest
-const stageSkillDir = join(stageDir, "skills", "brain-librarian");
+// skills/ — stamped SKILL.md written under brainName folder first, then copy the rest
+// (copyDir skips brain-librarian template because it is stamped separately above)
+const stageSkillDir = join(stageDir, "skills", brainName);
 mkdirSync(stageSkillDir, { recursive: true });
 writeFileSync(join(stageSkillDir, "SKILL.md"), stampedSkill);
 copyDir(join(pluginDir, "skills"), join(stageDir, "skills"));
@@ -72,14 +77,70 @@ if (existsSync(join(pluginDir, "docs")))
 const readmeSrc = join(pluginDir, "README.md");
 if (existsSync(readmeSrc)) copyFileSync(readmeSrc, join(stageDir, "README.md"));
 
-// .claude-plugin/plugin.json
+// .claude-plugin/plugin.json — augment with mcpServers + userConfig so the
+// user is prompted for the API key at plugin-enable time (no install.mjs needed).
 const stagePlugin = join(stageDir, ".claude-plugin");
 mkdirSync(stagePlugin, { recursive: true });
-copyFileSync(pluginJson, join(stagePlugin, "plugin.json"));
 
-// Zip from staging dir
-const result = spawnSync("zip", ["-r", outPath, "."], { cwd: stageDir, stdio: "inherit" });
-spawnSync("rm", ["-rf", stageDir]);
+const configPath = join(pluginDir, "brain.config.json");
+let mcpEndpoint = "";
+let apiKeyEnvVar = "BRAIN_API_KEY";
+if (existsSync(configPath)) {
+  let cfg;
+  try {
+    cfg = JSON.parse(readFileSync(configPath, "utf8"));
+  } catch (e) {
+    fail(`brain.config.json is not valid JSON: ${e.message}`);
+  }
+  if (cfg.mcpEndpoint) {
+    if (!/^https:\/\//.test(cfg.mcpEndpoint))
+      fail(`brain.config.json mcpEndpoint must start with https:// — got: ${cfg.mcpEndpoint}`);
+    mcpEndpoint = cfg.mcpEndpoint;
+  }
+  if (cfg.apiKeyEnvVar) apiKeyEnvVar = cfg.apiKeyEnvVar;
+}
 
-if (result.status !== 0) fail("zip failed");
+const basePlugin = JSON.parse(readFileSync(pluginJson, "utf8"));
+
+if (mcpEndpoint) {
+  // Declare the MCP server — key injected from userConfig secure storage.
+  basePlugin.mcpServers = {
+    [brainName]: {
+      type: "http",
+      url: mcpEndpoint,
+      headers: {
+        "X-API-Key": "${user_config.apiKey}",
+      },
+    },
+  };
+  // Prompt user for the API key when they enable the plugin.
+  basePlugin.userConfig = {
+    apiKey: {
+      description: `API key for ${basePlugin.displayName || brainName} MCP server`,
+      sensitive: true,
+    },
+  };
+}
+
+writeFileSync(join(stagePlugin, "plugin.json"), JSON.stringify(basePlugin, null, 2) + "\n");
+
+// Remove any existing output ZIP so we always produce a fresh archive (not a merge)
+if (existsSync(outPath)) unlinkSync(outPath);
+
+// Zip from staging dir — cross-platform: PowerShell on Windows, zip on macOS/Linux
+let result;
+if (platform() === "win32") {
+  // Compress-Archive requires an absolute path and does not accept cwd — use join(stageDir, "*")
+  const psCmd = `Compress-Archive -Path "${join(stageDir, "*")}" -DestinationPath "${outPath}"`;
+  result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", psCmd], { stdio: "inherit" });
+} else {
+  result = spawnSync("zip", ["-r", outPath, "."], { cwd: stageDir, stdio: "inherit" });
+}
+
+// Clean up staging dir only after checking exit code so failures are diagnosable
+if (result.status !== 0) {
+  console.error(`Staging directory left for inspection: ${stageDir}`);
+  fail("zip failed");
+}
+rmSync(stageDir, { recursive: true, force: true });
 console.log(`✓ ZIP → ${outPath}`);

@@ -1,25 +1,70 @@
-# Team onboarding
+# Primo Brain — Team Installation Guide
 
-Prerequisites: Claude Desktop with Cowork, EPAM CodeMie access, an approved
-CodeMie profile, network access to your Brain MCP endpoint, and an authorized
-API key for that endpoint.
+This guide installs the **Primo Brain** plugin into your Claude Desktop.
+It connects Claude to the Primo team knowledge base so you can search metrics,
+documents, and approved company sources directly from Cowork sessions.
 
-1. Install the supported CodeMie CLI and authenticate with EPAM SSO.
-2. Run `codemie proxy connect --claude-desktop` against your CodeMie instance.
-3. Clone `https://github.com/onetest-ai/applied_skills` (or pull latest `main`).
-4. Copy `cowork/brain-cowork/brain.config.example.json` to
-   `cowork/brain-cowork/brain.config.json` and fill in your values:
-   - `brainName` — kebab-case identifier for your Brain (e.g. `acme-brain`)
-   - `displayName` — human-readable name (e.g. `Acme Brain`)
-   - `mcpEndpoint` — the HTTPS MCP URL of your Brain
-   - `apiKeyEnvVar` — name of the env var holding your key (e.g. `ACME_BRAIN_API_KEY`)
-   - `codemie.gatewayUrl` — your CodeMie instance URL
-5. Create `cowork/brain-cowork/.env` containing `<apiKeyEnvVar>=<your-key>`.
-6. From `cowork/brain-cowork/`, run `node scripts/install.mjs`.
-   The installer verifies the bridge and restarts Claude Desktop automatically.
-7. Upload `dist/<brainName>-1.0.0.zip` in **Customize → Plugins → Add** and enable it.
-8. Run the acceptance test in `docs/ACCEPTANCE_TEST.md`.
+Prerequisites: Claude Desktop with Cowork enabled.
 
-Never commit `.env` or `brain.config.json`. Never send a key with the ZIP.
-Owners should maintain credential rotation, a support channel, and offboarding
-that revokes both Brain and CodeMie access.
+---
+
+## Step 1 — Get your API key
+
+Request your personal Primo Brain API key from **[YOUR TEAM LEAD / CHANNEL]**
+before starting. You will need it in Step 3.
+
+> The key is stored securely in your system keychain after you enter it once.
+> Never paste it into a file, chat message, or email.
+
+---
+
+## Step 2 — Download and install the plugin
+
+1. Download **`primo-brain-1.0.0.zip`** from the SharePoint page:
+   **[YOUR SHAREPOINT LINK]**
+
+2. Open **Claude Desktop** → click your avatar or the settings icon →
+   **Customize** → **Plugins** → **Add local plugin**
+
+3. Select the downloaded `primo-brain-1.0.0.zip` file and click **Open**
+
+4. Click **Enable** on the Primo Brain plugin card
+
+---
+
+## Step 3 — Enter your API key
+
+As soon as you click Enable, Claude Desktop shows a prompt:
+
+> **"API key for Primo Brain MCP server"**
+
+Paste your API key and confirm. It is stored in your system keychain and
+never written to any file. You will not be asked again unless you reinstall.
+
+---
+
+## Step 4 — Verify the connection
+
+1. Open a **new Cowork task** (existing tasks will not have the plugin loaded)
+2. Type `/primo-brain` — it should appear as a recognised skill
+3. Activate the skill and ask: *"Call health and list available metrics."*
+
+If it responds with metrics, you are ready to use the brain.
+
+---
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `/primo-brain` not found | Remove the plugin and re-add the ZIP (Plugins → three-dot menu → Remove) |
+| API key prompt never appeared | Remove and re-enable the plugin |
+| "Connection error" in responses | Check with **[YOUR TEAM LEAD / CHANNEL]** — the key may need to be reissued |
+| Still open task, no skill | Close the task and open a new one |
+
+---
+
+## Offboarding
+
+If you leave the project, notify **[YOUR TEAM LEAD / CHANNEL]** so your API key
+can be revoked. Remove the plugin via Customize → Plugins → three-dot menu → Remove.

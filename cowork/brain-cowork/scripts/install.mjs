@@ -36,6 +36,13 @@ for (const [f, v] of [["brainName", brainName], ["displayName", displayName],
 if (!/^https:\/\//.test(mcpEndpoint)) fail("mcpEndpoint must be an HTTPS URL");
 if (!/^[a-z][a-z0-9-]*$/.test(brainName)) fail("brainName must be kebab-case (lowercase letters, digits, hyphens)");
 if (/[/\\]/.test(displayName)) fail("displayName must not contain path separators (/ or \\)");
+if (/\.\./.test(displayName) || displayName.trim() !== displayName)
+  fail("displayName must not contain '..' or leading/trailing whitespace");
+{
+  const resolved = join(home, "Library", "Application Support", displayName);
+  if (!resolved.startsWith(join(home, "Library", "Application Support") + "/"))
+    fail(`displayName resolves outside Application Support — got: ${resolved}`);
+}
 
 // Step 1: Validate CodeMie Gateway
 const configLibrary = join(home, "Library", "Application Support", "Claude-3p", "configLibrary");
@@ -71,7 +78,7 @@ console.log(`✓ ${apiKeyEnvVar} found`);
 const supportDir = join(home, "Library", "Application Support", displayName);
 mkdirSync(supportDir, { recursive: true });
 const credentialsPath = join(supportDir, "credentials.env");
-writeFileSync(credentialsPath, `${apiKeyEnvVar}=${JSON.stringify(secret)}\n`, { mode: 0o600 });
+writeFileSync(credentialsPath, `${apiKeyEnvVar}=${secret}\n`, { mode: 0o600 });
 chmodSync(credentialsPath, 0o600);
 console.log(`✓ Credentials → ${credentialsPath}`);
 

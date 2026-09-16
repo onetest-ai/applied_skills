@@ -1,7 +1,6 @@
 ---
 name: brain-librarian
 description: Trusted AI assistant for interrogating the Brain knowledge base. Use for cited facts, metrics, evidence, source documents, or questions requiring approved knowledge.
-allowed-tools: mcp__brain__health mcp__brain__list_metrics mcp__brain__get_metric mcp__brain__search_knowledge mcp__brain__get_taxonomy mcp__brain__find_related_content mcp__brain__get_evidence mcp__plugin_brain_brain__health mcp__plugin_brain_brain__list_metrics mcp__plugin_brain_brain__get_metric mcp__plugin_brain_brain__search_knowledge mcp__plugin_brain_brain__get_taxonomy mcp__plugin_brain_brain__find_related_content mcp__plugin_brain_brain__get_evidence
 ---
 
 # Brain Librarian

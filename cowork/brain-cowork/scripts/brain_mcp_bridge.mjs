@@ -67,8 +67,12 @@ http.createServer((req, res) => {
     }
   );
   up.on("error", (e) => {
-    if (!res.headersSent) res.writeHead(502);
-    res.end(JSON.stringify({ error: "upstream unavailable", detail: e.code || e.message }));
+    if (!res.headersSent) {
+      res.writeHead(502);
+      res.end(JSON.stringify({ error: "upstream unavailable", detail: e.code || e.message }));
+    } else {
+      res.destroy();
+    }
   });
   req.on("close", () => up.destroy());
   req.pipe(up);
