@@ -18,6 +18,11 @@ This is the **narrative lane** of a local knowledge store. It writes `chunks`, `
 python knowledge_index.py index  --db knowledge.sqlite --corpus <markdown dir> [--reset] [--max-chars 1200] [--model M]
 # hybrid recall (BM25 + vector, RRF-fused) — returns cited chunks
 python knowledge_index.py search --db knowledge.sqlite --query "why did X change" [--k 8] [--json]
+#   snippet length: the human view caps each hit at 240 chars; --full prints the whole
+#   chunk, --chars N overrides the cap (--json already carries full text).
+python knowledge_index.py search --db knowledge.sqlite --query "..." --full
+# catalog of indexed source docs (no model needed) — so you don't guess filenames via search
+python knowledge_index.py sources --db knowledge.sqlite [--like SUBSTR] [--json]
 ```
 - **Input = Markdown.** Point it at parser output (`corpus-taxonomy-extraction/parse_corpus.py` / `visual-parse`) or any `.md`. No code→text layer needed — the input is already text.
 - Chunking: paragraph-merge to ~`--max-chars` (default 1200). Deterministic.
