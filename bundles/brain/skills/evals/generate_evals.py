@@ -51,6 +51,25 @@ _STOP_WORDS = frozenset({
 })
 
 
+def _natural_question(base_q: str, verbatim_quote: str) -> str:
+    """Build a unique, human-readable question from the category template and a verbatim fact.
+
+    Keeps the category question as the stem, then appends a short grounded phrase
+    so each eval is distinguishable and sounds like a real user question.
+    E.g.: "What action items were identified? (re: router training for team members)"
+    """
+    # Take the first sentence of the quote (up to first ? . or 60 chars)
+    quote = verbatim_quote.strip().rstrip("?.,;")
+    # Truncate to the first clause — split on comma, semicolon, or length
+    for sep in (",", ";", " and ", " but "):
+        if sep in quote:
+            quote = quote.split(sep)[0].strip()
+            break
+    if len(quote) > 60:
+        quote = quote[:57].rsplit(" ", 1)[0] + "…"
+    return f"{base_q} (re: {quote})"
+
+
 def _query_suffix_from_fact(verbatim_quote: str) -> str:
     """Extract searchable keywords from a verbatim quote for BM25 retrieval."""
     words = verbatim_quote.replace(",", " ").replace(".", " ").replace(";", " ").split()
@@ -297,9 +316,9 @@ def generate_evals(extractions_dir, taxonomy_path):
                 continue
             product = exts[0].get("product", "CROSS-PRODUCT")
             primary_fact = facts[0]
-            # Use the category question template for the human-facing question;
-            # _query_suffix_from_fact is for BM25 retrieval only, not the question text.
-            question = base_q
+            # Build a unique human-readable question grounded in the primary fact.
+            # base_q is the category template; the verbatim fact makes it distinct.
+            question = _natural_question(base_q, primary_fact)
             fact_suffix = _query_suffix_from_fact(primary_fact)
             rows.append({
                 "eval_id": f"E{eval_counter:03d}",
