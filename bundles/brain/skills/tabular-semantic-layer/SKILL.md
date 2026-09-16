@@ -70,6 +70,13 @@ A config is authored from a sample of a family's files; if other files in that f
 - Once you've **confirmed** a zero-fact file is truly redundant/legacy, list a filename substring in the family's `allow_zero`: it's reclassified `benign` (ℹ️, not ❌) and no longer fails `--strict`. Use this only for files you've verified add nothing — it's an explicit acknowledgement, not a mute button.
 - A family whose files have **no stable template** (ad-hoc exports) is the wrong fit for a rigid `long`/`wide_month` block — use the **`tolerant_long`** layout (content-based header/dim/measure detection + `entity_regex`). NPS is the worked example: one tolerant block ingested files that varied in sheet name, header row, dim column, and entity encoding.
 
+### `coverage.json` — completeness the audit CANNOT see (missing-entirely)
+
+`build_audit` checks per-file **parse health** — it only knows about files that were globbed. It **cannot** catch an entity or month for which **no file/row ever existed** (a division that stops appearing after January; a month whose source workbook was never produced/ingested). Every build now also emits **`coverage.json`** and prints:
+- **grains per family** (grain visibility — see at a glance that e.g. `workforce_mom` is `overall` only, so a division-grain comparison isn't modeled).
+- **⚠️ coverage holes** — an entity present in *some* of a family/grain's months but absent in others (the disappearing-division case). Detected with **no config**.
+- **❌ expected-roster violations** — months/entities named in an optional top-level `coverage` config block that are wholly absent (the missing-month case). `coverage: {"<family>": {"month_range": ["2026-01","2026-07"], "entities": [...]}}` (or `"months": [...]`, or `"*"` for a default). Under **`--strict`** a violation fails the build alongside zero/partial units; intra-family holes always warn (a genuinely sparse entity may be legitimate — triage, then add an expected roster to enforce).
+
 ## Guardrails / where the real work is
 
 - **Entity conformance is the bounded effort** (not parsing, not scale). Same entity appears in many forms across families — e.g. `Mid Atlantic`↔`Mid-Atlantic`, `CHICAGO`↔`Chicago`↔`Chicago Hod`, region codes (`NE3`)→division. Extend `dimension_map`; for branch/RSR add an alias table. Until conformed, use `--entity-like` for cross-family lookups.
