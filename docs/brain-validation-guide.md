@@ -404,7 +404,7 @@ Review `$PROJECT/taxonomy/taxonomy_v0.md` — the `review_flags` section is advi
 Set `TAXO` to the new file:
 
 ```bash
-TAXO=/path/to/taxonomy.json"
+TAXO=/path/to/taxonomy.json
 ```
 
 ---
