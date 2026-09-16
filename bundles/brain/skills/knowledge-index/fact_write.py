@@ -66,3 +66,130 @@ def judge_disagreements(disagreements, judge_fn):
         else:
             unresolved.append(d)
     return links, unresolved
+
+
+def _load_results(results_dir):
+    items = []
+    for fn in sorted(os.listdir(results_dir)):
+        if fn.startswith("result_") and fn.endswith(".json"):
+            try:
+                items += json.load(open(os.path.join(results_dir, fn)))
+            except (ValueError, OSError) as exc:
+                print(f"[warn] skip {fn}: {exc}", file=sys.stderr)
+    return items
+
+
+def run(con, results, aliases, embed_fn, judge_fn, high, low, now_iso, apply=False,
+        strict_merges=False, model="BAAI/bge-small-en-v1.5"):
+    import temporal_memory as T
+    T.ensure_schema(con)
+    existing = list({(r[0], r[1]) for r in con.execute(
+        "SELECT DISTINCT entity, predicate FROM memory_assertions")})
+    bands = {"exact": 0, "auto": 0, "review": 0, "distinct": 0}
+
+    # Pass 1: parse + canonicalize every item into a candidate assertion.
+    assertions = []
+    for it in _load_results(results):
+        try:
+            cid = int(it["chunk_id"]); value = it["value"]
+            ent_in, pred_in = it["entity"], it["predicate"]
+        except (KeyError, TypeError, ValueError) as exc:
+            print(f"[warn] skip malformed item: {exc}", file=sys.stderr); continue
+        row = con.execute("SELECT source, event_date, speaker FROM chunks WHERE id=?", (cid,)).fetchone()
+        if not row:
+            print(f"[warn] chunk {cid} not found", file=sys.stderr); continue
+        source, event_date, speaker = row
+        (ce, cp), band = resolve_key(ent_in, pred_in, existing, aliases, embed_fn, high, low, model)
+        if band == "review" and strict_merges:
+            ce, cp = FS.canon_key(ent_in, pred_in, aliases)  # hold: treat as distinct pending review
+        bands[band] += 1
+        if (ce, cp) not in existing:
+            existing.append((ce, cp))
+        asserted_at = T._timestamp(event_date) if event_date else now_iso
+        aid = FS.assertion_id(ce, cp, value, source, f"chunk:{cid}")
+        sentiment = it.get("sentiment", "neutral")
+        if sentiment not in FS.SENTIMENTS:
+            sentiment = "neutral"
+        assertions.append({
+            "assertion_id": aid, "entity": ce, "predicate": cp, "value": value,
+            "asserted_at": asserted_at, "ingested_at": now_iso, "source": source,
+            "segment_id": f"chunk:{cid}", "evidence": it.get("evidence", ""),
+            "sentiment": sentiment, "stance": it.get("stance", "")})
+
+    # Pass 2: link in chronological order so a later fact supersedes an earlier one
+    # even within the same batch. Priors = DB rows + in-batch assertions seen so far.
+    assertions.sort(key=lambda a: a["asserted_at"])
+    priors_cache = {}
+    all_auto, disagreements = [], []
+    for a in assertions:
+        key = (a["entity"], a["predicate"])
+        if key not in priors_cache:
+            priors_cache[key] = find_priors(con, *key)  # DB priors, once per key
+        auto, dis = plan_links(a["assertion_id"], a["value"], a["asserted_at"], priors_cache[key])
+        all_auto += auto; disagreements += dis
+        priors_cache[key].append({"assertion_id": a["assertion_id"],
+                                  "value": a["value"], "asserted_at": a["asserted_at"]})
+    judged, unresolved = judge_disagreements(disagreements, judge_fn)
+    links = all_auto + judged
+    report = {"assertions": len(assertions), "merges": bands,
+              "auto_supersedes": len(all_auto),
+              "judge": {"resolved": len(judged), "unresolved": len(unresolved)}}
+    if apply:
+        ledger = FS.build_ledger(assertions, links)
+        T.load_ledger(con, ledger); con.commit()
+    return report
+
+
+def _bedrock_judge(model):
+    """Return a callable(dis) -> {"relation": ...} backed by Bedrock. Lazy boto3 import."""
+
+    def _call(dis):
+        import boto3  # noqa: PLC0415
+        client = boto3.client("bedrock-runtime", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+        model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        prompt = (
+            "Two assertions about the same entity/predicate disagree.\n"
+            f"New value: {dis['new_value']!r} (assertion {dis['new_id']})\n"
+            f"Prior value: {dis['prior_value']!r} (assertion {dis['prior_id']})\n"
+            "Does the new value supersede the prior, contradict it, or should both be kept "
+            "(e.g. different scope/opinion)? "
+            'Answer ONLY as JSON: {"relation": "supersedes"|"contradicts"|"keep_both"}'
+        )
+        body = json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 128,
+            "messages": [{"role": "user", "content": prompt}],
+        })
+        resp = client.invoke_model(modelId=model_id, body=body)
+        payload = json.loads(resp["body"].read())
+        text = payload["content"][0]["text"].strip()
+        if text.startswith("```"):
+            text = text.strip("`").lstrip("json").strip()
+        return json.loads(text)
+
+    return _call
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--db", required=True); ap.add_argument("--results", required=True)
+    ap.add_argument("--aliases"); ap.add_argument("--report")
+    ap.add_argument("--apply", action="store_true"); ap.add_argument("--strict-merges", action="store_true")
+    ap.add_argument("--merge-high", type=float, default=0.90); ap.add_argument("--merge-low", type=float, default=0.75)
+    ap.add_argument("--model", default="BAAI/bge-small-en-v1.5")
+    a = ap.parse_args(argv)
+    from datetime import datetime, timezone
+    import knowledge_index as KI
+    aliases = json.load(open(a.aliases)) if a.aliases else {}
+    judge = _bedrock_judge(a.model)
+    con = sqlite3.connect(a.db)
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    report = run(con, a.results, aliases, KI.embed, judge, a.merge_high, a.merge_low,
+                 now_iso, apply=a.apply, strict_merges=a.strict_merges, model=a.model)
+    if a.report:
+        json.dump(report, open(a.report, "w"), indent=1)
+    print(json.dumps(report), file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
