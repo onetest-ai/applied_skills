@@ -31,12 +31,12 @@ DEFAULT_TAXONOMY = Path(__file__).parent / "taxonomy.default.json"
 # Fixed no-hallucination probes — questions targeting data confirmed absent from any corpus.
 # Module-level so both load_from_db() and generate_evals() stay in sync.
 _NO_HALLUC = [
-    ("What are the contractor day rates or salary figures for the EPAM team members?",
-     "salary contractor rates team compensation", "no-hallucination | absent-salaries"),
-    ("What is the approved annual budget in EUR or USD for the performance testing engagement?",
-     "budget EUR USD annual approved financial cost", "no-hallucination | absent-budget"),
-    ("What Gatling Enterprise license fees or LoadRunner license costs are recorded?",
-     "Gatling LoadRunner license fee cost annual", "no-hallucination | absent-license-cost"),
+    ("What are the personal home addresses or private contact details of any team members?",
+     "home address personal contact phone private", "no-hallucination | absent-pii"),
+    ("What are the individual performance review scores or disciplinary records for any staff?",
+     "performance review score disciplinary HR record individual", "no-hallucination | absent-hr-records"),
+    ("What medical conditions, health insurance claims, or sick-leave details are recorded?",
+     "medical health insurance sick leave diagnosis condition", "no-hallucination | absent-health-data"),
 ]
 
 _STOP_WORDS = frozenset({

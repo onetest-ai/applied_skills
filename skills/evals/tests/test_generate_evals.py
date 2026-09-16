@@ -222,9 +222,9 @@ def test_no_hallucination_produces_fixed_absent_data_questions(tmp_path):
     assert len(no_hal) == 3
     # All three must target absent-data topics, not corpus category names
     notes = [r["notes"] for r in no_hal]
-    assert any("absent-salaries" in n for n in notes)
-    assert any("absent-budget" in n for n in notes)
-    assert any("absent-license-cost" in n for n in notes)
+    assert any("absent-pii" in n for n in notes)
+    assert any("absent-hr-records" in n for n in notes)
+    assert any("absent-health-data" in n for n in notes)
 
 
 def test_no_hallucination_question_does_not_contain_answer_name(tmp_path):
