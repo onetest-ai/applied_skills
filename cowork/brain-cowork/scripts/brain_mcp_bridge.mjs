@@ -55,6 +55,8 @@ http.createServer((req, res) => {
     if (!hopHeaders.has(k.toLowerCase()) && v !== undefined) headers[k] = v;
   headers.host = target.host;
   headers["x-api-key"] = key;
+  // MCP over HTTP requires the client to accept both JSON and SSE
+  headers["accept"] = "application/json, text/event-stream";
 
   const up = https.request(
     { hostname: target.hostname, port: Number(target.port) || 443, path: target.pathname + (target.search || ""), method: req.method, headers },

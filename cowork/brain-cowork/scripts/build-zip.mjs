@@ -28,6 +28,7 @@ const pluginDir  = arg("--plugin-dir");
 const brainName  = arg("--brain-name");
 const pluginJson = arg("--plugin-json");
 const outPath    = arg("--out");
+const coworkMode = args.includes("--cowork"); // skip mcpServers injection (Cowork uses Gateway)
 
 if (!pluginDir)  fail("--plugin-dir required");
 if (!brainName)  fail("--brain-name required");
@@ -69,11 +70,35 @@ const copyDir = (src, dst) => {
 };
 
 // skills/ — stamped SKILL.md written under brainName folder first, then copy the rest
-// (copyDir skips brain-librarian template because it is stamped separately above)
+// brain-librarian template is kept in ZIP so the scripts are self-contained on a fresh checkout.
+// copyDir skips it from the recursive copy because it's handled separately (stamped above).
 const stageSkillDir = join(stageDir, "skills", brainName);
 mkdirSync(stageSkillDir, { recursive: true });
 writeFileSync(join(stageSkillDir, "SKILL.md"), stampedSkill);
+// Also keep the brain-librarian template itself so build-zip.mjs works after unzip on Windows
+const stageLibrarian = join(stageDir, "skills", "brain-librarian");
+mkdirSync(stageLibrarian, { recursive: true });
+copyFileSync(skillSrcPath, join(stageLibrarian, "SKILL.md"));
 copyDir(join(absPluginDir, "skills"), join(stageDir, "skills"));
+
+// scripts/ — include installers and bridge so the ZIP is self-contained on Windows
+const scriptsToBundle = [
+  "install-windows.mjs",
+  "install.mjs",
+  "build-zip.mjs",
+  "brain_mcp_bridge.mjs",
+];
+const stageScripts = join(stageDir, "scripts");
+mkdirSync(stageScripts, { recursive: true });
+for (const f of scriptsToBundle) {
+  const src = join(absPluginDir, "scripts", f);
+  if (existsSync(src)) copyFileSync(src, join(stageScripts, f));
+}
+
+// brain.config.example.json — copy template (never the real config)
+const exampleConfig = join(absPluginDir, "brain.config.example.json");
+if (existsSync(exampleConfig))
+  copyFileSync(exampleConfig, join(stageDir, "brain.config.example.json"));
 
 // docs/
 if (existsSync(join(absPluginDir, "docs")))
@@ -108,8 +133,9 @@ if (existsSync(configPath)) {
 
 const basePlugin = JSON.parse(readFileSync(absPluginJson, "utf8"));
 
-if (mcpEndpoint) {
+if (mcpEndpoint && !coworkMode) {
   // Declare the MCP server — key injected from userConfig secure storage.
+  // Skip in --cowork mode: CodeMie Gateway handles the MCP connection instead.
   basePlugin.mcpServers = {
     [brainName]: {
       type: "http",

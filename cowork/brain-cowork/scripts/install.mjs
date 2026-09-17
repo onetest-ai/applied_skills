@@ -179,6 +179,7 @@ execFileSync("node", [
   "--brain-name", brainName,
   "--plugin-json", pluginJsonPath,
   "--out", zipPath,
+  "--cowork",
 ], { stdio: "inherit" });
 console.log("");
 console.log(`✓ ${displayName} installed. Upload ${zipPath} in Customize → Plugins → Add.`);
