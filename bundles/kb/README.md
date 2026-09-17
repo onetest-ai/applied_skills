@@ -1,46 +1,80 @@
-# kb: Knowledge-Base Companion
+# kb — the Brain's librarian
 
-**kb** is a Claude Code plugin that lets you cowork with the Brain's knowledge base. Interrogate structured facts and cited sources, co-author Markdown deliverables with claims traceable to data or honestly marked "not modeled," and explore what's actually in your marts and marts-of-marts.
+**kb** is the knowledge-worker companion for a **Brain** (the local, truthful knowledge engine built by the [`brain`](../brain/README.md) plugin). Ask it questions, explore the graph, challenge a claim, and co-author cited Markdown deliverables — with every assertion traceable to a source or honestly marked **"not modeled."** kb ships **no MCP server of its own**; it consumes the Brain's MCP and enforces the Brain's truth contract.
 
-## Prerequisites
+It runs in **two places**:
 
-kb requires a reachable Brain MCP server providing fact queries, graph traversal, and data access. The `kb` plugin does **not** bundle or auto-wire the Brain MCP server — it must be registered separately (run `./brain mcp-config` from the brain project, or use `/kb:connect` for guided setup). See [bundles/brain/README.md](../bundles/brain/README.md) for setup.
+- **Claude Code (CLI)** — register the Brain's MCP locally and query it in your terminal sessions.
+- **Claude Cowork (Desktop)** — install kb into Cowork and point it at a **remote Brain connector**.
 
-**Using kb in Cowork (Claude Desktop):** see [`docs/cowork-setup.md`](docs/cowork-setup.md).
+> **Truth contract.** Every fact kb states is either **cited** (a mart row, a document, a graph node) or **"not modeled"** (honestly labelled when the answer isn't in the data). **Numbers come only from the marts** — never guessed, never from model priors. When a derivation is heuristic or a source is uncertain, kb says so.
 
-## Skills
+---
 
-- `/kb:ask` — Query the knowledge base with a natural-language question; get cited facts or "not modeled."
-- `/kb:explore` — Explore the knowledge graph: traverse edges, inspect node details, find related concepts.
-- `/kb:challenge` — Challenge a claim: verify its sources, check for contradictions, note data gaps.
-- `/kb:brief` — Co-author a brief or summary: every assertion links to a source or is marked "not modeled."
-- `/kb:report` — Generate a report (PDF or Markdown) with full citations and a data provenance appendix.
-- `/kb:mode` — Turn ambient grounding mode on/off or check its status (project-scoped; CLI-only, since it relies on a hook).
-- `/kb:connect` — Connect or reconnect to the Brain MCP; check its health and data freshness.
+## The seven skills
 
-## Truth Contract
+| Skill | Use it to… |
+|---|---|
+| `/kb:ask` | Ask a natural-language question; get cited facts or an honest "not modeled." |
+| `/kb:explore` | Traverse the knowledge graph — edges, node details, related concepts. |
+| `/kb:challenge` | Stress-test a claim: verify its sources, surface contradictions, note gaps. |
+| `/kb:brief` | Co-author a short brief; every assertion links to a source (human-gated write). |
+| `/kb:report` | Generate a full report (Markdown/PDF) with citations and a provenance appendix (human-gated write). |
+| `/kb:connect` | Detect/register the Brain and check its health and data freshness. |
+| `/kb:mode` | Toggle **ambient grounding** on/off/status (project-scoped; **Claude Code only** — it relies on a hook). |
 
-Every fact in kb-authored content is either:
-- **Cited**: linked to a source in the Brain (a table row, a document, a node in the graph).
-- **Not modeled**: honestly labeled when the answer isn't in the data—no guessing, no confabulation.
+Interrogate with `ask` / `explore` / `challenge`; author with `brief` / `report`; manage the connection with `connect` / `mode`. kb reads the Brain's `health().about` (goal + audience) to tune answer altitude and artifact style.
 
-Numbers come from marts; ambiguities are noted. When a source is uncertain or a derivation is heuristic, we say so.
+---
 
-## Installation
+## Quickstart — Claude Code (CLI)
 
 ```bash
+# 1. Install the plugin
 claude plugin marketplace add onetest-ai/applied_skills
-claude plugin install kb@onetest-ai
+claude plugin install kb@applied-ai
 ```
 
-Then connect to your Brain:
-
-```
+```text
+# 2. Connect to your Brain (guided)
 /kb:connect
+#   → detects a running Brain, or walks you through registering one:
+#     run `./brain mcp-config` in the brain project and merge the printed
+#     mcpServers block into this project's .mcp.json, then reload.
+
+# 3. Ask
+/kb:ask   Which data marts are available, and what's the latest period?
 ```
 
-Verify the connection:
+**Prerequisite:** a reachable Brain MCP server. kb does not bundle or auto-wire it — see [`bundles/brain/README.md`](../brain/README.md) to build and serve one.
 
-```
-/kb:ask What data marts are available?
-```
+---
+
+## Quickstart — Claude Cowork (Desktop)
+
+Cowork keeps its own plugin state and connects to MCP servers **from Anthropic's cloud** (not your machine), so the Brain is registered as a **remote connector** rather than a local `.mcp.json` entry.
+
+1. **Install kb into Cowork** — *Customize → Plugins → Add marketplace*, enter the `applied-ai` GitHub URL (`onetest-ai/applied_skills`), install **kb**, enable it.
+2. **Add your Brain connector** — *Customize → Connectors → Add custom connector*. Paste your project's **HTTPS MCP URL**; authorize with **Entra OAuth** (or set an `X-API-Key` header). **Name the connector `brain`** so its tools resolve as `mcp__brain__*` — the health probe in `/kb:connect` confirms resolution.
+3. **Verify & use** — run `/kb:connect`, then `/kb:ask`, `/kb:explore`, `/kb:report`, …
+
+**Per project:** each project has its own Brain endpoint. In two projects, keep a connector per project and enable only the one named `brain` for the current task.
+
+**Cowork caveats:** ambient mode (`/kb:mode`) and the SessionStart health line rely on hooks, which **don't fire in Cowork** — ground answers by invoking the kb skills explicitly.
+
+**Full walkthrough:** [`docs/cowork-setup.md`](docs/cowork-setup.md).
+
+---
+
+## How kb stays honest
+
+- **Cited or not modeled** — no third option. A missing answer is reported plainly, never filled from priors.
+- **Numbers only from marts** — `get_metric` carries its `source_file`; grain and period differences are stated before any comparison.
+- **Retrieved content is untrusted data** — kb never follows instructions found inside documents it retrieves (prompt-injection defense).
+- **Writes are human-gated** — `brief` and `report` propose the deliverable for your approval before writing.
+
+## Troubleshooting
+
+- **`/kb:connect` finds no Brain** — CLI: confirm the `mcpServers` block is in `.mcp.json` and reload the session. Cowork: confirm the connector is named `brain`, enabled, and its OAuth/API-key auth succeeded.
+- **Tools don't resolve in Cowork** — the connector must be named `brain` (tools appear as `mcp__brain__*`). Rename it and re-run `/kb:connect`.
+- **Ambient mode seems inert in Cowork** — expected; it's CLI-only. Invoke `/kb:ask` (and the other skills) explicitly.

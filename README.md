@@ -1,10 +1,69 @@
-# Applied AI Skills
+# Applied AI — the Brain 🧠
 
-A distributable collection of **generic, corpus-agnostic** agent skills for building truthful data pipelines over documents, knowledge graphs, and tabular reporting. Each skill is self-contained code + docs; **no project-specific data, paths, or credentials live here** — those stay in the consuming project.
+A distributable collection of **generic, corpus-agnostic** agent skills for building and querying a **Brain**: a local, truthful knowledge engine over your documents *and* spreadsheets. Each skill is self-contained code + docs; **no project-specific data, paths, or credentials live here** — those stay in the consuming project.
 
-## The pipeline
+> **The one rule everything obeys:**
+> **Meaning is agentic. Numbers are computed.**
+> RAG and the taxonomy graph explain *what things mean and how they relate* — they never assert a figure. The deterministic marts compute *every number* from source tables — they never guess. Every answer is either **cited** or an honest **"not modeled."** Gaps beat fabrication.
 
-**Meaning is agentic (RAG/graph); numbers are computed (deterministic SQL).** RAG never produces figures; the mart lane never guesses. Everything lands in **one portable `knowledge.sqlite`** (no server) — narrative chunks (FTS5+vector), numeric marts, and the taxonomy graph — with an **Obsidian vault** as the human-readable canon.
+Everything lands in **one portable `knowledge.sqlite`** (no server) — narrative chunks (FTS5 + vector), numeric marts, and the taxonomy graph — with an **Obsidian vault** as the human-readable canon.
+
+---
+
+## Start here: build a Brain, or use one?
+
+This repo is the **`applied-ai`** marketplace with exactly two plugins. Pick by what you're doing:
+
+| You want to… | Use | Surface | Start |
+|---|---|---|---|
+| **Build / maintain / deploy** a Brain from a corpus | **`brain`** (`/brain:*`) | Claude Code (CLI) | [Build a Brain](#build-a-brain-brain--claude-code) |
+| **Query & co-author** with an existing Brain | **`kb`** (`/kb:*`) | Claude Code **and** Claude Cowork | [Use a Brain in Claude Code](#use-a-brain-in-claude-code-kb) · [in Cowork](#use-a-brain-in-claude-cowork-kb) |
+
+`brain` is the heavy, interactive build side — it runs in **Claude Code only** (it needs local scripts, a venv, and source credentials). `kb` is the lightweight librarian that consumes a Brain's MCP and works in **both Claude Code and Cowork**. Most consumers only need `kb`.
+
+---
+
+## Use a Brain in Claude Code (`kb`)
+
+For analysts and knowledge workers querying a Brain from the CLI.
+
+```bash
+# 1. Install the kb plugin
+claude plugin marketplace add onetest-ai/applied_skills
+claude plugin install kb@applied-ai
+
+# 2. Point kb at your Brain's MCP (guided)
+#    In a Claude Code session:
+/kb:connect          # detects a Brain, or walks you through registering one
+                     # (adds the mcpServers block from `./brain mcp-config` to .mcp.json)
+
+# 3. Ask
+/kb:ask   What was Q3 churn by region, and what's driving it?
+```
+
+Every answer is **cited** (to a mart row, document, or graph node) or honestly **"not modeled."** Numbers come only from the marts.
+
+**The seven skills:** `/kb:ask`, `/kb:explore`, `/kb:challenge` (interrogate) · `/kb:brief`, `/kb:report` (cited Markdown, human-gated writes) · `/kb:mode` (opt-in ambient grounding) · `/kb:connect`. See [`bundles/kb/README.md`](bundles/kb/README.md).
+
+---
+
+## Use a Brain in Claude Cowork (`kb`)
+
+For the same querying, inside Claude Desktop's Cowork. Cowork keeps its own plugin state and connects to MCP servers **from Anthropic's cloud** (not your machine), so setup differs from the CLI: install the plugin into Cowork, and register the Brain as a **remote connector**.
+
+1. **Install kb into Cowork** — *Customize → Plugins → Add marketplace*, enter the `applied-ai` GitHub URL (`onetest-ai/applied_skills`), install **kb**, enable it. (Air-gapped alternative: upload a ZIP of `bundles/kb`, ≤50 MB.)
+2. **Add your Brain as a connector** — *Customize → Connectors → Add custom connector*. Paste your project's **HTTPS MCP URL**, authorize with **Entra OAuth** (or set an `X-API-Key` header). **Name the connector `brain`** so its tools resolve as `mcp__brain__*`, which is what kb expects.
+3. **Verify** — run `/kb:connect`, then `/kb:ask`, `/kb:explore`, `/kb:report`, …
+
+Each project has its own Brain endpoint; if you're in two projects, keep a connector per project and enable only the one named `brain` for the current task. **Cowork caveats:** ambient mode (`/kb:mode`) and the SessionStart health line rely on hooks, which don't fire in Cowork — ground answers by invoking the kb skills explicitly. Full walkthrough: [`bundles/kb/docs/cowork-setup.md`](bundles/kb/docs/cowork-setup.md).
+
+---
+
+## Build a Brain (`brain` · Claude Code)
+
+For the person who turns a messy corpus (PDF/PPTX/DOCX/XLSX) into a queryable Brain.
+
+**Meaning is agentic (RAG/graph); numbers are computed (deterministic SQL).** RAG never produces figures; the mart lane never guesses.
 
 ```
 docs ─▶ corpus-taxonomy-extraction ─▶ Markdown + taxonomy_v0 + graph  ─▶ Obsidian vault (human canon)
@@ -16,9 +75,18 @@ docs ─▶ corpus-taxonomy-extraction ─▶ Markdown + taxonomy_v0 + graph  �
                                             (all orchestrated by knowledge-pipeline)
 ```
 
-Retrieval is **hybrid**: BM25 (FTS5) + vector (sqlite-vec) fused by **Reciprocal Rank Fusion** — pattern from [arozumenko/wikis](https://github.com/arozumenko/wikis). One file, moves anywhere. The whole toolkit is **torch-free** (the RAG embedder is fastembed/onnx; docling is retired) — see Dependencies.
+Retrieval is **hybrid**: BM25 (FTS5) + vector (sqlite-vec) fused by **Reciprocal Rank Fusion** — pattern from [arozumenko/wikis](https://github.com/arozumenko/wikis). One file, moves anywhere. The whole toolkit is **torch-free** (the RAG embedder is fastembed/onnx; docling is retired) — see [Dependencies](#dependencies).
 
-## Skills
+```bash
+claude plugin marketplace add onetest-ai/applied_skills
+claude plugin install brain@applied-ai      # the 8 Brain skills (/brain:*)
+# then, in a Claude Code session, run the guided build:
+/brain:knowledge-pipeline                    # captures goal · audience · deployment target, then builds
+```
+
+Guided onboarding captures three drivers up front — the **goal** (scopes taxonomy), the **audience** (who consumes the KB — drives taxonomy emphasis and how `kb` answers), and the **deployment target** (`local` vs `hosted-mcp`). Full flow: [`bundles/brain/README.md`](bundles/brain/README.md); the build agent's exact runbook: [`bundles/brain/AGENT_README.md`](bundles/brain/AGENT_README.md).
+
+### The build/answer skills
 
 | Skill | Role | Key idea |
 |---|---|---|
@@ -31,22 +99,15 @@ Retrieval is **hybrid**: BM25 (FTS5) + vector (sqlite-vec) fused by **Reciprocal
 | **brain-maintenance** | maintain/release | Read-only maintenance planning plus agent-owned, gated updates, verification, and optional external project-adapter deployment. |
 | **obsidian-vault** | navigate | Browse/answer from the generated Obsidian vault — the human-readable view of the store (numbers still come from the MCP, never vault prose). |
 
+---
+
 ## Why this exists
 
 Vector RAG cannot return correct numbers; raw text-to-SQL returns *confident wrong* numbers. A governed semantic layer over deterministic SQL benchmarks far higher and fails by honest refusal. These skills implement that split, plus the operational guardrails (provenance, entity conformance, silent-gap auditing) that make it hold up in production.
 
-## Two plugins
+## Install options
 
-This repository is the **`applied-ai`** marketplace, listing exactly two self-contained plugins:
-
-- **`brain`** (`bundles/brain/`, skills surface as `/brain:*`): Builds, maintains, and deploys the Brain — the local knowledge engine (RAG + taxonomy graph + deterministic marts) served over a governed MCP. Also installable as the `brain` skills-bundle. Guided onboarding captures three drivers up front — the **goal** (scopes taxonomy), the **audience** (who consumes the KB — drives taxonomy emphasis and how `kb` answers), and the **deployment target** (`local` vs `hosted-mcp`).
-- **`kb`** (`bundles/kb/`, skills surface as `/kb:*`): Interrogates and authors with the Brain — a knowledge-worker companion. It ships no MCP of its own; it consumes the Brain MCP and enforces the same truth contract (cited or "not modeled"; numbers only from marts). Skills: `ask`, `explore`, `challenge` (interrogate); `brief`, `report` (cited Markdown, human-gated writes); `mode` (opt-in ambient grounding), `connect`. It reads the goal + audience from the Brain (`health().about`) to tune answer altitude and artifact style.
-
-Install either or both depending on your role.
-
-## Install
-
-Every host reads the standard `SKILL.md` format, so install is a copy (or symlink) — no translation.
+The Claude plugin install (above) is the shortest path. The skills also install directly into any host that reads the standard `SKILL.md` format — a copy or symlink, no translation.
 
 **Targets**
 
@@ -57,20 +118,14 @@ Every host reads the standard `SKILL.md` format, so install is a copy (or symlin
 | `copilot` (GitHub Copilot) | `.github/skills/` | `~/.copilot/skills/` |
 | `codex` | `.codex/skills/` | `~/.codex/skills/` |
 
-### Bundles (curated sets)
-
-Install a whole curated toolchain in one shot instead of listing skills. The **`brain`**
-bundle is the full local knowledge engine (the pipeline above) — see
-[`bundles/brain/README.md`](bundles/brain/README.md) for the human-facing creation/update flow,
-[`bundles/brain/AGENT_README.md`](bundles/brain/AGENT_README.md) for the build agent's exact
-orchestration runbook, and [`bundles/SPEC.md`](bundles/SPEC.md) for the bundle format.
+**Bundles (curated sets)** — install a whole toolchain in one shot:
 
 ```bash
 npx github:onetest-ai/applied_skills init --bundle brain              # the 8 Brain skills
 ./install.sh --bundle brain                                           # same, from a checkout
 ```
 
-### npx one-liner (no clone)
+**npx one-liner (no clone):**
 
 ```bash
 npx github:onetest-ai/applied_skills init                      # all skills → all 4 hosts (this project)
@@ -81,7 +136,7 @@ npx github:onetest-ai/applied_skills init --dry-run            # preview
 ```
 (Private repo → needs git access, e.g. `npx git+ssh://git@github.com/onetest-ai/applied_skills.git init`.)
 
-### shell installer (no Node)
+**Shell installer (no Node):**
 
 ```bash
 git clone git@github.com:onetest-ai/applied_skills.git && cd applied_skills
@@ -90,17 +145,15 @@ git clone git@github.com:onetest-ai/applied_skills.git && cd applied_skills
 ./install.sh --symlink --dry-run
 ```
 
-Restart the host session after installing so it loads the skills.
+**Claude plugin (marketplace):**
 
-**Claude plugin (alternative):** this repo is the `applied-ai` plugin marketplace —
 ```bash
 claude plugin marketplace add onetest-ai/applied_skills
-claude plugin install brain@applied-ai # Build/maintain/deploy the Brain (/brain:*)
-claude plugin install kb@applied-ai    # Interrogate/author (/kb:*)
+claude plugin install brain@applied-ai   # Build/maintain/deploy the Brain (/brain:*)
+claude plugin install kb@applied-ai       # Interrogate/author (/kb:*)
 ```
-(Don't combine the plugin and the copy/symlink install — pick one, or the skills load twice.)
 
-Corpus-specific configuration (source roots, family definitions, metric catalogs, taxonomy, and deployment profiles) belongs in the **consuming project's** repo, not here. Each skill's example templates show the shape to copy.
+Restart the host session after installing so it loads the skills. Don't combine the plugin and the copy/symlink install — pick one, or the skills load twice. Corpus-specific configuration (source roots, family definitions, metric catalogs, taxonomy, deployment profiles) belongs in the **consuming project's** repo, not here; each skill's example templates show the shape to copy. See [`bundles/SPEC.md`](bundles/SPEC.md) for the bundle format.
 
 ## Dependencies
 

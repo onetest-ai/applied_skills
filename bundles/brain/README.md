@@ -28,6 +28,12 @@ No required cloud service and no lock-in. Copy `knowledge.sqlite` for text/graph
 
 Plus the repo's top-level **`mcp/brain/`** — the governed FastMCP **tool layer** (`fastmcp_server.py`) with local stdio and opt-in Streamable HTTP. It lives in `mcp/`, not `skills/` (see below).
 
+> **`brain` builds; [`kb`](../kb/README.md) uses.** This bundle is the **build/maintain side** and runs in **Claude Code only** (it needs local scripts, a venv, and source credentials). Once a Brain exists, people *query* it with the **`kb`** plugin — its librarian:
+> - **In Claude Code:** serve the Brain over local **stdio** and register it via `/kb:connect` (or `./brain mcp-config`).
+> - **In Claude Cowork:** serve the Brain over **HTTPS Streamable HTTP** (the `hosted-mcp` deployment target) so Anthropic's cloud can reach it, then add it as a **remote connector named `brain`**. See [`../kb/docs/cowork-setup.md`](../kb/docs/cowork-setup.md).
+>
+> Choose the deployment target during onboarding: `local` (stdio, CLI only) or `hosted-mcp` (HTTPS, reachable from Cowork).
+
 ---
 
 ## Install
