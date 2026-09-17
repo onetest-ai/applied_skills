@@ -107,5 +107,14 @@ class TestConnectSkill(unittest.TestCase, SkillContractMixin):
         ])
 
 
+class TestAnswerSkillsBrainNamespace(unittest.TestCase):
+    def test_answer_skills_allow_brain_namespace(self):
+        from test_plugin_structure import KB_ROOT, read_text
+        for name in ("ask", "brief", "challenge", "explore", "report"):
+            text = read_text(KB_ROOT / "skills" / name / "SKILL.md")
+            self.assertIn("mcp__brain__", text,
+                          f"{name}: must allow the mcp__brain__* namespace (Cowork connector convention)")
+
+
 if __name__ == "__main__":
     unittest.main()

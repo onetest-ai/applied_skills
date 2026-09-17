@@ -1,5 +1,5 @@
 ---
-description: Detect whether a Brain MCP server is reachable, report its status, or walk the user through registering one via mcp-config. Use when the user asks to connect, reconnect, or check the Brain connection for kb.
+description: Detect whether a Brain MCP server is reachable, report its status, or walk the user through registering one — a Cowork connector or CLI mcp-config. Use when the user asks to connect, reconnect, or check the Brain connection for kb.
 allowed-tools: mcp__brain__health mcp__plugin_brain_brain__health Bash(./brain *) Read
 ---
 
@@ -18,9 +18,13 @@ Detect and (if needed) help the user register the Brain that `kb` grounds itself
    - Paste this project's Brain **HTTPS MCP URL** (Streamable HTTP).
    - Authorize with **Entra OAuth** in Advanced settings (or set an
      `X-API-Key` header if your endpoint uses static keys).
-   - **Name the connector `brain`** so its tools resolve as `mcp__brain__*`,
-     which is what kb's skills expect. If you belong to two projects, keep a
-     connector per project and enable only the one named `brain` for this task.
+   - **Name the connector `brain`** so its tools should resolve as
+     `mcp__brain__*`, which is what kb's skills expect; `/kb:connect`'s health
+     probe will confirm the resolution (or reveal a mismatch). If you belong
+     to two projects, keep each project's connector added, but two
+     connectors cannot both be named `brain` at once — disable the other
+     project's Brain connector and enable this project's (named `brain`) so
+     exactly one `brain` connector is active for this task.
    - Enable the connector, then re-run `/kb:connect`.
 
    **In Claude Code (CLI):**

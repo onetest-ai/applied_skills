@@ -24,13 +24,17 @@ Each project has its own Brain endpoint. Add it once per project:
 2. Paste your project's **HTTPS MCP URL** (Streamable HTTP transport).
 3. Authorize with **Entra OAuth** (Advanced settings → OAuth client id/secret).
    If your endpoint uses a static key, set an `X-API-Key` header instead.
-4. **Name the connector `brain`.** kb's skills call `mcp__brain__*`, so the
-   name must be `brain` for them to resolve.
+4. **Name the connector `brain`.** kb's skills call `mcp__brain__*`, so its
+   tools are expected to resolve as `mcp__brain__*` when named `brain`;
+   `/kb:connect`'s health probe will confirm the resolution (or reveal a
+   mismatch).
 5. Enable the connector.
 
-**In two projects?** Keep one connector per project and enable only the one
-named `brain` for the current Cowork task — kb grounds itself in the active
-`brain` connector.
+**In two projects?** Keep each project's connector added, but two connectors
+cannot both be named `brain` at once — for the current Cowork task, disable
+the other project's Brain connector and enable this project's (named
+`brain`), so exactly one `brain` connector is active. kb grounds itself in
+that active `brain` connector.
 
 ## 3. Verify
 

@@ -15,7 +15,7 @@ kb requires a reachable Brain MCP server providing fact queries, graph traversal
 - `/kb:challenge` — Challenge a claim: verify its sources, check for contradictions, note data gaps.
 - `/kb:brief` — Co-author a brief or summary: every assertion links to a source or is marked "not modeled."
 - `/kb:report` — Generate a report (PDF or Markdown) with full citations and a data provenance appendix.
-- `/kb:mode` — Toggle citation strictness: "strict" (all claims cited), "honest" (cited or not-modeled), "exploratory" (show confidence).
+- `/kb:mode` — Turn ambient grounding mode on/off or check its status (project-scoped; CLI-only, since it relies on a hook).
 - `/kb:connect` — Connect or reconnect to the Brain MCP; check its health and data freshness.
 
 ## Truth Contract
