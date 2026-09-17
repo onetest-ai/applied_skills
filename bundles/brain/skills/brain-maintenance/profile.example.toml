@@ -55,7 +55,9 @@ enabled = false
 # When enabled, these must exist inside the project. The adapter must be executable and
 # implement the project-defined plan/deploy/verify contract. It is invoked by the agent,
 # never by maintenance.py and never as a shell string.
-adapter = "ops/brain_deploy"
-profile = "ops/deploy.toml"
+# Reference adapters live in the plugin at mcp/brain/deploy/<provider>/ — copy one into
+# ops/deploy/ (see mcp/brain/deploy/README.md) and edit only the profile.
+adapter = "ops/deploy/brain_deploy.py"
+profile = "ops/deploy/deploy.toml"
 secret_env = ["BRAIN_API_KEY"]
 require_immutable_version = true

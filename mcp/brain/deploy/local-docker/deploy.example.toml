@@ -1,0 +1,40 @@
+# Local Docker deployment profile for the Brain MCP server (dev loop).
+# Copy to your project (default: ops/deploy/deploy.local.toml) and edit the paths.
+# All [stage] paths are relative to THIS profile's directory.
+# The API key is read at run time from the env var named in [run].api_key_env —
+# never written here, never printed.
+version = 1
+
+[image]
+name       = "brain-mcp"                    # local image name (tag appended, default :local)
+dockerfile = "../../Dockerfile"             # mcp/brain/Dockerfile, relative to this profile
+context    = ".brain-image"                 # build context `stage` assembles (created/overwritten)
+
+[stage]
+# Sources copied into the fixed context layout the Dockerfile expects.
+server  = "../.."                            # dir holding fastmcp_server.py, semantic_core.py, requirements.txt
+db      = "../../../../schema/knowledge.sqlite"   # the built knowledge store
+catalog = "../../../../schema/metrics.json"       # governed metric catalog (BRAIN_CATALOG)
+skills  = "../../../../bundles/brain/skills"       # dir holding knowledge-index/ and corpus-taxonomy-extraction/
+assets  = ""                                 # optional; "" → an empty assets/ dir is staged
+
+[run]
+container   = "brain-mcp-local"
+port        = 8000
+api_key_env = "BRAIN_API_KEY"
+
+[verification]
+mcp_url      = "http://127.0.0.1:8000/mcp"
+health_url   = "http://127.0.0.1:8000/healthz"
+metric_name  = "overall_nps"                 # a governed metric that exists in this store
+metric_grain = "region"
+search_query = "stakeholders names roles"
+expected_tools = [
+  "list_metrics",
+  "get_metric",
+  "search_knowledge",
+  "get_taxonomy",
+  "find_related_content",
+  "get_evidence",
+  "health",
+]
