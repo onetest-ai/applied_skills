@@ -105,7 +105,7 @@ class FailSafeFastMCP(FastMCP):
 
 mcp = FailSafeFastMCP(
     name="Semantic Knowledge Brain",
-    version="1.1.0",
+    version="1.1.1",
     instructions=INSTRUCTIONS,
     mask_error_details=True,
     # Tool functions validate inputs themselves so mistakes can be returned as structured,
@@ -183,7 +183,11 @@ class SafeToolErrorsMiddleware(Middleware):
                 if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
                     return _error_result(tool, "invalid_arguments", "limit must be an integer between 1 and 100")
             return await call_next(context)
-        except (ValueError, TypeError) as exc:
+        except ValueError as exc:
+            # Tools raise ValueError deliberately for bad user input (empty query, out-of-range
+            # limit, unknown metric). A TypeError is NOT user input — it's an internal/version
+            # bug (e.g. calling knowledge.search with the wrong arity against an older skills
+            # bundle); let it fall through to internal_error rather than blaming the caller.
             return _error_result(tool, "invalid_arguments", str(exc))
         except (FileNotFoundError, PermissionError):
             return _error_result(tool, "not_configured", "A required configured file is missing or unreadable.")
@@ -241,7 +245,10 @@ def _optional_string(tool: str, field: str, value: Any) -> tuple[str | None, Too
 def _safe_call(tool: str, operation, *args: Any) -> dict | ToolResult:
     try:
         return operation(*args)
-    except (ValueError, TypeError) as exc:
+    except ValueError as exc:
+        # ValueError = deliberate input validation. A TypeError is an internal/version bug
+        # (wrong arity, wrong types) and must NOT be reported as invalid_arguments — it falls
+        # through to internal_error below, masked, instead of blaming the caller's input.
         return _error_result(tool, "invalid_arguments", str(exc))
     except (FileNotFoundError, PermissionError):
         return _error_result(tool, "not_configured", "A required configured file is missing or unreadable.")
