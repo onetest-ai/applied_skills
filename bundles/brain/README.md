@@ -28,6 +28,47 @@ No required cloud service and no lock-in. Copy `knowledge.sqlite` for text/graph
 
 Plus the repo's top-level **`mcp/brain/`** — the governed FastMCP **tool layer** (`fastmcp_server.py`) with local stdio and opt-in Streamable HTTP. It lives in `mcp/`, not `skills/` (see below).
 
+> **`brain` builds; [`kb`](../kb/README.md) uses.** This bundle is the **build/maintain side** and runs in **Claude Code only** (it needs local scripts, a venv, and source credentials). Once a Brain exists, people *query* it with the **`kb`** plugin — its librarian:
+> - **In Claude Code:** serve the Brain over local **stdio** and register it via `/kb:connect` (or `./brain mcp-config`).
+> - **In Claude Cowork:** serve the Brain over **HTTPS Streamable HTTP** (the `hosted-mcp` deployment target) so Anthropic's cloud can reach it, then add it as a **remote connector named `brain`**. See [`../kb/docs/cowork-setup.md`](../kb/docs/cowork-setup.md).
+>
+> Choose the deployment target during onboarding: `local` (stdio, CLI only) or `hosted-mcp` (HTTPS, reachable from Cowork).
+
+## The pipeline at a glance
+
+**Meaning is agentic (RAG/graph); numbers are computed (deterministic SQL).** RAG never produces figures; the mart lane never guesses. Everything converges on one portable `knowledge.sqlite`.
+
+```mermaid
+flowchart TD
+    docs(["docs"]):::src --> cte["corpus-taxonomy-extraction"]:::mean
+    xlsx(["reporting xlsx"]):::src --> tsl["tabular-semantic-layer"]:::num
+
+    subgraph orch ["orchestrated by knowledge-pipeline"]
+        direction TB
+        cte --> md["Markdown + taxonomy_v0 + graph"]:::mean
+        md --> vault[("Obsidian vault · human canon")]:::mean
+        md --> ki["knowledge-index"]:::mean
+        ki --> chunks["chunks + FTS5 + vector"]:::mean
+        cte --> bg["build_graph.py"]:::mean
+        bg --> gnodes["graph_nodes / edges"]:::mean
+        tsl --> facts["facts · marts"]:::num
+        chunks --> db[("ONE knowledge.sqlite")]:::store
+        facts --> db
+        gnodes --> db
+    end
+
+    db --> hr["hybrid-retrieval"]:::answer
+    hr --> ans(["cited answer"]):::answer
+
+    classDef src fill:#e8e8e8,stroke:#888,color:#222;
+    classDef mean fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a;
+    classDef num fill:#dcfce7,stroke:#22c55e,color:#14532d;
+    classDef store fill:#fef9c3,stroke:#eab308,color:#713f12;
+    classDef answer fill:#f3e8ff,stroke:#a855f7,color:#581c87;
+```
+
+<sub>**Blue** = meaning (agentic RAG/graph) · **green** = numbers (computed marts) · **yellow** = the one portable store · **purple** = the cited answer.</sub>
+
 ---
 
 ## Install
