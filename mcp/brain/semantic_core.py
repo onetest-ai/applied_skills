@@ -5,6 +5,7 @@ FastMCP, or another host.  The public surface never accepts SQL.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import sqlite3
@@ -270,8 +271,26 @@ def search_knowledge(
         sys.path.insert(0, index_dir)
     import knowledge_index as knowledge
 
+    # Filters (as_of/latest_only/source_contains/tag/tag_boost) need the extended
+    # knowledge.search signature. An older bundled knowledge-index only accepts
+    # (con, model, query, limit); calling it with filters would raise an opaque arity
+    # TypeError. Detect capability by parameter name and fail with a clear, actionable
+    # message instead — this is a real "can't do that here", not an internal crash.
+    requested = [n for n, v in (
+        ("as_of", as_of), ("latest_only", latest_only), ("source_contains", source_contains),
+        ("tag", tag), ("tag_boost", tag_boost),
+    ) if v]
+    supports_filters = {"as_of", "source_contains", "tag"}.issubset(
+        inspect.signature(knowledge.search).parameters
+    )
+    if requested and not supports_filters:
+        raise ValueError(
+            "This Brain's index does not support search filters "
+            f"({', '.join(requested)}); omit them, or rebuild the store with a knowledge-index "
+            "version that supports filtered search."
+        )
     with _readonly_connection(vectors=True) as con:
-        if any((as_of, latest_only, source_contains, tag, tag_boost)):
+        if requested:
             result = knowledge.search(con, knowledge.DEFAULT_MODEL, query, limit, as_of, latest_only, source_contains, tag, tag_boost)
         else:
             result = knowledge.search(con, knowledge.DEFAULT_MODEL, query, limit)

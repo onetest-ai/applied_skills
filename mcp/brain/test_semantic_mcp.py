@@ -158,6 +158,31 @@ class SemanticCoreTests(FixtureCase):
         self.assertEqual(evidence["verbatim_page_text"], "VERBATIM PAGE")
         self.assertIn("|1|2|", evidence["extracted_tables"])
 
+    def test_search_filters_need_a_capable_index(self):
+        # An older bundled knowledge-index has a 4-arg search(); requesting a filter against
+        # it must fail with a CLEAR ValueError (-> invalid_arguments), never an opaque arity
+        # TypeError mislabeled as invalid_arguments (regression for the misleading error).
+        def ro(*, vectors=False):
+            con = sqlite3.connect(f"file:{self.fx['db'].as_posix()}?mode=ro", uri=True)
+            con.row_factory = sqlite3.Row
+            return con
+        old = types.SimpleNamespace(DEFAULT_MODEL="fake",
+                                    search=lambda con, model, query, limit: {"results": []})
+        with patch.dict(sys.modules, {"knowledge_index": old}), patch.object(core, "_readonly_connection", ro):
+            self.assertEqual(core.search_knowledge("alpha", 1)["count"], 0)  # no filters: fine
+            with self.assertRaisesRegex(ValueError, "does not support search filters"):
+                core.search_knowledge("alpha", 1, source_contains="Transcript")
+        # A capable index that accepts the extended signature receives the filter.
+        seen = {}
+        def ext(con, model, query, limit, as_of=None, latest_only=False,
+                source_contains=None, tag=None, tag_boost=None):
+            seen["source_contains"] = source_contains
+            return {"results": []}
+        new = types.SimpleNamespace(DEFAULT_MODEL="fake", search=ext)
+        with patch.dict(sys.modules, {"knowledge_index": new}), patch.object(core, "_readonly_connection", ro):
+            core.search_knowledge("alpha", 1, source_contains="Transcript")
+        self.assertEqual(seen["source_contains"], "Transcript")
+
     def test_chunk_id_survives_as_string_for_precision(self):
         # A 63-bit int64 chunk id (sha256-derived) exceeds JS's 2**53 safe range, so it
         # must be emitted AND accepted as a string; otherwise a float64 JSON client (e.g.
