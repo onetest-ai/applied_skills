@@ -93,12 +93,27 @@ class TestReportSkill(unittest.TestCase, SkillContractMixin):
 
 class TestModeSkill(unittest.TestCase, SkillContractMixin):
     def test_mode_contract(self):
-        self.assert_skill("mode", required_tokens=["state.json", "ambient", "on", "off", "status"])
+        self.assert_skill("mode", required_tokens=[
+            "state.json", "ambient", "on", "off", "status",  # preserved
+            "Cowork",                                         # limitation noted
+        ])
 
 
 class TestConnectSkill(unittest.TestCase, SkillContractMixin):
     def test_connect_contract(self):
-        self.assert_skill("connect", required_tokens=["health", "mcp-config", "brain"])
+        self.assert_skill("connect", required_tokens=[
+            "health", "mcp-config", "brain",   # CLI branch preserved
+            "connector", "Entra",              # Cowork branch added
+        ])
+
+
+class TestAnswerSkillsBrainNamespace(unittest.TestCase):
+    def test_answer_skills_allow_brain_namespace(self):
+        from test_plugin_structure import KB_ROOT, read_text
+        for name in ("ask", "brief", "challenge", "explore", "report"):
+            text = read_text(KB_ROOT / "skills" / name / "SKILL.md")
+            self.assertIn("mcp__brain__", text,
+                          f"{name}: must allow the mcp__brain__* namespace (Cowork connector convention)")
 
 
 if __name__ == "__main__":

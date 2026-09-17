@@ -1,5 +1,5 @@
 ---
-description: Detect whether a Brain MCP server is reachable, report its status, or walk the user through registering one via mcp-config. Use when the user asks to connect, reconnect, or check the Brain connection for kb.
+description: Detect whether a Brain MCP server is reachable, report its status, or walk the user through registering one — a Cowork connector or CLI mcp-config. Use when the user asks to connect, reconnect, or check the Brain connection for kb.
 allowed-tools: mcp__brain__health mcp__plugin_brain_brain__health Bash(./brain *) Read
 ---
 
@@ -7,12 +7,32 @@ Detect and (if needed) help the user register the Brain that `kb` grounds itself
 
 1. **Detect the Brain.** Call `health` in each namespace kb knows about — `mcp__brain__health` and `mcp__plugin_brain_brain__health` — since the same server can be mounted under either name depending on how it was registered.
 
-2. **If a Brain answers:** report which namespace responded and the lane counts / status it returns (chunks, facts, graph nodes, whatever `health` exposes). Tell the user kb is ready to use `/kb:ask`, `/kb:explore`, `/kb:challenge`, and ambient mode (`/kb:mode on`).
+2. **If a Brain answers:** report which namespace responded and the lane
+   counts / status `health` returns. Tell the user kb is ready to use
+   `/kb:ask`, `/kb:explore`, `/kb:challenge`, and (CLI only) ambient mode.
 
-3. **If no Brain answers:** walk the user through registering one:
-   - From the brain project, run `./brain mcp-config` to print the `mcpServers` JSON block for that store.
-   - Add that block to this project's `.mcp.json` (merging with any existing `mcpServers` entries — don't clobber other servers).
-   - Reload plugins / restart the session so Claude Code picks up the new MCP server.
-   - Point to `bundles/brain/README.md` for the full setup walkthrough (building the store, `brain mcp-config` details, troubleshooting).
+3. **If no Brain answers, register one — the steps differ by surface:**
 
-4. **Re-check.** After registration, call `health` again to confirm the Brain is now reachable, and report the result.
+   **In Claude Cowork (Desktop):**
+   - Open **Customize → Connectors → Add custom connector**.
+   - Paste this project's Brain **HTTPS MCP URL** (Streamable HTTP).
+   - Authorize with **Entra OAuth** in Advanced settings (or set an
+     `X-API-Key` header if your endpoint uses static keys).
+   - **Name the connector `brain`** so its tools should resolve as
+     `mcp__brain__*`, which is what kb's skills expect; `/kb:connect`'s health
+     probe will confirm the resolution (or reveal a mismatch). If you belong
+     to two projects, keep each project's connector added, but two
+     connectors cannot both be named `brain` at once — disable the other
+     project's Brain connector and enable this project's (named `brain`) so
+     exactly one `brain` connector is active for this task.
+   - Enable the connector, then re-run `/kb:connect`.
+
+   **In Claude Code (CLI):**
+   - From the brain project, run `./brain mcp-config` to print the
+     `mcpServers` JSON block for that store.
+   - Add that block to this project's `.mcp.json` (merge; don't clobber other
+     servers). Reload plugins / restart the session.
+   - See `bundles/brain/README.md` for the full walkthrough.
+
+4. **Re-check.** After registration, call `health` again to confirm the Brain
+   is reachable, and report the result.

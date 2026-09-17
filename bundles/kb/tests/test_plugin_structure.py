@@ -87,5 +87,30 @@ class TestMarketplacePlugins(unittest.TestCase):
         self.assertEqual(manifest["name"], "brain")
 
 
+class TestCoworkCleanup(unittest.TestCase):
+    def test_no_brain_cowork_tree(self):
+        self.assertFalse((REPO_ROOT / "cowork" / "brain-cowork").exists(),
+                         "cowork/brain-cowork must be removed")
+
+    def test_marketplace_has_no_brain_cowork(self):
+        market = load_json(REPO_ROOT / ".claude-plugin" / "marketplace.json")
+        names = {p["name"] for p in market["plugins"]}
+        self.assertNotIn("brain-cowork", names)
+        self.assertEqual(names, {"brain", "kb"})
+
+
+class TestCoworkDoc(unittest.TestCase):
+    def test_cowork_doc_exists_and_covers_setup(self):
+        doc = KB_ROOT / "docs" / "cowork-setup.md"
+        self.assertTrue(doc.is_file(), "bundles/kb/docs/cowork-setup.md missing")
+        text = read_text(doc)
+        for token in ("marketplace", "connector", "brain", "Entra", "/kb:connect"):
+            self.assertIn(token, text, f"cowork-setup.md missing {token!r}")
+
+    def test_readme_links_cowork_doc(self):
+        readme = read_text(KB_ROOT / "README.md")
+        self.assertIn("docs/cowork-setup.md", readme)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -17,4 +17,11 @@ Manage ambient mode for **$action** (`on`, `off`, or `status`), stored project-s
    - The `UserPromptSubmit` hook reads this file on the *next* prompt you submit — so `on`/`off` takes effect starting with your next message.
    - The `SessionStart` health line reflects Brain reachability at the *next* session start, not this setting.
 
-4. **Report** the state file's final contents (or current value for `status`) back to the user in one line.
+4. **Cowork limitation.** Ambient mode relies on the `UserPromptSubmit` hook,
+   and hooks do not fire in Claude Cowork (Desktop). If the user is in Cowork,
+   say so plainly: ambient auto-grounding is a Claude Code (CLI) feature. In
+   Cowork, ground each answer by invoking `/kb:ask` (and the other kb skills)
+   explicitly — the toggle state still writes to `state.json`, but nothing
+   reads it there.
+
+5. **Report** the state file's final contents (or current value for `status`) back to the user in one line.
