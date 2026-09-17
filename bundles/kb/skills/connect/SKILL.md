@@ -11,7 +11,14 @@ Detect and (if needed) help the user register the Brain that `kb` grounds itself
    counts / status `health` returns. Tell the user kb is ready to use
    `/kb:ask`, `/kb:explore`, `/kb:challenge`, and (CLI only) ambient mode.
 
-3. **If no Brain answers, register one — the steps differ by surface:**
+3. **If no Brain answers, register one — the steps differ by surface.**
+   First rule out a **misnamed connector**: kb can only call a Brain mounted as
+   `mcp__brain__*` or `mcp__plugin_brain_brain__*` — the server-name segment must be
+   literal (Claude Code allow-rules don't support a wildcard there), so a connector
+   registered under any other name (e.g. `knowledge`, `primo-brain`) is unreachable to
+   every kb skill even though it's healthy. If you see such a connector, **rename it to
+   `brain`** rather than adding a new one, then re-run `/kb:connect`. Otherwise register
+   one:
 
    **In Claude Cowork (Desktop):**
    - Open **Customize → Connectors → Add custom connector**.

@@ -34,24 +34,27 @@ from semantic_core import (
 )
 
 INSTRUCTIONS = """
-This server exposes a private knowledge brain through safe semantic tools.
-Route narrative questions to search_knowledge, exact figures to get_metric, taxonomy
-questions to get_taxonomy, and source inspection to get_evidence. Never infer a number
-from narrative text: every numeric claim must come from get_metric and cite source_file.
-If a tool returns status=not_modeled, that is an honest "no data" answer, not a failure:
-report the gap instead of guessing. Genuine failures (invalid arguments, internal errors)
-are returned as MCP error results (isError=true) that still carry status=error, an error
-code/message, how_to_fix, and retryable; follow how_to_fix and retry with corrected
-arguments. Failures stay structured MCP results rather than opaque HTTP 500s.
+This server exposes a private knowledge brain through safe, read-only semantic tools.
 
-IMPORTANT RESULT-LIMIT CONTRACT: every tool argument named limit accepts integers from
-1 through 100 inclusive. Never send limit above 100. Prefer narrow filters. If more
-coverage is needed, make multiple calls split by metric, month range, grain, entity,
-concept, or anchor section instead of requesting one oversized result set.
+Routing: narrative -> search_knowledge; exact figures -> get_metric (never infer a number
+from prose; every number cites its source_file); taxonomy/relations -> get_taxonomy; a named
+section, page figure, or table -> get_evidence. For a mutable fact call get_current_fact and
+for an open question get_question_status rather than trusting the newest retrieved sentence;
+a conflicted result has no current value until a supersedes/retracts relation resolves it.
 
-For mutable facts, call get_current_fact instead of choosing the newest retrieved
-sentence. For an open question, call get_question_status. A conflicted result has no
-current value until an explicit supersedes/retracts relation resolves it.
+Honesty: a status=not_modeled result is a valid "no data" answer -- report the gap, don't
+guess. On an error result (isError=true), follow its how_to_fix and retry with corrected
+arguments. limit is 1-100; for more coverage make multiple narrower calls (split by metric,
+grain, or range) rather than one oversized request.
+
+Answering the user: lead with a direct 1-2 sentence answer, then supporting detail (bullets
+only when it has parts). Cite each claim with a numbered footnote [1], [2], ... and end with
+a "Sources" list mapping each number to its file and section, e.g. 1. engage-ordering.md --
+"Engage vs. RMS" (a number cites the get_metric source_file). Never print internal ids like
+[RAG:...], [MART:...], or [GRAPH:...]; keep chunk_ids only for follow-up calls (get_evidence,
+find_related_content) and pass a chunk_id back verbatim as the string it was returned as -- it
+is a large id that loses precision if turned into a number. State anything unsupported as
+"Not modeled: ...", never as silence.
 """.strip()
 
 _LEGACY_TOOLS = {
@@ -102,7 +105,7 @@ class FailSafeFastMCP(FastMCP):
 
 mcp = FailSafeFastMCP(
     name="Semantic Knowledge Brain",
-    version="1.0.0",
+    version="1.1.0",
     instructions=INSTRUCTIONS,
     mask_error_details=True,
     # Tool functions validate inputs themselves so mistakes can be returned as structured,
@@ -215,6 +218,18 @@ def _required_integer(tool: str, field: str, value: Any) -> tuple[int | None, To
     if isinstance(value, bool) or not isinstance(value, int):
         return None, _error_result(tool, "invalid_arguments", f"{field} must be an integer")
     return value, None
+
+
+def _required_chunk_id(tool: str, field: str, value: Any) -> tuple[int | None, ToolResult | None]:
+    """chunk_id may arrive as an int or a numeric string. Search tools emit it as a
+    string so float64 JSON clients don't round the 63-bit id; accept that string back."""
+    if isinstance(value, bool):
+        return None, _error_result(tool, "invalid_arguments", f"{field} must be an integer id, not a boolean")
+    if isinstance(value, int):
+        return value, None
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        return int(value.strip()), None
+    return None, _error_result(tool, "invalid_arguments", f"{field} must be an integer or a numeric string")
 
 
 def _optional_string(tool: str, field: str, value: Any) -> tuple[str | None, ToolResult | None]:
@@ -366,13 +381,13 @@ def get_taxonomy(
 
 @mcp.tool(tags={"narrative", "relations"})
 def find_related_content(
-    chunk_id: Annotated[int | None, SkipValidation, Field(description="Optional integer anchor chunk id from search_knowledge")] = None,
+    chunk_id: Annotated[int | str | None, SkipValidation, Field(description="Optional anchor chunk id from search_knowledge; pass it back exactly as the string it was returned as")] = None,
     query: Annotated[str | None, SkipValidation, Field(description="Optional query used to discover an anchor when chunk_id is absent")] = None,
     limit: Annotated[int, SkipValidation, Field(description=_LIMIT_DESCRIPTION)] = 6,
 ) -> dict | ToolResult:
     """Find precomputed cross-document semantic neighbors for a cited section."""
     if chunk_id is not None:
-        valid_chunk_id, error = _required_integer("find_related_content", "chunk_id", chunk_id)
+        valid_chunk_id, error = _required_chunk_id("find_related_content", "chunk_id", chunk_id)
         if error:
             return error
         chunk_id = valid_chunk_id
@@ -389,11 +404,11 @@ def find_related_content(
 
 @mcp.tool(tags={"evidence"})
 def get_evidence(
-    chunk_id: Annotated[int | None, SkipValidation, Field(description="Required integer chunk id returned by search or taxonomy tools")] = None,
+    chunk_id: Annotated[int | str | None, SkipValidation, Field(description="Required chunk id returned by search or taxonomy tools; pass it back exactly as the string it was returned as")] = None,
     include_page_text: Annotated[bool, SkipValidation, Field(description="Boolean: include verbatim visual-page text and extracted table cells when available")] = True,
 ) -> dict | ToolResult:
     """Inspect one cited source section and its optional verbatim page/table evidence."""
-    valid_chunk_id, error = _required_integer("get_evidence", "chunk_id", chunk_id)
+    valid_chunk_id, error = _required_chunk_id("get_evidence", "chunk_id", chunk_id)
     if error:
         return error
     if not isinstance(include_page_text, bool):

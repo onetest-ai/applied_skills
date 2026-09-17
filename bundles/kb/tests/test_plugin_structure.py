@@ -69,6 +69,11 @@ class TestDoctrineAndVerifier(unittest.TestCase):
         self.assertIn("tools", fm)
         self.assertNotIn("Write", fm["tools"])
         self.assertNotIn("Edit", fm["tools"])
+        # The verifier's steps CALL the Brain MCP tools — it must actually be granted
+        # them (Read+Grep alone cannot re-resolve a citation). Guard both namespaces.
+        for tool in ("health", "get_evidence", "get_metric", "get_taxonomy"):
+            self.assertIn(f"mcp__brain__{tool}", fm["tools"], f"verifier missing mcp__brain__{tool}")
+            self.assertIn(f"mcp__plugin_brain_brain__{tool}", fm["tools"], f"verifier missing plugin-namespace {tool}")
 
 
 class TestMarketplacePlugins(unittest.TestCase):

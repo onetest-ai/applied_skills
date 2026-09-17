@@ -8,7 +8,7 @@ The authoring process follows a four-step flow:
 
 1. **Gather** — Route the subject through the Brain's MCP tools (`search_knowledge`, `get_metric`, `get_taxonomy`, `find_related_content`, `get_evidence`) per `../_shared/doctrine.md`. Collect raw claims, numbers, and relations.
 
-2. **Draft** — Compose the memo or report with inline citation tags: `[RAG:<chunk_id>]`, `[MART:<metric>@<grain>]`, `[GRAPH:<node>]`. Mark any unsupported area as an explicit "Not modeled: …" callout.
+2. **Draft** — Compose the memo or report in the house style (`../_shared/doctrine.md` → **Answer format**): lead with the answer, then support. Cite each claim with a numbered footnote `[1]`, `[2]`, … and build the **Sources** section as you go, mapping each number to its machine tag and file — `1. [RAG:<chunk_id>] — "Section" — source_file.md`. The machine tags (`[RAG:]`/`[MART:]`/`[GRAPH:]`) live in the Sources list, not inline in the prose, and are what the `verifier` re-resolves. Mark any unsupported area as an explicit "Not modeled: …" callout.
 
 3. **Verify** — Dispatch the `verifier` subagent (read-only; no edits). It re-resolves every citation against the Brain and returns a per-claim verdict. Block on any unsupported or grain-mismatched claim; demote uncertain ones to caveats.
 
@@ -20,7 +20,7 @@ The authoring process follows a four-step flow:
 
 ### Markdown Body
 
-- Every claim carries its citation tag: `[RAG:chunk_id]`, `[MART:metric@grain]`, or `[GRAPH:node]`.
+- Every claim carries a numbered footnote `[1]`, `[2]`, … in the prose; the **Sources** section resolves each number to its machine tag (`[RAG:chunk_id]`, `[MART:metric@grain]`, `[GRAPH:node]`) and `source_file`. Raw machine tags never appear inline in the reader-facing prose.
 - Numbers always cite their `source_file` from the Brain's `facts` row or `get_evidence` output.
 - Unmodeled areas are rendered as an explicit callout:
   ```

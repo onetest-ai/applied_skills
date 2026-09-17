@@ -16,6 +16,6 @@ Answer **$question** grounded in the Brain. Follow `../_shared/doctrine.md`.
    - relation/classification → `get_taxonomy`
    - a specific section / page figure / table → `get_evidence`
 
-4. **Compose one answer.** Every claim carries its tag — `[RAG:<chunk_id>]`, `[MART:<metric>@<grain>]`, or `[GRAPH:<node>]`. Numbers show `source_file`. Anything unsupported is stated as "Not modeled: …".
+4. **Compose one answer** in the house style (see `../_shared/doctrine.md` → **Answer format**): lead with a 1–2 sentence direct answer, then support shaped to fit and to `about.audience`, cite each claim with a numbered footnote `[1]`, `[2]`, … and close with a `**Sources**` list mapping each number to `source_file.md — "Section"`. Keep the raw `[RAG:]`/`[MART:]`/`[GRAPH:]` anchors internal — never print them. Anything unsupported is stated as "Not modeled: …".
 
 5. **Commit, cite, then qualify** — give the value first, disambiguate after; never refuse a retrievable figure.

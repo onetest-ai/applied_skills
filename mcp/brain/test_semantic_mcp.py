@@ -23,6 +23,11 @@ try:
 except ImportError:
     Client = StdioTransport = None
 
+try:
+    import httpx as _httpx
+except ImportError:
+    _httpx = None
+
 
 def build_fixture(root: Path) -> dict[str, Path]:
     db = root / "knowledge.sqlite"
@@ -143,12 +148,43 @@ class SemanticCoreTests(FixtureCase):
         self.assertEqual(hit["text"], "Alpha evidence")
         taxonomy = core.get_taxonomy("sales")
         self.assertEqual(taxonomy["subclasses"][0]["label"], "Retail")
-        self.assertEqual(taxonomy["tagged_sections"][0]["chunk_id"], 1)
+        # chunk_id is emitted as a STRING (int64 precision safety for JSON clients).
+        self.assertEqual(taxonomy["tagged_sections"][0]["chunk_id"], "1")
         related = core.find_related_content(chunk_id=1)
-        self.assertEqual([row["chunk_id"] for row in related["related"]], [2, 3])
+        self.assertEqual([row["chunk_id"] for row in related["related"]], ["2", "3"])
+        self.assertEqual(related["anchor"]["chunk_id"], "1")
         evidence = core.get_evidence(1)
+        self.assertEqual(evidence["chunk_id"], "1")
         self.assertEqual(evidence["verbatim_page_text"], "VERBATIM PAGE")
         self.assertIn("|1|2|", evidence["extracted_tables"])
+
+    def test_chunk_id_survives_as_string_for_precision(self):
+        # A 63-bit int64 chunk id (sha256-derived) exceeds JS's 2**53 safe range, so it
+        # must be emitted AND accepted as a string; otherwise a float64 JSON client (e.g.
+        # Cowork) rounds it and get_evidence/find_related_content return not_modeled.
+        big = 3199336978672560001
+        self.assertGreater(big, 2 ** 53)
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.execute(
+                "INSERT INTO chunks VALUES(?,?,?,?,?,?,?)",
+                (big, "ordering.md", 0, "Ordering", "Engage vs RMS", "h", None),
+            )
+            con.execute("INSERT INTO related VALUES(?,?,?)", (big, 1, 0.7))
+        # Output is a string, exactly the id.
+        ev = core.get_evidence(big)
+        self.assertEqual(ev["status"], "ok")
+        self.assertIsInstance(ev["chunk_id"], str)
+        self.assertEqual(ev["chunk_id"], str(big))
+        # The exact string round-trips back in (the JS-client path).
+        self.assertEqual(core.get_evidence(str(big))["source"], "ordering.md")
+        # not_modeled still echoes the id as a string.
+        missing = core.get_evidence(str(big + 7))
+        self.assertEqual(missing["status"], "not_modeled")
+        self.assertEqual(missing["chunk_id"], str(big + 7))
+        # find_related_content accepts the string id and returns string ids.
+        rel = core.find_related_content(chunk_id=str(big))
+        self.assertEqual(rel["anchor"]["chunk_id"], str(big))
+        self.assertIsInstance(rel["related"][0]["chunk_id"], str)
 
     def test_evidence_rejects_asset_path_escape(self):
         with sqlite3.connect(self.fx["db"]) as con:
@@ -323,8 +359,11 @@ class FastMCPContractTests(FixtureCase):
                     self.assertTrue(unhandled.is_error, tool_name)
                     self.assertEqual(unhandled.data["error"]["code"], "internal_error", tool_name)
                     self.assertNotIn("private/path", json.dumps(unhandled.data), tool_name)
-            self.assertIn("Never send limit above 100", fastmcp_server.INSTRUCTIONS)
-            self.assertIn("make multiple calls", fastmcp_server.INSTRUCTIONS)
+            # Limit contract still documented (guards Bug 10 regression), and the
+            # citation rule that keeps raw ids out of user-facing answers.
+            self.assertIn("limit is 1-100", fastmcp_server.INSTRUCTIONS)
+            self.assertIn("make multiple narrower calls", fastmcp_server.INSTRUCTIONS)
+            self.assertIn("Never print internal ids", fastmcp_server.INSTRUCTIONS)
             env = {key: os.environ[key] for key in ("BRAIN_DB", "BRAIN_CATALOG", "BRAIN_SKILLS", "BRAIN_ASSETS", "BRAIN_KNOWLEDGE_VERSION")}
             env["BRAIN_SHOW_BANNER"] = "0"
             env["PYTHONPATH"] = os.pathsep.join((str(self.fx["root"]), str(HERE)))
@@ -441,6 +480,7 @@ class FastMCPContractTests(FixtureCase):
         asyncio.run(run())
 
 
+@unittest.skipUnless(_httpx is not None, "httpx is not installed")
 class RestShimLimitTests(FixtureCase):
     """Bug 10: REST shim /api/v1/search must cap limit at 100 before calling _search_knowledge.
 

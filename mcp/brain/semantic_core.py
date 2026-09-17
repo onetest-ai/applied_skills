@@ -133,6 +133,25 @@ def _bounded_limit(limit: int) -> int:
     return limit
 
 
+def _coerce_chunk_id(value: Any) -> int:
+    """Accept a chunk_id as an int OR a numeric string and return the exact int.
+
+    Chunk ids are 63-bit int64 values; float64 JSON clients must send them back as
+    strings to preserve precision. bool is rejected (isinstance(True, int) is True)."""
+    if isinstance(value, bool):
+        raise ValueError("chunk_id must be an integer id, not a boolean")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        return int(value.strip())
+    raise ValueError("chunk_id must be an integer or a numeric string")
+
+
+def _as_chunk_id_str(value: Any) -> Any:
+    """Render a chunk id as a string for JSON output; pass through None/blank."""
+    return str(value) if value is not None else value
+
+
 def _metric_spec(name: str) -> dict[str, Any]:
     catalog = _catalog()
     if name not in catalog:
@@ -258,7 +277,10 @@ def search_knowledge(
             result = knowledge.search(con, knowledge.DEFAULT_MODEL, query, limit)
     hits = [
         {
-            "chunk_id": row["id"],
+            # chunk_id is a 63-bit int64 (sha256-derived). Emit it as a STRING so
+            # float64 JSON clients (e.g. Cowork) don't round it past 2**53 and then
+            # fail to round-trip it into get_evidence / find_related_content.
+            "chunk_id": str(row["id"]),
             "source": row["source"],
             "section": row.get("title") or "",
             "score": row["score"],
@@ -339,7 +361,7 @@ def get_taxonomy(
             sections = []
             if {"chunk_topics", "chunks"}.issubset(present):
                 sections = [
-                    dict(row)
+                    {**dict(row), "chunk_id": _as_chunk_id_str(row["chunk_id"])}
                     for row in con.execute(
                         """SELECT c.id AS chunk_id, c.source, c.title AS section
                            FROM chunk_topics t JOIN chunks c ON c.id=t.chunk_id
@@ -377,13 +399,15 @@ def find_related_content(
 ) -> dict[str, Any]:
     """Return precomputed semantic neighbors for a source section."""
     limit = _bounded_limit(limit)
+    if chunk_id is not None:
+        chunk_id = _coerce_chunk_id(chunk_id)
     if not chunk_id and not query:
         raise ValueError("Provide chunk_id or query")
     if not chunk_id:
         hits = search_knowledge(query or "", 1)["hits"]
         if not hits:
             return {"status": "not_modeled", "anchor": None, "related": []}
-        chunk_id = int(hits[0]["chunk_id"])
+        chunk_id = _coerce_chunk_id(hits[0]["chunk_id"])
     with _readonly_connection() as con:
         present = _present_tables(con)
         required = {"chunks", "related"}
@@ -422,19 +446,26 @@ def find_related_content(
             )]
             for row in rows:
                 row.update(edge_type="SIMILAR", direction="undirected")
-    return {"status": "ok" if anchor else "not_modeled", "anchor": dict(anchor) if anchor else None, "related": rows}
+    for row in rows:
+        row["chunk_id"] = _as_chunk_id_str(row["chunk_id"])
+    anchor_out = None
+    if anchor:
+        anchor_out = {**dict(anchor), "chunk_id": _as_chunk_id_str(anchor["chunk_id"])}
+    return {"status": "ok" if anchor else "not_modeled", "anchor": anchor_out, "related": rows}
 
 
-def get_evidence(chunk_id: int, include_page_text: bool = True) -> dict[str, Any]:
+def get_evidence(chunk_id: int | str, include_page_text: bool = True) -> dict[str, Any]:
     """Return a cited section and optional verbatim page/table text, but not binary images."""
+    chunk_id = _coerce_chunk_id(chunk_id)
     with _readonly_connection() as con:
         row = con.execute(
             "SELECT id AS chunk_id, source, ord, title AS section, text, image FROM chunks WHERE id=?",
             (chunk_id,),
         ).fetchone()
     if not row:
-        return {"status": "not_modeled", "chunk_id": chunk_id}
+        return {"status": "not_modeled", "chunk_id": _as_chunk_id_str(chunk_id)}
     result = dict(row)
+    result["chunk_id"] = _as_chunk_id_str(result["chunk_id"])
     result["status"] = "ok"
     image = result.pop("image")
     result["page_asset"] = image

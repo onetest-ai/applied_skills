@@ -24,6 +24,17 @@ Env: BRAIN_DB (store), BRAIN_CATALOG (metrics.<corpus>.json), BRAIN_SKILLS.
 import json, os, re, sqlite3, sys
 from pathlib import Path
 
+def _coerce_cid(v):
+    """Chunk ids are 63-bit int64; float64 JSON clients pass them back as strings to
+    keep precision. Accept int or numeric string, else 0 (falls through to 'need id')."""
+    if isinstance(v, bool):
+        return 0
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str) and v.strip().lstrip("-").isdigit():
+        return int(v.strip())
+    return 0
+
 def _resolve_skills():
     """Find the skills dir. Installed layout: <host>/mcp/brain/brain_mcp.py with
     skills at <host>/skills/ (siblings). Overridable by BRAIN_SKILLS; also tolerates
@@ -186,6 +197,7 @@ def t_related(chunk_id=0, query="", k=6):
     — cross-document links you can cite; still text/relations, never a number."""
     con = connect()
     try:
+        chunk_id = _coerce_cid(chunk_id)
         if not query and not chunk_id:
             return {"error": "give chunk_id or query"}
         if query and not chunk_id:
@@ -204,10 +216,10 @@ def t_related(chunk_id=0, query="", k=6):
         for rid, sc in rows:
             row = con.execute("SELECT source, ord, title FROM chunks WHERE id=?", (rid,)).fetchone()
             if row:
-                out.append({"chunk_id": rid, "source": row[0], "section": row[2] or "", "score": sc,
+                out.append({"chunk_id": str(rid), "source": row[0], "section": row[2] or "", "score": sc,
                             "note": vault_note(row[0], row[1], row[2])})
         a = con.execute("SELECT source, ord, title FROM chunks WHERE id=?", (chunk_id,)).fetchone()
-        return {"anchor": ({"chunk_id": chunk_id, "source": a[0], "section": a[2] or "",
+        return {"anchor": ({"chunk_id": str(chunk_id), "source": a[0], "section": a[2] or "",
                             "note": vault_note(a[0], a[1], a[2])} if a else None),
                 "related": out}
     finally:
@@ -230,7 +242,7 @@ def t_graph(label="", relation="", kind=""):
                 "WHERE e.rel='subclass_of' AND e.target=?", (nid,)).fetchall()]
             tagged = []
             if "chunk_topics" in tables:
-                tagged = [dict(zip(("chunk_id", "source", "section"), r)) for r in con.execute(
+                tagged = [{"chunk_id": str(r[0]), "source": r[1], "section": r[2]} for r in con.execute(
                     "SELECT c.id,c.source,c.title FROM chunk_topics t JOIN chunks c ON c.id=t.chunk_id "
                     "WHERE t.category_label=? LIMIT 50", (node[1],)).fetchall()]
             return {"node": dict(zip(("id", "label", "kind"), node)), "subclasses": subs, "tagged_sections": tagged}
@@ -254,6 +266,7 @@ def t_page(chunk_id=0, query=""):
     import base64, mimetypes
     con = connect()
     try:
+        chunk_id = _coerce_cid(chunk_id)
         if query and not chunk_id:
             import knowledge_index as K
             res = K.search(K.connect(resolve_db()), K.DEFAULT_MODEL, query, 1)
@@ -270,7 +283,7 @@ def t_page(chunk_id=0, query=""):
         tables = open(base + ".tables.md").read() if os.path.exists(base + ".tables.md") else ""
         data = base64.b64encode(open(path, "rb").read()).decode()
         mime = mimetypes.guess_type(path)[0] or "image/png"
-        meta = {"chunk_id": chunk_id, "source": row[0], "section": row[1], "image": img_rel,
+        meta = {"chunk_id": str(chunk_id), "source": row[0], "section": row[1], "image": img_rel,
                 "note": vault_note(row[0], row[3], row[1]), "has_tables": bool(tables)}
         blocks = [{"type": "image", "data": data, "mimeType": mime}]
         if tables:
@@ -332,7 +345,7 @@ def _dispatch(method, params):
     if method == "initialize":
         return {"protocolVersion": params.get("protocolVersion", "2024-11-05"),
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "brain", "version": "1.0.0"}}
+                "serverInfo": {"name": "brain", "version": "1.1.0"}}
     if method == "tools/list":
         return {"tools": [{"name": n, "description": d, "inputSchema": s} for n, (f, d, s) in TOOLS.items()]}
     if method == "tools/call":
