@@ -12,6 +12,6 @@ Explore **$topic** across the Brain. Follow `../_shared/doctrine.md`.
 
 3. **Walk the graph.** Iterate through `find_related_content` and `get_taxonomy` subclasses across documents. Gather connections, contradictions, and gaps.
 
-4. **Surface a navigable summary.** List each **source file (and section) / vault path** with its connection type (parent, sibling, child) and a one-line insight. Mark anything unsupported as "Not modeled".
+4. **Surface a navigable summary.** Lead with a one-line take on the topic, then list each connection with its type (parent, sibling, child) and a one-line insight. Mark anything unsupported as "Not modeled". Follow the house style in `../_shared/doctrine.md` → **Answer format**.
 
-5. **Cite all claims.** Every connection names its **source file / vault path** so the user can navigate directly to supporting evidence. Keep the `chunk_id` only as an internal anchor for `find_related_content` / `get_evidence` — don't print raw ids to the user (see `../_shared/doctrine.md` → Displaying citations).
+5. **Cite all claims with numbered footnotes.** Mark each connection with `[1]`, `[2]`, … and close with a `**Sources**` list mapping each number to its **source file (and section) / vault path** so the user can navigate to supporting evidence. Keep the `chunk_id` only as an internal anchor for `find_related_content` / `get_evidence` — never print raw ids.

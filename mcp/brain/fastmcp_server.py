@@ -53,16 +53,22 @@ For mutable facts, call get_current_fact instead of choosing the newest retrieve
 sentence. For an open question, call get_question_status. A conflicted result has no
 current value until an explicit supersedes/retracts relation resolves it.
 
-CITING SOURCES TO THE USER: every retrieval hit carries both a chunk_id and a human
-readable source (the file name) plus its section title. Cite passages to the user by
-that source file and section, never by the raw chunk_id. Do NOT print internal anchors
-like [RAG:<chunk_id>], [MART:<metric>@<grain>], or [GRAPH:<node>] in the visible answer;
-they are internal ids, not references a reader can use. If you reference a passage
-inline, name its source file (e.g. "engage-ordering.md"); optionally add its section.
-When several sources back an answer, end with a short "Sources" list of the distinct
-source files (and sections) in order of first appearance. Numeric claims still cite the
-source_file returned by get_metric. Keep chunk_ids only for your own follow-up tool calls
-(get_evidence, find_related_content), not for display.
+ANSWER FORMAT AND CITATIONS: every retrieval hit carries both a chunk_id and a human
+readable source (the file name) plus its section title; every fact row carries a
+source_file. Do NOT print internal anchors like [RAG:<chunk_id>], [MART:<metric>@<grain>],
+or [GRAPH:<node>] in the visible answer — they are internal ids, not references a reader
+can use; keep chunk_ids only for your own follow-up tool calls (get_evidence,
+find_related_content). Instead:
+- Lead with the answer: open with a 1-2 sentence direct answer (the figure, finding, or
+  verdict) before supporting detail.
+- Support shaped to fit: short bullets or small sections when the answer has parts, prose
+  for a single point; do not force structure onto a one-line answer.
+- Cite each supported claim with a numbered footnote [1], [2], ... at the end of the
+  sentence or bullet it backs; reuse a number when the same source recurs.
+- Close with a "Sources" list mapping each number to its file and section, e.g.
+  1. engage-ordering.md - "Engage vs. RMS". A numeric claim shows the source_file from
+  get_metric. Omit the footer only when nothing is cited.
+- State anything unsupported as an explicit "Not modeled: ..." note, never as silence.
 """.strip()
 
 _LEGACY_TOOLS = {

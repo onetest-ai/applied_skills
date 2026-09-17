@@ -27,24 +27,38 @@ Every fact must carry a citation tag in one of these forms:
 
 Visual facts and table data cite `get_evidence` with the evidence document and grid row or section.
 
-### Displaying citations to the user
+### Citations are internal anchors
 
 Citation tags are **internal anchors**, not reader-facing references. The chunk_id / metric /
 node lets you re-resolve evidence (`get_evidence`, `get_metric`, `get_taxonomy`) and lets the
 `verifier` recheck a draft — but a raw id means nothing to a reader. Every `search_knowledge`
 hit returns a `source` (file name) and section title next to its `chunk_id`; every `facts` /
-`get_evidence` row returns a `source_file`.
+`get_evidence` row returns a `source_file`. Never print `[RAG:<chunk_id>]`, `[MART:…]`, or
+`[GRAPH:…]` to the user; the reader-facing reference is a **numbered footnote** (below). If you
+hold a chunk_id but not its source, call `get_evidence(chunk_id=…)` to recover the `source`
+before citing.
 
-- **Interactive answers** (`/kb:ask`, `/kb:explore`, `/kb:challenge`): cite passages in the
-  visible text by their **source file and section**, never the raw id. Do **not** print
-  `[RAG:<chunk_id>]`, `[MART:…]`, or `[GRAPH:…]` to the user. When several sources back the
-  answer, close with a short **Sources** list of the distinct source files (and sections).
-- **Authored deliverables** (`/kb:brief`, `/kb:report`): may keep the tag as a footnote-style
-  anchor inline, but **must** resolve every tag to its `source_file` in the Sources section
-  (see `authoring.md`) so a reader can trace it.
+## Answer format
 
-If you hold a chunk_id but not its source, call `get_evidence(chunk_id=…)` to recover the
-`source` before citing.
+Interactive answers (`/kb:ask`, `/kb:explore`, `/kb:challenge`) follow one house style so
+responses read consistently:
+
+1. **Lead with the answer.** Open with a 1–2 sentence direct answer — the figure, the finding,
+   the verdict — before any supporting detail. Never bury it under setup.
+2. **Then the support, shaped to fit.** Use short bullets or a few small sections when the
+   answer has parts; stay in prose when it's a single point. Don't force structure onto a
+   one-line answer. Scale depth to `about.audience`: executives want the figure and the "so
+   what"; analysts want grain, method, and caveats.
+3. **Cite with numbered footnotes.** Mark each supported claim with `[1]`, `[2]`, … at the end
+   of the sentence or bullet it backs. Reuse a number when the same source recurs.
+4. **Close with Sources.** End with a `**Sources**` list mapping each number to its file and
+   section — `1. source_file.md — "Section title"` (a figure shows its metric `source_file`).
+   Omit the footer only when the answer cites nothing (e.g. a pure "not modeled").
+5. **Surface gaps inline.** Render anything unsupported as an explicit "Not modeled: …" note,
+   never as silence.
+
+**Authored deliverables** (`/kb:brief`, `/kb:report`) use the same numbered-footnote Sources
+convention but keep their own pipeline and audit sidecar — see `authoring.md`.
 
 ## Commit, Cite, Then Qualify
 
