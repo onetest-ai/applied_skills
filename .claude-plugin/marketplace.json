@@ -8,13 +8,23 @@
   "plugins": [
     {
       "name": "brain",
-      "source": "./bundles/brain",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/onetest-ai/applied_skills.git",
+        "path": "bundles/brain",
+        "ref": "fix/marketplace-source-paths"
+      },
       "description": "Build, maintain, and deploy the Brain: a local, truthful knowledge engine (RAG + taxonomy graph + deterministic marts) over docs + spreadsheets, served via a governed MCP.",
       "version": "0.3.0"
     },
     {
       "name": "kb",
-      "source": "./bundles/kb",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/onetest-ai/applied_skills.git",
+        "path": "bundles/kb",
+        "ref": "fix/marketplace-source-paths"
+      },
       "description": "Knowledge-worker companion over the Brain: cited answers and Markdown deliverables.",
       "version": "0.1.0"
     }
