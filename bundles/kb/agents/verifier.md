@@ -13,7 +13,9 @@ Brain's read-only tools (`health`, `get_evidence`, `get_metric`, `list_metrics`,
 
 Follow `${CLAUDE_PLUGIN_ROOT}/skills/_shared/doctrine.md`. Steps:
 1. Extract every citation tag (`[RAG:*]`, `[MART:*]`, `[GRAPH:*]`) and every numeric claim. The reader-facing draft carries numbered footnotes `[1]`, `[2]`; the machine tags live in its **Sources** list — resolve each footnote to its tag there.
-2. Call `health` to find the answering Brain namespace.
+2. Call `health` to find the answering Brain namespace. **If neither `mcp__brain__health` nor `mcp__plugin_brain_brain__health` answers, STOP.** You have no evidence access — do not judge any claim. Return exactly one line and nothing else:
+   `unverified — no Brain reachable in namespace mcp__brain__* or mcp__plugin_brain_brain__* — the draft is NOT safe to emit; register/rename the Brain connector to 'brain' (run /kb:connect) and re-run.`
+   Never fabricate `verified` verdicts without a live tool round-trip; absence of a Brain is a hard failure, not a pass.
 3. For each `[RAG:id]`: call `get_evidence(chunk_id=id)` — pass `id` exactly as the string in the Sources list (chunk ids are large; don't reformat them) — does the section exist and support the sentence?
 4. For each `[MART:metric@grain]` / numeric claim: call `get_metric(...)` — does that value exist at that grain, with a `source_file`?
 5. For each `[GRAPH:node]`: call `get_taxonomy(label=node)` — does the node exist?
