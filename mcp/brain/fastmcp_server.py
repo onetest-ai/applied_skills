@@ -52,7 +52,9 @@ only when it has parts). Cite each claim with a numbered footnote [1], [2], ... 
 a "Sources" list mapping each number to its file and section, e.g. 1. engage-ordering.md --
 "Engage vs. RMS" (a number cites the get_metric source_file). Never print internal ids like
 [RAG:...], [MART:...], or [GRAPH:...]; keep chunk_ids only for follow-up calls (get_evidence,
-find_related_content). State anything unsupported as "Not modeled: ...", never as silence.
+find_related_content) and pass a chunk_id back verbatim as the string it was returned as -- it
+is a large id that loses precision if turned into a number. State anything unsupported as
+"Not modeled: ...", never as silence.
 """.strip()
 
 _LEGACY_TOOLS = {
@@ -103,7 +105,7 @@ class FailSafeFastMCP(FastMCP):
 
 mcp = FailSafeFastMCP(
     name="Semantic Knowledge Brain",
-    version="1.0.0",
+    version="1.1.0",
     instructions=INSTRUCTIONS,
     mask_error_details=True,
     # Tool functions validate inputs themselves so mistakes can be returned as structured,
@@ -216,6 +218,18 @@ def _required_integer(tool: str, field: str, value: Any) -> tuple[int | None, To
     if isinstance(value, bool) or not isinstance(value, int):
         return None, _error_result(tool, "invalid_arguments", f"{field} must be an integer")
     return value, None
+
+
+def _required_chunk_id(tool: str, field: str, value: Any) -> tuple[int | None, ToolResult | None]:
+    """chunk_id may arrive as an int or a numeric string. Search tools emit it as a
+    string so float64 JSON clients don't round the 63-bit id; accept that string back."""
+    if isinstance(value, bool):
+        return None, _error_result(tool, "invalid_arguments", f"{field} must be an integer id, not a boolean")
+    if isinstance(value, int):
+        return value, None
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        return int(value.strip()), None
+    return None, _error_result(tool, "invalid_arguments", f"{field} must be an integer or a numeric string")
 
 
 def _optional_string(tool: str, field: str, value: Any) -> tuple[str | None, ToolResult | None]:
@@ -367,13 +381,13 @@ def get_taxonomy(
 
 @mcp.tool(tags={"narrative", "relations"})
 def find_related_content(
-    chunk_id: Annotated[int | None, SkipValidation, Field(description="Optional integer anchor chunk id from search_knowledge")] = None,
+    chunk_id: Annotated[int | str | None, SkipValidation, Field(description="Optional anchor chunk id from search_knowledge; pass it back exactly as the string it was returned as")] = None,
     query: Annotated[str | None, SkipValidation, Field(description="Optional query used to discover an anchor when chunk_id is absent")] = None,
     limit: Annotated[int, SkipValidation, Field(description=_LIMIT_DESCRIPTION)] = 6,
 ) -> dict | ToolResult:
     """Find precomputed cross-document semantic neighbors for a cited section."""
     if chunk_id is not None:
-        valid_chunk_id, error = _required_integer("find_related_content", "chunk_id", chunk_id)
+        valid_chunk_id, error = _required_chunk_id("find_related_content", "chunk_id", chunk_id)
         if error:
             return error
         chunk_id = valid_chunk_id
@@ -390,11 +404,11 @@ def find_related_content(
 
 @mcp.tool(tags={"evidence"})
 def get_evidence(
-    chunk_id: Annotated[int | None, SkipValidation, Field(description="Required integer chunk id returned by search or taxonomy tools")] = None,
+    chunk_id: Annotated[int | str | None, SkipValidation, Field(description="Required chunk id returned by search or taxonomy tools; pass it back exactly as the string it was returned as")] = None,
     include_page_text: Annotated[bool, SkipValidation, Field(description="Boolean: include verbatim visual-page text and extracted table cells when available")] = True,
 ) -> dict | ToolResult:
     """Inspect one cited source section and its optional verbatim page/table evidence."""
-    valid_chunk_id, error = _required_integer("get_evidence", "chunk_id", chunk_id)
+    valid_chunk_id, error = _required_chunk_id("get_evidence", "chunk_id", chunk_id)
     if error:
         return error
     if not isinstance(include_page_text, bool):
