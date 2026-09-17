@@ -23,6 +23,11 @@ try:
 except ImportError:
     Client = StdioTransport = None
 
+try:
+    import httpx as _httpx
+except ImportError:
+    _httpx = None
+
 
 def build_fixture(root: Path) -> dict[str, Path]:
     db = root / "knowledge.sqlite"
@@ -444,6 +449,7 @@ class FastMCPContractTests(FixtureCase):
         asyncio.run(run())
 
 
+@unittest.skipUnless(_httpx is not None, "httpx is not installed")
 class RestShimLimitTests(FixtureCase):
     """Bug 10: REST shim /api/v1/search must cap limit at 100 before calling _search_knowledge.
 
