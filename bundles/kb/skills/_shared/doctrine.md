@@ -27,6 +27,25 @@ Every fact must carry a citation tag in one of these forms:
 
 Visual facts and table data cite `get_evidence` with the evidence document and grid row or section.
 
+### Displaying citations to the user
+
+Citation tags are **internal anchors**, not reader-facing references. The chunk_id / metric /
+node lets you re-resolve evidence (`get_evidence`, `get_metric`, `get_taxonomy`) and lets the
+`verifier` recheck a draft — but a raw id means nothing to a reader. Every `search_knowledge`
+hit returns a `source` (file name) and section title next to its `chunk_id`; every `facts` /
+`get_evidence` row returns a `source_file`.
+
+- **Interactive answers** (`/kb:ask`, `/kb:explore`, `/kb:challenge`): cite passages in the
+  visible text by their **source file and section**, never the raw id. Do **not** print
+  `[RAG:<chunk_id>]`, `[MART:…]`, or `[GRAPH:…]` to the user. When several sources back the
+  answer, close with a short **Sources** list of the distinct source files (and sections).
+- **Authored deliverables** (`/kb:brief`, `/kb:report`): may keep the tag as a footnote-style
+  anchor inline, but **must** resolve every tag to its `source_file` in the Sources section
+  (see `authoring.md`) so a reader can trace it.
+
+If you hold a chunk_id but not its source, call `get_evidence(chunk_id=…)` to recover the
+`source` before citing.
+
 ## Commit, Cite, Then Qualify
 
 Answer flow: give the figure first, cite it, then qualify scope and caveats.

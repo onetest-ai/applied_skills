@@ -52,6 +52,17 @@ concept, or anchor section instead of requesting one oversized result set.
 For mutable facts, call get_current_fact instead of choosing the newest retrieved
 sentence. For an open question, call get_question_status. A conflicted result has no
 current value until an explicit supersedes/retracts relation resolves it.
+
+CITING SOURCES TO THE USER: every retrieval hit carries both a chunk_id and a human
+readable source (the file name) plus its section title. Cite passages to the user by
+that source file and section, never by the raw chunk_id. Do NOT print internal anchors
+like [RAG:<chunk_id>], [MART:<metric>@<grain>], or [GRAPH:<node>] in the visible answer;
+they are internal ids, not references a reader can use. If you reference a passage
+inline, name its source file (e.g. "engage-ordering.md"); optionally add its section.
+When several sources back an answer, end with a short "Sources" list of the distinct
+source files (and sections) in order of first appearance. Numeric claims still cite the
+source_file returned by get_metric. Keep chunk_ids only for your own follow-up tool calls
+(get_evidence, find_related_content), not for display.
 """.strip()
 
 _LEGACY_TOOLS = {

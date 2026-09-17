@@ -16,4 +16,4 @@ Adversarially test **$claim** against the Brain. Follow `../_shared/doctrine.md`
 
 5. **Surface silent gaps.** Mark anything unsupported as "Not modeled: …" — gaps are as important as confirmations.
 
-6. **Render a verdict per sub-claim.** Each carries citations with chunk_id or metric source. Output: CONFIRMED, REFINED, CONTRADICTED, or NOT MODELED.
+6. **Render a verdict per sub-claim.** Each cites its **source file (and section) or metric `source_file`** — not the raw chunk_id (see `../_shared/doctrine.md` → Displaying citations). Output: CONFIRMED, REFINED, CONTRADICTED, or NOT MODELED.
