@@ -17,12 +17,6 @@
       "source": "./bundles/kb",
       "description": "Knowledge-worker companion over the Brain: cited answers and Markdown deliverables.",
       "version": "0.1.0"
-    },
-    {
-      "name": "brain-cowork",
-      "source": "./cowork/brain-cowork",
-      "description": "Config-driven Cowork plugin template: edit brain.config.json, run install.mjs, deploy a private Brain for any project.",
-      "version": "1.0.0"
     }
   ]
 }

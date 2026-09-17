@@ -87,5 +87,17 @@ class TestMarketplacePlugins(unittest.TestCase):
         self.assertEqual(manifest["name"], "brain")
 
 
+class TestCoworkCleanup(unittest.TestCase):
+    def test_no_brain_cowork_tree(self):
+        self.assertFalse((REPO_ROOT / "cowork" / "brain-cowork").exists(),
+                         "cowork/brain-cowork must be removed")
+
+    def test_marketplace_has_no_brain_cowork(self):
+        market = load_json(REPO_ROOT / ".claude-plugin" / "marketplace.json")
+        names = {p["name"] for p in market["plugins"]}
+        self.assertNotIn("brain-cowork", names)
+        self.assertEqual(names, {"brain", "kb"})
+
+
 if __name__ == "__main__":
     unittest.main()
