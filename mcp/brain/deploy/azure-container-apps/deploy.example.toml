@@ -1,0 +1,39 @@
+# Azure Container Apps deployment profile for the Brain MCP server.
+# Copy to your project (default: ops/deploy/deploy.toml) and edit the values.
+# NO SECRETS here — the API key is referenced by Azure secret name and read at
+# verify time only from the environment variable named in [runtime].api_key_env.
+version = 1
+
+[azure]
+subscription       = "YOUR-SUBSCRIPTION"          # az subscription name or id
+resource_group     = "rg-your-brain-mcp"
+registry           = "youracr"                     # ACR name (no domain)
+registry_server    = "youracr.azurecr.io"          # ACR login server
+repository         = "your-brain-mcp"              # image repository
+container_app      = "your-brain-mcp"              # Container App name
+api_key_secret_ref = "mcp-api-key"                 # existing Container Apps secret name
+
+[image]
+context    = "."                                   # build context assembled per mcp/brain/Dockerfile's layout
+dockerfile = "mcp/brain/Dockerfile"                # path to the provider-neutral Dockerfile
+
+[runtime]
+knowledge_version_env = "BRAIN_KNOWLEDGE_VERSION"  # env set on the revision to the immutable tag
+api_key_env           = "BRAIN_API_KEY"            # env verify reads the key from (never printed)
+show_banner           = "0"
+
+[verification]
+mcp_url      = "https://your-brain-mcp.<region>.azurecontainerapps.io/mcp"
+health_url   = "https://your-brain-mcp.<region>.azurecontainerapps.io/healthz"
+metric_name  = "overall_nps"                       # a governed metric that exists in this store
+metric_grain = "region"
+search_query = "stakeholders names roles"          # a narrative query with expected hits
+expected_tools = [
+  "list_metrics",
+  "get_metric",
+  "search_knowledge",
+  "get_taxonomy",
+  "find_related_content",
+  "get_evidence",
+  "health",
+]

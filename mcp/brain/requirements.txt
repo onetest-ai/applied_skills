@@ -1,0 +1,4 @@
+fastmcp==2.14.7
+fastembed==0.8.0
+sqlite-vec==0.1.9
+uvicorn==0.52.4
