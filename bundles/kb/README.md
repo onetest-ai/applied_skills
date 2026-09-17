@@ -6,6 +6,8 @@
 
 kb requires a reachable Brain MCP server providing fact queries, graph traversal, and data access. The `kb` plugin does **not** bundle or auto-wire the Brain MCP server — it must be registered separately (run `./brain mcp-config` from the brain project, or use `/kb:connect` for guided setup). See [bundles/brain/README.md](../bundles/brain/README.md) for setup.
 
+**Using kb in Cowork (Claude Desktop):** see [`docs/cowork-setup.md`](docs/cowork-setup.md).
+
 ## Skills
 
 - `/kb:ask` — Query the knowledge base with a natural-language question; get cited facts or "not modeled."
