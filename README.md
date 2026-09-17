@@ -65,15 +65,42 @@ For the person who turns a messy corpus (PDF/PPTX/DOCX/XLSX) into a queryable Br
 
 **Meaning is agentic (RAG/graph); numbers are computed (deterministic SQL).** RAG never produces figures; the mart lane never guesses.
 
+```mermaid
+flowchart LR
+    docs([docs]):::src --> cte[corpus-taxonomy-extraction]:::mean
+    xlsx([reporting xlsx]):::src --> tsl[tabular-semantic-layer]:::num
+
+    subgraph orch [orchestrated by knowledge-pipeline]
+        direction LR
+
+        %% meaning lane (agentic)
+        cte --> md[Markdown + taxonomy_v0 + graph]:::mean
+        md --> vault[(Obsidian vault · human canon)]:::mean
+        md --> ki[knowledge-index]:::mean
+        ki --> chunks[chunks + FTS5 + vector]:::mean
+        cte --> bg[build_graph.py]:::mean
+        bg --> graph[graph_nodes / edges]:::mean
+
+        %% numbers lane (computed)
+        tsl --> facts[facts · marts]:::num
+
+        %% convergence
+        chunks --> db[(ONE knowledge.sqlite)]:::store
+        facts  --> db
+        graph  --> db
+    end
+
+    db --> hr[hybrid-retrieval]:::answer
+    hr --> ans([cited answer]):::answer
+
+    classDef src   fill:#e8e8e8,stroke:#888,color:#222;
+    classDef mean  fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a;
+    classDef num   fill:#dcfce7,stroke:#22c55e,color:#14532d;
+    classDef store fill:#fef9c3,stroke:#eab308,color:#713f12;
+    classDef answer fill:#f3e8ff,stroke:#a855f7,color:#581c87;
 ```
-docs ─▶ corpus-taxonomy-extraction ─▶ Markdown + taxonomy_v0 + graph  ─▶ Obsidian vault (human canon)
-                                          │                    │
-          Markdown ─▶ knowledge-index ────┤ chunks+FTS5+vector │
-   reporting xlsx ─▶ tabular-semantic-layer│ facts (marts)     ├─▶  ONE knowledge.sqlite
-                     corpus…/build_graph.py │ graph_nodes/edges │        │
-                                                                └─▶ hybrid-retrieval ─▶ cited answer
-                                            (all orchestrated by knowledge-pipeline)
-```
+
+<sub>**Blue** = meaning (agentic RAG/graph) · **green** = numbers (computed marts) · **yellow** = the one portable store · **purple** = the cited answer.</sub>
 
 Retrieval is **hybrid**: BM25 (FTS5) + vector (sqlite-vec) fused by **Reciprocal Rank Fusion** — pattern from [arozumenko/wikis](https://github.com/arozumenko/wikis). One file, moves anywhere. The whole toolkit is **torch-free** (the RAG embedder is fastembed/onnx; docling is retired) — see [Dependencies](#dependencies).
 
