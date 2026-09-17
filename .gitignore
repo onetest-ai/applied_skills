@@ -33,7 +33,9 @@ batch_*.json
 .codex/
 .dsh/
 .github/
-docs
+# Internal spec-driven-development scratch (plans/specs) — not shipped in the toolkit.
+# docs/ itself is tracked (user-facing guides); only the superpowers workspace is ignored.
+docs/superpowers/
 # Local environment overrides — never commit (paths are machine-specific)
 .env
 
@@ -41,4 +43,6 @@ docs
 evals/temporal_cross_session.csv
 retrieval-results.json
 retrieval-results.html
-.idea/.gitignore
+
+# JetBrains IDE
+.idea/
