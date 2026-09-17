@@ -272,8 +272,11 @@ class FastMCPContractTests(FixtureCase):
                     "get_current_fact": {"entity": "string", "predicate": "string", "as_of": "string"},
                     "get_question_status": {"question_id": "string", "as_of": "string"},
                     "get_taxonomy": {"label": "string", "relation": "string", "kind": "string", "limit": "integer"},
-                    "find_related_content": {"chunk_id": "integer", "query": "string", "limit": "integer"},
-                    "get_evidence": {"chunk_id": "integer", "include_page_text": "boolean"},
+                    # chunk_id is advertised as STRING (not integer): a 63-bit int64 loses
+                    # precision if the client sends it as a JSON number, so the schema must
+                    # steer the client to pass the exact string it received from search.
+                    "find_related_content": {"chunk_id": "string", "query": "string", "limit": "integer"},
+                    "get_evidence": {"chunk_id": "string", "include_page_text": "boolean"},
                 }
                 for tool_name, field_types in expected_types.items():
                     properties = tools[tool_name].inputSchema["properties"]

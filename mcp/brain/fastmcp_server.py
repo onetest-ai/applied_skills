@@ -105,7 +105,7 @@ class FailSafeFastMCP(FastMCP):
 
 mcp = FailSafeFastMCP(
     name="Semantic Knowledge Brain",
-    version="1.1.1",
+    version="1.1.2",
     instructions=INSTRUCTIONS,
     mask_error_details=True,
     # Tool functions validate inputs themselves so mistakes can be returned as structured,
@@ -122,7 +122,7 @@ _TOOL_FIXES = {
     "find_related_content": "Provide either chunk_id from search_knowledge/get_taxonomy or a non-empty query; keep limit between 1 and 100.",
     "get_current_fact": "Provide non-empty entity and predicate values; use ISO-8601 for optional as_of.",
     "get_question_status": "Provide a stable non-empty question_id; use ISO-8601 for optional as_of.",
-    "get_evidence": "Provide a valid integer chunk_id returned by search_knowledge, get_taxonomy, or find_related_content.",
+    "get_evidence": "Provide a valid chunk_id string returned by search_knowledge, get_taxonomy, or find_related_content, passed back verbatim (do not turn the large id into a number).",
     "health": "Verify BRAIN_DB, BRAIN_CATALOG, BRAIN_SKILLS, and sqlite-vec are installed and readable.",
 }
 
@@ -388,7 +388,7 @@ def get_taxonomy(
 
 @mcp.tool(tags={"narrative", "relations"})
 def find_related_content(
-    chunk_id: Annotated[int | str | None, SkipValidation, Field(description="Optional anchor chunk id from search_knowledge; pass it back exactly as the string it was returned as")] = None,
+    chunk_id: Annotated[str | None, SkipValidation, Field(description="Optional anchor chunk id from search_knowledge, as a STRING. Pass it back exactly as returned; it is a large id that loses precision if sent as a number.")] = None,
     query: Annotated[str | None, SkipValidation, Field(description="Optional query used to discover an anchor when chunk_id is absent")] = None,
     limit: Annotated[int, SkipValidation, Field(description=_LIMIT_DESCRIPTION)] = 6,
 ) -> dict | ToolResult:
@@ -411,7 +411,7 @@ def find_related_content(
 
 @mcp.tool(tags={"evidence"})
 def get_evidence(
-    chunk_id: Annotated[int | str | None, SkipValidation, Field(description="Required chunk id returned by search or taxonomy tools; pass it back exactly as the string it was returned as")] = None,
+    chunk_id: Annotated[str | None, SkipValidation, Field(description="Required chunk id returned by search or taxonomy tools, as a STRING. Pass it back exactly as returned; it is a large id that loses precision if sent as a number.")] = None,
     include_page_text: Annotated[bool, SkipValidation, Field(description="Boolean: include verbatim visual-page text and extracted table cells when available")] = True,
 ) -> dict | ToolResult:
     """Inspect one cited source section and its optional verbatim page/table evidence."""
