@@ -323,8 +323,11 @@ class FastMCPContractTests(FixtureCase):
                     self.assertTrue(unhandled.is_error, tool_name)
                     self.assertEqual(unhandled.data["error"]["code"], "internal_error", tool_name)
                     self.assertNotIn("private/path", json.dumps(unhandled.data), tool_name)
-            self.assertIn("Never send limit above 100", fastmcp_server.INSTRUCTIONS)
-            self.assertIn("make multiple calls", fastmcp_server.INSTRUCTIONS)
+            # Limit contract still documented (guards Bug 10 regression), and the
+            # citation rule that keeps raw ids out of user-facing answers.
+            self.assertIn("limit is 1-100", fastmcp_server.INSTRUCTIONS)
+            self.assertIn("make multiple narrower calls", fastmcp_server.INSTRUCTIONS)
+            self.assertIn("Never print internal ids", fastmcp_server.INSTRUCTIONS)
             env = {key: os.environ[key] for key in ("BRAIN_DB", "BRAIN_CATALOG", "BRAIN_SKILLS", "BRAIN_ASSETS", "BRAIN_KNOWLEDGE_VERSION")}
             env["BRAIN_SHOW_BANNER"] = "0"
             env["PYTHONPATH"] = os.pathsep.join((str(self.fx["root"]), str(HERE)))

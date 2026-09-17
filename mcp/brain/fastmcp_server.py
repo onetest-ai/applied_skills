@@ -34,41 +34,25 @@ from semantic_core import (
 )
 
 INSTRUCTIONS = """
-This server exposes a private knowledge brain through safe semantic tools.
-Route narrative questions to search_knowledge, exact figures to get_metric, taxonomy
-questions to get_taxonomy, and source inspection to get_evidence. Never infer a number
-from narrative text: every numeric claim must come from get_metric and cite source_file.
-If a tool returns status=not_modeled, that is an honest "no data" answer, not a failure:
-report the gap instead of guessing. Genuine failures (invalid arguments, internal errors)
-are returned as MCP error results (isError=true) that still carry status=error, an error
-code/message, how_to_fix, and retryable; follow how_to_fix and retry with corrected
-arguments. Failures stay structured MCP results rather than opaque HTTP 500s.
+This server exposes a private knowledge brain through safe, read-only semantic tools.
 
-IMPORTANT RESULT-LIMIT CONTRACT: every tool argument named limit accepts integers from
-1 through 100 inclusive. Never send limit above 100. Prefer narrow filters. If more
-coverage is needed, make multiple calls split by metric, month range, grain, entity,
-concept, or anchor section instead of requesting one oversized result set.
+Routing: narrative -> search_knowledge; exact figures -> get_metric (never infer a number
+from prose; every number cites its source_file); taxonomy/relations -> get_taxonomy; a named
+section, page figure, or table -> get_evidence. For a mutable fact call get_current_fact and
+for an open question get_question_status rather than trusting the newest retrieved sentence;
+a conflicted result has no current value until a supersedes/retracts relation resolves it.
 
-For mutable facts, call get_current_fact instead of choosing the newest retrieved
-sentence. For an open question, call get_question_status. A conflicted result has no
-current value until an explicit supersedes/retracts relation resolves it.
+Honesty: a status=not_modeled result is a valid "no data" answer -- report the gap, don't
+guess. On an error result (isError=true), follow its how_to_fix and retry with corrected
+arguments. limit is 1-100; for more coverage make multiple narrower calls (split by metric,
+grain, or range) rather than one oversized request.
 
-ANSWER FORMAT AND CITATIONS: every retrieval hit carries both a chunk_id and a human
-readable source (the file name) plus its section title; every fact row carries a
-source_file. Do NOT print internal anchors like [RAG:<chunk_id>], [MART:<metric>@<grain>],
-or [GRAPH:<node>] in the visible answer — they are internal ids, not references a reader
-can use; keep chunk_ids only for your own follow-up tool calls (get_evidence,
-find_related_content). Instead:
-- Lead with the answer: open with a 1-2 sentence direct answer (the figure, finding, or
-  verdict) before supporting detail.
-- Support shaped to fit: short bullets or small sections when the answer has parts, prose
-  for a single point; do not force structure onto a one-line answer.
-- Cite each supported claim with a numbered footnote [1], [2], ... at the end of the
-  sentence or bullet it backs; reuse a number when the same source recurs.
-- Close with a "Sources" list mapping each number to its file and section, e.g.
-  1. engage-ordering.md - "Engage vs. RMS". A numeric claim shows the source_file from
-  get_metric. Omit the footer only when nothing is cited.
-- State anything unsupported as an explicit "Not modeled: ..." note, never as silence.
+Answering the user: lead with a direct 1-2 sentence answer, then supporting detail (bullets
+only when it has parts). Cite each claim with a numbered footnote [1], [2], ... and end with
+a "Sources" list mapping each number to its file and section, e.g. 1. engage-ordering.md --
+"Engage vs. RMS" (a number cites the get_metric source_file). Never print internal ids like
+[RAG:...], [MART:...], or [GRAPH:...]; keep chunk_ids only for follow-up calls (get_evidence,
+find_related_content). State anything unsupported as "Not modeled: ...", never as silence.
 """.strip()
 
 _LEGACY_TOOLS = {
