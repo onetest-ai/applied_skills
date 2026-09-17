@@ -8,13 +8,13 @@
   "plugins": [
     {
       "name": "brain",
-      "source": "./bundles/brain",
+      "source": "../bundles/brain",
       "description": "Build, maintain, and deploy the Brain: a local, truthful knowledge engine (RAG + taxonomy graph + deterministic marts) over docs + spreadsheets, served via a governed MCP.",
       "version": "0.3.0"
     },
     {
       "name": "kb",
-      "source": "./bundles/kb",
+      "source": "../bundles/kb",
       "description": "Knowledge-worker companion over the Brain: cited answers and Markdown deliverables.",
       "version": "0.1.0"
     }
