@@ -1,0 +1,64 @@
+name: Bug report
+description: Something in a skill, the pipeline, or the MCP server isn't working as expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please **do not include** any private
+        corpus data, client names, credentials, or absolute machine paths.
+        For security issues, use the Security tab instead (see SECURITY.md).
+  - type: input
+    id: skill
+    attributes:
+      label: Affected skill / component
+      description: e.g. `knowledge-index`, `tabular-semantic-layer`, `mcp/brain`, `kb:ask`
+      placeholder: knowledge-index
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you run, and what went wrong? Paste exact error output (redacted).
+      placeholder: |
+        Command:
+        Output / error:
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps or a small sample (no private data) that triggers the issue.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Python version, host (Claude Code / dsh / Copilot / Codex), and how you installed.
+      placeholder: |
+        OS:
+        Python:
+        Host:
+        Install method (install.sh / npx / uv):
+    validations:
+      required: true
+  - type: checkboxes
+    id: hygiene
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have removed any private data, client names, credentials, and machine-specific paths.
+          required: true
