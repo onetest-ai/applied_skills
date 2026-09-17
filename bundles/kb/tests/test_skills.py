@@ -98,7 +98,10 @@ class TestModeSkill(unittest.TestCase, SkillContractMixin):
 
 class TestConnectSkill(unittest.TestCase, SkillContractMixin):
     def test_connect_contract(self):
-        self.assert_skill("connect", required_tokens=["health", "mcp-config", "brain"])
+        self.assert_skill("connect", required_tokens=[
+            "health", "mcp-config", "brain",   # CLI branch preserved
+            "connector", "Entra",              # Cowork branch added
+        ])
 
 
 if __name__ == "__main__":
