@@ -39,36 +39,30 @@ Plus the repo's top-level **`mcp/brain/`** — the governed FastMCP **tool layer
 **Meaning is agentic (RAG/graph); numbers are computed (deterministic SQL).** RAG never produces figures; the mart lane never guesses. Everything converges on one portable `knowledge.sqlite`.
 
 ```mermaid
-flowchart LR
-    docs([docs]):::src --> cte[corpus-taxonomy-extraction]:::mean
-    xlsx([reporting xlsx]):::src --> tsl[tabular-semantic-layer]:::num
+flowchart TD
+    docs(["docs"]):::src --> cte["corpus-taxonomy-extraction"]:::mean
+    xlsx(["reporting xlsx"]):::src --> tsl["tabular-semantic-layer"]:::num
 
-    subgraph orch [orchestrated by knowledge-pipeline]
-        direction LR
-
-        %% meaning lane (agentic)
-        cte --> md[Markdown + taxonomy_v0 + graph]:::mean
-        md --> vault[(Obsidian vault · human canon)]:::mean
-        md --> ki[knowledge-index]:::mean
-        ki --> chunks[chunks + FTS5 + vector]:::mean
-        cte --> bg[build_graph.py]:::mean
-        bg --> graph[graph_nodes / edges]:::mean
-
-        %% numbers lane (computed)
-        tsl --> facts[facts · marts]:::num
-
-        %% convergence
-        chunks --> db[(ONE knowledge.sqlite)]:::store
-        facts  --> db
-        graph  --> db
+    subgraph orch ["orchestrated by knowledge-pipeline"]
+        direction TB
+        cte --> md["Markdown + taxonomy_v0 + graph"]:::mean
+        md --> vault[("Obsidian vault · human canon")]:::mean
+        md --> ki["knowledge-index"]:::mean
+        ki --> chunks["chunks + FTS5 + vector"]:::mean
+        cte --> bg["build_graph.py"]:::mean
+        bg --> gnodes["graph_nodes / edges"]:::mean
+        tsl --> facts["facts · marts"]:::num
+        chunks --> db[("ONE knowledge.sqlite")]:::store
+        facts --> db
+        gnodes --> db
     end
 
-    db --> hr[hybrid-retrieval]:::answer
-    hr --> ans([cited answer]):::answer
+    db --> hr["hybrid-retrieval"]:::answer
+    hr --> ans(["cited answer"]):::answer
 
-    classDef src   fill:#e8e8e8,stroke:#888,color:#222;
-    classDef mean  fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a;
-    classDef num   fill:#dcfce7,stroke:#22c55e,color:#14532d;
+    classDef src fill:#e8e8e8,stroke:#888,color:#222;
+    classDef mean fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a;
+    classDef num fill:#dcfce7,stroke:#22c55e,color:#14532d;
     classDef store fill:#fef9c3,stroke:#eab308,color:#713f12;
     classDef answer fill:#f3e8ff,stroke:#a855f7,color:#581c87;
 ```
