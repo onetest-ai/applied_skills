@@ -93,7 +93,10 @@ class TestReportSkill(unittest.TestCase, SkillContractMixin):
 
 class TestModeSkill(unittest.TestCase, SkillContractMixin):
     def test_mode_contract(self):
-        self.assert_skill("mode", required_tokens=["state.json", "ambient", "on", "off", "status"])
+        self.assert_skill("mode", required_tokens=[
+            "state.json", "ambient", "on", "off", "status",  # preserved
+            "Cowork",                                         # limitation noted
+        ])
 
 
 class TestConnectSkill(unittest.TestCase, SkillContractMixin):
