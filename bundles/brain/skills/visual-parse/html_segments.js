@@ -59,6 +59,7 @@
 
   const tableOf = (t) => ({
     caption: (t.caption && t.caption.innerText.trim()) || '',
+    hasHeader: !!(t.tHead || t.querySelector('th')),
     rows: [...t.rows].map(r => [...r.cells].map(c => c.innerText.trim())),
   });
 

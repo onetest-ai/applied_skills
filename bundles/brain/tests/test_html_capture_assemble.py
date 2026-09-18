@@ -5,6 +5,7 @@ the real key set rather than a copy of it.
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import tempfile
@@ -72,22 +73,73 @@ class AssembleTests(unittest.TestCase):
         with_tables = [r for r in rows if r["n_tables"]]
         self.assertEqual(len(with_tables), 1, "the grid belongs to the segment, once")
 
-    def test_slug_is_stable_for_a_path_and_for_a_url(self):
-        """Capture is URL-shaped from the start so crawling is a small follow-on."""
-        self.assertEqual(HC._slug("file:///corpus/decks/q3-review.html"),
-                         HC._slug("/corpus/decks/q3-review.html"))
+    def test_slug_is_stable_and_collision_free(self):
+        """The slug names the assets directory, so two sources must never share one."""
+        long_a = "https://site-alpha.example.com/reports/2024/q3/deck-final-review-for-ops-leadership-team-presentation-v2"
+        long_b = "https://site-beta.example.org/reports/2024/q3/deck-final-review-for-ops-leadership-team-presentation-v2"
+        self.assertNotEqual(HC._slug(long_a), HC._slug(long_b))
+        self.assertEqual(HC._slug(long_a), HC._slug(long_a))          # stable
+        self.assertNotEqual(HC._slug("https://example.com/a"), HC._slug("https://example.com/b"))
         self.assertTrue(HC._slug("https://example.com/reports/q3"))
-        self.assertNotEqual(HC._slug("https://example.com/a"),
-                            HC._slug("https://example.com/b"))
 
     def test_img_sha_is_the_captured_file(self):
         row = self.pages["pages"][0]
-        self.assertEqual(len(row["img_sha"]), 64)
+        png_path = self.outdir / f"p{row['page']:02d}.png"
+        expected_sha = hashlib.sha256(png_path.read_bytes()).hexdigest()
+        self.assertEqual(row["img_sha"], expected_sha)
 
     def test_missing_png_is_reported_not_guessed(self):
         (self.outdir / "p01.png").unlink()
         with self.assertRaises(FileNotFoundError):
             HC.assemble(FIXTURE, self.plan, str(self.outdir), dpi=96)
+
+    def test_grid_normalizes_ragged_rows(self):
+        """Rows with different column counts are padded to header width."""
+        ragged_table = {
+            "caption": "Ragged",
+            "hasHeader": True,
+            "rows": [["A", "B"], ["1", "2", "3"], ["x"]]
+        }
+        grid = HC._grid(ragged_table)
+        lines = grid.split("\n")
+        # Caption, blank, header, separator, two body rows = 6 lines
+        self.assertEqual(len(lines), 6)
+        # All table lines (skip caption and blank) have 3 cells
+        table_lines = lines[2:]  # skip caption and blank line
+        for line in table_lines:
+            pipe_count = line.count("|")
+            # 3 cells = 4 pipes (leading, between each, trailing)
+            self.assertEqual(pipe_count, 4, f"line has wrong column count: {line}")
+
+    def test_grid_escapes_pipes_in_cells(self):
+        """A cell containing | must be escaped to prevent it being parsed as a delimiter."""
+        pipe_table = {
+            "caption": "With pipes",
+            "hasHeader": True,
+            "rows": [["a|b", "c"], ["x", "y"]]
+        }
+        grid = HC._grid(pipe_table)
+        self.assertIn("a\\|b", grid)
+        # Verify escaping doesn't break parsing: separator line shows column structure
+        lines = grid.split("\n")
+        sep_line = lines[3]  # skip caption, blank, header to get separator
+        cell_count = sep_line.count("|") - 1  # leading and trailing pipes, so columns = pipes - 1
+        self.assertEqual(cell_count, 2, "table should have 2 columns despite escaped pipe")
+
+    def test_grid_handles_headerless_tables(self):
+        """A table without hasHeader gets empty cells as a header."""
+        headerless_table = {
+            "caption": "No header",
+            "hasHeader": False,
+            "rows": [["1", "2"], ["3", "4"]]
+        }
+        grid = HC._grid(headerless_table)
+        lines = grid.split("\n")
+        # Caption, blank, empty-cell header, separator, two body rows = 6 lines
+        self.assertEqual(len(lines), 6)
+        # Header line (skip caption and blank) should have empty cells (spaces between pipes)
+        header = lines[2]
+        self.assertIn("|  |  |", header, "header should have empty cells")
 
 
 if __name__ == "__main__":

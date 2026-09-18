@@ -12,6 +12,7 @@
      "bbox": {"x": 0, "y": 720, "width": 1280, "height": 720},
      "height": 720,
      "tables": [{"caption": "FCR by quarter",
+                 "hasHeader": true,
                  "rows": [["Quarter", "FCR"], ["Q2", "68%"], ["Q3", "72%"]]}]},
     {"index": 3, "heading": "Appendix: raw notes",
      "text": "A long unstructured appendix with no internal headings.",

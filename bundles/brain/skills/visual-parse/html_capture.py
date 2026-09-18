@@ -87,21 +87,45 @@ def plan_captures(obj, max_px: int = 1600, overlap: float = 0.1) -> list[dict]:
 
 
 def _slug(source: str) -> str:
-    """Stable slug for a file path or URL — crawling later supplies URLs."""
-    s = re.sub(r"^[a-z]+://", "", source or "")
+    """Stable, collision-free slug for a file path or URL.
+
+    The readable tail is for humans reading an assets directory; the digest is
+    what makes two different sources impossible to confuse, since the slug names
+    the directory their captures land in. Truncating alone is not enough: two
+    URLs differing only in host share a tail.
+    """
+    s = re.sub(r"^[a-zA-Z]+://", "", source or "")
     s = re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
-    return (s[-60:].strip("-") or "doc")
+    digest = hashlib.sha256((source or "").encode("utf-8")).hexdigest()[:8]
+    tail = s[-48:].strip("-")
+    return f"{tail}-{digest}" if tail else digest
+
+
+def _cell(v) -> str:
+    """Escape pipes and normalize whitespace in a cell value."""
+    return str(v).replace("|", "\\|").replace("\n", " ").strip()
 
 
 def _grid(table) -> str:
-    rows = table.get("rows") or []
+    """Render a DOM table into Markdown, handling ragged rows and pipes in cells.
+
+    The DOM knows whether a table has a header; Python cannot guess. Tables
+    without an explicit header get an empty-cell row, preserving column count.
+    """
+    rows = [r for r in (table.get("rows") or []) if r]
     if not rows:
         return ""
-    head, *body = rows
-    out = ["| " + " | ".join(head) + " |",
-           "|" + "|".join(["---"] * len(head)) + "|"]
-    out += ["| " + " | ".join(r) + " |" for r in body]
-    cap = (table.get("caption") or "").strip()
+    width = max(len(r) for r in rows)
+    has_header = bool(table.get("hasHeader", True))
+    head = [_cell(c) for c in rows[0]] if has_header else [""] * width
+    body = rows[1:] if has_header else rows
+    head += [""] * (width - len(head))
+    out = ["| " + " | ".join(head) + " |", "|" + "|".join(["---"] * width) + "|"]
+    for r in body:
+        cells = [_cell(c) for c in r]
+        cells += [""] * (width - len(cells))  # pad ragged rows
+        out.append("| " + " | ".join(cells[:width]) + " |")
+    cap = _cell(table.get("caption") or "")
     return (f"**{cap}**\n\n" if cap else "") + "\n".join(out)
 
 
@@ -121,6 +145,9 @@ def assemble(obj, plan, outdir: str, dpi: int = 96) -> dict:
             raise FileNotFoundError(f"capture missing: {png}")
         seg = by_index[entry["segment"]]
         text = seg.get("text") or ""
+        # Every tile of a segment carries the SAME full segment text on purpose,
+        # because a later task merges a segment's tiles into one chunk. Without it
+        # a reader cannot tell intent from bug.
         with open(os.path.join(outdir, f"p{n:02d}.txt"), "w", encoding="utf-8") as fh:
             fh.write(text)
         # A grid belongs to the segment, not to a tile: write it once, on tile 1.
@@ -134,7 +161,10 @@ def assemble(obj, plan, outdir: str, dpi: int = 96) -> dict:
             "page": n, "image": f"p{n:02d}.png",
             "img_sha": hashlib.sha256(open(png, "rb").read()).hexdigest(),
             "text_len": len(text.strip()), "n_drawings": 0, "n_tables": len(grids),
-            "img_cover": 1.0, "flagged": True, "why": "html-segment",
+            "img_cover": 1.0,
+            # HTML segments are deck slides, the equivalent of render_pages.py --all,
+            # so every segment goes to the vision model for transcription.
+            "flagged": True, "why": "html-segment",
             "segment": entry["segment"], "tile": entry["tile"], "of": entry["of"],
         })
     payload = {"doc": obj.get("title") or obj.get("source", ""), "slug": _slug(obj.get("source", "")),
