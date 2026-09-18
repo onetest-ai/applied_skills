@@ -177,9 +177,11 @@ class TestBrainContractIsInlined(unittest.TestCase):
                              f"{name}: inlined contract differs from doctrine.md")
 
     def test_verifier_inlines_the_resolution_rules(self):
+        # "project instructions" (the pinned-Brain step) is not yet part of the
+        # contract; Task 14 reintroduces this token when the pin itself lands.
         from test_plugin_structure import KB_ROOT, read_text
         text = read_text(KB_ROOT / "agents" / "verifier.md")
-        for token in ("tool surface", "project instructions", "never blend"):
+        for token in ("tool surface", "never blend"):
             self.assertIn(token, text, f"verifier missing {token!r}")
 
     def test_no_skill_depends_on_a_parent_directory_reference_for_its_rules(self):

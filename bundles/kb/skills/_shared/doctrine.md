@@ -99,31 +99,12 @@ durable `meta` table). Use it to set altitude, not content:
 
 ## Brain Discovery
 
-A **Brain** is any MCP server in your available tools that exposes the Brain **tool surface**: `health`, `search_knowledge`, `get_metric`, `get_taxonomy`, `get_evidence`,
-`find_related_content`, `list_metrics`. Identify a Brain by that surface, never by its
-server name — the name is chosen by whoever registered it and carries no guarantee.
-
-Resolve one Brain per skill invocation, in this order:
-
-1. **Override.** If the user named a Brain in the request ("ask the acme brain about X"),
-   match it case-insensitively against each candidate's server-name segment and against
-   its `about.goal`. Use that Brain.
-2. **Discover.** Scan your available tools for servers carrying the surface. Call `health`
-   on each candidate.
-3. **One healthy Brain.** Use it. Name it in one short line, then answer.
-4. **Several.** Ask the user which, listing each as `server-name — about.goal` (prefer an
-   advertised `about.name` over the goal when the Brain provides one). Do not guess.
-5. **None.** Say so and point to `/kb:connect`.
-
-`health` is already called to read `about` for altitude, so disambiguation costs no extra
-round-trip beyond probing each candidate.
-
-**One invocation binds to one Brain.** Once resolved, every call in that invocation goes
-to that same server. Never blend results from two Brains into one cited answer — a mixed
-answer is unverifiable, and its citations point at stores the reader cannot reconcile.
-
-When dispatching the `verifier` subagent, state the resolved Brain's name in the dispatch
-prompt so it verifies against the store the draft actually came from.
+A **Brain** is any MCP server in your available tools that exposes the Brain tool surface —
+identify it by that surface, never by its server name, since the name is chosen by whoever
+registered it and carries no guarantee. `health` is already called to read `about` for
+altitude, so disambiguation costs no extra round-trip beyond probing each candidate. The
+ordered resolution steps live once, below, in the delimited contract block — not restated
+here, so this file never states the order twice.
 
 ## The Brain contract (non-negotiable)
 
@@ -135,15 +116,15 @@ This copy is what CI checks every inlined copy against; edit it here, then propa
 <!-- BRAIN-CONTRACT:START -->
 **Resolve one Brain per invocation.** A Brain is any MCP server exposing the tool surface
 `health`, `search_knowledge`, `get_metric`, `get_taxonomy`, `get_evidence`,
-`find_related_content`, `list_metrics` — identify it by that surface, never by server name
-(a later pin in project instructions will slot a step above this order; not yet in effect).
+`find_related_content`, `list_metrics` — identify it by that surface, never by server name.
 
 1. **Override.** If the user named a Brain in the request, match it case-insensitively
    against each candidate's server-name segment and its `about.goal`. Use that Brain.
 2. **Discover.** Scan available tools for servers carrying the surface and call `health`
    on each candidate.
-3. **One healthy Brain.** Use it.
-4. **Several.** Ask the user which, listing each as `server-name — about.goal`. Do not guess.
+3. **One healthy Brain.** Use it. Name it in one short line, then answer.
+4. **Several.** Ask the user which, listing each as `server-name — about.goal` (prefer an
+   advertised `about.name` over the goal when the Brain provides one). Do not guess.
 5. **None.** Say so and point to `/kb:connect`.
 
 **One invocation binds to one Brain.** Once resolved, every call in this invocation goes to

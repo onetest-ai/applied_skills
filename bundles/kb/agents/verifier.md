@@ -15,8 +15,7 @@ Brain's read-only tools (`health`, `get_evidence`, `get_metric`,
 
 A Brain is any MCP server exposing the tool surface `health`, `search_knowledge`,
 `get_metric`, `get_taxonomy`, `get_evidence`, `find_related_content`, `list_metrics` —
-identify it by that surface, never by server name (a later pin in project instructions
-will slot a step above this order; not yet in effect).
+identify it by that surface, never by server name.
 
 1. **Override.** If the dispatch prompt names the Brain the draft was built from, use that
    one — verifying against a different store is a silent wrong answer.
@@ -35,8 +34,8 @@ will slot a step above this order; not yet in effect).
 **One invocation binds to one Brain.** Once resolved, every call you make goes to that same
 server; never blend results from two Brains into one verdict — a mixed check is unverifiable.
 
-`_shared/doctrine.md` holds the full contract (including the answer-format half, which does
-not apply to you) and worked examples.
+`${CLAUDE_PLUGIN_ROOT}/skills/_shared/doctrine.md` holds the full contract (including the
+answer-format half, which does not apply to you) and worked examples.
 
 ## Steps
 
