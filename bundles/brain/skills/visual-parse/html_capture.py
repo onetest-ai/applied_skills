@@ -8,7 +8,10 @@ in Chrome and this consumes what it produced.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import re
 
 
 def validate_segments(obj) -> list[str]:
@@ -81,3 +84,61 @@ def plan_captures(obj, max_px: int = 1600, overlap: float = 0.1) -> list[dict]:
                          "height": min(float(max_px), height - off)},
             })
     return plan
+
+
+def _slug(source: str) -> str:
+    """Stable slug for a file path or URL — crawling later supplies URLs."""
+    s = re.sub(r"^[a-z]+://", "", source or "")
+    s = re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
+    return (s[-60:].strip("-") or "doc")
+
+
+def _grid(table) -> str:
+    rows = table.get("rows") or []
+    if not rows:
+        return ""
+    head, *body = rows
+    out = ["| " + " | ".join(head) + " |",
+           "|" + "|".join(["---"] * len(head)) + "|"]
+    out += ["| " + " | ".join(r) + " |" for r in body]
+    cap = (table.get("caption") or "").strip()
+    return (f"**{cap}**\n\n" if cap else "") + "\n".join(out)
+
+
+def assemble(obj, plan, outdir: str, dpi: int = 96) -> dict:
+    """Write the visual lane's artifact layout for one captured document.
+
+    Emits exactly what render_pages.py emits so vision_prep.py needs no change,
+    plus an additive `segment` field grouping the tiles of one logical unit.
+    """
+    os.makedirs(outdir, exist_ok=True)
+    by_index = {int(s["index"]): s for s in obj["segments"]}
+    rows = []
+    for entry in plan:
+        n = entry["page"]
+        png = os.path.join(outdir, f"p{n:02d}.png")
+        if not os.path.exists(png):
+            raise FileNotFoundError(f"capture missing: {png}")
+        seg = by_index[entry["segment"]]
+        text = seg.get("text") or ""
+        with open(os.path.join(outdir, f"p{n:02d}.txt"), "w", encoding="utf-8") as fh:
+            fh.write(text)
+        # A grid belongs to the segment, not to a tile: write it once, on tile 1.
+        grids = [_grid(t) for t in (seg.get("tables") or [])] if entry["tile"] == 1 else []
+        grids = [g for g in grids if g]
+        if grids:
+            with open(os.path.join(outdir, f"p{n:02d}.tables.md"), "w", encoding="utf-8") as fh:
+                fh.write("\n\n".join(f"### Table {i} (extracted, verbatim cells)\n{g}"
+                                     for i, g in enumerate(grids, 1)))
+        rows.append({
+            "page": n, "image": f"p{n:02d}.png",
+            "img_sha": hashlib.sha256(open(png, "rb").read()).hexdigest(),
+            "text_len": len(text.strip()), "n_drawings": 0, "n_tables": len(grids),
+            "img_cover": 1.0, "flagged": True, "why": "html-segment",
+            "segment": entry["segment"], "tile": entry["tile"], "of": entry["of"],
+        })
+    payload = {"doc": obj.get("title") or obj.get("source", ""), "slug": _slug(obj.get("source", "")),
+               "dpi": dpi, "source": obj.get("source", ""), "pages": rows}
+    with open(os.path.join(outdir, "pages.json"), "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2)
+    return payload
