@@ -1,44 +1,45 @@
 ---
-description: Use when the user asks to connect, reconnect, or check the Brain connection for kb — detects whether a Brain MCP server is reachable, reports its status, or walks the user through registering one (a Cowork connector or CLI mcp-config).
+description: Use when the user asks to connect, reconnect, check the Brain connection for kb, or see which Brains are reachable — detects every reachable Brain, reports it, or walks the user through registering one (a Cowork connector or CLI mcp-config).
+arguments: [brain]
 ---
 
-Detect and (if needed) help the user register the Brain that `kb` grounds itself in.
+Report the Brains `kb` can ground itself in, and help register one if none is reachable.
 
-1. **Detect the Brain.** Call `health` in each namespace kb knows about — `mcp__brain__health` and `mcp__plugin_brain_brain__health` — since the same server can be mounted under either name depending on how it was registered.
+1. **Discover.** Follow `../_shared/doctrine.md` → **Brain Discovery**: find every MCP
+   server in your available tools carrying the Brain tool surface, and call `health` on
+   each. If **$brain** is given, limit the report to the Brain it matches.
 
-2. **If a Brain answers:** report which namespace responded and the lane
-   counts / status `health` returns. Tell the user kb is ready to use
-   `/kb:ask`, `/kb:explore`, `/kb:challenge`, and (CLI only) ambient mode.
+2. **Report every Brain that answers** — not just the first. For each, give its server
+   name, its `about.goal` (and `about.name` when the Brain advertises one), and the lane
+   counts / status from `health`. Then tell the user kb is ready for `/kb:ask`,
+   `/kb:explore`, `/kb:challenge`, `/kb:brief`, `/kb:report`, and (CLI only) ambient mode.
 
-3. **If no Brain answers, register one — the steps differ by surface.**
-   First rule out a **misnamed connector**: kb can only call a Brain mounted as
-   `mcp__brain__*` or `mcp__plugin_brain_brain__*` — the server-name segment must be
-   literal (Claude Code allow-rules don't support a wildcard there), so a connector
-   registered under any other name (e.g. `knowledge`, `primo-brain`) is unreachable to
-   every kb skill even though it's healthy. If you see such a connector, **rename it to
-   `brain`** rather than adding a new one, then re-run `/kb:connect`. Otherwise register
-   one:
+   If several answered, say so plainly and note that the skills will ask which to use, or
+   that the user can name one in the request ("ask the acme brain about X"). **Do not tell
+   the user to rename or disable a connector — any name works.**
+
+3. **If no Brain answers, register one.** The steps differ by surface.
 
    **In Claude Cowork (Desktop):**
    - Open **Customize → Connectors → Add custom connector**.
-   - Paste this project's Brain **HTTPS MCP URL** (Streamable HTTP).
-   - Authorize with **Entra OAuth** in Advanced settings (or set an
-     `X-API-Key` header if your endpoint uses static keys).
-   - **Name the connector `brain`** so its tools should resolve as
-     `mcp__brain__*`, which is what kb's skills expect; `/kb:connect`'s health
-     probe will confirm the resolution (or reveal a mismatch). If you belong
-     to two projects, keep each project's connector added, but two
-     connectors cannot both be named `brain` at once — disable the other
-     project's Brain connector and enable this project's (named `brain`) so
-     exactly one `brain` connector is active for this task.
+   - Paste the project's Brain **HTTPS MCP URL** (Streamable HTTP).
+   - Authorize with **Entra OAuth** in Advanced settings (or set an `X-API-Key` header if
+     the endpoint uses static keys).
+   - Give it a name that identifies the project (`acme-brain`, `primo-brain`). The name is
+     free — kb finds a Brain by its tools, not its name — so a meaningful one just makes
+     the choice readable when several are connected.
    - Enable the connector, then re-run `/kb:connect`.
 
    **In Claude Code (CLI):**
-   - From the brain project, run `./brain mcp-config` to print the
-     `mcpServers` JSON block for that store.
-   - Add that block to this project's `.mcp.json` (merge; don't clobber other
-     servers). Reload plugins / restart the session.
+   - From the brain project, run `./brain mcp-config` to print the `mcpServers` JSON block
+     for that store.
+   - Add that block to this project's `.mcp.json` (merge; don't clobber other servers).
+     Reload plugins / restart the session.
    - See `bundles/brain/README.md` for the full walkthrough.
 
-4. **Re-check.** After registration, call `health` again to confirm the Brain
-   is reachable, and report the result.
+4. **Re-check.** After registration, discover again and report the result.
+
+**On approvals.** kb does not write permission rules. Brain tool calls prompt for approval
+unless the user allows them. To silence the prompts, add the Brain's server to
+`permissions.allow` in `.claude/settings.json`, e.g. `"mcp__acme-brain"` — use the
+exact name you registered the connector under.
