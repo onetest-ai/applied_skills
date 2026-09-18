@@ -143,5 +143,54 @@ class TestSkillsNameNoServer(unittest.TestCase):
                              f"{path.parent.name}: must not declare allowed-tools")
 
 
+CONTRACT_START = "<!-- BRAIN-CONTRACT:START -->"
+CONTRACT_END = "<!-- BRAIN-CONTRACT:END -->"
+
+
+def _contract(text):
+    """The delimited canonical block, or '' when absent."""
+    if CONTRACT_START not in text or CONTRACT_END not in text:
+        return ""
+    return text.split(CONTRACT_START, 1)[1].split(CONTRACT_END, 1)[0]
+
+
+class TestBrainContractIsInlined(unittest.TestCase):
+    """A rule that only applies when a sibling file resolves is not a rule.
+
+    The Agent Skills format documents same-directory references only, so
+    `../_shared/*.md` may not resolve at runtime. Every skill that must obey the
+    contract carries it verbatim; this test is what keeps the copies identical.
+    """
+
+    def _canonical(self):
+        from test_plugin_structure import KB_ROOT, read_text
+        block = _contract(read_text(KB_ROOT / "skills" / "_shared" / "doctrine.md"))
+        self.assertTrue(block.strip(), "doctrine.md must delimit the canonical contract block")
+        return block
+
+    def test_every_answering_skill_inlines_the_contract(self):
+        from test_plugin_structure import KB_ROOT, read_text
+        canonical = self._canonical()
+        for name in ("ask", "brief", "challenge", "explore", "report"):
+            text = read_text(KB_ROOT / "skills" / name / "SKILL.md")
+            self.assertEqual(_contract(text), canonical,
+                             f"{name}: inlined contract differs from doctrine.md")
+
+    def test_verifier_inlines_the_resolution_rules(self):
+        from test_plugin_structure import KB_ROOT, read_text
+        text = read_text(KB_ROOT / "agents" / "verifier.md")
+        for token in ("tool surface", "project instructions", "never blend"):
+            self.assertIn(token, text, f"verifier missing {token!r}")
+
+    def test_no_skill_depends_on_a_parent_directory_reference_for_its_rules(self):
+        """Depth may live in _shared/; the rules may not."""
+        from test_plugin_structure import KB_ROOT, read_text
+        for name in ("ask", "brief", "challenge", "explore", "report"):
+            text = read_text(KB_ROOT / "skills" / name / "SKILL.md")
+            head = text.split(CONTRACT_START, 1)[0]
+            self.assertNotIn("Follow `../_shared/doctrine.md`", head,
+                             f"{name}: still defers its rules to a parent-directory file")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -124,3 +124,39 @@ answer is unverifiable, and its citations point at stores the reader cannot reco
 
 When dispatching the `verifier` subagent, state the resolved Brain's name in the dispatch
 prompt so it verifies against the store the draft actually came from.
+
+## The Brain contract (non-negotiable)
+
+This is the canonical text of the contract every answering skill and the `verifier` carry
+inline in their own file — the Agent Skills format only guarantees same-directory/
+subdirectory references resolve, so a `SKILL.md` cannot depend on this file for its rules.
+This copy is what CI checks every inlined copy against; edit it here, then propagate.
+
+<!-- BRAIN-CONTRACT:START -->
+**Resolve one Brain per invocation.** A Brain is any MCP server exposing the tool surface
+`health`, `search_knowledge`, `get_metric`, `get_taxonomy`, `get_evidence`,
+`find_related_content`, `list_metrics` — identify it by that surface, never by server name
+(a later pin in project instructions will slot a step above this order; not yet in effect).
+
+1. **Override.** If the user named a Brain in the request, match it case-insensitively
+   against each candidate's server-name segment and its `about.goal`. Use that Brain.
+2. **Discover.** Scan available tools for servers carrying the surface and call `health`
+   on each candidate.
+3. **One healthy Brain.** Use it.
+4. **Several.** Ask the user which, listing each as `server-name — about.goal`. Do not guess.
+5. **None.** Say so and point to `/kb:connect`.
+
+**One invocation binds to one Brain.** Once resolved, every call in this invocation goes to
+that same server. Never blend results from two Brains into one cited answer — a mixed
+answer is unverifiable, and its citations point at stores the reader cannot reconcile.
+
+**Numbers only from `get_metric`.** Never assert a figure from narrative; a number comes
+only from `get_metric` (a governed `facts` row) or a `get_evidence` extracted table.
+
+**Every claim is cited, or declared "Not modeled: …".** A gap beats a guess.
+
+**Answer format.** Lead with a 1–2 sentence direct answer. Cite each supported claim with a
+numbered footnote `[1]`, `[2]`, … Close with a `**Sources**` list mapping each number to
+`source_file.md — "Section"`. Keep `[RAG:]`/`[MART:]`/`[GRAPH:]` as internal anchors only —
+never print them to the user.
+<!-- BRAIN-CONTRACT:END -->

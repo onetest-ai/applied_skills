@@ -1,6 +1,10 @@
-# Shared Authoring Pipeline
+# Shared Authoring Pipeline (reference)
 
-This pipeline governs how `/kb:brief` and `/kb:report` gather, draft, verify, and emit authored deliverables — ensuring every claim is cited, verifiable, and grounded in the Brain.
+This is the worked-example reference for how `/kb:brief` and `/kb:report` gather, draft,
+verify, and emit authored deliverables. The non-negotiable parts — the human-approval gate
+and the Sources/`sources.json` sidecar contract — are inlined directly in each skill's own
+`SKILL.md`, since a `SKILL.md` cannot depend on this file resolving. What follows is depth:
+worked examples and formatting detail, safe to skip if this file doesn't resolve.
 
 ## The Pipeline
 
