@@ -1,6 +1,6 @@
 ---
 name: corpus-taxonomy-extraction
-description: Use when you need to induce a starting taxonomy (intent classes, entities/dimensions, and a metric inventory) from a heterogeneous document corpus (PDF/PPTX/DOCX/XLSX) under a stated analytical goal — e.g. seeding a local knowledge graph, semantic layer, or classification scheme before building deterministic analytics. Goal-directed, agentic, runs bulk work on a low-tier model.
+description: Use when you need to induce a starting taxonomy (intent classes, entities/dimensions, and a metric inventory) from a heterogeneous document corpus (PDF/PPTX/DOCX/XLSX/MD) under a stated analytical goal — e.g. seeding a local knowledge graph, semantic layer, or classification scheme before building deterministic analytics. Goal-directed, agentic, runs bulk work on a low-tier model.
 ---
 
 # Corpus Taxonomy Extraction
@@ -49,9 +49,10 @@ goal + corpus + optional seed taxonomy
 ```
 
 ### 1. Parse — `parse_corpus.py` (deterministic, no LLM)
-`python parse_corpus.py --corpus <dir> --out <dir> --formats pptx,docx,pdf`
+`python parse_corpus.py --corpus <dir> --out <dir> --formats pptx,docx,pdf,md,markdown,txt`
 - PDF → PyMuPDF text layer; PPTX/DOCX → soffice→PDF→PyMuPDF; XLSX → openpyxl `read_only` structure dump. (Visual/diagram pages → the `visual-parse` skill.)
-- **Taxonomy pass = narrative/summary formats only (`--formats pptx,docx,pdf`).** Do NOT parse the big numeric workbooks — they explode into tens of MB of useless number-grid markdown and belong to the deterministic numeric lane, not here.
+- **MD/MARKDOWN/TXT → passthrough.** Markdown is already the parsed-store format, so a pre-processed corpus is copied verbatim under the standard `# SOURCE:` header — no converter, no LibreOffice, no loss.
+- **Taxonomy pass = narrative/summary formats only (`--formats pptx,docx,pdf,md,markdown,txt`).** Do NOT parse the big numeric workbooks — they explode into tens of MB of useless number-grid markdown and belong to the deterministic numeric lane, not here.
 
 **VTT/SRT corpora — two-pass approach:**
 
@@ -59,7 +60,7 @@ VTT and SRT (meeting transcripts) are parsed separately from the taxonomy induct
 
 ```bash
 # Taxonomy pass — narrative docs only (PDFs, slides)
-python parse_corpus.py --corpus <docs> --out <project>/map_parsed --formats pptx,docx,pdf
+python parse_corpus.py --corpus <docs> --out <project>/map_parsed --formats pptx,docx,pdf,md,markdown,txt
 
 # Knowledge-index pass — transcripts (separate output dir, --merge-cues required)
 python parse_corpus.py --corpus <docs> --out <project>/parsed --formats vtt,srt --merge-cues 10

@@ -1,6 +1,6 @@
 ---
 name: brain-maintenance
-description: Safely update and optionally deploy an existing Brain knowledge product. Use when the user asks to refresh, synchronize, maintain, rebuild changed sources, update the knowledge base, publish a new Brain image, deploy a Brain MCP revision, or roll back an update. Orchestrates source registry, visual parsing, parsed-store delta, selective classification, conditional marts, verification, and project-profile-driven deployment. The agent owns judgment and gates; scripts perform deterministic operations.
+description: Use when the user asks to refresh, synchronize, maintain, rebuild changed sources, update the knowledge base, publish a new Brain image, deploy a Brain MCP revision, or roll back an update — safely updates and optionally deploys an existing Brain knowledge product. Orchestrates source registry, visual parsing, parsed-store delta, selective classification, conditional marts, verification, and project-profile-driven deployment. The agent owns judgment and gates; scripts perform deterministic operations.
 ---
 
 # Brain Maintenance
@@ -103,6 +103,8 @@ For every added/changed narrative source:
 
 Use a fresh run directory for vision results. Never consume stale or partial `result_*.json`.
 
+**`--formats`'s default now includes `md,markdown,txt`.** On an existing corpus/project that predates this, a parse run with default `--formats` (i.e. omitting the flag) will pick up previously-skipped `.md`/`.txt` files as new sources on this maintenance pass — a silent behaviour change for deployed projects, not a bug. Expect and review the resulting new/changed doc count in the parsed-store delta below rather than treating it as drift.
+
 For a genuinely text-only source, deterministic parsing is acceptable. Do not downgrade an existing visually enriched document to a text-only parse.
 
 **VTT/SRT sources require two separate parse passes** — `--merge-cues` only applies to transcripts and must not be passed for PDF/PPTX/DOCX:
@@ -111,7 +113,7 @@ For a genuinely text-only source, deterministic parsing is acceptable. Do not do
 # Pass 1 — transcripts only
 python <skills>/corpus-taxonomy-extraction/parse_corpus.py --corpus <root> --out parsed/ --formats vtt,srt --merge-cues 10
 # Pass 2 — narrative docs
-python <skills>/corpus-taxonomy-extraction/parse_corpus.py --corpus <root> --out parsed/ --formats pptx,docx,pdf
+python <skills>/corpus-taxonomy-extraction/parse_corpus.py --corpus <root> --out parsed/ --formats pptx,docx,pdf,md,markdown,txt
 ```
 
 ### 4. Review and apply parsed-store delta
@@ -149,6 +151,18 @@ Never derive numeric authority from parsed narrative documents.
 ### 7. Verify locally
 
 Run the project verification, MCP tests, and representative narrative/numeric smoke checks. Compare lane counts with the pre-update status. Do not deploy with empty required lanes, missing citations, incomplete classification, or a failed MCP contract.
+
+- **Check the Brain is identifiable.** Read `meta.name`. If it is empty, warn the operator:
+  a client with several Brains connected will show this one only by its connector name and
+  goal. `name.txt` at the project root is the durable, reproducible source of truth for
+  `meta.name` — the same convention as `goal.txt`/`audience`. Tell the operator to set
+  `name.txt` (e.g. `echo 'ACME Contact Centre' > name.txt`) and re-run
+  `brain_sync.py seed` (or `apply`), which carries it into `meta.name` on every run, the
+  same way goal/audience refresh. A direct
+  `INSERT OR REPLACE INTO meta(key,value) VALUES('name', '<name>')` (via `./brain sql`)
+  also works for a one-off fix, but does not survive being reproduced from source files —
+  prefer `name.txt` + seed. This is a warning, never a gate — an anonymous Brain is fully
+  functional.
 
 ### 8. Plan and deploy through the project profile
 

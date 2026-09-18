@@ -1,6 +1,5 @@
 ---
-description: Turn ambient grounding mode on or off (or check its status) for this project. When on, every prompt gets a short reminder to ground factual/numeric claims in the Brain via a UserPromptSubmit hook. Use when the user asks to enable/disable/check "ambient mode" for kb.
-allowed-tools: Read Write(*/.claude/kb/state.json) Bash(mkdir *)
+description: Use when the user asks to enable, disable, or check "ambient mode" for kb — turns ambient grounding mode on or off (or checks its status) for this project. When on, every prompt gets a short reminder to ground factual/numeric claims in the Brain via a UserPromptSubmit hook.
 arguments: [action]
 ---
 

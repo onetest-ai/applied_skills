@@ -42,33 +42,57 @@ Each project has its own Brain endpoint. Add it once per project:
 
    ![Connectors tab with the Add button highlighted](images/cowork-05-connectors-add.png)
 
-2. In **Add custom connector**, **name the connector `brain`** and paste your
-   project's **HTTPS MCP URL** (Streamable HTTP transport).
+2. In **Add custom connector**, give the connector a name that identifies the
+   project (e.g. `acme-brain`) and paste your project's **HTTPS MCP URL**
+   (Streamable HTTP transport).
 
-   ![Add custom connector dialog: name field set to brain and the MCP server URL field](images/cowork-06-add-connector-name-brain.png)
+   ![Add custom connector dialog: the connector name and MCP server URL fields](images/cowork-06-add-connector-name-brain.png)
+
+   > The screenshot shows `brain` in the name field — that is just the example name it was
+   > captured with, not a requirement. Any name works.
 
 3. Authorize with **Entra OAuth** (Advanced settings → OAuth client id/secret).
    If your endpoint uses a static key, set an `X-API-Key` header instead.
-4. Naming it `brain` matters: kb's skills call `mcp__brain__*`, so its tools are
-   expected to resolve as `mcp__brain__*` when the connector is named `brain`;
-   `/kb:connect`'s health probe will confirm the resolution (or reveal a
-   mismatch).
+4. The name is yours to choose — **any name works**. kb finds a Brain by the tools it
+   exposes, not by what the connector is called; a project-specific name just makes the
+   choice readable when several Brains are connected.
 5. Enable the connector.
+6. **Pin it in this project's instructions.** Add one line naming the Brain to the project
+   instructions Cowork surfaces for this project (kb never writes this file — add the line
+   yourself):
 
-**In two projects?** Keep each project's connector added, but two connectors
-cannot both be named `brain` at once — for the current Cowork task, disable
-the other project's Brain connector and enable this project's (named
-`brain`), so exactly one `brain` connector is active. kb grounds itself in
-that active `brain` connector.
+   ```
+   This project's Brain is `acme-brain`.
+   ```
+
+   kb checks a Brain named in the request first, the pin second, and only then falls back
+   to discovery — so a project with one connector never has to disambiguate, and a project
+   with several answers from the one you pinned whenever a request names none. Naming a
+   different Brain in the request always wins over the pin. If the pin names a Brain that
+   matches no reachable candidate at all, kb stops and tells you which Brains ARE reachable
+   instead of silently answering from a different one.
+
+**In two projects?** Add both Brains as connectors and leave both enabled. kb discovers
+every reachable Brain and, when more than one answers, asks which to use — listing each by
+name and by the analytical goal it reports. You can answer in advance by naming it in the
+request ("ask the acme brain about Q3 handle time" — this always wins, even over a pin), or
+pin one per project as above for every request that names none.
 
 ## 3. Verify
 
-Run `/kb:connect`. It calls `health` and reports whether the Brain is
-reachable. Then use `/kb:ask`, `/kb:explore`, `/kb:challenge`, `/kb:brief`,
-`/kb:report`.
+Ask a simple question with `/kb:ask` — e.g. "what data does this Brain cover?" — and
+confirm the answer cites the Brain you expect (it names which Brain it used before
+answering). Then use `/kb:explore`, `/kb:challenge`, `/kb:brief`, `/kb:report`.
 
 ## What differs from the CLI
 
 - **Ambient mode (`/kb:mode`)** relies on a hook that does not fire in Cowork.
   In Cowork, ground answers by invoking the kb skills explicitly.
 - **The SessionStart health line** reads a local store and is CLI-only.
+- **Choosing between Brains** is remembered for the length of a conversation only. Cowork
+  has no project-local state for kb to write, so with several Brains connected it asks
+  once per conversation rather than once per project.
+- **Approval prompts.** The CLI's escape hatch — adding a server to `permissions.allow` in
+  `.claude/settings.json` — doesn't apply here: Cowork doesn't surface a
+  `.claude/settings.json` file for this project, so there's nothing to edit. Approve Brain
+  tool calls as Cowork prompts for them.

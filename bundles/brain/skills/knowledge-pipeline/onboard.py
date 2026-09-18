@@ -42,7 +42,7 @@ def brain_py():
             return str(c)
     return sys.executable
 
-NARRATIVE_EXT = {".pdf", ".pptx", ".ppt", ".docx", ".doc", ".md", ".txt", ".vtt", ".srt"}
+NARRATIVE_EXT = {".pdf", ".pptx", ".ppt", ".docx", ".doc", ".md", ".markdown", ".txt", ".vtt", ".srt"}
 REPORTING_EXT = {".xlsx", ".xlsm", ".xls", ".csv"}
 
 # module -> pip name (for the preflight message). All torch-free (docling retired).
@@ -133,6 +133,7 @@ def cmd_scaffold(a):
     if not met.exists():
         _copy_template(TSL / "metrics.example.json", met, corpus)
     (proj / "goal.txt").write_text((a.goal or "") + "\n")
+    (proj / "name.txt").write_text((a.name or "") + "\n")
     config = proj / "brain.toml"
     if not config.exists():
         def rel_or_abs(path):
@@ -150,7 +151,7 @@ def cmd_scaffold(a):
                  'include = ["**/*"]']
         if docs:
             lines += ["", "[sources.roots.docs]", f"path = {json.dumps(docs_path)}", f"mode = {json.dumps(a.docs_mode)}",
-                      'include = ["**/*.pdf", "**/*.ppt", "**/*.pptx", "**/*.doc", "**/*.docx", "**/*.vtt", "**/*.srt", "**/*.json"]']
+                      'include = ["**/*.pdf", "**/*.ppt", "**/*.pptx", "**/*.doc", "**/*.docx", "**/*.vtt", "**/*.srt", "**/*.json", "**/*.md", "**/*.markdown", "**/*.txt"]']
         if reporting:
             lines += ["", "[sources.roots.reporting]", f"path = {json.dumps(reporting_path)}", f"mode = {json.dumps(a.reporting_mode)}",
                       'include = ["**/*.xlsx", "**/*.xlsm", "**/*.xls"]']
@@ -166,7 +167,7 @@ def cmd_scaffold(a):
         shutil.copy2(launcher, proj / "brain")
         os.chmod(proj / "brain", 0o755)
 
-    plan = _plan_text(proj, corpus, db, docs, reporting, fam, met, a.goal, a.deploy_target, a.audience)
+    plan = _plan_text(proj, corpus, db, docs, reporting, fam, met, a.goal, a.deploy_target, a.audience, a.name)
     (proj / "BRAIN.md").write_text(plan)
 
     print(f"scaffolded project: {proj}")
@@ -179,10 +180,44 @@ def cmd_scaffold(a):
     return 0
 
 
-def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target="local", audience=""):
+def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target="local", audience="", name=""):
     docs_s = str(docs) if docs else "<docs-dir>"
     rep_s = str(reporting) if reporting else "<reporting-dir>"
     py = brain_py()
+    # Seeding is build correctness, not a name-dependent nicety: `brain_sync.py seed`
+    # populates the `synced_files` tracking table that every later maintenance pass
+    # requires. An anonymous project (no --name) still needs it — skipping it left
+    # anonymous projects' first maintenance run failing with "synced_files table
+    # missing; run brain_sync seed first". So step 9 is ALWAYS emitted; only the note
+    # about also recording the display name is conditional on `name`.
+    # step9 is interpolated into the OUTER textwrap.dedent(f"""...""") below at column 0
+    # (no leading spaces before "{step9}" in that template), and the f-string is evaluated
+    # BEFORE the outer dedent runs. So step9's own lines must already carry the same
+    # 4-space indentation as every other line in that literal — an inner dedent()-then-drop
+    # (zero-indent) string would make the common leading prefix across the WHOLE outer
+    # document "", turning the outer dedent into a no-op and indenting the entire generated
+    # BRAIN.md by four spaces (which Markdown then renders as one indented code block).
+    if name:
+        name_note = textwrap.dedent(f"""
+        #     This also records the Brain's display name into the durable `meta` table via
+        #     name.txt, not raw SQL: it was written to `{proj/'name.txt'}` by scaffold, and
+        #     brain_sync's seed/apply path (see SKILL.md's plan/apply/seed sequence) UPSERTs
+        #     it into meta.name on this same seed call.""").strip("\n")
+    else:
+        name_note = ""
+    step9_body_lines = [
+        "# 9 · seed the `synced_files` tracking table — required before any maintenance",
+        "#     pass; an unseeded store fails its first maintenance run with \"synced_files",
+        "#     table missing\". Always run this, named project or not.",
+    ]
+    if name_note:
+        step9_body_lines.append(name_note)
+    step9_body_lines.append(
+        f'"$PY" "{Path(__file__).resolve().parent/"brain_sync.py"}" seed --db "$DB" '
+        f'--parsed "{proj/"parsed"}" --require-goal'
+    )
+    step9_body = "\n".join(step9_body_lines)
+    step9 = "\n" + textwrap.indent(step9_body, "    ") + "\n"
     deploy_section = textwrap.dedent({
         "local": """
     ## Deployment target: local
@@ -214,6 +249,11 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     taxonomy emphasis (secondary lens under the goal) and how the `kb` plugin sets answer
     altitude/vocabulary and authored-artifact tone/depth. Canonical in `brain.toml`
     `[project].audience`; distinct from `[deployment].target` (distribution/infra).
+
+    **Name (optional):** {name or "<none — this Brain is anonymous>"} — the display name
+    a client shows when several Brains are connected. Written to `name.txt`. A Brain with
+    no name is fully functional; a client juggling several just tells them apart by
+    connector name and goal instead.
 
     **Store:** `{db}` — one portable SQLite file (chunks+FTS+vector · facts · graph).
     **Source config:** `{proj/'brain.toml'}` — named roots with paths relative to this project.
@@ -265,7 +305,8 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats vtt,srt --merge-cues 10
 
     # 1b · parse narrative docs → Markdown (pymupdf text; visual pages via visual-parse)
-    "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats pptx,docx,pdf
+    #      md/markdown/txt pass through untouched — already-Markdown corpora need no conversion.
+    "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats pptx,docx,pdf,md,markdown,txt
 
     # 2 · 🤖 induce taxonomy (map→reduce→judge→emit) → taxonomy/taxonomy_v0.json
     #     see corpus-taxonomy-extraction/SKILL.md; goal = above. Dispatch Haiku subagents.
@@ -291,7 +332,7 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
 
     # 8 · Obsidian vault = a VIEW of the store
     "$PY" "{CTE/'to_obsidian.py'}" --db "$DB" --out "{proj/'vault'}"
-
+{step9}
     # verify the built store
     "$PY" "{Path(__file__).resolve()}" verify --db "$DB"
     ```
@@ -387,6 +428,8 @@ def main():
     s = sub.add_parser("scaffold", help="create project layout + config templates + BRAIN.md plan, then preflight & scan")
     s.add_argument("--project", required=True, help="project dir to create/populate")
     s.add_argument("--goal", default="", help="analytical goal string (the noise filter)")
+    s.add_argument("--name", help="display name for this Brain, e.g. 'ACME Contact Centre' "
+                   "— what a client shows when several Brains are connected")
     s.add_argument("--audience", default="", help="who will consume the KB — roles/personas "
                    "(e.g. 'call-center ops managers and workforce planners'). Canonical in "
                    "brain.toml [project].audience; drives taxonomy emphasis + kb answer/artifact "

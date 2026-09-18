@@ -12,14 +12,18 @@ sys.path.insert(0, str(HERE))
 import brain_sync as B  # noqa: E402
 
 
-def _project(td: str, goal: str = "", audience: str = ""):
-    """Build a <project>/schema/knowledge.sqlite layout; goal.txt/brain.toml optional."""
+def _project(td: str, goal: str = "", audience: str = "", name: str = None):
+    """Build a <project>/schema/knowledge.sqlite layout; goal.txt/brain.toml/name.txt
+    optional. `name` uses None (not "") as "don't write name.txt" so callers can also
+    exercise an explicitly blank name.txt if ever needed."""
     proj = Path(td)
     (proj / "schema").mkdir(parents=True, exist_ok=True)
     if goal:
         (proj / "goal.txt").write_text(goal, encoding="utf-8")
     if audience:
         (proj / "brain.toml").write_text(f'[project]\naudience = "{audience}"\n', encoding="utf-8")
+    if name is not None:
+        (proj / "name.txt").write_text(name, encoding="utf-8")
     return str(proj / "schema" / "knowledge.sqlite")
 
 
@@ -51,6 +55,54 @@ class WriteMetaTests(unittest.TestCase):
             db = _project(td)
             c = sqlite3.connect(db)
             self.assertEqual(B.read_meta(c, "goal"), "")  # no meta table yet
+            c.close()
+
+
+class WriteMetaNameTests(unittest.TestCase):
+    """name is asymmetric with goal/audience: it carries forward from name.txt when
+    present (the fix for the "rename does nothing" finding), but a MISSING name.txt must
+    never clear an existing meta.name — that would silently destroy a hand-set name on
+    every ordinary seed/apply of every pre-existing project (none of which has name.txt)."""
+
+    def test_name_txt_present_carries_forward_into_meta(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = _project(td, goal="g", name="ACME Contact Centre")
+            c = sqlite3.connect(db)
+            B.write_meta(c, db)
+            self.assertEqual(B.read_meta(c, "name"), "ACME Contact Centre")
+            c.close()
+
+    def test_editing_name_txt_and_reseeding_updates_meta(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = _project(td, goal="g", name="Old Name")
+            c = sqlite3.connect(db)
+            B.write_meta(c, db)
+            self.assertEqual(B.read_meta(c, "name"), "Old Name")
+            (Path(td) / "name.txt").write_text("New Name", encoding="utf-8")
+            B.write_meta(c, db)                        # re-seed after a rename
+            self.assertEqual(B.read_meta(c, "name"), "New Name")
+            c.close()
+
+    def test_missing_name_txt_never_clears_an_existing_meta_name(self):
+        """The data-loss guard: an operator hand-set meta.name (e.g. via the
+        brain-maintenance INSERT OR REPLACE fix-up) with no name.txt on disk. An ordinary
+        seed/apply of that project must leave it untouched, not wipe it to empty."""
+        with tempfile.TemporaryDirectory() as td:
+            db = _project(td, goal="g")                # no name.txt
+            c = sqlite3.connect(db)
+            B.ensure_meta(c)
+            c.execute("INSERT INTO meta(key,value) VALUES('name', 'Hand-Set Name')")
+            c.commit()
+            B.write_meta(c, db)                         # ordinary re-seed, no rename intended
+            self.assertEqual(B.read_meta(c, "name"), "Hand-Set Name")
+            c.close()
+
+    def test_missing_name_txt_and_no_prior_meta_name_stays_empty_and_does_not_raise(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = _project(td, goal="g")                # no name.txt, no prior meta.name
+            c = sqlite3.connect(db)
+            B.write_meta(c, db)
+            self.assertEqual(B.read_meta(c, "name"), "")
             c.close()
 
 

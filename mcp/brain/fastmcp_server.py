@@ -33,7 +33,7 @@ from semantic_core import (
     search_knowledge as _search_knowledge,
 )
 
-INSTRUCTIONS = """
+_ROUTING_INSTRUCTIONS = """
 This server exposes a private knowledge brain through safe, read-only semantic tools.
 
 Routing: narrative -> search_knowledge; exact figures -> get_metric (never infer a number
@@ -103,10 +103,39 @@ class FailSafeFastMCP(FastMCP):
             return _finalize_error_flags(error.to_mcp_result())
 
 
+def _brain_identity() -> str:
+    """This deployment's display name: meta.name, else the first clause of meta.goal,
+    else empty. Never raises — an unreadable store yields an anonymous Brain, not a
+    failed start."""
+    try:
+        about = _health().get("about") or {}
+    except Exception:
+        return ""
+    name = (about.get("name") or "").strip()
+    if name:
+        return name
+    goal = (about.get("goal") or "").strip()
+    return goal.split(".")[0].split(";")[0].strip() if goal else ""
+
+
+def _instructions_for(identity: str) -> str:
+    """Prepend an identity paragraph so a client with several Brains connected can tell
+    them apart from the server instructions alone."""
+    if not identity:
+        return _ROUTING_INSTRUCTIONS
+    return (
+        f"This Brain answers for **{identity}**. If several Brains are connected, this one "
+        f"covers {identity} only — never blend its results with another Brain's, and say "
+        f"which Brain a figure came from.\n\n" + _ROUTING_INSTRUCTIONS
+    )
+
+
+_IDENTITY = _brain_identity()
+
 mcp = FailSafeFastMCP(
-    name="Semantic Knowledge Brain",
-    version="1.1.2",
-    instructions=INSTRUCTIONS,
+    name=f"Semantic Knowledge Brain — {_IDENTITY}" if _IDENTITY else "Semantic Knowledge Brain",
+    version="1.2.0",
+    instructions=_instructions_for(_IDENTITY),
     mask_error_details=True,
     # Tool functions validate inputs themselves so mistakes can be returned as structured,
     # actionable isError results with a stable payload, instead of raw protocol errors that
@@ -427,6 +456,51 @@ def get_evidence(
 def health() -> dict | ToolResult:
     """Check all three knowledge lanes and report the deployed knowledge version."""
     return _safe_call("health", _health)
+
+
+def _apply_label(tools, identity: str) -> None:
+    """Shared idempotent labelling logic: prefix every tool's description with the
+    Brain's name. Tool descriptions are always in the client's context, while server
+    `instructions` may not be — labelling both is how a client with several Brains
+    connected tells them apart. A description already carrying the label is left alone."""
+    if not identity:
+        return
+    label = f"[{identity}]"
+    for tool in tools:
+        text = tool.description or ""
+        if not text.startswith(label):
+            tool.description = f"{label} {text}".strip()
+
+
+async def _label_tools(identity: str) -> None:
+    """Public async API: four tests call this directly. Kept exactly as before; shares
+    `_apply_label` with the synchronous import-time path so the two cannot drift."""
+    _apply_label((await mcp.get_tools()).values(), identity)
+
+
+def _label_tools_at_import(identity: str) -> None:
+    """Label tool descriptions at import time without ever awaiting anything or touching
+    the event loop. In pinned fastmcp 2.14.7, `mcp.get_tools()` resolves to
+    `ToolManager.get_tools()` -> `apply_transformations_to_tools(self._tools, {})`, which
+    with no transformations returns the same `Tool` objects already sitting in
+    `mcp._tool_manager._tools` — so walking that registry directly does no IO and needs no
+    loop, thread, or `asyncio.run`.
+
+    Guarded broadly and deliberately: this runs at MODULE IMPORT, above `app =
+    mcp.http_app(...)`. A labelling failure here — e.g. a future fastmcp renaming the
+    private `_tool_manager`/`_tools` attributes this walks — must never stop the module
+    from finishing import and `app`/`main()` from booting. That mirrors the contract
+    `_brain_identity()` already keeps: an unreadable store yields an anonymous Brain, not a
+    failed start. Here it's an unlabelled-but-serving Brain, not a failed start."""
+    try:
+        _apply_label(mcp._tool_manager._tools.values(), identity)
+    except Exception:
+        pass
+
+
+# Label tool descriptions at import time so both entrypoints — `main()`'s stdio/http path
+# and the module-level ASGI `app` export below — ship labelled tool descriptions.
+_label_tools_at_import(_IDENTITY)
 
 
 @mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)

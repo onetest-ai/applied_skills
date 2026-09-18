@@ -1,7 +1,7 @@
 {
   "name": "brain",
   "description": "Build, maintain, and deploy the Brain — a local, truthful knowledge engine: goal-directed taxonomy extraction, local hybrid RAG (SQLite FTS5 + vectors), a config-driven SQLite semantic layer, and hybrid retrieval that routes numbers to deterministic SQL and narrative to RAG. Served over a governed MCP (registered via ./brain mcp-config).",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "author": { "name": "onetest-ai" },
   "homepage": "https://github.com/onetest-ai/applied_skills",
   "keywords": ["sqlite", "rag", "semantic-layer", "etl", "taxonomy", "knowledge-graph", "pymupdf", "retrieval"]

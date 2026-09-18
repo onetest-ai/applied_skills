@@ -29,8 +29,8 @@ No required cloud service and no lock-in. Copy `knowledge.sqlite` for text/graph
 Plus the repo's top-level **`mcp/brain/`** — the governed FastMCP **tool layer** (`fastmcp_server.py`) with local stdio and opt-in Streamable HTTP. It lives in `mcp/`, not `skills/` (see below).
 
 > **`brain` builds; [`kb`](../kb/README.md) uses.** This bundle is the **build/maintain side** and runs in **Claude Code only** (it needs local scripts, a venv, and source credentials). Once a Brain exists, people *query* it with the **`kb`** plugin — its librarian:
-> - **In Claude Code:** serve the Brain over local **stdio** and register it via `/kb:connect` (or `./brain mcp-config`).
-> - **In Claude Cowork:** serve the Brain over **HTTPS Streamable HTTP** (the `hosted-mcp` deployment target) so Anthropic's cloud can reach it, then add it as a **remote connector named `brain`**. See [`../kb/docs/cowork-setup.md`](../kb/docs/cowork-setup.md).
+> - **In Claude Code:** serve the Brain over local **stdio** and register it by running `./brain mcp-config` and merging the printed `mcpServers` block into `.mcp.json`.
+> - **In Claude Cowork:** serve the Brain over **HTTPS Streamable HTTP** (the `hosted-mcp` deployment target) so Anthropic's cloud can reach it, then add it as a **remote connector under any meaningful name** — kb discovers a Brain by the tools it exposes, not by the connector's name. See [`../kb/docs/cowork-setup.md`](../kb/docs/cowork-setup.md).
 >
 > Choose the deployment target during onboarding: `local` (stdio, CLI only) or `hosted-mcp` (HTTPS, reachable from Cowork).
 
@@ -90,12 +90,13 @@ The installer reads `bundles/brain/factory.json`, resolves the ordered skill lis
 
 ## Getting started — guided onboarding
 
-Don't hand-run the pipeline on your first brain. Ask the orchestrator to **create a brain** / **get started** and it runs a wizard: it asks for your **goal** (the single analytical goal that scopes everything), your **docs** folder, your **reporting spreadsheets** (if any), and a **project dir** — then scaffolds the layout, drops in config templates, preflights the deps, scans your corpus into narrative-vs-reporting, and writes a `BRAIN.md` with the exact ordered build commands. It walks you through the build, pausing at the agentic stages (visual transcription when needed, taxonomy induction, and chunk classification), verifies every lane, and answers your first question.
+Don't hand-run the pipeline on your first brain. Ask the orchestrator to **create a brain** / **get started** and it runs a wizard: it asks for your **goal** (the single analytical goal that scopes everything), an **optional name** for the Brain (what a client shows when several Brains are connected — an anonymous Brain is fully functional), your **docs** folder, your **reporting spreadsheets** (if any), and a **project dir** — then scaffolds the layout, drops in config templates, preflights the deps, scans your corpus into narrative-vs-reporting, and writes a `BRAIN.md` with the exact ordered build commands. It walks you through the build, pausing at the agentic stages (visual transcription when needed, taxonomy induction, and chunk classification), verifies every lane, and answers your first question.
 
 ```bash
 # the deterministic core of the wizard (the orchestrator drives the questions):
 python .../knowledge-pipeline/onboard.py scaffold --project ./acme-brain \
   --goal "optimize call-center ops and introduce an AI workforce" \
+  --name "ACME Contact Centre" \
   --docs ./docs --reporting ./xlsx \
   --docs-mode import --reporting-mode import   # use mirror only for authoritative folders
 python .../knowledge-pipeline/onboard.py verify --db ./acme-brain/schema/knowledge.sqlite
@@ -232,6 +233,7 @@ In other words, “agentic” does not mean an invisible daemon. A human asks an
 ```text
 <brain-project>/
   goal.txt
+  name.txt                        # optional display name; empty = anonymous Brain, still fully functional
   schema/                         # families/metrics config + usually knowledge.sqlite
   taxonomy/taxonomy_vN.json       # reviewed vocabulary; source of truth
   parsed/                         # final, VLM-enriched Markdown consumed by brain_sync

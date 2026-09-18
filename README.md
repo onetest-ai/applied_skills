@@ -32,18 +32,17 @@ For analysts and knowledge workers querying a Brain from the CLI.
 claude plugin marketplace add onetest-ai/applied_skills
 claude plugin install kb@applied-ai
 
-# 2. Point kb at your Brain's MCP (guided)
-#    In a Claude Code session:
-/kb:connect          # detects a Brain, or walks you through registering one
-                     # (adds the mcpServers block from `./brain mcp-config` to .mcp.json)
+# 2. Register your Brain's MCP server (platform plumbing, not a kb skill)
+#    run `./brain mcp-config` in the brain project and merge the printed
+#    mcpServers block into this project's .mcp.json, then reload.
 
 # 3. Ask
 /kb:ask   What was Q3 churn by region, and what's driving it?
 ```
 
-Every answer is **cited** (to a mart row, document, or graph node) or honestly **"not modeled."** Numbers come only from the marts.
+Every answer is **cited** (to a mart row, document, or graph node) or honestly **"not modeled."** Numbers come only from the marts. kb discovers the Brain by its tool surface and names which one it used; once several are registered, pin one in this project's `CLAUDE.md`/`AGENTS.md` (`This project's Brain is \`acme-brain\`.`) so kb never has to ask.
 
-**The seven skills:** `/kb:ask`, `/kb:explore`, `/kb:challenge` (interrogate) · `/kb:brief`, `/kb:report` (cited Markdown, human-gated writes) · `/kb:mode` (opt-in ambient grounding) · `/kb:connect`. See [`bundles/kb/README.md`](bundles/kb/README.md).
+**The six skills:** `/kb:ask`, `/kb:explore`, `/kb:challenge` (interrogate) · `/kb:brief`, `/kb:report` (cited Markdown, human-gated writes) · `/kb:mode` (opt-in ambient grounding). See [`bundles/kb/README.md`](bundles/kb/README.md).
 
 ---
 
@@ -52,16 +51,17 @@ Every answer is **cited** (to a mart row, document, or graph node) or honestly *
 For the same querying, inside Claude Desktop's Cowork. Cowork keeps its own plugin state and connects to MCP servers **from Anthropic's cloud** (not your machine), so setup differs from the CLI: install the plugin into Cowork, and register the Brain as a **remote connector**.
 
 1. **Install kb into Cowork** — *Customize → Plugins → Add marketplace*, enter the `applied-ai` GitHub URL (`onetest-ai/applied_skills`), install **kb**, enable it. (Air-gapped alternative: upload a ZIP of `bundles/kb`, ≤50 MB.)
-2. **Add your Brain as a connector** — *Customize → Connectors → Add custom connector*. Paste your project's **HTTPS MCP URL**, authorize with **Entra OAuth** (or set an `X-API-Key` header). **Name the connector `brain`** so its tools resolve as `mcp__brain__*`, which is what kb expects.
-3. **Verify** — run `/kb:connect`, then `/kb:ask`, `/kb:explore`, `/kb:report`, …
+2. **Add your Brain as a connector** — *Customize → Connectors → Add custom connector*. Paste your project's **HTTPS MCP URL**, authorize with **Entra OAuth** (or set an `X-API-Key` header). The connector's name is yours to choose — kb finds a Brain by the tools it exposes, not by what the connector is called.
+3. **Pin it in the project instructions** (once more than one Brain is registered) — add `This project's Brain is \`acme-brain\`.` to this project's instructions in Cowork. kb checks the pin right after a request-named Brain and before discovery, so naming a different Brain in the request still always wins.
+4. **Verify** — ask a simple question with `/kb:ask` and confirm it cites the Brain you expect, then use `/kb:explore`, `/kb:report`, …
 
-Each project has its own Brain endpoint; if you're in two projects, keep a connector per project and enable only the one named `brain` for the current task. **Cowork caveats:** ambient mode (`/kb:mode`) and the SessionStart health line rely on hooks, which don't fire in Cowork — ground answers by invoking the kb skills explicitly. Full walkthrough: [`bundles/kb/docs/cowork-setup.md`](bundles/kb/docs/cowork-setup.md).
+Each project has its own Brain endpoint; if you're in two projects, add both connectors and leave both enabled — kb discovers every reachable Brain and asks which to use when more than one answers, and you can name one in the request ("ask the acme brain about …", which always wins even over a pin) or pin one per project as above for every request that names none. **Cowork caveats:** ambient mode (`/kb:mode`) and the SessionStart health line rely on hooks, which don't fire in Cowork — ground answers by invoking the kb skills explicitly. Full walkthrough: [`bundles/kb/docs/cowork-setup.md`](bundles/kb/docs/cowork-setup.md).
 
 ---
 
 ## Build a Brain (`brain` · Claude Code)
 
-For the person who turns a messy corpus (PDF/PPTX/DOCX/XLSX) into a queryable Brain.
+For the person who turns a messy corpus (PDF/PPTX/DOCX/XLSX/MD) into a queryable Brain.
 
 **Meaning is agentic (RAG/graph); numbers are computed (deterministic SQL).** RAG never produces figures; the mart lane never guesses.
 
@@ -111,7 +111,7 @@ Guided onboarding captures three drivers up front — the **goal** (scopes taxon
 
 | Skill | Role | Key idea |
 |---|---|---|
-| **corpus-taxonomy-extraction** | build | Goal-directed taxonomy induction (intent classes + entities + metric inventory) from a mixed corpus (PDF/PPTX/DOCX/XLSX via pymupdf + LibreOffice). Also emits the taxonomy **graph** (`build_graph.py`) and an **Obsidian vault** (`to_obsidian.py`), and flags near-duplicate / off-axis categories for human review. |
+| **corpus-taxonomy-extraction** | build | Goal-directed taxonomy induction (intent classes + entities + metric inventory) from a mixed corpus (PDF/PPTX/DOCX/XLSX via pymupdf + LibreOffice; MD/TXT pass through). Also emits the taxonomy **graph** (`build_graph.py`) and an **Obsidian vault** (`to_obsidian.py`), and flags near-duplicate / off-axis categories for human review. |
 | **visual-parse** | build | Page routing + visual understanding: renders slide/diagram pages, flags the visual ones, and VLM-transcribes them (with deterministic table-grid extraction) so meaning on slides isn't lost. |
 | **knowledge-index** | build | Local hybrid RAG over Markdown → SQLite **FTS5 + sqlite-vec, RRF-fused**. Torch-free embeddings (fastembed/onnx). The narrative lane. |
 | **tabular-semantic-layer** | build | Config-driven ETL of large/heterogeneous Excel → normalized `facts` in the same SQLite + a governed metric catalog. Four layouts, weighted rollups, build audit (`--strict`). |

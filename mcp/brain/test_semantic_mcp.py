@@ -232,19 +232,28 @@ class SemanticCoreTests(FixtureCase):
         self.assertNotIn(str(self.fx["root"]), json.dumps(result))
         self.assertEqual(result["about"]["goal"], "optimize call-center operations")
         self.assertEqual(result["about"]["audience"], "ops managers and workforce planners")
+        # stock fixture seeds no `name` row: a store predating this change reports an empty name
+        self.assertEqual(result["about"]["name"], "")
 
     def test_health_about_degrades_without_meta_table(self):
         # A store built before the meta table must still return about with empty strings.
         with sqlite3.connect(self.fx["db"]) as con:
             con.execute("DROP TABLE meta")
         result = core.health()
-        self.assertEqual(result["about"], {"goal": "", "audience": ""})
+        self.assertEqual(result["about"], {"name": "", "goal": "", "audience": ""})
 
     def test_health_about_empty_when_meta_has_no_values(self):
         with sqlite3.connect(self.fx["db"]) as con:
             con.execute("DELETE FROM meta")
         result = core.health()
-        self.assertEqual(result["about"], {"goal": "", "audience": ""})
+        self.assertEqual(result["about"], {"name": "", "goal": "", "audience": ""})
+
+    def test_health_about_carries_name_when_set(self):
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.execute("INSERT OR REPLACE INTO meta VALUES('name','ACME Contact Centre')")
+        result = core.health()
+        self.assertEqual(result["about"]["name"], "ACME Contact Centre")
+        self.assertEqual(result["about"]["goal"], "optimize call-center operations")
 
 
 @unittest.skipUnless(Client is not None, "fastmcp is not installed")
@@ -257,6 +266,19 @@ class FastMCPContractTests(FixtureCase):
             async with Client(fastmcp_server.mcp) as client:
                 tools = {tool.name: tool for tool in await client.list_tools()}
                 self.assertEqual(set(tools), expected)
+                # F5: labelling must happen at import time (module-level), not only inside
+                # main() — the uvicorn/`app` ASGI entrypoint Cowork remote connectors reach
+                # never calls main(). Every other labelling test calls _label_tools()
+                # directly, which would not catch a regression that removed the module-level
+                # call; this one goes through the same in-process Client path a real client
+                # uses, so it fails if only main()'s call site is labelling tools. The fixture
+                # store has no meta.name, so identity falls back to the first clause of
+                # meta.goal ("optimize call-center operations").
+                for name, tool in tools.items():
+                    self.assertTrue(
+                        (tool.description or "").startswith("[optimize call-center operations]"),
+                        f"{name}: tool description not labelled at import time: {tool.description!r}",
+                    )
                 for name in ("get_metric", "search_knowledge", "get_taxonomy", "find_related_content"):
                     limit = tools[name].inputSchema["properties"]["limit"]
                     self.assertIn("1..100", limit["description"])
@@ -389,9 +411,9 @@ class FastMCPContractTests(FixtureCase):
                     self.assertNotIn("private/path", json.dumps(unhandled.data), tool_name)
             # Limit contract still documented (guards Bug 10 regression), and the
             # citation rule that keeps raw ids out of user-facing answers.
-            self.assertIn("limit is 1-100", fastmcp_server.INSTRUCTIONS)
-            self.assertIn("make multiple narrower calls", fastmcp_server.INSTRUCTIONS)
-            self.assertIn("Never print internal ids", fastmcp_server.INSTRUCTIONS)
+            self.assertIn("limit is 1-100", fastmcp_server._ROUTING_INSTRUCTIONS)
+            self.assertIn("make multiple narrower calls", fastmcp_server._ROUTING_INSTRUCTIONS)
+            self.assertIn("Never print internal ids", fastmcp_server._ROUTING_INSTRUCTIONS)
             env = {key: os.environ[key] for key in ("BRAIN_DB", "BRAIN_CATALOG", "BRAIN_SKILLS", "BRAIN_ASSETS", "BRAIN_KNOWLEDGE_VERSION")}
             env["BRAIN_SHOW_BANNER"] = "0"
             env["PYTHONPATH"] = os.pathsep.join((str(self.fx["root"]), str(HERE)))
@@ -504,7 +526,12 @@ class FastMCPContractTests(FixtureCase):
                     })
                     self.assertEqual(response.status_code, 200)
                     payload = response.json() if response.headers.get("content-type", "").startswith("application/json") else json.loads(next(line[6:] for line in response.text.splitlines() if line.startswith("data: ")))
-                    self.assertEqual(payload["result"]["serverInfo"]["name"], "Semantic Knowledge Brain")
+                    # The fixture store has no meta.name, so identity falls back to the
+                    # first clause of meta.goal ("optimize call-center operations").
+                    self.assertEqual(
+                        payload["result"]["serverInfo"]["name"],
+                        "Semantic Knowledge Brain — optimize call-center operations",
+                    )
         asyncio.run(run())
 
 
@@ -634,6 +661,98 @@ class TestFinalizeErrorFlags(unittest.TestCase):
         self.assertTrue(result.isError)
         blob = json.dumps(result.structuredContent or {})
         self.assertIn("search_knowledge", blob)
+
+
+class BrainIdentityTests(FixtureCase):
+    def _server(self):
+        import fastmcp_server as fs
+        return fs
+
+    def test_identity_prefers_name(self):
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.execute("INSERT OR REPLACE INTO meta VALUES('name','ACME Contact Centre')")
+        self.assertEqual(self._server()._brain_identity(), "ACME Contact Centre")
+
+    def test_identity_falls_back_to_first_clause_of_goal(self):
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.execute("DELETE FROM meta WHERE key='name'")
+        # fixture goal: "optimize call-center operations"
+        self.assertEqual(self._server()._brain_identity(), "optimize call-center operations")
+
+    def test_identity_is_empty_without_meta(self):
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.execute("DROP TABLE meta")
+        self.assertEqual(self._server()._brain_identity(), "")
+
+    def test_identity_is_empty_when_the_store_cannot_be_read(self):
+        # _IDENTITY is computed at import time; if this guard ever narrows, an
+        # unreadable store would crash the server on boot instead of serving anonymously.
+        fs = self._server()
+        with patch.object(fs, "_health", side_effect=sqlite3.OperationalError("unable to open database file")):
+            self.assertEqual(fs._brain_identity(), "")
+        # The clause must catch broadly, not just database errors.
+        with patch.object(fs, "_health", side_effect=RuntimeError("boom")):
+            self.assertEqual(fs._brain_identity(), "")
+
+    def test_instructions_name_the_brain(self):
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.execute("INSERT OR REPLACE INTO meta VALUES('name','ACME Contact Centre')")
+        text = self._server()._instructions_for("ACME Contact Centre")
+        self.assertIn("ACME Contact Centre", text)
+        self.assertIn("never blend", text.lower())
+        # The routing doctrine survives the identity paragraph.
+        self.assertIn("search_knowledge", text)
+
+    def test_instructions_without_identity_are_still_valid(self):
+        text = self._server()._instructions_for("")
+        self.assertNotIn("This Brain answers for", text)
+        self.assertIn("search_knowledge", text)
+
+    def _snapshot_and_restore_tool_descriptions(self, fs):
+        # _label_tools mutates the shared module-level mcp tool registry, which persists
+        # for the rest of the test session (e.g. FastMCPContractTests::test_in_process_and_real_stdio
+        # round-trips the same `mcp` object). Restore the originals unconditionally so labelling
+        # tests never leak state into other tests, regardless of ordering.
+        import asyncio
+        originals = {name: tool.description for name, tool in asyncio.run(fs.mcp.get_tools()).items()}
+
+        def _restore():
+            for name, tool in asyncio.run(fs.mcp.get_tools()).items():
+                tool.description = originals[name]
+
+        self.addCleanup(_restore)
+
+    def test_tool_descriptions_carry_the_identity(self):
+        import asyncio
+        fs = self._server()
+        self._snapshot_and_restore_tool_descriptions(fs)
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.execute("INSERT OR REPLACE INTO meta VALUES('name','ACME Contact Centre')")
+        asyncio.run(fs._label_tools("ACME Contact Centre"))
+        tools = asyncio.run(fs.mcp.get_tools())
+        self.assertTrue(tools, "no tools registered")
+        for name, tool in tools.items():
+            self.assertTrue(tool.description.startswith("[ACME Contact Centre]"),
+                            f"{name}: description not labelled: {tool.description!r}")
+
+    def test_labelling_is_a_noop_without_identity(self):
+        import asyncio
+        fs = self._server()
+        self._snapshot_and_restore_tool_descriptions(fs)
+        before = {n: t.description for n, t in asyncio.run(fs.mcp.get_tools()).items()}
+        asyncio.run(fs._label_tools(""))
+        after = {n: t.description for n, t in asyncio.run(fs.mcp.get_tools()).items()}
+        self.assertEqual(before, after)
+
+    def test_labelling_is_idempotent(self):
+        import asyncio
+        fs = self._server()
+        self._snapshot_and_restore_tool_descriptions(fs)
+        asyncio.run(fs._label_tools("ACME Contact Centre"))
+        once = {n: t.description for n, t in asyncio.run(fs.mcp.get_tools()).items()}
+        asyncio.run(fs._label_tools("ACME Contact Centre"))
+        twice = {n: t.description for n, t in asyncio.run(fs.mcp.get_tools()).items()}
+        self.assertEqual(once, twice)
 
 
 if __name__ == "__main__":

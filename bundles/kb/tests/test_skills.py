@@ -71,11 +71,6 @@ class TestBriefSkill(unittest.TestCase, SkillContractMixin):
             required_tokens=["_shared/authoring.md", "verifier", "docs/kb/", "Sources"],
         )
 
-    def test_brief_does_not_allow_write(self):
-        path = KB_ROOT / "skills" / "brief" / "SKILL.md"
-        fm = parse_frontmatter(read_text(path))
-        self.assertNotIn("Write", fm.get("allowed-tools", ""))
-
 
 class TestReportSkill(unittest.TestCase, SkillContractMixin):
     def test_report_contract(self):
@@ -84,11 +79,6 @@ class TestReportSkill(unittest.TestCase, SkillContractMixin):
             required_tokens=["_shared/authoring.md", "verifier", "docs/kb/",
                              "Table of Contents", "Sources"],
         )
-
-    def test_report_does_not_allow_write(self):
-        path = KB_ROOT / "skills" / "report" / "SKILL.md"
-        fm = parse_frontmatter(read_text(path))
-        self.assertNotIn("Write", fm.get("allowed-tools", ""))
 
 
 class TestModeSkill(unittest.TestCase, SkillContractMixin):
@@ -99,21 +89,91 @@ class TestModeSkill(unittest.TestCase, SkillContractMixin):
         ])
 
 
-class TestConnectSkill(unittest.TestCase, SkillContractMixin):
-    def test_connect_contract(self):
-        self.assert_skill("connect", required_tokens=[
-            "health", "mcp-config", "brain",   # CLI branch preserved
-            "connector", "Entra",              # Cowork branch added
-        ])
+class TestSkillsNameNoServer(unittest.TestCase):
+    """kb must not hardcode an MCP server name: users register Brains under any name."""
 
+    FORBIDDEN = ("mcp__brain__", "mcp__plugin_brain_brain__")
 
-class TestAnswerSkillsBrainNamespace(unittest.TestCase):
-    def test_answer_skills_allow_brain_namespace(self):
+    def test_no_skill_hardcodes_a_server_name(self):
         from test_plugin_structure import KB_ROOT, read_text
         for name in ("ask", "brief", "challenge", "explore", "report"):
             text = read_text(KB_ROOT / "skills" / name / "SKILL.md")
-            self.assertIn("mcp__brain__", text,
-                          f"{name}: must allow the mcp__brain__* namespace (Cowork connector convention)")
+            for token in self.FORBIDDEN:
+                self.assertNotIn(token, text, f"{name}: hardcodes {token!r}")
+
+    def test_answer_skills_defer_to_the_discovery_contract(self):
+        from test_plugin_structure import KB_ROOT, read_text
+        for name in ("ask", "brief", "challenge", "explore", "report"):
+            text = read_text(KB_ROOT / "skills" / name / "SKILL.md")
+            self.assertIn("Brain Discovery", text,
+                          f"{name}: must defer to the doctrine Brain Discovery contract")
+
+    def test_every_description_opens_with_use_when(self):
+        """The description is how a model decides whether to invoke a skill, so the
+        trigger leads. `Use to` / `Use at` / capability-first openers do not qualify."""
+        from test_plugin_structure import KB_ROOT, read_text, parse_frontmatter
+        for path in sorted((KB_ROOT / "skills").glob("*/SKILL.md")):
+            desc = parse_frontmatter(read_text(path)).get("description", "")
+            self.assertTrue(desc.startswith("Use when "),
+                            f"{path.parent.name}: description must open with 'Use when ', got {desc[:40]!r}")
+
+    def test_no_skill_declares_allowed_tools(self):
+        """`allowed-tools` is pre-approval, not capability, and it cannot name a server
+        whose name varies per user. kb declares none and lets permissions govern."""
+        from test_plugin_structure import KB_ROOT, read_text, parse_frontmatter
+        for path in sorted((KB_ROOT / "skills").glob("*/SKILL.md")):
+            fm = parse_frontmatter(read_text(path))
+            self.assertNotIn("allowed-tools", fm,
+                             f"{path.parent.name}: must not declare allowed-tools")
+
+
+CONTRACT_START = "<!-- BRAIN-CONTRACT:START -->"
+CONTRACT_END = "<!-- BRAIN-CONTRACT:END -->"
+
+
+def _contract(text):
+    """The delimited canonical block, or '' when absent."""
+    if CONTRACT_START not in text or CONTRACT_END not in text:
+        return ""
+    return text.split(CONTRACT_START, 1)[1].split(CONTRACT_END, 1)[0]
+
+
+class TestBrainContractIsInlined(unittest.TestCase):
+    """A rule that only applies when a sibling file resolves is not a rule.
+
+    The Agent Skills format documents same-directory references only, so
+    `../_shared/*.md` may not resolve at runtime. Every skill that must obey the
+    contract carries it verbatim; this test is what keeps the copies identical.
+    """
+
+    def _canonical(self):
+        from test_plugin_structure import KB_ROOT, read_text
+        block = _contract(read_text(KB_ROOT / "skills" / "_shared" / "doctrine.md"))
+        self.assertTrue(block.strip(), "doctrine.md must delimit the canonical contract block")
+        return block
+
+    def test_every_answering_skill_inlines_the_contract(self):
+        from test_plugin_structure import KB_ROOT, read_text
+        canonical = self._canonical()
+        for name in ("ask", "brief", "challenge", "explore", "report"):
+            text = read_text(KB_ROOT / "skills" / name / "SKILL.md")
+            self.assertEqual(_contract(text), canonical,
+                             f"{name}: inlined contract differs from doctrine.md")
+
+    def test_verifier_inlines_the_resolution_rules(self):
+        from test_plugin_structure import KB_ROOT, read_text
+        text = read_text(KB_ROOT / "agents" / "verifier.md")
+        for token in ("tool surface", "never blend", "project instructions"):
+            self.assertIn(token, text, f"verifier missing {token!r}")
+
+    def test_no_skill_depends_on_a_parent_directory_reference_for_its_rules(self):
+        """Depth may live in _shared/; the rules may not."""
+        from test_plugin_structure import KB_ROOT, read_text
+        for name in ("ask", "brief", "challenge", "explore", "report"):
+            text = read_text(KB_ROOT / "skills" / name / "SKILL.md")
+            head = text.split(CONTRACT_START, 1)[0]
+            self.assertNotIn("Follow `../_shared/doctrine.md`", head,
+                             f"{name}: still defers its rules to a parent-directory file")
 
 
 if __name__ == "__main__":

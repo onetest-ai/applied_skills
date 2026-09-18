@@ -44,10 +44,10 @@ def ensure_meta(c):
     c.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
 
 
-def _read_goal_audience(db):
+def _read_goal_audience_name(db):
     """Resolve <project> from the db path (<project>/schema/knowledge.sqlite) and read
-    the canonical goal (goal.txt) + audience (brain.toml [project].audience). Absent
-    files yield empty strings — never crash."""
+    the canonical goal (goal.txt), audience (brain.toml [project].audience), and display
+    name (name.txt). Absent files yield empty strings — never crash."""
     project = Path(db).resolve().parent.parent
     goal = ""
     goal_txt = project / "goal.txt"
@@ -61,6 +61,16 @@ def _read_goal_audience(db):
             audience = str((data.get("project") or {}).get("audience", "") or "")
         except Exception:
             audience = ""
+    name = ""
+    name_txt = project / "name.txt"
+    if name_txt.is_file():
+        name = name_txt.read_text(encoding="utf-8").strip()
+    return goal, audience, name
+
+
+def _read_goal_audience(db):
+    """Back-compat wrapper: (goal, audience) only — see `_read_goal_audience_name`."""
+    goal, audience, _name = _read_goal_audience_name(db)
     return goal, audience
 
 
@@ -76,14 +86,28 @@ def write_meta(c, db):
     """UPSERT goal + audience into meta (idempotent; re-seeding refreshes them).
     Returns (goal, audience, drift) where `drift` is the PRIOR goal when it was non-empty
     and differs from the new one, else None — a changed goal silently reshapes the whole
-    taxonomy, so callers surface it."""
+    taxonomy, so callers surface it.
+
+    `name` is asymmetric with goal/audience: goal.txt/brain.toml are the SOLE source of
+    truth for goal/audience, so an absent file legitimately clears the meta value on
+    every seed/apply. `name.txt` is optional, and an operator may set `meta.name` by
+    hand (per brain-maintenance's `INSERT OR REPLACE` guidance) without ever creating
+    name.txt. Unconditionally clearing meta.name when name.txt is absent would silently
+    destroy that hand-set value on the next ordinary seed/apply — a data-loss regression
+    strictly worse than the staleness it would fix. So: `name.txt` present with non-empty
+    content carries forward (this is what lets renaming name.txt take effect on refresh);
+    name.txt absent or blank leaves any existing meta.name exactly as-is (no write, no
+    clear)."""
     ensure_meta(c)
-    goal, audience = _read_goal_audience(db)
+    goal, audience, name = _read_goal_audience_name(db)
     prior_goal = read_meta(c, "goal")
     drift = prior_goal if (prior_goal and prior_goal != goal) else None
     for key, value in (("goal", goal), ("audience", audience)):
         c.execute("INSERT INTO meta(key,value) VALUES(?,?) "
                   "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+    if name:
+        c.execute("INSERT INTO meta(key,value) VALUES(?,?) "
+                  "ON CONFLICT(key) DO UPDATE SET value=excluded.value", ("name", name))
     return goal, audience, drift
 
 
