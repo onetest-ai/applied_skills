@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,9 +28,16 @@ RENDER_PAGES_ROW_KEYS = {"page", "image", "img_sha", "text_len", "n_drawings",
 RENDER_PAGES_TOP_KEYS = {"doc", "slug", "dpi", "pages"}
 
 
-def _outdir_with_pngs(plan):
-    """assemble() only hashes these and checks they exist — it never decodes them."""
-    d = Path(tempfile.mkdtemp())
+def _outdir_with_pngs(plan, obj=FIXTURE):
+    """assemble() only hashes these and checks they exist — it never decodes them.
+
+    assemble() now asserts the outdir's basename equals the slug 'plan' would
+    compute from `obj`, so the directory must be named accordingly — never a
+    bare tempdir name.
+    """
+    parent = Path(tempfile.mkdtemp())
+    d = parent / HC._slug(obj.get("source", ""))
+    d.mkdir()
     for entry in plan:
         (d / f"p{entry['page']:02d}.png").write_bytes(
             b"\x89PNG\r\n\x1a\n" + bytes([entry["page"]]) * 16)
@@ -81,6 +89,15 @@ class AssembleTests(unittest.TestCase):
         self.assertEqual(HC._slug(long_a), HC._slug(long_a))          # stable
         self.assertNotEqual(HC._slug("https://example.com/a"), HC._slug("https://example.com/b"))
         self.assertTrue(HC._slug("https://example.com/reports/q3"))
+
+    def test_image_resolves_the_way_vision_prep_resolves_it(self):
+        """vision_prep.py:60 does os.path.join(dirname(render_dir), row['image']) — the
+        image path must be slug-relative (<slug>/pNN.png), not bare (pNN.png), or every
+        HTML image silently fails to resolve."""
+        row = self.pages["pages"][0]
+        assets_root = os.path.dirname(str(self.outdir).rstrip("/"))
+        resolved = os.path.join(assets_root, row["image"])
+        self.assertTrue(os.path.exists(resolved), resolved)
 
     def test_img_sha_is_the_captured_file(self):
         row = self.pages["pages"][0]
@@ -142,24 +159,49 @@ class AssembleTests(unittest.TestCase):
         self.assertIn("|  |  |", header, "header should have empty cells")
 
     def test_cli_plans_and_assembles(self):
-        """The SKILL.md workflow is shell commands, so the CLI must actually run."""
+        """The SKILL.md workflow is shell commands, so the CLI must actually run.
+
+        'plan' owns the slug/outdir seam: it prints the directory the provider
+        must write into, and 'assemble' must be pointed at that exact directory.
+        """
         import subprocess, sys, json as _json
         d = Path(tempfile.mkdtemp())
         seg = d / "segments.json"
         seg.write_text(_json.dumps(FIXTURE))
         plan_path = d / "plan.json"
+        assets_root = d / "assets"
         script = HERE.parent / "skills" / "visual-parse" / "html_capture.py"
         r = subprocess.run([sys.executable, str(script), "plan",
-                            "--segments", str(seg), "--out", str(plan_path)],
+                            "--segments", str(seg), "--out", str(plan_path),
+                            "--assets-root", str(assets_root)],
                            text=True, capture_output=True)
         self.assertEqual(r.returncode, 0, r.stderr)
-        plan = _json.loads(plan_path.read_text())
-        out = _outdir_with_pngs(plan)
+        plan_obj = _json.loads(plan_path.read_text())
+        self.assertEqual(plan_obj["slug"], HC._slug(FIXTURE["source"]))
+        outdir = Path(plan_obj["outdir"])
+        self.assertEqual(outdir, assets_root / plan_obj["slug"])
+        self.assertIn(outdir.name, r.stdout, "plan must print the outdir on stdout")
+        for entry in plan_obj["plan"]:
+            (outdir / f"p{entry['page']:02d}.png").write_bytes(
+                b"\x89PNG\r\n\x1a\n" + bytes([entry["page"]]) * 16)
         r = subprocess.run([sys.executable, str(script), "assemble",
                             "--segments", str(seg), "--plan", str(plan_path),
-                            "--outdir", str(out)], text=True, capture_output=True)
+                            "--outdir", str(outdir)], text=True, capture_output=True)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertTrue((Path(out) / "pages.json").is_file())
+        self.assertTrue((outdir / "pages.json").is_file())
+
+    def test_outdir_mismatched_with_slug_raises(self):
+        """A provider that wrote into the wrong directory fails loudly, naming both."""
+        bad_dir = Path(tempfile.mkdtemp()) / "not-the-slug"
+        bad_dir.mkdir()
+        for entry in self.plan:
+            (bad_dir / f"p{entry['page']:02d}.png").write_bytes(
+                b"\x89PNG\r\n\x1a\n" + bytes([entry["page"]]) * 16)
+        with self.assertRaises(ValueError) as cm:
+            HC.assemble(FIXTURE, self.plan, str(bad_dir), dpi=96)
+        msg = str(cm.exception)
+        self.assertIn("not-the-slug", msg)
+        self.assertIn(HC._slug(FIXTURE["source"]), msg)
 
 
 if __name__ == "__main__":

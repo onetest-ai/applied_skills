@@ -57,6 +57,25 @@ class SegmentsContractTests(unittest.TestCase):
         obj["segments"][0]["bbox"]["height"] = 0
         self.assertIn("bbox.height", " ".join(HC.validate_segments(obj)))
 
+    def test_missing_index_is_reported(self):
+        """plan_captures/assemble key everything on seg['index']; a payload missing it
+        must be reported here, not surface as a bare KeyError downstream."""
+        obj = json.loads(FIXTURE.read_text())
+        del obj["segments"][0]["index"]
+        self.assertIn("index", " ".join(HC.validate_segments(obj)))
+
+    def test_nan_bbox_height_is_reported(self):
+        """A fully hidden segment's bboxUnion() starts from Infinity seeds and can
+        yield NaN — 'bh <= 0' alone does not catch it."""
+        obj = json.loads(FIXTURE.read_text())
+        obj["segments"][0]["bbox"]["height"] = float("nan")
+        self.assertIn("bbox.height", " ".join(HC.validate_segments(obj)))
+
+    def test_nan_height_is_reported(self):
+        obj = json.loads(FIXTURE.read_text())
+        obj["segments"][0]["height"] = float("nan")
+        self.assertIn("height", " ".join(HC.validate_segments(obj)))
+
 
 if __name__ == "__main__":
     unittest.main()

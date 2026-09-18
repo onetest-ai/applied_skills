@@ -103,7 +103,11 @@ For every added/changed narrative source:
 
 Use a fresh run directory for vision results. Never consume stale or partial `result_*.json`.
 
-**`--formats`'s default now includes `md,markdown,txt`.** On an existing corpus/project that predates this, a parse run with default `--formats` (i.e. omitting the flag) will pick up previously-skipped `.md`/`.txt` files as new sources on this maintenance pass — a silent behaviour change for deployed projects, not a bug. Expect and review the resulting new/changed doc count in the parsed-store delta below rather than treating it as drift.
+**`--formats`'s default now includes `md,markdown,txt,html,htm`.** On an existing corpus/project that predates this, a parse run with default `--formats` (i.e. omitting the flag) will pick up previously-skipped `.md`/`.txt`/`.html`/`.htm` files as new sources on this maintenance pass — a silent behaviour change for deployed projects, not a bug. Expect and review the resulting new/changed doc count in the parsed-store delta below rather than treating it as drift.
+
+**An existing project with `.html`/`.htm` files under its docs root needs its `brain.toml` updated before this pass, or the run fails.** The registry only tracks what its include globs name; if an existing root's globs predate the HTML branch, `parse_corpus.py` will now emit parsed documents for those `.html`/`.htm` files, but `brain_sync.source_ids` has no registered source for them and raises `unmanaged parsed documents` under `--strict-sources` (step 4, below). Add `"**/*.html"` and `"**/*.htm"` to every existing root's `include` list in `brain.toml` before running this pass — `onboard.py`'s glob change only reaches brand-new scaffolds, not projects that already exist.
+
+**The `# fidelity:` header makes every parsed document byte-different on the first pass after this upgrade, for every format, not just HTML.** `parse_corpus.py` now writes a third header line (`# fidelity: full` or `# fidelity: degraded`) on every document it parses. That changes every parsed document's bytes relative to the last run, so the parsed-store delta will show the WHOLE corpus as `changed` and re-embed it on this one pass. That is expected — it is not drift, and it is not a sign the source content changed — but an operator not told this will see a full-corpus re-embed and think something broke.
 
 For a genuinely text-only source, deterministic parsing is acceptable. Do not downgrade an existing visually enriched document to a text-only parse.
 
@@ -112,10 +116,14 @@ artifact to reuse across runs the way a PDF/PPTX page does — re-run the visual
 step (`html_segments.js` → `html_capture.py plan` → screenshots → `html_capture.py assemble`)
 against the current page for a changed HTML source, exactly as if it were new. A parsed
 document whose header reads `fidelity: degraded` means no browser was available at the run
-that ingested it: text-only, DOM-derived, no images, no VLM transcription. If a browser (or
-browser-capable provider) is available on this maintenance pass, re-running that source
-through the full-fidelity capture path upgrades it to `fidelity: full` — check for `fidelity:
-degraded` headers in the parsed corpus and treat them as a punch list, not a permanent state.
+that ingested it: text-only, DOM-derived, no images, no VLM transcription. No code writes a
+`fidelity: full` marker — `vision_assemble.py` writes the captured Markdown with no preamble
+at all. So "upgrading" a source is really re-capturing it through the full-fidelity path,
+which REPLACES the degraded parsed document with one that carries no `fidelity: degraded`
+line, rather than any script rewriting a header in place. If a browser (or browser-capable
+provider) is available on this maintenance pass, re-run that source through the capture path;
+check for `fidelity: degraded` headers in the parsed corpus and treat them as a punch list, not
+a permanent state.
 
 **VTT/SRT sources require two separate parse passes** — `--merge-cues` only applies to transcripts and must not be passed for PDF/PPTX/DOCX:
 

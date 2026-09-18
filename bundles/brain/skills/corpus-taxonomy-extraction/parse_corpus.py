@@ -342,22 +342,24 @@ def _parse_html(path, min_text=HTML_MIN_TEXT):
     Returns ("", "skipped-js-rendered") when extraction yields almost nothing: the
     document was built by JS and we captured none of it. Storing those few stray
     words would put them in the index to be cited as if they were the deck.
+
+    HTML has no pages — PyMuPDF's print-pagination of it is an artifact of print
+    CSS, not of the document (the same fact the full-fidelity capture path segments
+    by DOM instead of pagination for). Emitting `## [part N]` headings here would
+    promote that pagination to citable chunk boundaries and make the same deck
+    ingested both ways cite incompatible targets. So this joins the per-page text
+    into ONE un-paginated body instead.
     """
     import pymupdf
     doc = pymupdf.open(path, filetype="html")
-    raw_texts = []
-    parts = []
-    for i, page in enumerate(doc, 1):
-        t = (page.get_text() or "").strip()
-        if t:
-            raw_texts.append(t)
-            parts.append(f"\n\n## [part {i}]\n\n{t}")
+    raw_texts = [(page.get_text() or "").strip() for page in doc]
     doc.close()
+    raw_texts = [t for t in raw_texts if t]
     # Check against raw text length to detect JS-rendered docs with no content
     raw_len = len("".join(raw_texts))
     if raw_len < min_text:
         return "", "skipped-js-rendered"
-    md = "".join(parts).strip()
+    md = "\n\n".join(raw_texts).strip()
     return md, "pymupdf-html"
 
 

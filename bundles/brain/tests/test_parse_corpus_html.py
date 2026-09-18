@@ -39,6 +39,17 @@ class HtmlDegradedPathTests(unittest.TestCase):
         self.assertIn("Five9 FCR was 72%", md)
         self.assertNotIn("console.log", md, "script content must not reach the store")
 
+    def test_degraded_path_does_not_paginate(self):
+        """HTML has no pages: PyMuPDF's print pagination is an offset a reader never
+        saw, and the full-fidelity path segments by DOM, not by print page. Emitting
+        '## [part N]' headings here would promote pagination to chunk boundaries and
+        make the same deck cite incompatible targets depending on which path ingested
+        it."""
+        md, method = self._parse(STATIC)
+        self.assertEqual(method, "pymupdf-html")
+        self.assertNotIn("[part", md)
+        self.assertNotIn("##", md)
+
     def test_htm_extension_also_handled(self):
         md, method = self._parse(STATIC, name="deck.htm")
         self.assertEqual(method, "pymupdf-html")

@@ -62,6 +62,20 @@ class PlanCapturesTests(unittest.TestCase):
             HC.plan_captures(bad)
         self.assertIn("source", str(cm.exception))
 
+    def test_degenerate_trailing_tile_is_dropped(self):
+        """A final offset whose remaining height is under 15% of max_px (e.g. a 1px-tall
+        tile) must be dropped and absorbed into the previous tile, not emitted."""
+        obj = {"source": "x", "segments": [
+            {"index": 1, "text": "t", "tables": [],
+             "bbox": {"x": 0, "y": 0, "width": 100, "height": 2881}, "height": 2881}]}
+        plan = HC.plan_captures(obj, max_px=1600, overlap=0.1)
+        heights = [p["clip"]["height"] for p in plan]
+        self.assertNotIn(1.0, heights, "a 1px sliver tile must not survive")
+        self.assertTrue(all(h >= 0.15 * 1600 for h in heights))
+        # still covers the whole segment
+        last = plan[-1]["clip"]
+        self.assertGreaterEqual(last["y"] + last["height"], 2881)
+
     def test_out_of_range_overlap_is_rejected(self):
         for bad in (1.0, -0.1, 1.5):
             with self.assertRaises(ValueError) as cm:

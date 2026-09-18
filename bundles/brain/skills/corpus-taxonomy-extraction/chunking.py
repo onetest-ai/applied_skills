@@ -13,7 +13,7 @@ sections(md, max_chars) -> list[(title, body)] (compatibility wrapper)
 import re
 
 def strip_preamble(md):
-    return re.sub(r"\A# SOURCE:.*\n(# method:.*\n)?\n?", "", md)
+    return re.sub(r"\A# SOURCE:.*\n(# method:.*\n)?(# fidelity:.*\n)?\n?", "", md)
 
 def derive_title(title, body):
     t = (title or "").strip()

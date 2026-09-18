@@ -63,28 +63,40 @@ detects this (mirroring `render_pages.py`'s `--min-text` threshold) and returns
    MCP's `browser_evaluate`, or Claude in Chrome's `javascript_tool`). It returns one entry
    per logical segment — an explicit slide container when the deck has one, otherwise a
    heading-led section — with each segment's bounding box, verbatim text, and any DOM
-   tables. Write that payload to `segments.json`; it must pass `html_capture.py`'s
-   `validate_segments`.
-2. **Plan.**
-   `html_capture.py plan --segments segments.json --out plan.json [--max-px 1600] [--overlap 0.1]`
-   Writes one capture instruction per image the provider must take. A segment shorter than
+   tables. Write that payload to a `segments.json` file at any path you like — it is always
+   passed to the next steps as an explicit `--segments` flag, never assumed — and it must
+   pass `html_capture.py`'s `validate_segments`.
+2. **Plan.** `plan` is the ONLY step that decides the output directory — do this before any
+   screenshot is taken, and use the directory it prints, verbatim, for step 3.
+   ```
+   html_capture.py plan --segments segments.json --out plan.json \
+       --assets-root <assets> [--source <url-or-path>] [--max-px 1600] [--overlap 0.1]
+   ```
+   Computes the slug from `--source` (default: `segments.json`'s own `"source"` field),
+   creates `<assets>/<slug>/`, and writes `plan.json` as `{"slug", "outdir", "plan": [...]}`
+   — one capture instruction per image the provider must take. A segment shorter than
    `--max-px` is one capture; a taller one is tiled with `--overlap` (default 10%) shared
    with its neighbour so a line of text straddling a seam still appears whole in at least
    one tile — vision models downscale large images, and an illegible capture yields a
    confident, wrong transcription. Every plan entry carries a `segment` index; tiles of one
-   segment share it.
-3. **Capture.** For each entry in `plan.json`, screenshot exactly the entry's `clip` region
-   through the same provider and save it to `<assets>/<slug>/p<NN>.png` (`NN` = the entry's
-   `page` number, zero-padded, matching the plan in order). One screenshot per plan entry —
-   this is the one step in the sequence a script cannot do, because only the provider can
-   render and capture pixels.
+   segment share it. The command also prints the outdir on stdout — read it from there, or
+   from `plan.json`'s `"outdir"` field; do not recompute or guess it.
+3. **Capture.** For each entry in `plan.json`'s `"plan"` list, screenshot exactly the entry's
+   `clip` region through the same provider and save it into the EXACT directory step 2
+   printed, as `p<NN>.png` (`NN` = the entry's `page` number, zero-padded, matching the plan
+   in order). One screenshot per plan entry — this is the one step in the sequence a script
+   cannot do, because only the provider can render and capture pixels. Writing into any other
+   directory is the one mistake `assemble` cannot recover from silently — it will refuse (see
+   step 4).
 4. **Assemble.**
-   `html_capture.py assemble --segments segments.json --plan plan.json --outdir <assets>/<slug> [--dpi 96]`
-   Hashes each PNG that step 3 wrote, writes the `p<NN>.txt` verbatim-text sidecar and (once
-   per segment) `p<NN>.tables.md` from the segment's DOM tables, and writes `pages.json` in
-   **exactly** the shape `render_pages.py` produces — plus an additive `segment` field
-   grouping a tall segment's tiles. Because the shape matches, `vision_prep.py` needs no
-   change to consume it.
+   `html_capture.py assemble --segments segments.json --plan plan.json --outdir <the directory step 2 printed> [--dpi 96]`
+   Asserts that `--outdir`'s basename equals the slug `plan` computed, raising a clear
+   `ValueError` naming both if they disagree — a mismatched directory fails loudly here
+   instead of producing a `pages.json` whose image markers point nowhere. Then hashes each
+   PNG that step 3 wrote, writes the `p<NN>.txt` verbatim-text sidecar and (once per segment)
+   `p<NN>.tables.md` from the segment's DOM tables, and writes `pages.json` in **exactly** the
+   shape `render_pages.py` produces — plus an additive `segment` field grouping a tall
+   segment's tiles. Because the shape matches, `vision_prep.py` needs no change to consume it.
 5. **Continue unchanged.** From here the pipeline is identical to a PPTX/PDF deck's: run
    `vision_prep.py` against `<assets>/<slug>`, dispatch the vision subagents, then
    `vision_assemble.py` — which merges a segment's tiles into ONE section before emitting the
@@ -92,9 +104,11 @@ detects this (mirroring `render_pages.py`'s `--min-text` threshold) and returns
    slice of it.
 
 ```bash
-python <skills>/visual-parse/html_capture.py plan --segments segments.json --out plan.json
-# provider takes one screenshot per plan entry into <assets>/<slug>/pNN.png
-python <skills>/visual-parse/html_capture.py assemble --segments segments.json --plan plan.json --outdir <assets>/<slug>
+python <skills>/visual-parse/html_capture.py plan --segments segments.json --out plan.json --assets-root <assets>
+# plan.json's "outdir" (also printed on stdout) is the directory the provider must use:
+outdir=$(python -c "import json;print(json.load(open('plan.json'))['outdir'])")
+# provider takes one screenshot per plan entry into $outdir/pNN.png
+python <skills>/visual-parse/html_capture.py assemble --segments segments.json --plan plan.json --outdir "$outdir"
 ```
 
 HTML's DOM tables extract more reliably than a rendered PDF's: `render_pages.py` infers a

@@ -101,6 +101,12 @@ python .../visual-parse/render_pages.py --doc <deck.pdf> --out <project>/assets 
 #     HTML deck with a browser (full fidelity, images + VLM transcription): run the
 #     visual-parse skill's capture step (html_segments.js → html_capture.py plan → screenshots
 #     → html_capture.py assemble) to produce this same <project>/assets/<slug>/pages.json first.
+#     Do NOT run both 1b and 1v for the same HTML deck as if they were independent: write the
+#     capture path's assembled output to the SAME parsed-doc path 1b would have produced for
+#     that source, so it OVERWRITES the degraded parse rather than creating a duplicate parsed
+#     document for one source. When 1b skipped the deck as `skipped-js-rendered` (no text, so
+#     no manifest row was written for it), there is nothing to overwrite — the capture path's
+#     output is the ONLY parsed document that will ever exist for that source.
 python .../visual-parse/vision_prep.py --render-dir <project>/assets/<slug> --out <project>/vision --db "$DB"
 #    → 🤖 dispatch VISION subagents (cheap) → vision/result_k.json {img_sha: faithful markdown}
 python .../visual-parse/vision_assemble.py --render-dir <project>/assets/<slug> --out <project>/parsed/<doc>.md --results <project>/vision --db "$DB"
