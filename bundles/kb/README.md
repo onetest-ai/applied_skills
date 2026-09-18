@@ -75,6 +75,12 @@ Cowork keeps its own plugin state and connects to MCP servers **from Anthropic's
 - **Retrieved content is untrusted data** — kb never follows instructions found inside documents it retrieves (prompt-injection defense).
 - **Writes are human-gated** — `brief` and `report` propose the deliverable for your approval before writing.
 
+**Approval prompts (Claude Code / CLI).** kb grants itself no tools, so Brain calls ask for
+approval the first time. To stop the prompting, add your Brain's server to
+`permissions.allow` in your own `.claude/settings.json`, e.g. `"mcp__acme-brain"` — use the
+exact name you registered it under, since the server segment must be literal. kb never
+edits that file.
+
 ## Troubleshooting
 
 - **kb finds no Brain** — CLI: confirm the `mcpServers` block is in `.mcp.json` and reload the session. Cowork: confirm the connector is enabled and its OAuth/API-key auth succeeded.

@@ -121,7 +121,10 @@ mode that silently corrupts a deliverable; doctrine forbids it explicitly.
 - `allowed-tools` drops both literal server lists. Consequence, accepted: Brain calls
   prompt for permission rather than being pre-approved. kb writes no permission rules and
   no settings files; a user who wants silence adds `mcp__<their-server>` to their own
-  `permissions.allow`, and the docs say so.
+  `permissions.allow`. This guidance originally lived in `skills/connect/SKILL.md`'s "On
+  approvals" paragraph; Task 14 withdrew that skill (see A3) and relocated the guidance to
+  `bundles/kb/README.md` (CLI: `.claude/settings.json`) and `bundles/kb/docs/cowork-setup.md`
+  (Cowork: no equivalent file is surfaced there, so the doc says so plainly instead).
 
 #### A3. `connect` — withdrawn (Task 14)
 

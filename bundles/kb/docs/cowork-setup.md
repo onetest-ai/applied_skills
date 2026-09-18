@@ -90,3 +90,7 @@ answering). Then use `/kb:explore`, `/kb:challenge`, `/kb:brief`, `/kb:report`.
 - **Choosing between Brains** is remembered for the length of a conversation only. Cowork
   has no project-local state for kb to write, so with several Brains connected it asks
   once per conversation rather than once per project.
+- **Approval prompts.** The CLI's escape hatch — adding a server to `permissions.allow` in
+  `.claude/settings.json` — doesn't apply here: Cowork doesn't surface a
+  `.claude/settings.json` file for this project, so there's nothing to edit. Approve Brain
+  tool calls as Cowork prompts for them.
