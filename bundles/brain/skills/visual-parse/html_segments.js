@@ -37,7 +37,10 @@
     const distinct = new Set(wrapped.filter(Boolean));
     const eachHasItsOwn = wrapped.every(Boolean) && distinct.size === bounds.length;
     if (eachHasItsOwn) {
-      return wrapped.map(w => [w]);
+      const groups = wrapped.map(w => [w]);
+      const leadIn = leadInFor(wrapped[0]);
+      if (leadIn.length) groups.unshift(leadIn);
+      return groups;
     } else {
       // Sibling-walk path: include lead-in content if it has text
       const groups = bounds.map(runFrom);
