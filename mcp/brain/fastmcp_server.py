@@ -11,7 +11,6 @@ import asyncio
 import hmac
 import json
 import os
-import threading
 from typing import Annotated, Any
 
 from fastmcp import FastMCP
@@ -460,54 +459,49 @@ def health() -> dict | ToolResult:
     return _safe_call("health", _health)
 
 
-async def _label_tools(identity: str) -> None:
-    """Prefix every tool description with the Brain's name. Tool descriptions are always
-    in the client's context, while server `instructions` may not be — labelling both is
-    how a client with several Brains connected tells them apart. Idempotent: a description
-    already carrying the label is left alone."""
+def _apply_label(tools, identity: str) -> None:
+    """Shared idempotent labelling logic: prefix every tool's description with the
+    Brain's name. Tool descriptions are always in the client's context, while server
+    `instructions` may not be — labelling both is how a client with several Brains
+    connected tells them apart. A description already carrying the label is left alone."""
     if not identity:
         return
     label = f"[{identity}]"
-    for tool in (await mcp.get_tools()).values():
+    for tool in tools:
         text = tool.description or ""
         if not text.startswith(label):
             tool.description = f"{label} {text}".strip()
 
 
-def _label_tools_sync(identity: str) -> None:
-    """Run `_label_tools` synchronously at import time, regardless of whether this thread
-    already has a running event loop. Normal imports (by `main()`'s stdio/http path, by
-    uvicorn loading `app`, and by a plain `import fastmcp_server` in tests) have no running
-    loop, so this is a plain `asyncio.run`. But the module can also be re-imported
-    dynamically (`importlib`) from inside an already-running loop — the test suite's
-    `test_http_app_enforces_api_key_end_to_end` does exactly this to exercise a
-    freshly-configured `app` — and `asyncio.run` raises RuntimeError in that case. Fall back
-    to a private thread with its own loop so labelling still completes synchronously before
-    the module finishes importing."""
+async def _label_tools(identity: str) -> None:
+    """Public async API: four tests call this directly. Kept exactly as before; shares
+    `_apply_label` with the synchronous import-time path so the two cannot drift."""
+    _apply_label((await mcp.get_tools()).values(), identity)
+
+
+def _label_tools_at_import(identity: str) -> None:
+    """Label tool descriptions at import time without ever awaiting anything or touching
+    the event loop. In pinned fastmcp 2.14.7, `mcp.get_tools()` resolves to
+    `ToolManager.get_tools()` -> `apply_transformations_to_tools(self._tools, {})`, which
+    with no transformations returns the same `Tool` objects already sitting in
+    `mcp._tool_manager._tools` — so walking that registry directly does no IO and needs no
+    loop, thread, or `asyncio.run`.
+
+    Guarded broadly and deliberately: this runs at MODULE IMPORT, above `app =
+    mcp.http_app(...)`. A labelling failure here — e.g. a future fastmcp renaming the
+    private `_tool_manager`/`_tools` attributes this walks — must never stop the module
+    from finishing import and `app`/`main()` from booting. That mirrors the contract
+    `_brain_identity()` already keeps: an unreadable store yields an anonymous Brain, not a
+    failed start. Here it's an unlabelled-but-serving Brain, not a failed start."""
     try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        asyncio.run(_label_tools(identity))
-        return
-    errors: list[BaseException] = []
-
-    def _runner() -> None:
-        try:
-            asyncio.run(_label_tools(identity))
-        except BaseException as exc:  # pragma: no cover - defensive
-            errors.append(exc)
-
-    thread = threading.Thread(target=_runner, daemon=True)
-    thread.start()
-    thread.join()
-    if errors:
-        raise errors[0]
+        _apply_label(mcp._tool_manager._tools.values(), identity)
+    except Exception:
+        pass
 
 
-# Label tool descriptions at import time so both entrypoints — `main()` (stdio/local http)
-# and the module-level ASGI `app` export below (the `uvicorn fastmcp_server:app` hosting
-# path Cowork remote connectors reach) — ship labelled tool descriptions.
-_label_tools_sync(_IDENTITY)
+# Label tool descriptions at import time so both entrypoints — `main()`'s stdio/http path
+# and the module-level ASGI `app` export below — ship labelled tool descriptions.
+_label_tools_at_import(_IDENTITY)
 
 
 @mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)

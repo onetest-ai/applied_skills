@@ -146,6 +146,18 @@ class BrainNameTests(unittest.TestCase):
             self.assertIn("ACME Contact Centre", plan)
             self.assertIn("meta", plan,
                           "BRAIN.md must show how the name reaches the meta table")
+            # Regression guard: the --name branch interpolates an extra "step 9" block into
+            # the plan text before the outer textwrap.dedent() runs. If that block's lines
+            # don't carry the same indentation as the rest of the literal, the outer dedent's
+            # common-prefix computation collapses to "" and the ENTIRE document — heading,
+            # prose, code fences — ends up indented four spaces, which Markdown then renders
+            # as one indented code block. A substring assertion alone can't see this class of
+            # bug, so assert directly that no body line is four-space indented and that the
+            # heading survives at column 0.
+            self.assertIn("\n# Brain build plan", plan)
+            indented_lines = [line for line in plan.splitlines() if line.startswith("    ")]
+            self.assertEqual(indented_lines, [],
+                             f"BRAIN.md must not be indented as a whole: {indented_lines[:3]!r}")
 
     def test_scaffold_without_a_name_still_works(self):
         with tempfile.TemporaryDirectory() as td:

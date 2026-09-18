@@ -191,13 +191,23 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     # name IS given, prefer the durable, reproducible route — name.txt (already written by
     # scaffold) carries forward into meta.name via brain_sync's own seed/apply path — over
     # raw SQL against the store.
-    step9 = "" if not name else textwrap.dedent(f"""
-    # 9 · the Brain's name is recorded into the durable `meta` table via name.txt, not raw
-    #     SQL: it was written to `{proj/'name.txt'}` by scaffold, and brain_sync's seed/apply
-    #     path (see SKILL.md's plan/apply/seed sequence) UPSERTs it into meta.name on your
-    #     next seed/apply cycle. Re-run seed now to record it immediately:
-    "$PY" "{Path(__file__).resolve().parent/'brain_sync.py'}" seed --db "$DB" --parsed "{proj/'parsed'}" --require-goal
-    """)
+    # step9 is interpolated into the OUTER textwrap.dedent(f"""...""") below at column 0
+    # (no leading spaces before "{step9}" in that template), and the f-string is evaluated
+    # BEFORE the outer dedent runs. So step9's own lines must already carry the same
+    # 4-space indentation as every other line in that literal — an inner dedent()-then-drop
+    # (zero-indent) string would make the common leading prefix across the WHOLE outer
+    # document "", turning the outer dedent into a no-op and indenting the entire generated
+    # BRAIN.md by four spaces (which Markdown then renders as one indented code block).
+    step9 = ""
+    if name:
+        step9_body = textwrap.dedent(f"""
+        # 9 · the Brain's name is recorded into the durable `meta` table via name.txt, not raw
+        #     SQL: it was written to `{proj/'name.txt'}` by scaffold, and brain_sync's seed/apply
+        #     path (see SKILL.md's plan/apply/seed sequence) UPSERTs it into meta.name on your
+        #     next seed/apply cycle. Re-run seed now to record it immediately:
+        "$PY" "{Path(__file__).resolve().parent/'brain_sync.py'}" seed --db "$DB" --parsed "{proj/'parsed'}" --require-goal
+        """).strip("\n")
+        step9 = "\n" + textwrap.indent(step9_body, "    ") + "\n"
     deploy_section = textwrap.dedent({
         "local": """
     ## Deployment target: local
@@ -312,7 +322,7 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
 
     # 8 · Obsidian vault = a VIEW of the store
     "$PY" "{CTE/'to_obsidian.py'}" --db "$DB" --out "{proj/'vault'}"
-    {step9}
+{step9}
     # verify the built store
     "$PY" "{Path(__file__).resolve()}" verify --db "$DB"
     ```
