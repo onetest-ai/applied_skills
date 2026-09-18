@@ -49,6 +49,21 @@ def title_of(md, page):
             return s[:80]
     return f"Page {page}"
 
+def group_pages(rows):
+    """Consecutive rows sharing a `segment` are tiles of one logical unit.
+
+    A row without `segment` — everything render_pages.py produces — is its own
+    group, so existing documents assemble exactly as before.
+    """
+    groups = []
+    for r in rows:
+        seg = r.get("segment")
+        if seg is not None and groups and groups[-1][0].get("segment") == seg:
+            groups[-1].append(r)
+        else:
+            groups.append([r])
+    return groups
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--render-dir", required=True, help="<assets>/<slug> (has pages.json, p*.png, p*.txt)")
@@ -72,29 +87,32 @@ def main():
         c.commit(); c.close()
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
 
-    out, missing = [], 0
-    for p in pages["pages"]:
+    def body_and_title(p):
+        """One row's body and title — the existing per-page logic, lifted out of the
+        loop unchanged. Returns (body, title, missing_delta)."""
         n = p["page"]
-        img_marker = f"<!-- image: {assets_rel}/p{n:02d}.png -->"
+        tp = os.path.join(a.render_dir, f"p{n:02d}.txt")
+        txt = open(tp).read().strip() if os.path.exists(tp) else ""
         if p["flagged"]:
             md = vlm.get(p["img_sha"])
             if md is None:
-                missing += 1
-                txt = ""
-                tp = os.path.join(a.render_dir, f"p{n:02d}.txt")
-                if os.path.exists(tp):
-                    txt = open(tp).read().strip()
-                body = f"_[visual page — awaiting VLM transcription]_\n\n{txt}"
-                title = f"Page {n}"
-            else:
-                body = demote(md.strip())
-                title = title_of(md, n)
-        else:
-            tp = os.path.join(a.render_dir, f"p{n:02d}.txt")
-            txt = open(tp).read().strip() if os.path.exists(tp) else ""
-            body = txt
-            title = title_of(txt, n)
-        out.append(f"## p{n:02d} · {title}\n{img_marker}\n\n{body}\n")
+                return f"_[visual page — awaiting VLM transcription]_\n\n{txt}", f"Page {n}", 1
+            return demote(md.strip()), title_of(md, n), 0
+        return txt, title_of(txt, n), 0
+
+    out, missing = [], 0
+    for group in group_pages(pages["pages"]):
+        tiles = sorted(group, key=lambda r: r.get("tile", 1))
+        n = tiles[0]["page"]
+        img_marker = f"<!-- image: {assets_rel}/p{n:02d}.png -->"
+        bodies, title = [], None
+        for t in tiles:
+            b, ti, miss = body_and_title(t)
+            missing += miss
+            bodies.append(b)
+            if title is None:
+                title = ti
+        out.append(f"## p{n:02d} · {title}\n{img_marker}\n\n" + "\n\n".join(bodies) + "\n")
 
     open(a.out, "w").write("\n".join(out))
     nflag = sum(p["flagged"] for p in pages["pages"])
