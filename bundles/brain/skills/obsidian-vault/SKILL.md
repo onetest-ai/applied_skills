@@ -1,6 +1,6 @@
 ---
 name: obsidian-vault
-description: Use to navigate and answer from an Obsidian vault — follow [[wikilinks]], filter by #tags, traverse MOCs/topic notes, read a note's Related sections and embedded images. For a brain built by this toolkit, the vault is a VIEW of the knowledge.sqlite store (note = section = retrieval chunk). Complements the brain MCP tools: numbers still come from the store (never vault prose); the vault is for browsing relationships, reading full context, and working without the MCP server.
+description: Use when you need to navigate and answer from an Obsidian vault — follow [[wikilinks]], filter by #tags, traverse MOCs/topic notes, read a note's Related sections and embedded images. For a brain built by this toolkit, the vault is a VIEW of the knowledge.sqlite store (note = section = retrieval chunk). Complements the brain MCP tools: numbers still come from the store (never vault prose); the vault is for browsing relationships, reading full context, and working without the MCP server.
 ---
 
 # obsidian-vault (navigate & answer from the vault)

@@ -1,6 +1,6 @@
 ---
 name: hybrid-retrieval
-description: Use at ANSWER time to answer a question over one local SQLite knowledge store — routing numeric/aggregation claims to deterministic SQL (marts), narrative/qualitative claims to hybrid RAG (FTS5+vector RRF), and taxonomy/relations to graph JOINs, then composing one cited answer. Use whenever a question mixes "what happened / why" with exact figures, drill-downs, or trends. Pairs with the build skills knowledge-index, tabular-semantic-layer, corpus-taxonomy-extraction.
+description: Use when you need to answer a question over one local SQLite knowledge store, at ANSWER time — routing numeric/aggregation claims to deterministic SQL (marts), narrative/qualitative claims to hybrid RAG (FTS5+vector RRF), and taxonomy/relations to graph JOINs, then composing one cited answer. Use whenever a question mixes "what happened / why" with exact figures, drill-downs, or trends. Pairs with the build skills knowledge-index, tabular-semantic-layer, corpus-taxonomy-extraction.
 ---
 
 # Hybrid Retrieval

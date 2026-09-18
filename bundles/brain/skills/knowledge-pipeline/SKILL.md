@@ -1,6 +1,6 @@
 ---
 name: knowledge-pipeline
-description: Orchestrator — turn a mixed corpus (documents, transcripts, spreadsheets) into ONE local knowledge.sqlite (chunks+FTS+vector, numeric marts, taxonomy graph) and answer questions over it truthfully. Use when the user wants to "build the knowledge base", "index this corpus", "set up retrieval", "create a brain", "get started / onboard", or "answer questions over these docs+spreadsheets+transcripts". Runs a guided onboarding wizard for first-time setup. Composes corpus-taxonomy-extraction, knowledge-index, tabular-semantic-layer, hybrid-retrieval. Local, portable, no server.
+description: Use when the user wants to "build the knowledge base", "index this corpus", "set up retrieval", "create a brain", "get started / onboard", or "answer questions over these docs+spreadsheets+transcripts" — the orchestrator that turns a mixed corpus (documents, transcripts, spreadsheets) into ONE local knowledge.sqlite (chunks+FTS+vector, numeric marts, taxonomy graph) and answers questions over it truthfully. Runs a guided onboarding wizard for first-time setup. Composes corpus-taxonomy-extraction, knowledge-index, tabular-semantic-layer, hybrid-retrieval. Local, portable, no server.
 ---
 
 # Knowledge Pipeline (orchestrator)

@@ -1,6 +1,6 @@
 ---
 name: knowledge-index
-description: Use to build and query a LOCAL hybrid retrieval index over Markdown — SQLite FTS5 (BM25) + sqlite-vec (embeddings), fused by Reciprocal Rank Fusion. One portable .sqlite file, no server, torch-free (fastembed/onnx). Feed it Docling/plain Markdown; it chunks, embeds, and serves cited recall. The narrative lane of the local knowledge store.
+description: Use when you need to build or query a LOCAL hybrid retrieval index over Markdown — SQLite FTS5 (BM25) + sqlite-vec (embeddings), fused by Reciprocal Rank Fusion. One portable .sqlite file, no server, torch-free (fastembed/onnx). Feed it Docling/plain Markdown; it chunks, embeds, and serves cited recall. The narrative lane of the local knowledge store.
 ---
 
 # Knowledge Index (local hybrid RAG)

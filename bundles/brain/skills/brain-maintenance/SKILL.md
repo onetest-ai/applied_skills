@@ -1,6 +1,6 @@
 ---
 name: brain-maintenance
-description: Safely update and optionally deploy an existing Brain knowledge product. Use when the user asks to refresh, synchronize, maintain, rebuild changed sources, update the knowledge base, publish a new Brain image, deploy a Brain MCP revision, or roll back an update. Orchestrates source registry, visual parsing, parsed-store delta, selective classification, conditional marts, verification, and project-profile-driven deployment. The agent owns judgment and gates; scripts perform deterministic operations.
+description: Use when the user asks to refresh, synchronize, maintain, rebuild changed sources, update the knowledge base, publish a new Brain image, deploy a Brain MCP revision, or roll back an update — safely updates and optionally deploys an existing Brain knowledge product. Orchestrates source registry, visual parsing, parsed-store delta, selective classification, conditional marts, verification, and project-profile-driven deployment. The agent owns judgment and gates; scripts perform deterministic operations.
 ---
 
 # Brain Maintenance

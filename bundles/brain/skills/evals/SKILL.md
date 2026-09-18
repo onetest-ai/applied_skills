@@ -1,6 +1,6 @@
 ---
 name: evals
-description: Generate adversarial eval suites from a VTT/SRT corpus and run them against a FastMCP brain. Two modes — extraction (verbatim quotes via Bedrock Haiku, recommended) and db-fallback (chunk_topics, smoke-test only). Produces a promptfoo pass rate across Haiku/Sonnet/Opus tiers. Use after the brain is built (knowledge.sqlite exists with chunk_topics populated).
+description: Use when the brain is built (knowledge.sqlite exists with chunk_topics populated) and you need to generate adversarial eval suites from a VTT/SRT corpus and run them against a FastMCP brain. Two modes — extraction (verbatim quotes via Bedrock Haiku, recommended) and db-fallback (chunk_topics, smoke-test only). Produces a promptfoo pass rate across Haiku/Sonnet/Opus tiers.
 ---
 
 # Evals Skill
