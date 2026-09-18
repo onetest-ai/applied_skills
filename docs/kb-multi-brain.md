@@ -1,7 +1,7 @@
 # kb against multiple Brains
 
 **Date:** 2026-09-18
-**Status:** approved, not yet implemented
+**Status:** implemented
 
 ## Problem
 
@@ -127,7 +127,7 @@ one connector named `brain` active.
 # before — hard allowlist, blind to any other Brain
 tools: Read, Grep, mcp__brain__health, mcp__brain__get_evidence, ...
 # after — inherits every MCP tool; read-only enforced by the platform
-disallowedTools: Write, Edit, NotebookEdit
+disallowedTools: Write, Edit, NotebookEdit, Bash
 ```
 
 This is strictly stronger than today: "never edits files" moves from a prose promise to a
@@ -160,7 +160,10 @@ two deployed Brains are indistinguishable in context. Part B fixes that at the s
 - `knowledge-pipeline`'s `onboard.py` prompts for it alongside goal and audience, and
   records it in the scaffolded `BRAIN.md`, so it is chosen by whoever knows the corpus.
 - `brain-maintenance` carries it forward on refresh and **warns** when it is empty — a
-  Brain anonymous to a multi-Brain client — without failing.
+  Brain anonymous to a multi-Brain client — without failing. Carrying it forward means
+  `brain_sync.write_meta` re-reads `name.txt` like it re-reads `goal.txt`, but UPSERTs
+  `name` **only when that file is non-empty**: no existing project has a `name.txt`, and
+  an unconditional write would clear any `meta.name` an operator set by hand.
 - `fastmcp_server.py` derives its identity from `meta` at startup rather than constants:
   server `name`, a leading identity paragraph in `INSTRUCTIONS`, and the project name
   prefixed to each tool description. Identity goes in **both** instructions and tool
@@ -179,7 +182,7 @@ Part A:
   this design (it requires `mcp__brain__` in every answering skill). It inverts: **no
   literal MCP server name appears in any kb skill or in the verifier.**
 - `tests/test_plugin_structure.py` verifier assertions (lines 75–76) become: no `tools:`
-  allowlist; `disallowedTools` present and covering `Write`, `Edit`, `NotebookEdit`.
+  allowlist; `disallowedTools` present and covering `Write`, `Edit`, `NotebookEdit`, `Bash`.
 - New: doctrine states the discovery contract and the one-Brain-per-invocation rule;
   `connect` contains no renaming instruction; `cowork-setup.md` contains no
   disable-a-connector instruction.

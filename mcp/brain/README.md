@@ -23,9 +23,26 @@ Every advertised tool property carries a concrete primitive schema, with a `null
 | `get_taxonomy` | Explore taxonomy nodes, edges, and tagged sections |
 | `find_related_content` | Read precomputed semantic neighbors |
 | `get_evidence` | Inspect one cited section and optional page/table text |
-| `health` | Check knowledge lanes and deployed knowledge version; also returns `about: {goal, audience}` |
+| `health` | Check knowledge lanes and deployed knowledge version; also returns `about: {name, goal, audience}` |
 
-`health` additionally returns an `about` object — `{"goal": <str>, "audience": <str>}` — read from the store's durable `meta` table (seeded from `goal.txt` and `brain.toml` `[project].audience`). Consumers such as the `kb` plugin use it to tune answer altitude and authored-artifact style. Stores built before the `meta` table (or with no values recorded) return empty strings, never an error.
+`health` additionally returns an `about` object — `{"name": <str>, "goal": <str>, "audience": <str>}` — read from the store's durable `meta` table (seeded from `name.txt`, `goal.txt`, and `brain.toml` `[project].audience`). Consumers such as the `kb` plugin use it to tune answer altitude and authored-artifact style. Stores built before the `meta` table (or with no values recorded) return empty strings, never an error.
+
+### Brain identity (`meta.name`)
+
+`meta.name` is this Brain's optional display name — how it tells itself apart when a client has several Brains connected. It is not required: an anonymous Brain (no `meta.name` recorded) is fully functional.
+
+When set, it surfaces in four places:
+
+- the MCP server's `name`, e.g. `Semantic Knowledge Brain — ACME Contact Centre`;
+- the server's `instructions`, which open with an identity paragraph naming the Brain and warning against blending its results with another Brain's;
+- every advertised tool's `description`, prefixed with `[<name>]`;
+- `health`'s `about.name`.
+
+If `meta.name` is empty, the identity used for all four falls back to the first clause of `meta.goal` (split on the first `.` or `;`), and if `goal` is also empty, the Brain presents as anonymous — the server name reverts to plain `Semantic Knowledge Brain`, `instructions` drop the identity paragraph, and tool descriptions are left unlabeled.
+
+`meta.name` is set via onboarding's `--name` flag (`onboard.py scaffold --project <dir> --name '<display name>'`), which writes it to `name.txt` in the project directory. From there, `brain_sync.write_meta` carries it into the store's `meta` table on every seed and apply, the same way `goal`/`audience` refresh from their own source files — so renaming `name.txt` and re-running the normal build flow takes effect.
+
+One safety rule is asymmetric with `goal`/`audience`: `name` is UPSERTed only when `name.txt` is non-empty. `goal` and `audience` are written unconditionally from their source files on every seed/apply (an empty `goal.txt` clears `meta.goal`). `name.txt` absent or blank instead leaves any existing `meta.name` untouched — so a name set by hand (e.g. via a one-off `brain-maintenance` fix-up) is never silently cleared by an ordinary re-seed that has no `name.txt`.
 
 `brain_mcp.py` is retained temporarily as the legacy stdio implementation. New integrations should use `fastmcp_server.py`.
 
