@@ -141,6 +141,26 @@ class AssembleTests(unittest.TestCase):
         header = lines[2]
         self.assertIn("|  |  |", header, "header should have empty cells")
 
+    def test_cli_plans_and_assembles(self):
+        """The SKILL.md workflow is shell commands, so the CLI must actually run."""
+        import subprocess, sys, json as _json
+        d = Path(tempfile.mkdtemp())
+        seg = d / "segments.json"
+        seg.write_text(_json.dumps(FIXTURE))
+        plan_path = d / "plan.json"
+        script = HERE.parent / "skills" / "visual-parse" / "html_capture.py"
+        r = subprocess.run([sys.executable, str(script), "plan",
+                            "--segments", str(seg), "--out", str(plan_path)],
+                           text=True, capture_output=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        plan = _json.loads(plan_path.read_text())
+        out = _outdir_with_pngs(plan)
+        r = subprocess.run([sys.executable, str(script), "assemble",
+                            "--segments", str(seg), "--plan", str(plan_path),
+                            "--outdir", str(out)], text=True, capture_output=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((Path(out) / "pages.json").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

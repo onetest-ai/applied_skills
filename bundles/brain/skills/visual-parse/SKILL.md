@@ -65,20 +65,23 @@ detects this (mirroring `render_pages.py`'s `--min-text` threshold) and returns
    heading-led section — with each segment's bounding box, verbatim text, and any DOM
    tables. Write that payload to `segments.json`; it must pass `html_capture.py`'s
    `validate_segments`.
-2. **Plan.** Call `html_capture.py`'s `plan_captures(segments_json, max_px=1600)` to get one
-   capture instruction per image the provider must take. A segment shorter than `max_px` is
-   one capture; a taller one is tiled with ~10% overlap so a line of text straddling a seam
-   still appears whole in at least one tile — vision models downscale large images, and an
-   illegible capture yields a confident, wrong transcription. Every plan entry carries a
-   `segment` index; tiles of one segment share it.
-3. **Capture.** For each plan entry, screenshot exactly the entry's `clip` region through the
-   same provider and save it to `<assets>/<slug>/p<NN>.png` (`NN` = the entry's `page`
-   number, zero-padded, matching the plan in order). One screenshot per plan entry — this is
-   the one step in the sequence a script cannot do, because only the provider can render and
-   capture pixels.
-4. **Assemble.** Call `html_capture.py`'s `assemble(segments_json, plan, outdir)`. It hashes
-   each PNG that step 3 wrote, writes the `p<NN>.txt` verbatim-text sidecar and (once per
-   segment) `p<NN>.tables.md` from the segment's DOM tables, and writes `pages.json` in
+2. **Plan.**
+   `html_capture.py plan --segments segments.json --out plan.json [--max-px 1600] [--overlap 0.1]`
+   Writes one capture instruction per image the provider must take. A segment shorter than
+   `--max-px` is one capture; a taller one is tiled with `--overlap` (default 10%) shared
+   with its neighbour so a line of text straddling a seam still appears whole in at least
+   one tile — vision models downscale large images, and an illegible capture yields a
+   confident, wrong transcription. Every plan entry carries a `segment` index; tiles of one
+   segment share it.
+3. **Capture.** For each entry in `plan.json`, screenshot exactly the entry's `clip` region
+   through the same provider and save it to `<assets>/<slug>/p<NN>.png` (`NN` = the entry's
+   `page` number, zero-padded, matching the plan in order). One screenshot per plan entry —
+   this is the one step in the sequence a script cannot do, because only the provider can
+   render and capture pixels.
+4. **Assemble.**
+   `html_capture.py assemble --segments segments.json --plan plan.json --outdir <assets>/<slug> [--dpi 96]`
+   Hashes each PNG that step 3 wrote, writes the `p<NN>.txt` verbatim-text sidecar and (once
+   per segment) `p<NN>.tables.md` from the segment's DOM tables, and writes `pages.json` in
    **exactly** the shape `render_pages.py` produces — plus an additive `segment` field
    grouping a tall segment's tiles. Because the shape matches, `vision_prep.py` needs no
    change to consume it.
@@ -87,6 +90,12 @@ detects this (mirroring `render_pages.py`'s `--min-text` threshold) and returns
    `vision_assemble.py` — which merges a segment's tiles into ONE section before emitting the
    parsed Markdown, so a citation resolves to "the segment", never to an arbitrary vertical
    slice of it.
+
+```bash
+python <skills>/visual-parse/html_capture.py plan --segments segments.json --out plan.json
+# provider takes one screenshot per plan entry into <assets>/<slug>/pNN.png
+python <skills>/visual-parse/html_capture.py assemble --segments segments.json --plan plan.json --outdir <assets>/<slug>
+```
 
 HTML's DOM tables extract more reliably than a rendered PDF's: `render_pages.py` infers a
 grid from `find_tables()` over a raster image, while `html_segments.js` reads real `<table>`

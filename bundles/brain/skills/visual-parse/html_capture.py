@@ -8,6 +8,7 @@ in Chrome and this consumes what it produced.
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -172,3 +173,39 @@ def assemble(obj, plan, outdir: str, dpi: int = 96) -> dict:
     with open(os.path.join(outdir, "pages.json"), "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2)
     return payload
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Plan and assemble HTML captures for the visual lane.")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("plan", help="segments.json -> capture instructions the provider executes")
+    p.add_argument("--segments", required=True, help="segments.json from html_segments.js")
+    p.add_argument("--out", required=True, help="where to write the capture plan JSON")
+    p.add_argument("--max-px", type=int, default=1600,
+                   help="tallest capture before a segment is tiled (default: 1600)")
+    p.add_argument("--overlap", type=float, default=0.1,
+                   help="fraction of a tile shared with its neighbour (default: 0.1)")
+
+    a = sub.add_parser("assemble", help="plan + captured PNGs -> the visual lane's artifact layout")
+    a.add_argument("--segments", required=True)
+    a.add_argument("--plan", required=True)
+    a.add_argument("--outdir", required=True, help="<assets>/<slug>; the PNGs are already here")
+    a.add_argument("--dpi", type=int, default=96)
+
+    args = ap.parse_args(argv)
+    obj = json.load(open(args.segments, encoding="utf-8"))
+    if args.cmd == "plan":
+        plan = plan_captures(obj, max_px=args.max_px, overlap=args.overlap)
+        with open(args.out, "w", encoding="utf-8") as fh:
+            json.dump(plan, fh, indent=2)
+        segs = len({e["segment"] for e in plan})
+        print(f"{args.segments}: {segs} segment(s) -> {len(plan)} capture(s) -> {args.out}")
+        return
+    plan = json.load(open(args.plan, encoding="utf-8"))
+    pages = assemble(obj, plan, args.outdir, dpi=args.dpi)
+    print(f"{args.outdir}: {len(pages['pages'])} page(s) written (slug {pages['slug']})")
+
+
+if __name__ == "__main__":
+    main()
