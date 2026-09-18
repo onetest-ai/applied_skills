@@ -41,3 +41,42 @@ def validate_segments(obj) -> list[str]:
         if "text" not in s:
             problems.append(f"{where} missing 'text'")
     return problems
+
+
+def plan_captures(obj, max_px: int = 1600, overlap: float = 0.1) -> list[dict]:
+    """Capture instructions for one document: one entry per image the provider takes.
+
+    A segment shorter than max_px is one capture. A taller one is tiled with
+    `overlap` of the tile height shared between neighbours, so a line of text
+    straddling a seam appears whole in at least one tile. Tiles of one segment
+    share a `segment` value; vision_assemble merges them back into one chunk, so
+    a citation resolves to the segment, never to a tile.
+    """
+    problems = validate_segments(obj)
+    if problems:
+        raise ValueError("invalid segments.json: " + "; ".join(problems))
+    step = max(1, int(max_px * (1.0 - overlap)))
+    plan: list[dict] = []
+    page = 0
+    for seg in obj["segments"]:
+        box = seg["bbox"]
+        top, height = float(box["y"]), float(box["height"])
+        offsets = [0.0] if height <= max_px else [
+            float(o) for o in range(0, int(height), step)
+            if o < height and (o + step < height or o + max_px >= height)
+        ]
+        if height > max_px and offsets[-1] + max_px < height:
+            offsets.append(height - max_px)
+        of = len(offsets)
+        for tile, off in enumerate(offsets, 1):
+            page += 1
+            plan.append({
+                "page": page,
+                "segment": int(seg["index"]),
+                "tile": tile,
+                "of": of,
+                "clip": {"x": float(box["x"]), "y": top + off,
+                         "width": float(box["width"]),
+                         "height": min(float(max_px), height - off)},
+            })
+    return plan
