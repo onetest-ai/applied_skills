@@ -136,5 +136,27 @@ class TestCoworkDoc(unittest.TestCase):
         self.assertIn("any name", text)
 
 
+class TestNoHardcodedBrainNamespace(unittest.TestCase):
+    """The whole point of the multi-Brain work: kb names no MCP server."""
+
+    def test_kb_tree_is_free_of_server_names(self):
+        offenders = []
+        for sub in ("skills", "agents"):
+            for path in sorted((KB_ROOT / sub).rglob("*.md")):
+                text = read_text(path)
+                for token in ("mcp__brain__", "mcp__plugin_brain_brain__"):
+                    if token in text:
+                        offenders.append(f"{path.relative_to(KB_ROOT)}: {token}")
+        self.assertEqual(offenders, [], "hardcoded MCP server names remain")
+
+    def test_no_skill_grants_itself_tools(self):
+        offenders = [
+            path.parent.name
+            for path in sorted((KB_ROOT / "skills").glob("*/SKILL.md"))
+            if "allowed-tools" in read_text(path)
+        ]
+        self.assertEqual(offenders, [], "skills still declare allowed-tools")
+
+
 if __name__ == "__main__":
     unittest.main()
