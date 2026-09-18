@@ -19,11 +19,31 @@
     }
     return els;
   };
+
+  // Content before the first boundary belongs to no boundary's run, but it is
+  // usually the document's lede — the paragraph a reader would cite. Emit it as
+  // its own leading segment when it carries text.
+  const leadInFor = (first) => {
+    const els = [];
+    for (let n = first.parentElement && first.parentElement.firstElementChild;
+         n && n !== first; n = n.nextElementSibling) {
+      els.push(n);
+    }
+    return els.some(e => (e.innerText || '').trim()) ? els : [];
+  };
+
   const groupsFor = (bounds) => {
     const wrapped = bounds.map(b => b.closest('section, article'));
     const distinct = new Set(wrapped.filter(Boolean));
     const eachHasItsOwn = wrapped.every(Boolean) && distinct.size === bounds.length;
-    return eachHasItsOwn ? wrapped.map(w => [w]) : bounds.map(runFrom);
+    if (eachHasItsOwn) {
+      return wrapped.map(w => [w]);
+    } else {
+      // Sibling-walk path: include lead-in content if it has text
+      const groups = bounds.map(runFrom);
+      const leadIn = leadInFor(bounds[0]);
+      return leadIn.length ? [leadIn, ...groups] : groups;
+    }
   };
 
   const pick = () => {
