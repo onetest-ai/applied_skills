@@ -65,15 +65,16 @@ class TestDoctrineAndVerifier(unittest.TestCase):
         fm = parse_frontmatter(text)
         self.assertEqual(fm.get("name"), "verifier")
         self.assertIn("description", fm)
-        # read-only: no Write/Edit in the tools allowlist
-        self.assertIn("tools", fm)
-        self.assertNotIn("Write", fm["tools"])
-        self.assertNotIn("Edit", fm["tools"])
-        # The verifier's steps CALL the Brain MCP tools — it must actually be granted
-        # them (Read+Grep alone cannot re-resolve a citation). Guard both namespaces.
-        for tool in ("health", "get_evidence", "get_metric", "get_taxonomy"):
-            self.assertIn(f"mcp__brain__{tool}", fm["tools"], f"verifier missing mcp__brain__{tool}")
-            self.assertIn(f"mcp__plugin_brain_brain__{tool}", fm["tools"], f"verifier missing plugin-namespace {tool}")
+        # A `tools:` allowlist would pin the verifier to specific MCP server names and
+        # leave it blind to any other Brain. It must inherit MCP tools instead.
+        self.assertNotIn("tools", fm, "verifier must not pin a tools allowlist")
+        # Read-only is enforced by the platform, not by prose.
+        self.assertIn("disallowedTools", fm)
+        for tool in ("Write", "Edit", "NotebookEdit"):
+            self.assertIn(tool, fm["disallowedTools"], f"verifier may still use {tool}")
+        # No hardcoded server names anywhere in the agent.
+        self.assertNotIn("mcp__brain__", text)
+        self.assertNotIn("mcp__plugin_brain_brain__", text)
 
     def test_doctrine_states_discovery_contract(self):
         text = read_text(KB_ROOT / "skills" / "_shared" / "doctrine.md")
