@@ -75,6 +75,17 @@ class TestDoctrineAndVerifier(unittest.TestCase):
             self.assertIn(f"mcp__brain__{tool}", fm["tools"], f"verifier missing mcp__brain__{tool}")
             self.assertIn(f"mcp__plugin_brain_brain__{tool}", fm["tools"], f"verifier missing plugin-namespace {tool}")
 
+    def test_doctrine_states_discovery_contract(self):
+        text = read_text(KB_ROOT / "skills" / "_shared" / "doctrine.md")
+        # Identify a Brain by its tool surface, never by server name.
+        for token in ("Brain Discovery", "tool surface", "search_knowledge", "get_metric"):
+            self.assertIn(token, text, f"doctrine missing {token!r}")
+        # The old rename-to-`brain` convention must be gone.
+        self.assertNotIn("mcp__brain__", text)
+        self.assertNotIn("mcp__plugin_brain_brain__", text)
+        # One invocation binds to one Brain.
+        self.assertIn("never blend", text.lower())
+
 
 class TestMarketplacePlugins(unittest.TestCase):
     def test_marketplace_has_brain_and_kb(self):
