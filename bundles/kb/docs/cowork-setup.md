@@ -46,7 +46,10 @@ Each project has its own Brain endpoint. Add it once per project:
    project (e.g. `acme-brain`) and paste your project's **HTTPS MCP URL**
    (Streamable HTTP transport).
 
-   ![Add custom connector dialog: name field set to brain and the MCP server URL field](images/cowork-06-add-connector-name-brain.png)
+   ![Add custom connector dialog: the connector name and MCP server URL fields](images/cowork-06-add-connector-name-brain.png)
+
+   > The screenshot shows `brain` in the name field — that is just the example name it was
+   > captured with, not a requirement. Any name works.
 
 3. Authorize with **Entra OAuth** (Advanced settings → OAuth client id/secret).
    If your endpoint uses a static key, set an `X-API-Key` header instead.

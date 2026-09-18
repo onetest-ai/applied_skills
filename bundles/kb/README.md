@@ -76,5 +76,5 @@ Cowork keeps its own plugin state and connects to MCP servers **from Anthropic's
 ## Troubleshooting
 
 - **`/kb:connect` finds no Brain** — CLI: confirm the `mcpServers` block is in `.mcp.json` and reload the session. Cowork: confirm the connector is enabled and its OAuth/API-key auth succeeded.
-- **Tools don't resolve in Cowork** — check that the connector is enabled and its auth succeeded; run `/kb:connect` to list every Brain kb can currently reach.
+- **kb answered from the wrong Brain, or doesn't see one you expect** — run `/kb:connect` to list every Brain kb can currently reach with its goal. If the one you want is missing, its connector is disabled or its auth failed. If it is listed but kb chose another, name it in the request ("ask the acme brain about …"). A server that exposes only part of the Brain tool surface is not recognised as a Brain.
 - **Ambient mode seems inert in Cowork** — expected; it's CLI-only. Invoke `/kb:ask` (and the other skills) explicitly.
