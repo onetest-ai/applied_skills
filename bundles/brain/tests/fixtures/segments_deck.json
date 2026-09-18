@@ -1,0 +1,21 @@
+{
+  "source": "file:///corpus/decks/q3-review.html",
+  "title": "Q3 Contact Centre Review",
+  "viewport": {"width": 1280, "height": 720},
+  "segments": [
+    {"index": 1, "heading": "Q3 Contact Centre Review",
+     "text": "Q3 Contact Centre Review\nPrepared for the ops leadership team",
+     "bbox": {"x": 0, "y": 0, "width": 1280, "height": 720},
+     "height": 720, "tables": []},
+    {"index": 2, "heading": "FCR",
+     "text": "Five9 FCR was 72% in Q3, up from 68% in Q2.",
+     "bbox": {"x": 0, "y": 720, "width": 1280, "height": 720},
+     "height": 720,
+     "tables": [{"caption": "FCR by quarter",
+                 "rows": [["Quarter", "FCR"], ["Q2", "68%"], ["Q3", "72%"]]}]},
+    {"index": 3, "heading": "Appendix: raw notes",
+     "text": "A long unstructured appendix with no internal headings.",
+     "bbox": {"x": 0, "y": 1440, "width": 1280, "height": 5200},
+     "height": 5200, "tables": []}
+  ]
+}
