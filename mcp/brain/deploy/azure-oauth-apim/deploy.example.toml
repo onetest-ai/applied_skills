@@ -1,0 +1,37 @@
+# Entra OAuth facade (on Azure API Management) for an APIM-fronted Brain MCP server.
+# Copy to your project (default: ops/deploy/oauth.toml) and edit the values.
+# NO SECRETS here — the adapter uses your Azure CLI session only and never reads,
+# prints, or stores a token (the facade forwards Entra's token response untouched).
+#
+# Prerequisites the adapter does NOT create (it preflight-checks these and aborts deploy
+# if any is missing):
+#   * The MCP server is already exposed through APIM and guarded by validate-azure-ad-token
+#     (client-application-ids must include entra.resource_app_id), and its 401 challenge
+#     advertises the PRM (WWW-Authenticate: ... resource_metadata=...).
+#   * The Entra resource app exists, exposes api://<resource_app_id>/<scope>, issues v2
+#     tokens, and has the MCP client callback registered (the adapter moves it Web -> SPA).
+#
+# The adapter DOES create (config-only, idempotent): the anonymous well-known API
+# (apim.wellknown_api at path apim.wellknown_path — NOT present by default) + its PRM
+# operation (apim.prm_operation_id), plus the /authorize, /token and AS-metadata
+# operations and all policies.
+version = 1
+
+[apim]
+subscription      = "YOUR-SUBSCRIPTION"                       # az subscription name or id
+resource_group    = "rg-your-apim"
+service           = "your-apim"                               # APIM service name
+gateway_url       = "https://your-apim.azure-api.net"         # APIM gateway base (no trailing slash)
+wellknown_api     = "well-known"                              # API id the adapter creates to serve PRM + OAuth facade
+wellknown_path    = ""                                        # its APIM path; "" = gateway root (recommended for RFC 8414/9728)
+prm_operation_id  = "get"                                     # PRM operation id it creates (GET /.well-known/oauth-protected-resource/*)
+
+[entra]
+tenant_id              = "00000000-0000-0000-0000-000000000000"   # Entra tenant (directory) id
+resource_app_id        = "00000000-0000-0000-0000-000000000000"   # resource app appId; App ID URI = api://<this>
+resource_app_object_id = "00000000-0000-0000-0000-000000000000"   # that app's object id (for the SPA callback PATCH)
+scope                  = "MCP.Access"                             # the exposed delegated scope name
+
+[mcp]
+resource_url = "https://your-apim.azure-api.net/primo/mcp"        # the MCP endpoint = PRM `resource` (client requires this verbatim)
+callback_url = "https://claude.ai/api/mcp/auth_callback"          # the MCP client's OAuth redirect (moved to SPA; its origin is forwarded to Entra)
