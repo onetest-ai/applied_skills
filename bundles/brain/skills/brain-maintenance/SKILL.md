@@ -107,13 +107,23 @@ Use a fresh run directory for vision results. Never consume stale or partial `re
 
 For a genuinely text-only source, deterministic parsing is acceptable. Do not downgrade an existing visually enriched document to a text-only parse.
 
+**HTML sources re-capture on refresh, not diff.** An HTML source has no stable rendered
+artifact to reuse across runs the way a PDF/PPTX page does — re-run the visual-parse capture
+step (`html_segments.js` → `html_capture.py plan` → screenshots → `html_capture.py assemble`)
+against the current page for a changed HTML source, exactly as if it were new. A parsed
+document whose header reads `fidelity: degraded` means no browser was available at the run
+that ingested it: text-only, DOM-derived, no images, no VLM transcription. If a browser (or
+browser-capable provider) is available on this maintenance pass, re-running that source
+through the full-fidelity capture path upgrades it to `fidelity: full` — check for `fidelity:
+degraded` headers in the parsed corpus and treat them as a punch list, not a permanent state.
+
 **VTT/SRT sources require two separate parse passes** — `--merge-cues` only applies to transcripts and must not be passed for PDF/PPTX/DOCX:
 
 ```bash
 # Pass 1 — transcripts only
 python <skills>/corpus-taxonomy-extraction/parse_corpus.py --corpus <root> --out parsed/ --formats vtt,srt --merge-cues 10
 # Pass 2 — narrative docs
-python <skills>/corpus-taxonomy-extraction/parse_corpus.py --corpus <root> --out parsed/ --formats pptx,docx,pdf,md,markdown,txt
+python <skills>/corpus-taxonomy-extraction/parse_corpus.py --corpus <root> --out parsed/ --formats pptx,docx,pdf,md,markdown,txt,html,htm
 ```
 
 ### 4. Review and apply parsed-store delta

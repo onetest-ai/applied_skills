@@ -93,9 +93,14 @@ DB=<project>/schema/knowledge.sqlite
 #     classify as empty [] and retrieval quality degrades severely. Always pass --merge-cues N > 1 for VTT/SRT.
 python .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats vtt,srt --merge-cues 10
 # 1b. parse narrative docs → Markdown. TEXT pages via pymupdf (torch-free):
-python .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf,md,markdown,txt
+python .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf,md,markdown,txt,html,htm
+#     HTML with no browser degrades to DOM text (fidelity: degraded) via the same command; an
+#     HTML deck needs a browser to capture — see the visual-parse capture step below.
 # 1v. VISUAL/diagram/table pages (slide decks, flows, timelines) — the visual-parse skill:
 python .../visual-parse/render_pages.py --doc <deck.pdf> --out <project>/assets     # PNG + text + table grids; flag visual pages
+#     HTML deck with a browser (full fidelity, images + VLM transcription): run the
+#     visual-parse skill's capture step (html_segments.js → html_capture.py plan → screenshots
+#     → html_capture.py assemble) to produce this same <project>/assets/<slug>/pages.json first.
 python .../visual-parse/vision_prep.py --render-dir <project>/assets/<slug> --out <project>/vision --db "$DB"
 #    → 🤖 dispatch VISION subagents (cheap) → vision/result_k.json {img_sha: faithful markdown}
 python .../visual-parse/vision_assemble.py --render-dir <project>/assets/<slug> --out <project>/parsed/<doc>.md --results <project>/vision --db "$DB"
