@@ -503,25 +503,26 @@ def get_evidence(chunk_id: int | str, include_page_text: bool = True) -> dict[st
 
 
 def _read_about(con: sqlite3.Connection) -> dict[str, str]:
-    """Read goal + audience from the durable `meta(key,value)` table. Degrades gracefully:
-    a store built before this change (no meta table) or an empty meta yields empty strings,
-    never an error."""
-    about = {"goal": "", "audience": ""}
+    """Read name + goal + audience from the durable `meta(key,value)` table. Degrades
+    gracefully: a store built before this change (no meta table), an empty meta, or a
+    store that predates `name` yields empty strings, never an error."""
+    about = {"name": "", "goal": "", "audience": ""}
     if "meta" not in _present_tables(con):
         return about
     try:
-        for row in con.execute("SELECT key, value FROM meta WHERE key IN ('goal','audience')"):
+        for row in con.execute(
+                "SELECT key, value FROM meta WHERE key IN ('name','goal','audience')"):
             if row["key"] in about:
                 about[row["key"]] = row["value"] or ""
     except sqlite3.Error:
-        return {"goal": "", "audience": ""}
+        return {"name": "", "goal": "", "audience": ""}
     return about
 
 
 def health() -> dict[str, Any]:
     """Return deployment and store health without exposing local filesystem paths.
 
-    Includes an `about: {goal, audience}` block read from the durable `meta` table so
+    Includes an `about: {name, goal, audience}` block read from the durable `meta` table so
     consumers (e.g. the kb plugin) can tune answer altitude/artifact style; empty strings
     when the store predates the meta table or has no values recorded."""
     tables = ("chunks", "chunks_fts", "chunks_vec", "graph_nodes", "graph_edges", "chunk_topics", "facts")

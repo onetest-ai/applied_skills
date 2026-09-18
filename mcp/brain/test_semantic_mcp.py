@@ -238,13 +238,20 @@ class SemanticCoreTests(FixtureCase):
         with sqlite3.connect(self.fx["db"]) as con:
             con.execute("DROP TABLE meta")
         result = core.health()
-        self.assertEqual(result["about"], {"goal": "", "audience": ""})
+        self.assertEqual(result["about"], {"name": "", "goal": "", "audience": ""})
 
     def test_health_about_empty_when_meta_has_no_values(self):
         with sqlite3.connect(self.fx["db"]) as con:
             con.execute("DELETE FROM meta")
         result = core.health()
-        self.assertEqual(result["about"], {"goal": "", "audience": ""})
+        self.assertEqual(result["about"], {"name": "", "goal": "", "audience": ""})
+
+    def test_health_about_carries_name_when_set(self):
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.execute("INSERT OR REPLACE INTO meta VALUES('name','ACME Contact Centre')")
+        result = core.health()
+        self.assertEqual(result["about"]["name"], "ACME Contact Centre")
+        self.assertEqual(result["about"]["goal"], "optimize call-center operations")
 
 
 @unittest.skipUnless(Client is not None, "fastmcp is not installed")
