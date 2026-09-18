@@ -69,6 +69,37 @@ class SegmentMergingTests(unittest.TestCase):
         md = _run(d, rd)
         self.assertLess(md.index("FIRST"), md.index("SECOND"))
 
+    def test_tiles_are_sorted_even_when_pages_json_lists_them_out_of_order(self):
+        """The sort is load-bearing: pages.json order is not guaranteed to be tile order."""
+        rows = [
+            {"page": 2, "image": "p02.png", "img_sha": "b" * 64, "text_len": 1,
+             "n_drawings": 0, "n_tables": 0, "img_cover": 1.0, "flagged": True,
+             "why": "html-segment", "segment": 1, "tile": 2, "of": 2},
+            {"page": 1, "image": "p01.png", "img_sha": "a" * 64, "text_len": 1,
+             "n_drawings": 0, "n_tables": 0, "img_cover": 1.0, "flagged": True,
+             "why": "html-segment", "segment": 1, "tile": 1, "of": 2},
+        ]
+        d, rd = _render_dir(rows, {1: "x", 2: "y"},
+                            results={"a" * 64: "FIRST", "b" * 64: "SECOND"})
+        md = _run(d, rd)
+        self.assertLess(md.index("FIRST"), md.index("SECOND"))
+        self.assertEqual(md.count("## p"), 1)
+
+    def test_a_later_tile_supplies_the_title_when_the_first_has_none(self):
+        rows = [
+            {"page": 1, "image": "p01.png", "img_sha": "a" * 64, "text_len": 0,
+             "n_drawings": 0, "n_tables": 0, "img_cover": 1.0, "flagged": True,
+             "why": "html-segment", "segment": 1, "tile": 1, "of": 2},
+            {"page": 2, "image": "p02.png", "img_sha": "b" * 64, "text_len": 9,
+             "n_drawings": 0, "n_tables": 0, "img_cover": 1.0, "flagged": True,
+             "why": "html-segment", "segment": 1, "tile": 2, "of": 2},
+        ]
+        d, rd = _render_dir(rows, {1: "", 2: "Risks"},
+                            results={"b" * 64: "# Risks\nStaffing is short."})
+        md = _run(d, rd)
+        self.assertIn("· Risks", md)
+        self.assertNotIn("· Page 1", md)
+
     def test_rows_without_a_segment_assemble_exactly_as_before(self):
         """The regression guard: every pages.json render_pages.py ever wrote."""
         rows = [

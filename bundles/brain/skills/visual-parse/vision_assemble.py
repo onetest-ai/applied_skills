@@ -88,30 +88,39 @@ def main():
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
 
     def body_and_title(p):
-        """One row's body and title — the existing per-page logic, lifted out of the
-        loop unchanged. Returns (body, title, missing_delta)."""
+        """One row's body and title. Returns (body, title_or_None, missing_delta).
+
+        title is None when this row has no real title of its own, so a later tile
+        of the same segment can supply one — a blank lead-in tile must not pin the
+        whole section to "Page N".
+        """
         n = p["page"]
         tp = os.path.join(a.render_dir, f"p{n:02d}.txt")
         txt = open(tp).read().strip() if os.path.exists(tp) else ""
         if p["flagged"]:
             md = vlm.get(p["img_sha"])
             if md is None:
-                return f"_[visual page — awaiting VLM transcription]_\n\n{txt}", f"Page {n}", 1
+                return f"_[visual page — awaiting VLM transcription]_\n\n{txt}", None, 1
             return demote(md.strip()), title_of(md, n), 0
-        return txt, title_of(txt, n), 0
+        return txt, (title_of(txt, n) if txt else None), 0
 
     out, missing = [], 0
     for group in group_pages(pages["pages"]):
         tiles = sorted(group, key=lambda r: r.get("tile", 1))
         n = tiles[0]["page"]
         img_marker = f"<!-- image: {assets_rel}/p{n:02d}.png -->"
-        bodies, title = [], None
+        bodies, title, shown_txt = [], None, False
         for t in tiles:
             b, ti, miss = body_and_title(t)
+            if miss and shown_txt:
+                b = "_[visual page — awaiting VLM transcription]_"
+            elif miss:
+                shown_txt = True
             missing += miss
             bodies.append(b)
             if title is None:
                 title = ti
+        title = title or f"Page {n}"
         out.append(f"## p{n:02d} · {title}\n{img_marker}\n\n" + "\n\n".join(bodies) + "\n")
 
     open(a.out, "w").write("\n".join(out))
