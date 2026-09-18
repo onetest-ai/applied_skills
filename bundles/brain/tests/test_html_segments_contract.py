@@ -46,6 +46,11 @@ class SegmentsContractTests(unittest.TestCase):
         obj["segments"] = []
         self.assertTrue(HC.validate_segments(obj))
 
+    def test_segment_missing_text_is_reported(self):
+        obj = json.loads(FIXTURE.read_text())
+        del obj["segments"][0]["text"]
+        self.assertIn("text", " ".join(HC.validate_segments(obj)))
+
 
 if __name__ == "__main__":
     unittest.main()
