@@ -133,6 +133,7 @@ def cmd_scaffold(a):
     if not met.exists():
         _copy_template(TSL / "metrics.example.json", met, corpus)
     (proj / "goal.txt").write_text((a.goal or "") + "\n")
+    (proj / "name.txt").write_text((a.name or "") + "\n")
     config = proj / "brain.toml"
     if not config.exists():
         def rel_or_abs(path):
@@ -166,7 +167,7 @@ def cmd_scaffold(a):
         shutil.copy2(launcher, proj / "brain")
         os.chmod(proj / "brain", 0o755)
 
-    plan = _plan_text(proj, corpus, db, docs, reporting, fam, met, a.goal, a.deploy_target, a.audience)
+    plan = _plan_text(proj, corpus, db, docs, reporting, fam, met, a.goal, a.deploy_target, a.audience, a.name)
     (proj / "BRAIN.md").write_text(plan)
 
     print(f"scaffolded project: {proj}")
@@ -179,7 +180,7 @@ def cmd_scaffold(a):
     return 0
 
 
-def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target="local", audience=""):
+def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target="local", audience="", name=""):
     docs_s = str(docs) if docs else "<docs-dir>"
     rep_s = str(reporting) if reporting else "<reporting-dir>"
     py = brain_py()
@@ -214,6 +215,12 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     taxonomy emphasis (secondary lens under the goal) and how the `kb` plugin sets answer
     altitude/vocabulary and authored-artifact tone/depth. Canonical in `brain.toml`
     `[project].audience`; distinct from `[deployment].target` (distribution/infra).
+
+    **Name (optional):** {name or "<none — this Brain is anonymous>"} — the display name
+    a client shows when several Brains are connected. Written to `name.txt`; the build
+    sequence below records it into the durable `meta` table (`meta.name`) the same way a
+    Brain with no name falls back to being told apart only by its connector name and goal —
+    fully functional, just anonymous to a client juggling several.
 
     **Store:** `{db}` — one portable SQLite file (chunks+FTS+vector · facts · graph).
     **Source config:** `{proj/'brain.toml'}` — named roots with paths relative to this project.
@@ -292,6 +299,16 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
 
     # 8 · Obsidian vault = a VIEW of the store
     "$PY" "{CTE/'to_obsidian.py'}" --db "$DB" --out "{proj/'vault'}"
+
+    # 9 · record the Brain's name in the durable `meta` table (optional — a Brain with
+    #     no name is fully functional but anonymous to a client with several connected)
+    "$PY" - <<'PY'
+    import sqlite3
+    c = sqlite3.connect({json.dumps(str(db))})
+    c.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+    c.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('name', ?)", ({json.dumps(name or "")},))
+    c.commit()
+    PY
 
     # verify the built store
     "$PY" "{Path(__file__).resolve()}" verify --db "$DB"
@@ -388,6 +405,8 @@ def main():
     s = sub.add_parser("scaffold", help="create project layout + config templates + BRAIN.md plan, then preflight & scan")
     s.add_argument("--project", required=True, help="project dir to create/populate")
     s.add_argument("--goal", default="", help="analytical goal string (the noise filter)")
+    s.add_argument("--name", help="display name for this Brain, e.g. 'ACME Contact Centre' "
+                   "— what a client shows when several Brains are connected")
     s.add_argument("--audience", default="", help="who will consume the KB — roles/personas "
                    "(e.g. 'call-center ops managers and workforce planners'). Canonical in "
                    "brain.toml [project].audience; drives taxonomy emphasis + kb answer/artifact "

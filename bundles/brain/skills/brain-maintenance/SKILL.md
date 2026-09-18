@@ -150,6 +150,11 @@ Never derive numeric authority from parsed narrative documents.
 
 Run the project verification, MCP tests, and representative narrative/numeric smoke checks. Compare lane counts with the pre-update status. Do not deploy with empty required lanes, missing citations, incomplete classification, or a failed MCP contract.
 
+- **Check the Brain is identifiable.** Read `meta.name`. If it is empty, warn the operator:
+  a client with several Brains connected will show this one only by its connector name and
+  goal. Offer to set it (`INSERT OR REPLACE INTO meta VALUES('name', '<name>')`). This is a
+  warning, never a gate — an anonymous Brain is fully functional.
+
 ### 8. Plan and deploy through the project profile
 
 First print a sanitized plan:

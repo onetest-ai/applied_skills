@@ -127,5 +127,34 @@ class NarrativeExtTests(unittest.TestCase):
             self.assertEqual(len(other), 0, f"Expected no 'other' files, got {other}")
 
 
+class BrainNameTests(unittest.TestCase):
+    def _scaffold(self, project, *extra):
+        return subprocess.run([
+            sys.executable, str(SCRIPT), "scaffold",
+            "--project", str(project), "--goal", "optimize call-center operations",
+            *extra,
+        ], text=True, capture_output=True)
+
+    def test_scaffold_records_a_brain_name(self):
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td) / "brain"
+            result = self._scaffold(project, "--name", "ACME Contact Centre")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((project / "name.txt").read_text().strip(),
+                             "ACME Contact Centre")
+            plan = (project / "BRAIN.md").read_text()
+            self.assertIn("ACME Contact Centre", plan)
+            self.assertIn("meta", plan,
+                          "BRAIN.md must show how the name reaches the meta table")
+
+    def test_scaffold_without_a_name_still_works(self):
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td) / "brain"
+            result = self._scaffold(project)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((project / "BRAIN.md").is_file())
+            self.assertEqual((project / "name.txt").read_text().strip(), "")
+
+
 if __name__ == "__main__":
     unittest.main()
