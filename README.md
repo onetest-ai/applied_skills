@@ -61,7 +61,7 @@ Each project has its own Brain endpoint; if you're in two projects, keep a conne
 
 ## Build a Brain (`brain` · Claude Code)
 
-For the person who turns a messy corpus (PDF/PPTX/DOCX/XLSX) into a queryable Brain.
+For the person who turns a messy corpus (PDF/PPTX/DOCX/XLSX/MD) into a queryable Brain.
 
 **Meaning is agentic (RAG/graph); numbers are computed (deterministic SQL).** RAG never produces figures; the mart lane never guesses.
 
@@ -111,7 +111,7 @@ Guided onboarding captures three drivers up front — the **goal** (scopes taxon
 
 | Skill | Role | Key idea |
 |---|---|---|
-| **corpus-taxonomy-extraction** | build | Goal-directed taxonomy induction (intent classes + entities + metric inventory) from a mixed corpus (PDF/PPTX/DOCX/XLSX via pymupdf + LibreOffice). Also emits the taxonomy **graph** (`build_graph.py`) and an **Obsidian vault** (`to_obsidian.py`), and flags near-duplicate / off-axis categories for human review. |
+| **corpus-taxonomy-extraction** | build | Goal-directed taxonomy induction (intent classes + entities + metric inventory) from a mixed corpus (PDF/PPTX/DOCX/XLSX via pymupdf + LibreOffice; MD/TXT pass through). Also emits the taxonomy **graph** (`build_graph.py`) and an **Obsidian vault** (`to_obsidian.py`), and flags near-duplicate / off-axis categories for human review. |
 | **visual-parse** | build | Page routing + visual understanding: renders slide/diagram pages, flags the visual ones, and VLM-transcribes them (with deterministic table-grid extraction) so meaning on slides isn't lost. |
 | **knowledge-index** | build | Local hybrid RAG over Markdown → SQLite **FTS5 + sqlite-vec, RRF-fused**. Torch-free embeddings (fastembed/onnx). The narrative lane. |
 | **tabular-semantic-layer** | build | Config-driven ETL of large/heterogeneous Excel → normalized `facts` in the same SQLite + a governed metric catalog. Four layouts, weighted rollups, build audit (`--strict`). |

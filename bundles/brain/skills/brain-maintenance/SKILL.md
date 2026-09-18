@@ -111,7 +111,7 @@ For a genuinely text-only source, deterministic parsing is acceptable. Do not do
 # Pass 1 — transcripts only
 python <skills>/corpus-taxonomy-extraction/parse_corpus.py --corpus <root> --out parsed/ --formats vtt,srt --merge-cues 10
 # Pass 2 — narrative docs
-python <skills>/corpus-taxonomy-extraction/parse_corpus.py --corpus <root> --out parsed/ --formats pptx,docx,pdf
+python <skills>/corpus-taxonomy-extraction/parse_corpus.py --corpus <root> --out parsed/ --formats pptx,docx,pdf,md,markdown,txt
 ```
 
 ### 4. Review and apply parsed-store delta

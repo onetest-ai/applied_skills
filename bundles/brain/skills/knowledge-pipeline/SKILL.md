@@ -91,7 +91,7 @@ DB=<project>/schema/knowledge.sqlite
 #     classify as empty [] and retrieval quality degrades severely. Always pass --merge-cues N > 1 for VTT/SRT.
 python .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats vtt,srt --merge-cues 10
 # 1b. parse narrative docs → Markdown. TEXT pages via pymupdf (torch-free):
-python .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf
+python .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf,md,markdown,txt
 # 1v. VISUAL/diagram/table pages (slide decks, flows, timelines) — the visual-parse skill:
 python .../visual-parse/render_pages.py --doc <deck.pdf> --out <project>/assets     # PNG + text + table grids; flag visual pages
 python .../visual-parse/vision_prep.py --render-dir <project>/assets/<slug> --out <project>/vision --db "$DB"

@@ -6,6 +6,7 @@ low-tier model can read. No LLM, no torch (docling is retired):
   - .pdf         -> PyMuPDF text layer
   - .pptx/.docx  -> LibreOffice (soffice) -> PDF -> PyMuPDF text layer
   - .xlsx/.xlsm  -> openpyxl read_only structure-dump
+  - .md/.txt     -> passthrough (already the parsed-store format)
 This is the TEXT-layer path. Visual/diagram pages (flows, timelines, complex
 tables) collapse under any text extractor — those go through the `visual-parse`
 skill (render page -> VLM transcription + deterministic table extraction).
@@ -321,6 +322,15 @@ def _speaker_and_text(text: str) -> tuple[str, str]:
     return "", re.sub(r"</?v[^>]*>", "", text).strip()
 
 
+def _parse_text(path):
+    """Markdown/plain text -> itself. Markdown IS the parsed-store format, so a
+    pre-processed corpus needs no conversion — only the standard `# SOURCE:`
+    header the writer prepends. Decoding is lenient for the same reason the
+    transcript parsers are: a corpus is not guaranteed to be clean UTF-8."""
+    with open(path, encoding="utf-8", errors="replace") as f:
+        return f.read().strip()
+
+
 def parse_one(path, xlsx_max_mb, sample_rows, merge_cues=1):
     ext = os.path.splitext(path)[1].lower()
     size_mb = os.path.getsize(path) / 1e6
@@ -340,6 +350,8 @@ def parse_one(path, xlsx_max_mb, sample_rows, merge_cues=1):
         return _parse_vtt(path, merge_cues=merge_cues), "transcript-etl"
     if ext == ".json":
         return _parse_ai_dial_json(path), "ai-dial-json"
+    if ext in (".md", ".markdown", ".txt"):
+        return _parse_text(path), "passthrough"
     return None, "skipped"
 
 def main(argv=None):
@@ -348,7 +360,7 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     ap.add_argument("--xlsx-max-mb", type=float, default=20.0)
     ap.add_argument("--sample-rows", type=int, default=8)
-    ap.add_argument("--formats", default="pptx,docx,pdf,xlsx,xlsm,vtt,srt,json",
+    ap.add_argument("--formats", default="pptx,docx,pdf,xlsx,xlsm,vtt,srt,json,md,markdown,txt",
                     help="comma-separated extensions (no dot) to include")
     ap.add_argument("--merge-cues", type=int, default=1,
                     help="join N consecutive same-speaker VTT/SRT cues into one chunk (default: 1 = per-cue)")

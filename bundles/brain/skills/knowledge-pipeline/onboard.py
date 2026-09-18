@@ -42,7 +42,7 @@ def brain_py():
             return str(c)
     return sys.executable
 
-NARRATIVE_EXT = {".pdf", ".pptx", ".ppt", ".docx", ".doc", ".md", ".txt", ".vtt", ".srt"}
+NARRATIVE_EXT = {".pdf", ".pptx", ".ppt", ".docx", ".doc", ".md", ".markdown", ".txt", ".vtt", ".srt"}
 REPORTING_EXT = {".xlsx", ".xlsm", ".xls", ".csv"}
 
 # module -> pip name (for the preflight message). All torch-free (docling retired).
@@ -150,7 +150,7 @@ def cmd_scaffold(a):
                  'include = ["**/*"]']
         if docs:
             lines += ["", "[sources.roots.docs]", f"path = {json.dumps(docs_path)}", f"mode = {json.dumps(a.docs_mode)}",
-                      'include = ["**/*.pdf", "**/*.ppt", "**/*.pptx", "**/*.doc", "**/*.docx", "**/*.vtt", "**/*.srt", "**/*.json"]']
+                      'include = ["**/*.pdf", "**/*.ppt", "**/*.pptx", "**/*.doc", "**/*.docx", "**/*.vtt", "**/*.srt", "**/*.json", "**/*.md", "**/*.markdown", "**/*.txt"]']
         if reporting:
             lines += ["", "[sources.roots.reporting]", f"path = {json.dumps(reporting_path)}", f"mode = {json.dumps(a.reporting_mode)}",
                       'include = ["**/*.xlsx", "**/*.xlsm", "**/*.xls"]']
@@ -265,7 +265,8 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats vtt,srt --merge-cues 10
 
     # 1b · parse narrative docs → Markdown (pymupdf text; visual pages via visual-parse)
-    "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats pptx,docx,pdf
+    #      md/markdown/txt pass through untouched — already-Markdown corpora need no conversion.
+    "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats pptx,docx,pdf,md,markdown,txt
 
     # 2 · 🤖 induce taxonomy (map→reduce→judge→emit) → taxonomy/taxonomy_v0.json
     #     see corpus-taxonomy-extraction/SKILL.md; goal = above. Dispatch Haiku subagents.
