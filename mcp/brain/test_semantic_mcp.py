@@ -671,6 +671,16 @@ class BrainIdentityTests(FixtureCase):
             con.execute("DROP TABLE meta")
         self.assertEqual(self._server()._brain_identity(), "")
 
+    def test_identity_is_empty_when_the_store_cannot_be_read(self):
+        # _IDENTITY is computed at import time; if this guard ever narrows, an
+        # unreadable store would crash the server on boot instead of serving anonymously.
+        fs = self._server()
+        with patch.object(fs, "_health", side_effect=sqlite3.OperationalError("unable to open database file")):
+            self.assertEqual(fs._brain_identity(), "")
+        # The clause must catch broadly, not just database errors.
+        with patch.object(fs, "_health", side_effect=RuntimeError("boom")):
+            self.assertEqual(fs._brain_identity(), "")
+
     def test_instructions_name_the_brain(self):
         with sqlite3.connect(self.fx["db"]) as con:
             con.execute("INSERT OR REPLACE INTO meta VALUES('name','ACME Contact Centre')")
