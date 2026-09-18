@@ -128,6 +128,13 @@ class TestCoworkDoc(unittest.TestCase):
         readme = read_text(KB_ROOT / "README.md")
         self.assertIn("docs/cowork-setup.md", readme)
 
+    def test_cowork_doc_does_not_require_a_connector_name(self):
+        text = read_text(KB_ROOT / "docs" / "cowork-setup.md").lower()
+        self.assertNotIn("name the connector `brain`", text)
+        self.assertNotIn("disable", text,
+                         "cowork doc must not tell users to disable a Brain connector")
+        self.assertIn("any name", text)
+
 
 if __name__ == "__main__":
     unittest.main()

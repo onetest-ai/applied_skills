@@ -55,10 +55,10 @@ claude plugin install kb@applied-ai
 Cowork keeps its own plugin state and connects to MCP servers **from Anthropic's cloud** (not your machine), so the Brain is registered as a **remote connector** rather than a local `.mcp.json` entry.
 
 1. **Install kb into Cowork** — *Customize → Plugins → Add marketplace*, enter the `applied-ai` GitHub URL (`onetest-ai/applied_skills`), install **kb**, enable it.
-2. **Add your Brain connector** — *Customize → Connectors → Add custom connector*. Paste your project's **HTTPS MCP URL**; authorize with **Entra OAuth** (or set an `X-API-Key` header). **Name the connector `brain`** so its tools resolve as `mcp__brain__*` — the health probe in `/kb:connect` confirms resolution.
+2. **Add your Brain connector** — *Customize → Connectors → Add custom connector*. Paste your project's **HTTPS MCP URL**; authorize with **Entra OAuth** (or set an `X-API-Key` header). The connector's name is yours to choose (e.g. `acme-brain`) — kb finds a Brain by the tools it exposes, not by what the connector is called; the health probe in `/kb:connect` confirms it's reachable.
 3. **Verify & use** — run `/kb:connect`, then `/kb:ask`, `/kb:explore`, `/kb:report`, …
 
-**Per project:** each project has its own Brain endpoint. In two projects, keep a connector per project and enable only the one named `brain` for the current task.
+**Per project:** each project has its own Brain endpoint. In two projects, add both connectors and leave both enabled — kb discovers every reachable Brain and asks which to use when more than one answers.
 
 **Cowork caveats:** ambient mode (`/kb:mode`) and the SessionStart health line rely on hooks, which **don't fire in Cowork** — ground answers by invoking the kb skills explicitly.
 
@@ -75,6 +75,6 @@ Cowork keeps its own plugin state and connects to MCP servers **from Anthropic's
 
 ## Troubleshooting
 
-- **`/kb:connect` finds no Brain** — CLI: confirm the `mcpServers` block is in `.mcp.json` and reload the session. Cowork: confirm the connector is named `brain`, enabled, and its OAuth/API-key auth succeeded.
-- **Tools don't resolve in Cowork** — the connector must be named `brain` (tools appear as `mcp__brain__*`). Rename it and re-run `/kb:connect`.
+- **`/kb:connect` finds no Brain** — CLI: confirm the `mcpServers` block is in `.mcp.json` and reload the session. Cowork: confirm the connector is enabled and its OAuth/API-key auth succeeded.
+- **Tools don't resolve in Cowork** — check that the connector is enabled and its auth succeeded; run `/kb:connect` to list every Brain kb can currently reach.
 - **Ambient mode seems inert in Cowork** — expected; it's CLI-only. Invoke `/kb:ask` (and the other skills) explicitly.

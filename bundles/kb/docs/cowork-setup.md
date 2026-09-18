@@ -42,24 +42,23 @@ Each project has its own Brain endpoint. Add it once per project:
 
    ![Connectors tab with the Add button highlighted](images/cowork-05-connectors-add.png)
 
-2. In **Add custom connector**, **name the connector `brain`** and paste your
-   project's **HTTPS MCP URL** (Streamable HTTP transport).
+2. In **Add custom connector**, give the connector a name that identifies the
+   project (e.g. `acme-brain`) and paste your project's **HTTPS MCP URL**
+   (Streamable HTTP transport).
 
    ![Add custom connector dialog: name field set to brain and the MCP server URL field](images/cowork-06-add-connector-name-brain.png)
 
 3. Authorize with **Entra OAuth** (Advanced settings → OAuth client id/secret).
    If your endpoint uses a static key, set an `X-API-Key` header instead.
-4. Naming it `brain` matters: kb's skills call `mcp__brain__*`, so its tools are
-   expected to resolve as `mcp__brain__*` when the connector is named `brain`;
-   `/kb:connect`'s health probe will confirm the resolution (or reveal a
-   mismatch).
+4. The name is yours to choose — **any name works**. kb finds a Brain by the tools it
+   exposes, not by what the connector is called; a project-specific name just makes the
+   choice readable when several Brains are connected.
 5. Enable the connector.
 
-**In two projects?** Keep each project's connector added, but two connectors
-cannot both be named `brain` at once — for the current Cowork task, disable
-the other project's Brain connector and enable this project's (named
-`brain`), so exactly one `brain` connector is active. kb grounds itself in
-that active `brain` connector.
+**In two projects?** Add both Brains as connectors and leave both enabled. kb discovers
+every reachable Brain and, when more than one answers, asks which to use — listing each by
+name and by the analytical goal it reports. You can answer in advance by naming it in the
+request: "ask the acme brain about Q3 handle time".
 
 ## 3. Verify
 
@@ -72,3 +71,6 @@ reachable. Then use `/kb:ask`, `/kb:explore`, `/kb:challenge`, `/kb:brief`,
 - **Ambient mode (`/kb:mode`)** relies on a hook that does not fire in Cowork.
   In Cowork, ground answers by invoking the kb skills explicitly.
 - **The SessionStart health line** reads a local store and is CLI-only.
+- **Choosing between Brains** is remembered for the length of a conversation only. Cowork
+  has no project-local state for kb to write, so with several Brains connected it asks
+  once per conversation rather than once per project.
