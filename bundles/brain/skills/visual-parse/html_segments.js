@@ -28,7 +28,7 @@
 
   const pick = () => {
     const slides = [...document.querySelectorAll(SLIDE)];
-    if (slides.length > 1) return slides;
+    if (slides.length > 1) return slides.map(s => [s]);
     const tops = [...document.querySelectorAll(BOUNDARY)];
     if (tops.length) return groupsFor(tops);
     return [[document.body]];
@@ -56,27 +56,32 @@
     };
   };
 
+  const headingOf = (group) => {
+    for (const el of group) {
+      if (el.matches && el.matches('h1, h2, h3')) return el.innerText.trim();
+      const q = el.querySelector && el.querySelector('h1, h2, h3');
+      if (q) return q.innerText.trim();
+    }
+    return '';
+  };
+
   const seen = new Set();
   const segments = [];
   for (const els of pick()) {
-    // Skip duplicate slide containers
     if (seen.has(els[0])) continue;
     seen.add(els[0]);
 
-    // Handle both single-element slides and multi-element groups
-    const group = Array.isArray(els) ? els : [els];
-
-    const bbox = bboxUnion(group);
-    const head = group[0].querySelector('h1, h2, h3');
-    const text = group.map(el => el.innerText.trim()).join('\n').trim();
+    const bbox = bboxUnion(els);
+    const heading = headingOf(els);
+    const text = els.map(el => el.innerText.trim()).join('\n').trim();
     const tables = [];
-    for (const el of group) {
+    for (const el of els) {
       tables.push(...[...el.querySelectorAll('table')].map(tableOf));
     }
 
     segments.push({
       index: segments.length + 1,
-      heading: (head && head.innerText.trim()) || '',
+      heading: heading,
       text: text,
       bbox: bbox,
       height: bbox.height,
