@@ -398,9 +398,9 @@ class FastMCPContractTests(FixtureCase):
                     self.assertNotIn("private/path", json.dumps(unhandled.data), tool_name)
             # Limit contract still documented (guards Bug 10 regression), and the
             # citation rule that keeps raw ids out of user-facing answers.
-            self.assertIn("limit is 1-100", fastmcp_server.INSTRUCTIONS)
-            self.assertIn("make multiple narrower calls", fastmcp_server.INSTRUCTIONS)
-            self.assertIn("Never print internal ids", fastmcp_server.INSTRUCTIONS)
+            self.assertIn("limit is 1-100", fastmcp_server._ROUTING_INSTRUCTIONS)
+            self.assertIn("make multiple narrower calls", fastmcp_server._ROUTING_INSTRUCTIONS)
+            self.assertIn("Never print internal ids", fastmcp_server._ROUTING_INSTRUCTIONS)
             env = {key: os.environ[key] for key in ("BRAIN_DB", "BRAIN_CATALOG", "BRAIN_SKILLS", "BRAIN_ASSETS", "BRAIN_KNOWLEDGE_VERSION")}
             env["BRAIN_SHOW_BANNER"] = "0"
             env["PYTHONPATH"] = os.pathsep.join((str(self.fx["root"]), str(HERE)))
@@ -513,7 +513,12 @@ class FastMCPContractTests(FixtureCase):
                     })
                     self.assertEqual(response.status_code, 200)
                     payload = response.json() if response.headers.get("content-type", "").startswith("application/json") else json.loads(next(line[6:] for line in response.text.splitlines() if line.startswith("data: ")))
-                    self.assertEqual(payload["result"]["serverInfo"]["name"], "Semantic Knowledge Brain")
+                    # The fixture store has no meta.name, so identity falls back to the
+                    # first clause of meta.goal ("optimize call-center operations").
+                    self.assertEqual(
+                        payload["result"]["serverInfo"]["name"],
+                        "Semantic Knowledge Brain — optimize call-center operations",
+                    )
         asyncio.run(run())
 
 
@@ -643,6 +648,42 @@ class TestFinalizeErrorFlags(unittest.TestCase):
         self.assertTrue(result.isError)
         blob = json.dumps(result.structuredContent or {})
         self.assertIn("search_knowledge", blob)
+
+
+class BrainIdentityTests(FixtureCase):
+    def _server(self):
+        import fastmcp_server as fs
+        return fs
+
+    def test_identity_prefers_name(self):
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.execute("INSERT OR REPLACE INTO meta VALUES('name','ACME Contact Centre')")
+        self.assertEqual(self._server()._brain_identity(), "ACME Contact Centre")
+
+    def test_identity_falls_back_to_first_clause_of_goal(self):
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.execute("DELETE FROM meta WHERE key='name'")
+        # fixture goal: "optimize call-center operations"
+        self.assertEqual(self._server()._brain_identity(), "optimize call-center operations")
+
+    def test_identity_is_empty_without_meta(self):
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.execute("DROP TABLE meta")
+        self.assertEqual(self._server()._brain_identity(), "")
+
+    def test_instructions_name_the_brain(self):
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.execute("INSERT OR REPLACE INTO meta VALUES('name','ACME Contact Centre')")
+        text = self._server()._instructions_for("ACME Contact Centre")
+        self.assertIn("ACME Contact Centre", text)
+        self.assertIn("never blend", text.lower())
+        # The routing doctrine survives the identity paragraph.
+        self.assertIn("search_knowledge", text)
+
+    def test_instructions_without_identity_are_still_valid(self):
+        text = self._server()._instructions_for("")
+        self.assertNotIn("This Brain answers for", text)
+        self.assertIn("search_knowledge", text)
 
 
 if __name__ == "__main__":

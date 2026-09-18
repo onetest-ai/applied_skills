@@ -33,7 +33,7 @@ from semantic_core import (
     search_knowledge as _search_knowledge,
 )
 
-INSTRUCTIONS = """
+_ROUTING_INSTRUCTIONS = """
 This server exposes a private knowledge brain through safe, read-only semantic tools.
 
 Routing: narrative -> search_knowledge; exact figures -> get_metric (never infer a number
@@ -103,10 +103,39 @@ class FailSafeFastMCP(FastMCP):
             return _finalize_error_flags(error.to_mcp_result())
 
 
+def _brain_identity() -> str:
+    """This deployment's display name: meta.name, else the first clause of meta.goal,
+    else empty. Never raises — an unreadable store yields an anonymous Brain, not a
+    failed start."""
+    try:
+        about = _health().get("about") or {}
+    except Exception:
+        return ""
+    name = (about.get("name") or "").strip()
+    if name:
+        return name
+    goal = (about.get("goal") or "").strip()
+    return goal.split(".")[0].split(";")[0].strip() if goal else ""
+
+
+def _instructions_for(identity: str) -> str:
+    """Prepend an identity paragraph so a client with several Brains connected can tell
+    them apart from the server instructions alone."""
+    if not identity:
+        return _ROUTING_INSTRUCTIONS
+    return (
+        f"This Brain answers for **{identity}**. If several Brains are connected, this one "
+        f"covers {identity} only — never blend its results with another Brain's, and say "
+        f"which Brain a figure came from.\n\n" + _ROUTING_INSTRUCTIONS
+    )
+
+
+_IDENTITY = _brain_identity()
+
 mcp = FailSafeFastMCP(
-    name="Semantic Knowledge Brain",
-    version="1.1.2",
-    instructions=INSTRUCTIONS,
+    name=f"Semantic Knowledge Brain — {_IDENTITY}" if _IDENTITY else "Semantic Knowledge Brain",
+    version="1.2.0",
+    instructions=_instructions_for(_IDENTITY),
     mask_error_details=True,
     # Tool functions validate inputs themselves so mistakes can be returned as structured,
     # actionable isError results with a stable payload, instead of raw protocol errors that
