@@ -232,6 +232,8 @@ class SemanticCoreTests(FixtureCase):
         self.assertNotIn(str(self.fx["root"]), json.dumps(result))
         self.assertEqual(result["about"]["goal"], "optimize call-center operations")
         self.assertEqual(result["about"]["audience"], "ops managers and workforce planners")
+        # stock fixture seeds no `name` row: a store predating this change reports an empty name
+        self.assertEqual(result["about"]["name"], "")
 
     def test_health_about_degrades_without_meta_table(self):
         # A store built before the meta table must still return about with empty strings.
