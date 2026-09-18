@@ -1,12 +1,11 @@
 ---
-description: Answer a question from the Brain with a fully cited response — decompose into sub-claims, route each to the right lane, and mark anything the Brain cannot support as "not modeled". Use whenever the user asks a factual/analytical question that the knowledge base should ground.
-allowed-tools: mcp__brain__search_knowledge mcp__brain__get_metric mcp__brain__get_taxonomy mcp__brain__find_related_content mcp__brain__get_evidence mcp__brain__list_metrics mcp__brain__health mcp__plugin_brain_brain__search_knowledge mcp__plugin_brain_brain__get_metric mcp__plugin_brain_brain__get_taxonomy mcp__plugin_brain_brain__find_related_content mcp__plugin_brain_brain__get_evidence mcp__plugin_brain_brain__list_metrics mcp__plugin_brain_brain__health
+description: Use when the user asks a factual or analytical question the knowledge base should ground — answers from the Brain with a fully cited response, decomposing into sub-claims, routing each to the right lane, and marking anything the Brain cannot support as "not modeled".
 arguments: [question]
 ---
 
 Answer **$question** grounded in the Brain. Follow `../_shared/doctrine.md`.
 
-1. **Detect the Brain.** Call `health`. If no Brain answers, tell the user and suggest `/kb:connect`; stop. Read `about` from the result (see `../_shared/doctrine.md`): tune this answer's **altitude and vocabulary** to `about.audience`, within `about.goal`'s scope. If `about.audience` is empty, proceed with no persona.
+1. **Resolve the Brain.** Follow `../_shared/doctrine.md` → **Brain Discovery**: identify candidate servers by tool surface, `health` each, use the override if the user named one, ask if several answer, and point to `/kb:connect` if none does. Read `about` from the resolved Brain's `health`: tune this answer's **altitude and vocabulary** to `about.audience`, within `about.goal`'s scope. If `about.audience` is empty, proceed with no persona.
 
 2. **Decompose** the question into sub-claims. Classify each: narrative, number, relation, or visual/table.
 

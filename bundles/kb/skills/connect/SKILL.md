@@ -1,6 +1,5 @@
 ---
-description: Detect whether a Brain MCP server is reachable, report its status, or walk the user through registering one — a Cowork connector or CLI mcp-config. Use when the user asks to connect, reconnect, or check the Brain connection for kb.
-allowed-tools: mcp__brain__health mcp__plugin_brain_brain__health Bash(./brain *) Read
+description: Use when the user asks to connect, reconnect, or check the Brain connection for kb — detects whether a Brain MCP server is reachable, reports its status, or walks the user through registering one (a Cowork connector or CLI mcp-config).
 ---
 
 Detect and (if needed) help the user register the Brain that `kb` grounds itself in.

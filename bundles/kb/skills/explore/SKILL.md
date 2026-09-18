@@ -1,12 +1,11 @@
 ---
-description: Explore a topic across the Brain — traverse related documents and taxonomy, surfacing connections and gaps with full citations to source files and vault paths.
-allowed-tools: mcp__brain__search_knowledge mcp__brain__get_metric mcp__brain__get_taxonomy mcp__brain__find_related_content mcp__brain__get_evidence mcp__brain__list_metrics mcp__brain__health mcp__plugin_brain_brain__search_knowledge mcp__plugin_brain_brain__get_metric mcp__plugin_brain_brain__get_taxonomy mcp__plugin_brain_brain__find_related_content mcp__plugin_brain_brain__get_evidence mcp__plugin_brain_brain__list_metrics mcp__plugin_brain_brain__health
+description: Use when the user wants to explore a topic across the Brain — traverses related documents and taxonomy, surfacing connections and gaps with full citations to source files and vault paths.
 arguments: [topic]
 ---
 
 Explore **$topic** across the Brain. Follow `../_shared/doctrine.md`.
 
-1. **Detect the Brain.** Call `health`. If no Brain answers, tell the user and suggest `/kb:connect`; stop.
+1. **Resolve the Brain.** Follow `../_shared/doctrine.md` → **Brain Discovery**: identify candidate servers by tool surface, `health` each, use the override if the user named one, ask if several answer, and point to `/kb:connect` if none does.
 
 2. **Anchor the exploration.** Use `get_taxonomy(label=...)` to find a taxonomy node, or fall back to the top `search_knowledge` hit.
 

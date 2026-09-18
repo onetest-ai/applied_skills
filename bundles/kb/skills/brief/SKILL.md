@@ -1,6 +1,5 @@
 ---
-description: Author a short cited memo on a topic from the Brain — gather narrative, metrics, and relations; verify claims; then propose the write to the human for approval. Emit to docs/kb/ with a Sources section and a sources.json sidecar.
-allowed-tools: mcp__brain__search_knowledge mcp__brain__get_metric mcp__brain__get_taxonomy mcp__brain__find_related_content mcp__brain__get_evidence mcp__brain__list_metrics mcp__brain__health mcp__plugin_brain_brain__search_knowledge mcp__plugin_brain_brain__get_metric mcp__plugin_brain_brain__get_taxonomy mcp__plugin_brain_brain__find_related_content mcp__plugin_brain_brain__get_evidence mcp__plugin_brain_brain__list_metrics mcp__plugin_brain_brain__health
+description: Use when the user wants a short cited memo on a topic from the Brain — gathers narrative, metrics, and relations; verifies claims; then proposes the write to the human for approval, emitting to docs/kb/ with a Sources section and a sources.json sidecar.
 arguments: [subject]
 ---
 
@@ -8,7 +7,7 @@ Author a brief, cited memo on **$subject** following `../_shared/authoring.md`.
 
 ## Steps
 
-1. **Detect the Brain.** Call `health` (see ../_shared/doctrine.md for namespace detection); if none, suggest `/kb:connect` and stop. Read `about` from the result and adapt the memo's **tone, depth, and section emphasis** to `about.audience`, within `about.goal`'s scope (empty audience → no persona).
+1. **Resolve the Brain.** Follow `../_shared/doctrine.md` → **Brain Discovery**: identify candidate servers by tool surface, `health` each, use the override if the user named one, ask if several answer, and point to `/kb:connect` if none does. Read `about` from the resolved Brain's `health` and adapt the memo's **tone, depth, and section emphasis** to `about.audience`, within `about.goal`'s scope (empty audience → no persona).
 
 2. **Gather.** Call the Brain tools to collect narrative, metrics, and relations on the subject. Route per doctrine (narrative → `search_knowledge`, numbers → `get_metric`, relations → `get_taxonomy`, cited sections → `get_evidence`).
 
