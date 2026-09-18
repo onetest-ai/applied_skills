@@ -35,17 +35,28 @@ Four layers have to line up (each is a separate failure the adapter fixes):
 
 ## What it creates
 
-On the existing anonymous `well-known` API (it must already serve the Protected
-Resource Metadata):
+It provisions the anonymous `well-known` API (path `""`) — **not present by default** —
+and, on it:
 
+- `GET /.well-known/oauth-protected-resource/*` — the PRM (points discovery at the facade,
+  `authorization_servers` = the APIM gateway, `resource` = the server URL)
 - `GET /.well-known/oauth-authorization-server` — AS metadata pointing at the facade
 - `GET /authorize` — 302 → Entra, `resource` stripped, all other params preserved
 - `POST /token` — proxy → Entra, `resource` stripped from the body, callback `Origin` forwarded
 - an API-level `<cors>` policy (answers the `/token` preflight)
-- repoints the PRM `authorization_servers` at the APIM gateway (keeps `resource` = server URL)
 
 and, on Entra, moves the MCP client callback from the **Web** to the **SPA** platform
 (secret-less PKCE). No tokens are ever read, logged, or stored.
+
+## Prerequisites (asserted by preflight; not created here)
+
+`plan` prints a preflight and `deploy` aborts before any change if a required one is missing:
+
+- APIM service reachable, and the **MCP API** already guarded by `validate-azure-ad-token`
+  whose `client-application-ids` trusts the resource app, returning a 401 challenge that
+  advertises the PRM (`WWW-Authenticate: … resource_metadata=…`) — the last is a soft check.
+- The **Entra resource app**: exposes `api://<app>/<scope>`, `accessTokenVersion = 2`, and has
+  the MCP client callback registered.
 
 ## Use
 

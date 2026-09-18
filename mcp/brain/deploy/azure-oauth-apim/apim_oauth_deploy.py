@@ -197,19 +197,38 @@ def put_policy(cfg: dict, scope_path: str, xml: str) -> None:
     az_rest("PUT", f"{base_url(cfg)}/{scope_path}/policies/policy?api-version={API_VERSION}", body)
 
 
+PRM_URL_TEMPLATE = "/.well-known/oauth-protected-resource/*"
+
+
+def put_operation(cfg: dict, op_id: str, method: str, url: str, display: str) -> None:
+    api = cfg["apim"]["wellknown_api"]
+    body = json.dumps({"properties": {"displayName": display, "method": method,
+                                      "urlTemplate": url, "templateParameters": [], "responses": []}})
+    az_rest("PUT", f"{base_url(cfg)}/apis/{api}/operations/{op_id}?api-version={API_VERSION}", body)
+
+
+def ensure_wellknown_api(cfg: dict) -> None:
+    """Create the anonymous well-known API (path ""). It is NOT present by default;
+    a plain PUT is idempotent, so re-running deploy is safe."""
+    api = cfg["apim"]["wellknown_api"]
+    body = json.dumps({"properties": {"displayName": api, "path": cfg["apim"].get("wellknown_path", ""),
+                                      "protocols": ["https"], "subscriptionRequired": False}})
+    az_rest("PUT", f"{base_url(cfg)}/apis/{api}?api-version={API_VERSION}", body)
+
+
 def deploy(cfg: dict) -> None:
     api = cfg["apim"]["wellknown_api"]
     prm_op = cfg["apim"].get("prm_operation_id", "get")
-    # 1. facade operations
+    # 1. the anonymous well-known API (created if absent) and its PRM operation
+    ensure_wellknown_api(cfg)
+    put_operation(cfg, prm_op, "GET", PRM_URL_TEMPLATE, "OAuth Protected Resource Metadata")
+    # 2. facade operations
     for op in operations(cfg):
-        body = json.dumps({"properties": {"displayName": op["display"], "method": op["method"],
-                                          "urlTemplate": op["url"], "templateParameters": [], "responses": []}})
-        az_rest("PUT", f"{base_url(cfg)}/apis/{api}/operations/{op['id']}?api-version={API_VERSION}", body)
-    # 2. API-level CORS (must precede the operation return-responses so preflight is answered)
+        put_operation(cfg, op["id"], op["method"], op["url"], op["display"])
+    # 3. API-level CORS (must precede the operation return-responses so preflight is answered)
     put_policy(cfg, f"apis/{api}", API_CORS)
-    # 3. PRM at the operation scope (routes clients to the APIM authorization server)
+    # 4. PRM + facade endpoint policies
     put_policy(cfg, f"apis/{api}/operations/{prm_op}", PRM)
-    # 4. facade endpoint policies
     for op in operations(cfg):
         put_policy(cfg, f"apis/{api}/operations/{op['id']}", op["policy"])
     # 5. move the MCP client callback to the SPA platform (secret-less PKCE redemption)
@@ -228,17 +247,21 @@ def move_callback_to_spa(cfg: dict) -> None:
     az_rest("PATCH", f"https://graph.microsoft.com/v1.0/applications/{obj}", body)
 
 
-def sanitized_plan(cfg: dict, profile: Path) -> dict:
+def sanitized_plan(cfg: dict, profile: Path, checks: list[dict]) -> dict:
     apim, entra, mcp = cfg["apim"], cfg["entra"], cfg["mcp"]
     api = apim["wellknown_api"]
+    prm_op = apim.get("prm_operation_id", "get")
     return {
         "version": 1,
         "provider": "azure-oauth-apim",
         "profile": str(profile),
         "apim": {"service": apim["service"], "resource_group": apim["resource_group"], "api": api,
                  "gateway_url": apim["gateway_url"]},
-        "creates_operations": [f"{op['method']} {op['url']} (id {op['id']})" for op in operations(cfg)],
-        "sets_policies": [f"apis/{api} (CORS)", f"apis/{api}/operations/{apim.get('prm_operation_id', 'get')} (PRM)",
+        "preflight": checks,
+        "ensures_api": f"{api} (anonymous, path '{apim.get('wellknown_path', '')}') — created if absent",
+        "creates_operations": [f"GET {PRM_URL_TEMPLATE} (id {prm_op}) — PRM",
+                               *[f"{op['method']} {op['url']} (id {op['id']})" for op in operations(cfg)]],
+        "sets_policies": [f"apis/{api} (CORS)", f"apis/{api}/operations/{prm_op} (PRM)",
                           *[f"apis/{api}/operations/{op['id']}" for op in operations(cfg)]],
         "prm_change": {"resource": mcp["resource_url"], "authorization_servers": [apim["gateway_url"].rstrip("/")]},
         "entra_change": {"app": entra["resource_app_id"], "callback": mcp["callback_url"], "platform": "Web -> SPA"},
@@ -284,9 +307,9 @@ def verify(cfg: dict) -> dict:
     if authz.status != 302 or "login.microsoftonline.com" not in location or "resource=" in location:
         raise RuntimeError("/authorize did not 302 to Entra with resource stripped")
 
-    preflight = _get(f"{gateway}/token", {"Origin": "https://claude.ai",
-                     "Access-Control-Request-Method": "POST"}, method="OPTIONS")
-    if preflight.status != 200 or not preflight.headers.get("Access-Control-Allow-Origin"):
+    cors = _get(f"{gateway}/token", {"Origin": "https://claude.ai",
+                "Access-Control-Request-Method": "POST"}, method="OPTIONS")
+    if cors.status != 200 or not cors.headers.get("Access-Control-Allow-Origin"):
         raise RuntimeError("/token CORS preflight did not return 200 with CORS headers")
 
     app = json.loads(az(["ad", "app", "show", "--id", entra["resource_app_id"],
@@ -296,7 +319,45 @@ def verify(cfg: dict) -> dict:
 
     return {"status": "ok", "prm_authorization_servers": prm["authorization_servers"],
             "as_token_endpoint": meta["token_endpoint"], "authorize_resource_stripped": True,
-            "token_cors_preflight": preflight.status, "callback_platform": "spa"}
+            "token_cors_preflight": cors.status, "callback_platform": "spa"}
+
+
+def _last_line(exc: subprocess.CalledProcessError) -> str:
+    text = (exc.stderr or exc.stdout or "").strip()
+    return text.splitlines()[-1] if text else str(exc)
+
+
+def preflight(cfg: dict) -> list[dict]:
+    """Read-only checks that the base (which this adapter does NOT create) is in place:
+    APIM service, the Entra resource app + scope + registered callback + v2 tokens, and
+    the MCP endpoint's discovery challenge. The well-known API is intentionally NOT
+    checked — deploy creates it. A failed non-optional check blocks deploy."""
+    apim, entra, mcp = cfg["apim"], cfg["entra"], cfg["mcp"]
+    checks: list[dict] = []
+    try:
+        az_rest("GET", f"{base_url(cfg)}?api-version={API_VERSION}")
+        checks.append({"check": f"APIM service '{apim['service']}' reachable", "ok": True})
+    except subprocess.CalledProcessError as exc:
+        checks.append({"check": f"APIM service '{apim['service']}' reachable", "ok": False, "detail": _last_line(exc)})
+    try:
+        app = json.loads(az(["ad", "app", "show", "--id", entra["resource_app_id"], "--query",
+              "{scopes:api.oauth2PermissionScopes[].value, web:web.redirectUris, spa:spa.redirectUris,"
+              " atv:api.requestedAccessTokenVersion}", "-o", "json"]))
+        checks.append({"check": f"Entra app {entra['resource_app_id']} exists", "ok": True})
+        checks.append({"check": f"scope '{entra['scope']}' exposed", "ok": entra["scope"] in (app.get("scopes") or [])})
+        registered = mcp["callback_url"] in ((app.get("web") or []) + (app.get("spa") or []))
+        checks.append({"check": "client callback registered on the app", "ok": registered})
+        checks.append({"check": "accessTokenVersion == 2", "ok": app.get("atv") == 2})
+    except subprocess.CalledProcessError as exc:
+        checks.append({"check": f"Entra app {entra['resource_app_id']} exists", "ok": False, "detail": _last_line(exc)})
+    try:
+        www = _get(mcp["resource_url"], method="GET").headers.get("WWW-Authenticate", "")
+        checks.append({"check": "MCP endpoint challenges discovery (WWW-Authenticate resource_metadata)",
+                       "ok": "resource_metadata" in www, "optional": True,
+                       "detail": (www[:120] or "no WWW-Authenticate header")})
+    except (urllib.error.URLError, OSError) as exc:
+        checks.append({"check": "MCP endpoint reachable", "ok": False, "optional": True, "detail": str(exc)})
+    return checks
 
 
 def main(argv=None) -> int:
@@ -310,11 +371,15 @@ def main(argv=None) -> int:
         profile = Path(a.profile).expanduser().resolve(); cfg = load(profile)
         if a.command == "verify":
             print(json.dumps(verify(cfg), indent=2)); return 0
-        print(json.dumps(sanitized_plan(cfg, profile), indent=2))
+        checks = preflight(cfg)
+        print(json.dumps(sanitized_plan(cfg, profile, checks), indent=2))
         if a.command == "plan":
             return 0
         if not a.yes:
             raise RuntimeError("deployment requires --yes after reviewing the plan")
+        blocking = [c["check"] for c in checks if not c["ok"] and not c.get("optional")]
+        if blocking:
+            raise RuntimeError("preflight failed — fix the base first: " + "; ".join(blocking))
         deploy(cfg)
         print(json.dumps(verify(cfg), indent=2))
         return 0

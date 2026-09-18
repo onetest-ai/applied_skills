@@ -3,15 +3,18 @@
 # NO SECRETS here — the adapter uses your Azure CLI session only and never reads,
 # prints, or stores a token (the facade forwards Entra's token response untouched).
 #
-# Prerequisites (this adapter does NOT create them):
+# Prerequisites the adapter does NOT create (it preflight-checks these and aborts deploy
+# if any is missing):
 #   * The MCP server is already exposed through APIM and guarded by validate-azure-ad-token
-#     (client-application-ids must include entra.resource_app_id).
-#   * An anonymous APIM API (subscriptionRequired = false) already serves the Protected
-#     Resource Metadata — its id is apim.wellknown_api and its PRM operation id is
-#     apim.prm_operation_id. The adapter adds /authorize, /token and the AS-metadata
-#     operations to that same API and repoints the PRM there.
-#   * The Entra resource app exists, exposes api://<resource_app_id>/<scope>, and has the
-#     MCP client callback registered (this adapter moves it Web -> SPA).
+#     (client-application-ids must include entra.resource_app_id), and its 401 challenge
+#     advertises the PRM (WWW-Authenticate: ... resource_metadata=...).
+#   * The Entra resource app exists, exposes api://<resource_app_id>/<scope>, issues v2
+#     tokens, and has the MCP client callback registered (the adapter moves it Web -> SPA).
+#
+# The adapter DOES create (config-only, idempotent): the anonymous well-known API
+# (apim.wellknown_api at path apim.wellknown_path — NOT present by default) + its PRM
+# operation (apim.prm_operation_id), plus the /authorize, /token and AS-metadata
+# operations and all policies.
 version = 1
 
 [apim]
@@ -19,8 +22,9 @@ subscription      = "YOUR-SUBSCRIPTION"                       # az subscription 
 resource_group    = "rg-your-apim"
 service           = "your-apim"                               # APIM service name
 gateway_url       = "https://your-apim.azure-api.net"         # APIM gateway base (no trailing slash)
-wellknown_api     = "well-known"                              # existing anonymous API (path "") serving PRM
-prm_operation_id  = "get"                                     # its PRM operation id (GET /.well-known/oauth-protected-resource/*)
+wellknown_api     = "well-known"                              # API id the adapter creates to serve PRM + OAuth facade
+wellknown_path    = ""                                        # its APIM path; "" = gateway root (recommended for RFC 8414/9728)
+prm_operation_id  = "get"                                     # PRM operation id it creates (GET /.well-known/oauth-protected-resource/*)
 
 [entra]
 tenant_id              = "00000000-0000-0000-0000-000000000000"   # Entra tenant (directory) id
