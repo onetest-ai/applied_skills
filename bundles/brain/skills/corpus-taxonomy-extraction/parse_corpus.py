@@ -332,7 +332,8 @@ def _parse_text(path):
         return f.read().strip()
 
 
-HTML_MIN_TEXT = 100   # min text to detect JS-rendered doc (no content) vs real HTML; tunable per corpus
+HTML_MIN_TEXT = 220   # mirrors render_pages.py's --min-text 220 rather than inventing a
+                      # second notion of "too little text"; tunable per corpus via min_text
 
 
 def _parse_html(path, min_text=HTML_MIN_TEXT):
