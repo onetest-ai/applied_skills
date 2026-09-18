@@ -190,6 +190,40 @@ class AssembleTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue((outdir / "pages.json").is_file())
 
+    def test_cli_with_differing_source_flag_still_assembles(self):
+        """A `--source` value differing from segments.json's own 'source' (as
+        visual-parse/SKILL.md's --source flag allows) must not make 'assemble'
+        reject the directory 'plan' itself created and printed."""
+        import subprocess, sys, json as _json
+        d = Path(tempfile.mkdtemp())
+        seg = d / "segments.json"
+        seg.write_text(_json.dumps(FIXTURE))
+        plan_path = d / "plan.json"
+        assets_root = d / "assets"
+        script = HERE.parent / "skills" / "visual-parse" / "html_capture.py"
+        other_source = "https://example.com/other"
+        r = subprocess.run([sys.executable, str(script), "plan",
+                            "--segments", str(seg), "--out", str(plan_path),
+                            "--assets-root", str(assets_root),
+                            "--source", other_source],
+                           text=True, capture_output=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        plan_obj = _json.loads(plan_path.read_text())
+        self.assertEqual(plan_obj["slug"], HC._slug(other_source))
+        self.assertNotEqual(plan_obj["slug"], HC._slug(FIXTURE["source"]),
+                             "the point of this test is that the two slugs differ")
+        outdir = Path(plan_obj["outdir"])
+        for entry in plan_obj["plan"]:
+            (outdir / f"p{entry['page']:02d}.png").write_bytes(
+                b"\x89PNG\r\n\x1a\n" + bytes([entry["page"]]) * 16)
+        r = subprocess.run([sys.executable, str(script), "assemble",
+                            "--segments", str(seg), "--plan", str(plan_path),
+                            "--outdir", str(outdir)], text=True, capture_output=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pages = _json.loads((outdir / "pages.json").read_text())
+        self.assertEqual(pages["slug"], outdir.name)
+        self.assertEqual(pages["slug"], plan_obj["slug"])
+
     def test_outdir_mismatched_with_slug_raises(self):
         """A provider that wrote into the wrong directory fails loudly, naming both."""
         bad_dir = Path(tempfile.mkdtemp()) / "not-the-slug"

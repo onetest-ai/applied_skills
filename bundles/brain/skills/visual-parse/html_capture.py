@@ -36,8 +36,10 @@ def validate_segments(obj) -> list[str]:
         if not isinstance(s, dict):
             problems.append(f"{where} must be an object")
             continue
-        if "index" not in s or not isinstance(s.get("index"), (int, float)):
-            problems.append(f"{where} missing an integer 'index'")
+        idx = s.get("index")
+        if ("index" not in s or not isinstance(idx, (int, float))
+                or (isinstance(idx, float) and not idx.is_integer())):
+            problems.append(f"{where} missing an integer-valued 'index'")
         bbox = s.get("bbox")
         if not isinstance(bbox, dict) or not all(k in bbox for k in ("x", "y", "width", "height")):
             problems.append(f"{where} missing 'bbox' with x/y/width/height")
@@ -143,26 +145,29 @@ def _grid(table) -> str:
     return (f"**{cap}**\n\n" if cap else "") + "\n".join(out)
 
 
-def assemble(obj, plan, outdir: str, dpi: int = 96) -> dict:
+def assemble(obj, plan, outdir: str, dpi: int = 96, slug: str | None = None) -> dict:
     """Write the visual lane's artifact layout for one captured document.
 
     Emits exactly what render_pages.py emits so vision_prep.py needs no change,
     plus an additive `segment` field grouping the tiles of one logical unit.
 
-    `outdir`'s basename must equal the slug `plan` computed from the same
-    segments.json — `plan` is the one place that decides the directory name
-    (see its `--assets-root`/`--source` flags), so a provider that wrote its
-    screenshots somewhere else fails loudly here instead of producing a
-    `pages.json` whose image markers point at a directory that doesn't exist.
+    `outdir`'s basename must equal the slug — normally `plan.json`'s own
+    `"slug"` (pass it as `slug=`), since `plan` is the one place that decides
+    the directory name and may have been given a `--source` that differs from
+    segments.json's own `source` field. Recomputing from `obj["source"]` here
+    would disagree with `plan` in exactly that case and reject a directory
+    `plan` itself created. `slug=None` (a legacy list-shaped plan with no
+    recorded slug) falls back to recomputing from `obj["source"]`, unchanged
+    from before this parameter existed.
     """
-    slug = _slug(obj.get("source", ""))
+    if slug is None:
+        slug = _slug(obj.get("source", ""))
     actual = os.path.basename(str(outdir).rstrip("/"))
     if actual != slug:
         raise ValueError(
             f"outdir basename {actual!r} does not match the slug {slug!r} that "
-            f"'plan' computed from segments.json's source {obj.get('source', '')!r} "
-            f"— the provider must write PNGs into the directory 'plan' printed, "
-            f"not a different one"
+            f"'plan' computed — the provider must write PNGs into the directory "
+            f"'plan' printed, not a different one"
         )
     os.makedirs(outdir, exist_ok=True)
     by_index = {int(s["index"]): s for s in obj["segments"]}
@@ -247,8 +252,13 @@ def main(argv=None):
         print(outdir)
         return
     plan_obj = json.load(open(args.plan, encoding="utf-8"))
-    plan = plan_obj["plan"] if isinstance(plan_obj, dict) and "plan" in plan_obj else plan_obj
-    pages = assemble(obj, plan, args.outdir, dpi=args.dpi)
+    if isinstance(plan_obj, dict) and "plan" in plan_obj:
+        plan = plan_obj["plan"]
+        slug = plan_obj.get("slug")
+    else:
+        plan = plan_obj
+        slug = None
+    pages = assemble(obj, plan, args.outdir, dpi=args.dpi, slug=slug)
     print(f"{args.outdir}: {len(pages['pages'])} page(s) written (slug {pages['slug']})")
 
 

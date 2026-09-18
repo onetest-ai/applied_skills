@@ -64,6 +64,13 @@ class SegmentsContractTests(unittest.TestCase):
         del obj["segments"][0]["index"]
         self.assertIn("index", " ".join(HC.validate_segments(obj)))
 
+    def test_non_integral_index_is_reported(self):
+        """The message says 'integer-valued'; int(seg['index']) would otherwise
+        silently truncate a value like 1.9, so the check must match the message."""
+        obj = json.loads(FIXTURE.read_text())
+        obj["segments"][0]["index"] = 1.9
+        self.assertIn("integer", " ".join(HC.validate_segments(obj)))
+
     def test_nan_bbox_height_is_reported(self):
         """A fully hidden segment's bboxUnion() starts from Infinity seeds and can
         yield NaN — 'bh <= 0' alone does not catch it."""
