@@ -19,15 +19,23 @@ mcp/brain/
   deploy/
     README.md                        # this file
     azure-container-apps/
-      brain_deploy.py                # cloud adapter
+      brain_deploy.py                # cloud adapter (builds/updates the server image)
       deploy.example.toml            # profile template (no secrets)
+    azure-oauth-apim/
+      apim_oauth_deploy.py           # auth-layer adapter — Entra OAuth facade in APIM
+      deploy.example.toml            # facade profile template (no secrets)
+      README.md                      # why the facade is needed + usage
     local-docker/
       brain_deploy.py                # local dev-loop adapter (stage/plan/deploy/verify/stop)
       deploy.example.toml            # local profile template
 ```
 
 Other providers (GCP Cloud Run, AWS App Runner, …) get a sibling folder under
-`deploy/` implementing the same subcommands.
+`deploy/` implementing the same subcommands. Adapters split by concern: the
+container/host adapters ship the **server**; `azure-oauth-apim/` puts an Entra **OAuth
+facade** in front so MCP clients (Claude, VS Code) can authorize — it strips the RFC 8707
+`resource` indicator Entra rejects (`AADSTS9010010`). Same `plan`/`deploy`/`verify`
+contract; see its README.
 
 ## Local pipeline (`local-docker`)
 
