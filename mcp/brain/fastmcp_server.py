@@ -11,6 +11,7 @@ import asyncio
 import hmac
 import json
 import os
+import threading
 from typing import Annotated, Any
 
 from fastmcp import FastMCP
@@ -473,6 +474,42 @@ async def _label_tools(identity: str) -> None:
             tool.description = f"{label} {text}".strip()
 
 
+def _label_tools_sync(identity: str) -> None:
+    """Run `_label_tools` synchronously at import time, regardless of whether this thread
+    already has a running event loop. Normal imports (by `main()`'s stdio/http path, by
+    uvicorn loading `app`, and by a plain `import fastmcp_server` in tests) have no running
+    loop, so this is a plain `asyncio.run`. But the module can also be re-imported
+    dynamically (`importlib`) from inside an already-running loop — the test suite's
+    `test_http_app_enforces_api_key_end_to_end` does exactly this to exercise a
+    freshly-configured `app` — and `asyncio.run` raises RuntimeError in that case. Fall back
+    to a private thread with its own loop so labelling still completes synchronously before
+    the module finishes importing."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(_label_tools(identity))
+        return
+    errors: list[BaseException] = []
+
+    def _runner() -> None:
+        try:
+            asyncio.run(_label_tools(identity))
+        except BaseException as exc:  # pragma: no cover - defensive
+            errors.append(exc)
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    thread.join()
+    if errors:
+        raise errors[0]
+
+
+# Label tool descriptions at import time so both entrypoints — `main()` (stdio/local http)
+# and the module-level ASGI `app` export below (the `uvicorn fastmcp_server:app` hosting
+# path Cowork remote connectors reach) — ship labelled tool descriptions.
+_label_tools_sync(_IDENTITY)
+
+
 @mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)
 async def healthz(_: Request) -> JSONResponse:
     try:
@@ -624,7 +661,6 @@ def main(argv: list[str] | None = None) -> None:
         except argparse.ArgumentTypeError as exc:
             parser.error(str(exc))
     show_banner = os.getenv("BRAIN_SHOW_BANNER", "1") != "0"
-    asyncio.run(_label_tools(_IDENTITY))
     if args.transport == "stdio":
         mcp.run(transport="stdio", show_banner=show_banner)
         return

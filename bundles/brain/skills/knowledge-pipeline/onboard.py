@@ -184,6 +184,20 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     docs_s = str(docs) if docs else "<docs-dir>"
     rep_s = str(reporting) if reporting else "<reporting-dir>"
     py = brain_py()
+    # No name given: step 9 is omitted entirely, not emitted as a no-op. Writing
+    # `INSERT OR REPLACE INTO meta(...) VALUES('name', '')` unconditionally would WIPE any
+    # meta.name an operator later sets by hand if this runbook is ever re-run — the exact
+    # data-loss regression `brain_sync.write_meta` is written and tested to avoid. When a
+    # name IS given, prefer the durable, reproducible route — name.txt (already written by
+    # scaffold) carries forward into meta.name via brain_sync's own seed/apply path — over
+    # raw SQL against the store.
+    step9 = "" if not name else textwrap.dedent(f"""
+    # 9 · the Brain's name is recorded into the durable `meta` table via name.txt, not raw
+    #     SQL: it was written to `{proj/'name.txt'}` by scaffold, and brain_sync's seed/apply
+    #     path (see SKILL.md's plan/apply/seed sequence) UPSERTs it into meta.name on your
+    #     next seed/apply cycle. Re-run seed now to record it immediately:
+    "$PY" "{Path(__file__).resolve().parent/'brain_sync.py'}" seed --db "$DB" --parsed "{proj/'parsed'}" --require-goal
+    """)
     deploy_section = textwrap.dedent({
         "local": """
     ## Deployment target: local
@@ -217,10 +231,9 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     `[project].audience`; distinct from `[deployment].target` (distribution/infra).
 
     **Name (optional):** {name or "<none — this Brain is anonymous>"} — the display name
-    a client shows when several Brains are connected. Written to `name.txt`; the build
-    sequence below records it into the durable `meta` table (`meta.name`) the same way a
-    Brain with no name falls back to being told apart only by its connector name and goal —
-    fully functional, just anonymous to a client juggling several.
+    a client shows when several Brains are connected. Written to `name.txt`. A Brain with
+    no name is fully functional; a client juggling several just tells them apart by
+    connector name and goal instead.
 
     **Store:** `{db}` — one portable SQLite file (chunks+FTS+vector · facts · graph).
     **Source config:** `{proj/'brain.toml'}` — named roots with paths relative to this project.
@@ -299,17 +312,7 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
 
     # 8 · Obsidian vault = a VIEW of the store
     "$PY" "{CTE/'to_obsidian.py'}" --db "$DB" --out "{proj/'vault'}"
-
-    # 9 · record the Brain's name in the durable `meta` table (optional — a Brain with
-    #     no name is fully functional but anonymous to a client with several connected)
-    "$PY" - <<'PY'
-    import sqlite3
-    c = sqlite3.connect({json.dumps(str(db))})
-    c.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
-    c.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('name', ?)", ({json.dumps(name or "")},))
-    c.commit()
-    PY
-
+    {step9}
     # verify the built store
     "$PY" "{Path(__file__).resolve()}" verify --db "$DB"
     ```

@@ -266,6 +266,19 @@ class FastMCPContractTests(FixtureCase):
             async with Client(fastmcp_server.mcp) as client:
                 tools = {tool.name: tool for tool in await client.list_tools()}
                 self.assertEqual(set(tools), expected)
+                # F5: labelling must happen at import time (module-level), not only inside
+                # main() — the uvicorn/`app` ASGI entrypoint Cowork remote connectors reach
+                # never calls main(). Every other labelling test calls _label_tools()
+                # directly, which would not catch a regression that removed the module-level
+                # call; this one goes through the same in-process Client path a real client
+                # uses, so it fails if only main()'s call site is labelling tools. The fixture
+                # store has no meta.name, so identity falls back to the first clause of
+                # meta.goal ("optimize call-center operations").
+                for name, tool in tools.items():
+                    self.assertTrue(
+                        (tool.description or "").startswith("[optimize call-center operations]"),
+                        f"{name}: tool description not labelled at import time: {tool.description!r}",
+                    )
                 for name in ("get_metric", "search_knowledge", "get_taxonomy", "find_related_content"):
                     limit = tools[name].inputSchema["properties"]["limit"]
                     self.assertIn("1..100", limit["description"])

@@ -52,10 +52,10 @@ Every answer is **cited** (to a mart row, document, or graph node) or honestly *
 For the same querying, inside Claude Desktop's Cowork. Cowork keeps its own plugin state and connects to MCP servers **from Anthropic's cloud** (not your machine), so setup differs from the CLI: install the plugin into Cowork, and register the Brain as a **remote connector**.
 
 1. **Install kb into Cowork** — *Customize → Plugins → Add marketplace*, enter the `applied-ai` GitHub URL (`onetest-ai/applied_skills`), install **kb**, enable it. (Air-gapped alternative: upload a ZIP of `bundles/kb`, ≤50 MB.)
-2. **Add your Brain as a connector** — *Customize → Connectors → Add custom connector*. Paste your project's **HTTPS MCP URL**, authorize with **Entra OAuth** (or set an `X-API-Key` header). **Name the connector `brain`** so its tools resolve as `mcp__brain__*`, which is what kb expects.
+2. **Add your Brain as a connector** — *Customize → Connectors → Add custom connector*. Paste your project's **HTTPS MCP URL**, authorize with **Entra OAuth** (or set an `X-API-Key` header). The connector's name is yours to choose — kb finds a Brain by the tools it exposes, not by what the connector is called.
 3. **Verify** — run `/kb:connect`, then `/kb:ask`, `/kb:explore`, `/kb:report`, …
 
-Each project has its own Brain endpoint; if you're in two projects, keep a connector per project and enable only the one named `brain` for the current task. **Cowork caveats:** ambient mode (`/kb:mode`) and the SessionStart health line rely on hooks, which don't fire in Cowork — ground answers by invoking the kb skills explicitly. Full walkthrough: [`bundles/kb/docs/cowork-setup.md`](bundles/kb/docs/cowork-setup.md).
+Each project has its own Brain endpoint; if you're in two projects, add both connectors and leave both enabled — kb discovers every reachable Brain and asks which to use when more than one answers, and you can name one in the request ("ask the acme brain about …"). **Cowork caveats:** ambient mode (`/kb:mode`) and the SessionStart health line rely on hooks, which don't fire in Cowork — ground answers by invoking the kb skills explicitly. Full walkthrough: [`bundles/kb/docs/cowork-setup.md`](bundles/kb/docs/cowork-setup.md).
 
 ---
 

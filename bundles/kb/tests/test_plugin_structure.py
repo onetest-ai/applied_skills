@@ -70,7 +70,7 @@ class TestDoctrineAndVerifier(unittest.TestCase):
         self.assertNotIn("tools", fm, "verifier must not pin a tools allowlist")
         # Read-only is enforced by the platform, not by prose.
         self.assertIn("disallowedTools", fm)
-        for tool in ("Write", "Edit", "NotebookEdit", "Bash"):
+        for tool in ("Write", "Edit", "NotebookEdit", "Bash", "Task", "SlashCommand"):
             self.assertIn(tool, fm["disallowedTools"], f"verifier may still use {tool}")
         # No hardcoded server names anywhere in the agent.
         self.assertNotIn("mcp__brain__", text)

@@ -127,11 +127,16 @@ one connector named `brain` active.
 # before — hard allowlist, blind to any other Brain
 tools: Read, Grep, mcp__brain__health, mcp__brain__get_evidence, ...
 # after — inherits every MCP tool; read-only enforced by the platform
-disallowedTools: Write, Edit, NotebookEdit, Bash
+disallowedTools: Write, Edit, NotebookEdit, Bash, Task, SlashCommand
 ```
 
-This is strictly stronger than today: "never edits files" moves from a prose promise to a
-platform guarantee, while Brain access stops depending on a name.
+This is not uniformly stronger than today — it is stronger on file mutation ("never edits
+files" moves from a prose promise to a platform guarantee) but weaker on blast radius (an
+allowlist-less subagent inherits every other tool, including `Task` and `SlashCommand`,
+unless explicitly disallowed). The verifier's `disallowedTools` list adds `Task` and
+`SlashCommand` alongside `Write`, `Edit`, `NotebookEdit`, `Bash` for exactly this reason:
+Brain access stops depending on a name, without handing the verifier the ability to spawn
+further agents or invoke slash commands.
 
 Step 2's hard stop is kept but re-aimed: it fires when **no Brain-shaped server answers at
 all**, not on a name mismatch. A verifier without evidence access must never return
@@ -182,7 +187,8 @@ Part A:
   this design (it requires `mcp__brain__` in every answering skill). It inverts: **no
   literal MCP server name appears in any kb skill or in the verifier.**
 - `tests/test_plugin_structure.py` verifier assertions (lines 75–76) become: no `tools:`
-  allowlist; `disallowedTools` present and covering `Write`, `Edit`, `NotebookEdit`, `Bash`.
+  allowlist; `disallowedTools` present and covering `Write`, `Edit`, `NotebookEdit`, `Bash`,
+  `Task`, `SlashCommand`.
 - New: doctrine states the discovery contract and the one-Brain-per-invocation rule;
   `connect` contains no renaming instruction; `cowork-setup.md` contains no
   disable-a-connector instruction.

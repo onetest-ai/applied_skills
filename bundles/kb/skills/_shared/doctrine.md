@@ -89,7 +89,7 @@ Numbers stated on a slide are **reported** (cite as such); numbers from `facts` 
 
 ## Audience & goal
 
-On connect, `health` returns an `about` block: `{goal, audience}` (read from the Brain's
+On connect, `health` returns an `about` block: `{name, goal, audience}` (read from the Brain's
 durable `meta` table). Use it to set altitude, not content:
 
 - **Read it from the first `health` call.** `about.goal` is the analytical scope; `about.audience` is who consumes the KB (e.g. "call-center ops managers and workforce planners").

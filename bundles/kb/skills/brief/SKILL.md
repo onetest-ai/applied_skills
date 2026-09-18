@@ -13,7 +13,7 @@ Author a brief, cited memo on **$subject** following `../_shared/authoring.md`.
 
 3. **Draft.** Compose a 200–400-word memo with inline citation tags (`[RAG:id]`, `[MART:metric@grain]`, `[GRAPH:node]`). Mark any unsupported claim as "Not modeled: …".
 
-4. **Verify.** Dispatch the `verifier` subagent to re-resolve every citation against the Brain. Return its verdict. Block on unsupported claims; if any fail, revise and re-verify.
+4. **Verify.** Dispatch the `verifier` subagent, naming the resolved Brain in its dispatch prompt, to re-resolve every citation against the Brain. Return its verdict. Block on unsupported claims; if any fail, revise and re-verify.
 
 5. **Propose.** Show the draft memo, the verifier verdict, and the proposed path (`docs/kb/<slug>.md`) to the human. Do **not** write yet — await approval.
 

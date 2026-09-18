@@ -10,9 +10,9 @@ The authoring process follows a four-step flow:
 
 2. **Draft** — Compose the memo or report in the house style (`../_shared/doctrine.md` → **Answer format**): lead with the answer, then support. Cite each claim with a numbered footnote `[1]`, `[2]`, … and build the **Sources** section as you go, mapping each number to its machine tag and file — `1. [RAG:<chunk_id>] — "Section" — source_file.md`. The machine tags (`[RAG:]`/`[MART:]`/`[GRAPH:]`) live in the Sources list, not inline in the prose, and are what the `verifier` re-resolves. Mark any unsupported area as an explicit "Not modeled: …" callout.
 
-3. **Verify** — Dispatch the `verifier` subagent (read-only; no edits). It re-resolves every citation against the Brain and returns a per-claim verdict. Block on any unsupported or grain-mismatched claim; demote uncertain ones to caveats.
+3. **Verify** — Dispatch the `verifier` subagent (read-only; no edits), naming the resolved Brain in the dispatch prompt so it verifies against the store the draft actually came from. It re-resolves every citation against the Brain and returns a per-claim verdict. Block on any unsupported or grain-mismatched claim; demote uncertain ones to caveats.
 
-4. **Human Gate** — Show the draft and verifier verdict to the human. Do **not** write to disk without explicit approval. (Brief and report skills have no `Write` in their allowed-tools.)
+4. **Human Gate** — Show the draft and verifier verdict to the human. Do **not** write to disk without explicit approval.
 
 5. **Emit** — After approval, write the final Markdown and the sources sidecar.
 

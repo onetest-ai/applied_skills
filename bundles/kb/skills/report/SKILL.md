@@ -17,7 +17,7 @@ Author a long-form structured report on **$subject** following `../_shared/autho
    - Explicit "Not modeled: …" callouts for unsupported areas
    - A **Sources** section at the end (numbered, with source_file for each)
 
-4. **Verify.** Dispatch the `verifier` subagent to re-resolve every citation against the Brain. Return its verdict. Block on unsupported claims; if any fail, revise and re-verify.
+4. **Verify.** Dispatch the `verifier` subagent, naming the resolved Brain in its dispatch prompt, to re-resolve every citation against the Brain. Return its verdict. Block on unsupported claims; if any fail, revise and re-verify.
 
 5. **Propose.** Show the draft report, the verifier verdict, and the proposed path (`docs/kb/<slug>.md`) to the human. Do **not** write yet — await approval.
 

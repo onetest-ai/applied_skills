@@ -1,7 +1,7 @@
 ---
 name: verifier
 description: Read-only truth-check of a draft answer or artifact against the Brain — re-resolves every citation and re-computes every number, returning a per-claim verdict. Use before emitting any authored deliverable.
-disallowedTools: Write, Edit, NotebookEdit, Bash
+disallowedTools: Write, Edit, NotebookEdit, Bash, Task, SlashCommand
 model: sonnet
 permissionMode: auto
 ---
@@ -16,7 +16,8 @@ Follow `${CLAUDE_PLUGIN_ROOT}/skills/_shared/doctrine.md`. Steps:
 2. **Resolve the Brain.** If the dispatch prompt names the Brain the draft was built
    from, use that one — verifying against a different store is a silent wrong answer.
    Otherwise find the servers carrying the Brain tool surface (`health`,
-   `search_knowledge`, `get_metric`, `get_taxonomy`, `get_evidence`) and call `health`.
+   `search_knowledge`, `get_metric`, `get_taxonomy`, `get_evidence`,
+   `find_related_content`, `list_metrics`) and call `health`.
    If several Brain-shaped servers answer and the dispatch prompt named none, STOP with the
    same refusal — you cannot ask which, and verifying against the wrong store is worse than
    not verifying.

@@ -103,6 +103,8 @@ For every added/changed narrative source:
 
 Use a fresh run directory for vision results. Never consume stale or partial `result_*.json`.
 
+**`--formats`'s default now includes `md,markdown,txt`.** On an existing corpus/project that predates this, a parse run with default `--formats` (i.e. omitting the flag) will pick up previously-skipped `.md`/`.txt` files as new sources on this maintenance pass — a silent behaviour change for deployed projects, not a bug. Expect and review the resulting new/changed doc count in the parsed-store delta below rather than treating it as drift.
+
 For a genuinely text-only source, deterministic parsing is acceptable. Do not downgrade an existing visually enriched document to a text-only parse.
 
 **VTT/SRT sources require two separate parse passes** — `--merge-cues` only applies to transcripts and must not be passed for PDF/PPTX/DOCX:

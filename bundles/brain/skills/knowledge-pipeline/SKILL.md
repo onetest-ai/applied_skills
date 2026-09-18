@@ -15,6 +15,7 @@ When the user wants to **create a brain** / "get started" / doesn't yet have a p
 
 **1. Ask, one at a time (skip any the user already answered):**
 - **Goal** — the single analytical goal that scopes everything (the noise filter). *"What are you trying to get out of this corpus?"* (e.g. "optimize call-center operations and introduce an AI workforce"). Don't proceed without it — it drives taxonomy + demotion.
+- **Name** — *"What should this Brain be called?"* (e.g. "ACME Contact Centre"). **Optional** — an anonymous Brain is fully functional. It's what a client shows when several Brains are connected (server identity, tool-description prefix), so worth asking for whenever the user will likely have more than one Brain around. Written to `name.txt`.
 - **Audience** — *"Who will consume the KB — which roles/personas?"* (e.g. "call-center ops managers and workforce planners"). Optional but valuable: it's a secondary lens that refines taxonomy emphasis and drives how the `kb` plugin sets answer altitude/vocabulary and authored-artifact tone/depth. Distinct from the deployment target (that's distribution/infra). Recorded in `brain.toml` `[project].audience`.
 - **Docs** — folder of narrative documents (PDF/PPTX/DOCX) and/or transcripts (VTT/SRT). VTT/SRT corpora require `--merge-cues N` at parse time (see Build step 1a).
 - **Reporting** — folder of the numeric workbooks (XLSX/XLSM), if any. May be the same folder or none (then the numbers lane stays empty — that's fine).
@@ -29,13 +30,14 @@ When the user wants to **create a brain** / "get started" / doesn't yet have a p
 **2. Scaffold + preflight + scan** (deterministic):
 ```bash
 python .../knowledge-pipeline/onboard.py scaffold \
-  --project <proj> --goal "<goal>" [--audience "<roles/personas>"] --docs <docs> [--reporting <xlsx-dir>] \
+  --project <proj> --goal "<goal>" [--name "<display name>"] [--audience "<roles/personas>"] --docs <docs> [--reporting <xlsx-dir>] \
   [--docs-mode import|mirror] [--reporting-mode import|mirror] \
   [--deploy-target local|hosted-mcp] [--corpus <name>]
 ```
 This creates the project layout (`schema/ parsed/ taxonomy/ classify/ vision/ marts/ vault/ .incoming/`), copies `families.<corpus>.json` + `metrics.<corpus>.json` templates into `schema/`, and writes:
 
 - `goal.txt`;
+- `name.txt` (empty when no `--name` was given — the Brain stays anonymous and fully functional);
 - portable `brain.toml` with a `[project]` section (canonical `audience`) followed by `incoming` (`managed`), `docs` (`import` by default), and `reporting` (`import` by default) roots; paths are relative to the project whenever the platform permits;
 - **`BRAIN.md`** with exact ordered build and source-registry commands (plus a deployment section matching the chosen target).
 
