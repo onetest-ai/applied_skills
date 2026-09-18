@@ -695,6 +695,52 @@ class BrainIdentityTests(FixtureCase):
         self.assertNotIn("This Brain answers for", text)
         self.assertIn("search_knowledge", text)
 
+    def _snapshot_and_restore_tool_descriptions(self, fs):
+        # _label_tools mutates the shared module-level mcp tool registry, which persists
+        # for the rest of the test session (e.g. FastMCPContractTests::test_in_process_and_real_stdio
+        # round-trips the same `mcp` object). Restore the originals unconditionally so labelling
+        # tests never leak state into other tests, regardless of ordering.
+        import asyncio
+        originals = {name: tool.description for name, tool in asyncio.run(fs.mcp.get_tools()).items()}
+
+        def _restore():
+            for name, tool in asyncio.run(fs.mcp.get_tools()).items():
+                tool.description = originals[name]
+
+        self.addCleanup(_restore)
+
+    def test_tool_descriptions_carry_the_identity(self):
+        import asyncio
+        fs = self._server()
+        self._snapshot_and_restore_tool_descriptions(fs)
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.execute("INSERT OR REPLACE INTO meta VALUES('name','ACME Contact Centre')")
+        asyncio.run(fs._label_tools("ACME Contact Centre"))
+        tools = asyncio.run(fs.mcp.get_tools())
+        self.assertTrue(tools, "no tools registered")
+        for name, tool in tools.items():
+            self.assertTrue(tool.description.startswith("[ACME Contact Centre]"),
+                            f"{name}: description not labelled: {tool.description!r}")
+
+    def test_labelling_is_a_noop_without_identity(self):
+        import asyncio
+        fs = self._server()
+        self._snapshot_and_restore_tool_descriptions(fs)
+        before = {n: t.description for n, t in asyncio.run(fs.mcp.get_tools()).items()}
+        asyncio.run(fs._label_tools(""))
+        after = {n: t.description for n, t in asyncio.run(fs.mcp.get_tools()).items()}
+        self.assertEqual(before, after)
+
+    def test_labelling_is_idempotent(self):
+        import asyncio
+        fs = self._server()
+        self._snapshot_and_restore_tool_descriptions(fs)
+        asyncio.run(fs._label_tools("ACME Contact Centre"))
+        once = {n: t.description for n, t in asyncio.run(fs.mcp.get_tools()).items()}
+        asyncio.run(fs._label_tools("ACME Contact Centre"))
+        twice = {n: t.description for n, t in asyncio.run(fs.mcp.get_tools()).items()}
+        self.assertEqual(once, twice)
+
 
 if __name__ == "__main__":
     unittest.main()

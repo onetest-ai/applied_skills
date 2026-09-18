@@ -7,6 +7,7 @@ HTTP. Both transports expose the exact same governed semantic tools.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hmac
 import json
 import os
@@ -458,6 +459,20 @@ def health() -> dict | ToolResult:
     return _safe_call("health", _health)
 
 
+async def _label_tools(identity: str) -> None:
+    """Prefix every tool description with the Brain's name. Tool descriptions are always
+    in the client's context, while server `instructions` may not be — labelling both is
+    how a client with several Brains connected tells them apart. Idempotent: a description
+    already carrying the label is left alone."""
+    if not identity:
+        return
+    label = f"[{identity}]"
+    for tool in (await mcp.get_tools()).values():
+        text = tool.description or ""
+        if not text.startswith(label):
+            tool.description = f"{label} {text}".strip()
+
+
 @mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)
 async def healthz(_: Request) -> JSONResponse:
     try:
@@ -609,6 +624,7 @@ def main(argv: list[str] | None = None) -> None:
         except argparse.ArgumentTypeError as exc:
             parser.error(str(exc))
     show_banner = os.getenv("BRAIN_SHOW_BANNER", "1") != "0"
+    asyncio.run(_label_tools(_IDENTITY))
     if args.transport == "stdio":
         mcp.run(transport="stdio", show_banner=show_banner)
         return
