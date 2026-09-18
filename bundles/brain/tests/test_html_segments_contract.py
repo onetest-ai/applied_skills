@@ -51,6 +51,12 @@ class SegmentsContractTests(unittest.TestCase):
         del obj["segments"][0]["text"]
         self.assertIn("text", " ".join(HC.validate_segments(obj)))
 
+    def test_zero_bbox_height_is_reported(self):
+        """The planner tiles from bbox.height, so that is the field that must be valid."""
+        obj = json.loads(FIXTURE.read_text())
+        obj["segments"][0]["bbox"]["height"] = 0
+        self.assertIn("bbox.height", " ".join(HC.validate_segments(obj)))
+
 
 if __name__ == "__main__":
     unittest.main()

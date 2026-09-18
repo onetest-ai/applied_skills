@@ -35,6 +35,10 @@ def validate_segments(obj) -> list[str]:
         bbox = s.get("bbox")
         if not isinstance(bbox, dict) or not all(k in bbox for k in ("x", "y", "width", "height")):
             problems.append(f"{where} missing 'bbox' with x/y/width/height")
+        if isinstance(bbox, dict):
+            bh = bbox.get("height")
+            if not isinstance(bh, (int, float)) or bh <= 0:
+                problems.append(f"{where} has a non-positive 'bbox.height'")
         h = s.get("height")
         if not isinstance(h, (int, float)) or h <= 0:
             problems.append(f"{where} has a non-positive 'height'")
@@ -55,18 +59,15 @@ def plan_captures(obj, max_px: int = 1600, overlap: float = 0.1) -> list[dict]:
     problems = validate_segments(obj)
     if problems:
         raise ValueError("invalid segments.json: " + "; ".join(problems))
+    if not (0.0 <= overlap < 0.95):
+        raise ValueError(f"overlap must be in [0, 0.95), got {overlap!r}")
     step = max(1, int(max_px * (1.0 - overlap)))
     plan: list[dict] = []
     page = 0
     for seg in obj["segments"]:
         box = seg["bbox"]
         top, height = float(box["y"]), float(box["height"])
-        offsets = [0.0] if height <= max_px else [
-            float(o) for o in range(0, int(height), step)
-            if o < height and (o + step < height or o + max_px >= height)
-        ]
-        if height > max_px and offsets[-1] + max_px < height:
-            offsets.append(height - max_px)
+        offsets = [0.0] if height <= max_px else [float(o) for o in range(0, int(height), step)]
         of = len(offsets)
         for tile, off in enumerate(offsets, 1):
             page += 1

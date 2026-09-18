@@ -62,6 +62,12 @@ class PlanCapturesTests(unittest.TestCase):
             HC.plan_captures(bad)
         self.assertIn("source", str(cm.exception))
 
+    def test_out_of_range_overlap_is_rejected(self):
+        for bad in (1.0, -0.1, 1.5):
+            with self.assertRaises(ValueError) as cm:
+                HC.plan_captures(FIXTURE, overlap=bad)
+            self.assertIn("overlap", str(cm.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
