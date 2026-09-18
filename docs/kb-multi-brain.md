@@ -80,20 +80,28 @@ Replaces the "Namespace Detection" section of `skills/_shared/doctrine.md`.
 > name. `mcp__brain__*`, `mcp__plugin_brain_brain__*`, `mcp__acme-brain__*` and
 > `mcp__knowledge__*` are all equally valid.
 
-Resolution, once per skill invocation:
+Resolution, once per skill invocation. **Precedence: a Brain named in the request wins over
+the pin; the pin wins over discovery** — fixed in a final-review pass after an earlier draft
+of this doc (and the shipped contract) had Pinned checked first and unconditionally
+blocking fall-through, which made a request naming a different Brain than the pin
+unreachable. That was a specification error, not an implementation slip; it is corrected
+here and in the shipped contract alike:
 
-1. **Pinned** (Task 14) — if the project's own instructions (`CLAUDE.md`, `AGENTS.md`, or
-   the project instructions Cowork surfaces) name the Brain this project uses, resolve
-   that one and say which. **If it is named but not reachable, stop** rather than falling
-   through to discovery — a pin is an explicit instruction, and answering from a different
-   store would put the project's own citations behind numbers it never sanctioned. List
-   the Brains that ARE reachable and give the corrected pin line to paste. This step
-   supersedes the persisted-pointer idea this doc originally cut (see **Out of scope**):
-   the "pointer" turns out to already exist — it's the project's own instructions file,
-   which nobody has to build or maintain a mechanism for.
-2. **Override** — the user named a Brain in the request ("ask the acme brain..."). Match
-   case-insensitively against the server segment and against each candidate's
-   `about.goal`. Use it.
+1. **Override** — the user named a Brain in the request ("ask the acme brain..."). Match
+   case-insensitively against the server segment, `about.goal`, and `about.name` (when
+   advertised). Use it. Checked first; wins over any pin.
+2. **Pinned** (Task 14) — otherwise, if the project's own instructions (`CLAUDE.md`,
+   `AGENTS.md`, or the project instructions Cowork surfaces) name the Brain this project
+   uses, match it with the same rule as Override and resolve that one, saying which.
+   **If it matches no reachable candidate at all, stop** rather than falling through to
+   discovery — a pin is an explicit instruction, and answering from a different store
+   would put the project's own citations behind numbers it never sanctioned. List the
+   Brains that ARE reachable and give the corrected pin line to paste. A cosmetic mismatch
+   (e.g. a pinned display name against a differently-spelled server segment) still matches
+   under the Override rule — only a genuinely absent Brain stops. This step supersedes the
+   persisted-pointer idea this doc originally cut (see **Out of scope**): the "pointer"
+   turns out to already exist — it's the project's own instructions file, which nobody has
+   to build or maintain a mechanism for.
 3. **Discover** — scan available tools for servers carrying the surface; call `health` on
    each candidate.
 4. **Exactly one healthy Brain** — use it, name it in one short line, proceed.
@@ -211,8 +219,8 @@ Part A:
   allowlist; `disallowedTools` present and covering `Write`, `Edit`, `NotebookEdit`, `Bash`,
   `Task`, `SlashCommand`.
 - New: doctrine states the discovery contract and the one-Brain-per-invocation rule;
-  `connect` contains no renaming instruction; `cowork-setup.md` contains no
-  disable-a-connector instruction.
+  `cowork-setup.md` contains no disable-a-connector instruction. (`connect` itself was
+  later withdrawn — see A3 — so this bullet no longer names it as a skill under test.)
 
 Part B:
 

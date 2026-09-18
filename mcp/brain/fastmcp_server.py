@@ -7,7 +7,6 @@ HTTP. Both transports expose the exact same governed semantic tools.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import hmac
 import json
 import os

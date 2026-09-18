@@ -82,7 +82,8 @@ class TestHealthLine(unittest.TestCase):
                 },
             )
             self.assertEqual(res.returncode, 0)   # never breaks the session
-            self.assertIn("mcpServers", res.stdout)
+            self.assertIn("no local Brain store", res.stdout)
+            self.assertIn("remote", res.stdout.lower())
 
 
 class TestAmbientReminder(unittest.TestCase):

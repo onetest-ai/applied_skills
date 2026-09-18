@@ -65,16 +65,18 @@ Each project has its own Brain endpoint. Add it once per project:
    This project's Brain is `acme-brain`.
    ```
 
-   A pinned Brain is the first thing kb resolves — every skill checks it before discovery,
-   so a project with one connector never has to disambiguate, and a project with several
-   always answers from the one you named. If the pin names a Brain that isn't reachable, kb
-   stops and tells you which Brains ARE reachable instead of silently answering from a
-   different one.
+   kb checks a Brain named in the request first, the pin second, and only then falls back
+   to discovery — so a project with one connector never has to disambiguate, and a project
+   with several answers from the one you pinned whenever a request names none. Naming a
+   different Brain in the request always wins over the pin. If the pin names a Brain that
+   matches no reachable candidate at all, kb stops and tells you which Brains ARE reachable
+   instead of silently answering from a different one.
 
 **In two projects?** Add both Brains as connectors and leave both enabled. kb discovers
 every reachable Brain and, when more than one answers, asks which to use — listing each by
 name and by the analytical goal it reports. You can answer in advance by naming it in the
-request ("ask the acme brain about Q3 handle time"), or pin one per project as above.
+request ("ask the acme brain about Q3 handle time" — this always wins, even over a pin), or
+pin one per project as above for every request that names none.
 
 ## 3. Verify
 

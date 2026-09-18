@@ -158,6 +158,17 @@ class TestNoHardcodedBrainNamespace(unittest.TestCase):
         self.assertEqual(offenders, [], "skills still declare allowed-tools")
 
 
+_CONTRACT_START = "<!-- BRAIN-CONTRACT:START -->"
+_CONTRACT_END = "<!-- BRAIN-CONTRACT:END -->"
+
+
+def _extract_contract(text: str) -> str:
+    """The delimited canonical block, or '' when absent."""
+    if _CONTRACT_START not in text or _CONTRACT_END not in text:
+        return ""
+    return text.split(_CONTRACT_START, 1)[1].split(_CONTRACT_END, 1)[0]
+
+
 class TestConnectSkillRemoved(unittest.TestCase):
     """Registering a Brain is adding an MCP server — platform plumbing, not a skill."""
 
@@ -166,20 +177,39 @@ class TestConnectSkillRemoved(unittest.TestCase):
 
     def test_nothing_references_the_deleted_skill(self):
         offenders = []
+        candidates = [KB_ROOT / "README.md", REPO_ROOT / "README.md"]
         for sub in ("skills", "agents", "docs", "hooks"):
             root = KB_ROOT / sub
-            if not root.exists():
-                continue
-            for path in sorted(root.rglob("*")):
-                if path.is_file() and path.suffix in (".md", ".sh") and "kb:connect" in read_text(path):
-                    offenders.append(str(path.relative_to(KB_ROOT)))
+            if root.exists():
+                candidates.extend(sorted(root.rglob("*")))
+        for path in candidates:
+            if path.is_file() and path.suffix in (".md", ".sh") and "kb:connect" in read_text(path):
+                offenders.append(str(path))
         self.assertEqual(offenders, [], "stale /kb:connect references remain")
 
-    def test_contract_resolves_a_pinned_brain_first(self):
+    def test_contract_pin_is_a_tiebreak_that_stops_on_a_genuine_miss(self):
+        """A Brain named in the request must outrank the pin; the pin only stops
+        discovery when it names a Brain that matches no reachable candidate."""
         text = read_text(KB_ROOT / "skills" / "_shared" / "doctrine.md")
+        block = _extract_contract(text)
+        self.assertTrue(block.strip(), "doctrine.md must delimit the canonical contract block")
         for token in ("project instructions", "CLAUDE.md"):
-            self.assertIn(token, text, f"contract missing {token!r}")
-        self.assertIn("stop", text.lower())
+            self.assertIn(token, block, f"contract missing {token!r}")
+        self.assertIn(
+            "fall through to discovery", block,
+            "contract must keep the pin's stop-on-unreachable behavior",
+        )
+        self.assertIn(
+            "wins over the pin", block,
+            "contract must state that a request-named Brain outranks the pin",
+        )
+        # Override must be resolved before Pinned in the numbered list.
+        override_idx = block.find("**Override.**")
+        pinned_idx = block.find("**Pinned.**")
+        self.assertGreater(override_idx, -1, "contract missing an Override step")
+        self.assertGreater(pinned_idx, -1, "contract missing a Pinned step")
+        self.assertLess(override_idx, pinned_idx,
+                        "Override must be resolved before Pinned")
 
 
 if __name__ == "__main__":

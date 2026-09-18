@@ -14,7 +14,7 @@ find_db() {
   return 1
 }
 
-DB="$(find_db)" || { echo "kb: no Brain detected — add a Brain MCP server (mcpServers entry in .mcp.json) to register one."; exit 0; }
+DB="$(find_db)" || { echo "kb: no local Brain store found — expected if your Brain is remote/hosted (MCP over HTTPS) rather than a local knowledge.sqlite."; exit 0; }
 
 if ! command -v sqlite3 >/dev/null 2>&1; then
   echo "kb: Brain store found ($DB) but sqlite3 is unavailable for a health line."

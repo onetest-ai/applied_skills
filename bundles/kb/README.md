@@ -57,7 +57,7 @@ Cowork keeps its own plugin state and connects to MCP servers **from Anthropic's
 
 1. **Install kb into Cowork** — *Customize → Plugins → Add marketplace*, enter the `applied-ai` GitHub URL (`onetest-ai/applied_skills`), install **kb**, enable it.
 2. **Add your Brain connector** — *Customize → Connectors → Add custom connector*. Paste your project's **HTTPS MCP URL**; authorize with **Entra OAuth** (or set an `X-API-Key` header). The connector's name is yours to choose (e.g. `acme-brain`) — kb finds a Brain by the tools it exposes, not by what the connector is called.
-3. **Pin it in the project instructions** (optional but recommended once more than one Brain is registered) — add `This project's Brain is \`acme-brain\`.` to this project's instructions in Cowork. kb resolves the pin first, before discovery.
+3. **Pin it in the project instructions** (optional but recommended once more than one Brain is registered) — add `This project's Brain is \`acme-brain\`.` to this project's instructions in Cowork. kb checks the pin right after a request-named Brain and before discovery, so naming a different Brain in the request still always wins.
 4. **Verify & use** — ask a simple question with `/kb:ask` and confirm it cites the Brain you expect, then use `/kb:explore`, `/kb:report`, …
 
 **Per project:** each project has its own Brain endpoint. In two projects, add both connectors and leave both enabled — kb discovers every reachable Brain and asks which to use when more than one answers (or pin one per project as above).
@@ -84,6 +84,6 @@ edits that file.
 ## Troubleshooting
 
 - **kb finds no Brain** — CLI: confirm the `mcpServers` block is in `.mcp.json` and reload the session. Cowork: confirm the connector is enabled and its OAuth/API-key auth succeeded.
-- **kb answered from the wrong Brain, or doesn't see one you expect** — ask `/kb:ask` a question; kb names which Brain it used, or lists every Brain it can currently reach with its goal if more than one answered. If the one you want is missing, its connector is disabled or its auth failed. If it is listed but kb chose another, name it in the request ("ask the acme brain about …") or pin it in the project instructions. A server that exposes only part of the Brain tool surface is not recognised as a Brain.
+- **kb answered from the wrong Brain, or doesn't see one you expect** — ask `/kb:ask` a question; kb names which Brain it used, or lists every Brain it can currently reach with its goal if more than one answered. If the one you want is missing, its connector is disabled or its auth failed. If it is listed but kb chose another, name it in the request ("ask the acme brain about …") — naming a Brain in the request always wins, even in a project pinned to a different one — or pin it in the project instructions for every future request that names none. A server that exposes only part of the Brain tool surface is not recognised as a Brain.
 - **A pinned Brain isn't reachable** — kb stops rather than silently falling back to another store; it lists the Brains that ARE reachable and gives you the corrected pin line to paste.
 - **Ambient mode seems inert in Cowork** — expected; it's CLI-only. Invoke `/kb:ask` (and the other skills) explicitly.
