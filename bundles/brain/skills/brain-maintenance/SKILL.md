@@ -152,8 +152,15 @@ Run the project verification, MCP tests, and representative narrative/numeric sm
 
 - **Check the Brain is identifiable.** Read `meta.name`. If it is empty, warn the operator:
   a client with several Brains connected will show this one only by its connector name and
-  goal. Offer to set it (`INSERT OR REPLACE INTO meta VALUES('name', '<name>')`). This is a
-  warning, never a gate — an anonymous Brain is fully functional.
+  goal. `name.txt` at the project root is the durable, reproducible source of truth for
+  `meta.name` — the same convention as `goal.txt`/`audience`. Tell the operator to set
+  `name.txt` (e.g. `echo 'ACME Contact Centre' > name.txt`) and re-run
+  `brain_sync.py seed` (or `apply`), which carries it into `meta.name` on every run, the
+  same way goal/audience refresh. A direct
+  `INSERT OR REPLACE INTO meta(key,value) VALUES('name', '<name>')` (via `./brain sql`)
+  also works for a one-off fix, but does not survive being reproduced from source files —
+  prefer `name.txt` + seed. This is a warning, never a gate — an anonymous Brain is fully
+  functional.
 
 ### 8. Plan and deploy through the project profile
 
