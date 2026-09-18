@@ -42,7 +42,7 @@ def brain_py():
             return str(c)
     return sys.executable
 
-NARRATIVE_EXT = {".pdf", ".pptx", ".ppt", ".docx", ".doc", ".md", ".markdown", ".txt", ".vtt", ".srt"}
+NARRATIVE_EXT = {".pdf", ".pptx", ".ppt", ".docx", ".doc", ".md", ".markdown", ".txt", ".vtt", ".srt", ".html", ".htm"}
 REPORTING_EXT = {".xlsx", ".xlsm", ".xls", ".csv"}
 
 # module -> pip name (for the preflight message). All torch-free (docling retired).
@@ -151,7 +151,7 @@ def cmd_scaffold(a):
                  'include = ["**/*"]']
         if docs:
             lines += ["", "[sources.roots.docs]", f"path = {json.dumps(docs_path)}", f"mode = {json.dumps(a.docs_mode)}",
-                      'include = ["**/*.pdf", "**/*.ppt", "**/*.pptx", "**/*.doc", "**/*.docx", "**/*.vtt", "**/*.srt", "**/*.json", "**/*.md", "**/*.markdown", "**/*.txt"]']
+                      'include = ["**/*.pdf", "**/*.ppt", "**/*.pptx", "**/*.doc", "**/*.docx", "**/*.vtt", "**/*.srt", "**/*.json", "**/*.md", "**/*.markdown", "**/*.txt", "**/*.html", "**/*.htm"]']
         if reporting:
             lines += ["", "[sources.roots.reporting]", f"path = {json.dumps(reporting_path)}", f"mode = {json.dumps(a.reporting_mode)}",
                       'include = ["**/*.xlsx", "**/*.xlsm", "**/*.xls"]']

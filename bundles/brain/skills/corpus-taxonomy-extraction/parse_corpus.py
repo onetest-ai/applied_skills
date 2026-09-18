@@ -6,6 +6,7 @@ low-tier model can read. No LLM, no torch (docling is retired):
   - .pdf         -> PyMuPDF text layer
   - .pptx/.docx  -> LibreOffice (soffice) -> PDF -> PyMuPDF text layer
   - .xlsx/.xlsm  -> openpyxl read_only structure-dump
+  - .html/.htm   -> PyMuPDF HTML renderer (degraded fidelity, no JavaScript)
   - .md/.txt     -> passthrough (already the parsed-store format)
 This is the TEXT-layer path. Visual/diagram pages (flows, timelines, complex
 tables) collapse under any text extractor — those go through the `visual-parse`
@@ -331,6 +332,37 @@ def _parse_text(path):
         return f.read().strip()
 
 
+HTML_MIN_TEXT = 220   # mirrors render_pages.py's --min-text 220 rather than inventing a
+                      # second notion of "too little text"; tunable per corpus via min_text
+
+
+def _parse_html(path, min_text=HTML_MIN_TEXT):
+    """HTML -> text via PyMuPDF's own renderer. NO JavaScript runs here.
+
+    Returns ("", "skipped-js-rendered") when extraction yields almost nothing: the
+    document was built by JS and we captured none of it. Storing those few stray
+    words would put them in the index to be cited as if they were the deck.
+
+    HTML has no pages — PyMuPDF's print-pagination of it is an artifact of print
+    CSS, not of the document (the same fact the full-fidelity capture path segments
+    by DOM instead of pagination for). Emitting `## [part N]` headings here would
+    promote that pagination to citable chunk boundaries and make the same deck
+    ingested both ways cite incompatible targets. So this joins the per-page text
+    into ONE un-paginated body instead.
+    """
+    import pymupdf
+    doc = pymupdf.open(path, filetype="html")
+    raw_texts = [(page.get_text() or "").strip() for page in doc]
+    doc.close()
+    raw_texts = [t for t in raw_texts if t]
+    # Check against raw text length to detect JS-rendered docs with no content
+    raw_len = len("".join(raw_texts))
+    if raw_len < min_text:
+        return "", "skipped-js-rendered"
+    md = "\n\n".join(raw_texts).strip()
+    return md, "pymupdf-html"
+
+
 def parse_one(path, xlsx_max_mb, sample_rows, merge_cues=1):
     ext = os.path.splitext(path)[1].lower()
     size_mb = os.path.getsize(path) / 1e6
@@ -352,6 +384,9 @@ def parse_one(path, xlsx_max_mb, sample_rows, merge_cues=1):
         return _parse_ai_dial_json(path), "ai-dial-json"
     if ext in (".md", ".markdown", ".txt"):
         return _parse_text(path), "passthrough"
+    if ext in (".html", ".htm"):
+        md, how = _parse_html(path)
+        return (md or None), how
     return None, "skipped"
 
 def main(argv=None):
@@ -360,7 +395,7 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     ap.add_argument("--xlsx-max-mb", type=float, default=20.0)
     ap.add_argument("--sample-rows", type=int, default=8)
-    ap.add_argument("--formats", default="pptx,docx,pdf,xlsx,xlsm,vtt,srt,json,md,markdown,txt",
+    ap.add_argument("--formats", default="pptx,docx,pdf,xlsx,xlsm,vtt,srt,json,md,markdown,txt,html,htm",
                     help="comma-separated extensions (no dot) to include")
     ap.add_argument("--merge-cues", type=int, default=1,
                     help="join N consecutive same-speaker VTT/SRT cues into one chunk (default: 1 = per-cue)")
@@ -385,7 +420,8 @@ def main(argv=None):
                 safe = rel.replace(os.sep, "__") + ".md"
                 outp = os.path.join(a.out, safe)
                 with open(outp, "w") as f:
-                    f.write(f"# SOURCE: {rel}\n# method: {method}\n\n{md}")
+                    f.write(f"# SOURCE: {rel}\n# method: {method}\n# fidelity: "
+                            f"{'degraded' if method == 'pymupdf-html' else 'full'}\n\n{md}")
                 manifest.append({"source": rel, "md": safe, "method": method,
                                  "chars": len(md), "size_mb": round(os.path.getsize(src)/1e6, 2)})
                 print(f"[ok] {method:20} {len(md):>8} chars  {rel}", file=sys.stderr)

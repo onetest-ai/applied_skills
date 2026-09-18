@@ -35,6 +35,105 @@ Instantiate `vision_prep.py` to batch the **flagged, uncached** pages (image pat
 `vision_assemble.py --render-dir <assets>/<slug> --out <parsed>/<doc>.md [--results <dir>] [--db <db>]`
 Per page in order: the VLM Markdown (flagged) or the text layer (text page), under a `## p<NN> · <title>` heading with the image marker. Internal `#`/`##` are demoted; deeper VLM headings and max-size splitting may still yield multiple downstream chunks for one page, all inheriting its image. Writes the `page_render` cache when `--db` is given. Extracted `p<NN>.tables.md` grids remain factual asset sidecars (served by `get_evidence`) and are not appended to parsed Markdown.
 
+## HTML decks — the capture step
+
+HTML is a continuous medium, not a paginated one: there is no print page to render, so the
+unit of capture comes from the DOM. This lane substitutes a **capture step** in front of the
+same render→transcribe→assemble pipeline above; nothing downstream of `pages.json` changes.
+
+### Providers and their fidelity
+
+| Provider | Fidelity | When |
+|---|---|---|
+| Playwright MCP | full | Headless, scriptable — batch runs and CI, where no human needs to watch it happen. |
+| Claude in Chrome | full | Drives the user's own Chrome — desktop/Cowork sessions, or when a browser connection already exists and spinning up a second one is wasteful. |
+| PyMuPDF (no browser) | degraded | No browser available at all. DOM text only — no JavaScript execution, no images, no screenshots. This is `parse_corpus.py`'s existing `.html`/`.htm` branch, not a new script. |
+
+Full fidelity requires an actual browser (Playwright MCP or Claude in Chrome) because only a
+browser executes the page's JavaScript and lets you screenshot the result. The degraded path
+never touches the vision lane: it produces text and a `# fidelity: degraded` header in the
+parsed Markdown, and nothing else — no `pages.json`, no images, no VLM transcription. A
+JS-rendered deck run through the degraded path yields almost no text; `parse_corpus.py`
+detects this (mirroring `render_pages.py`'s `--min-text` threshold) and returns
+`skipped-js-rendered` rather than storing a near-empty document as if it were the real deck.
+
+### Sequence (full-fidelity path)
+
+1. **Segment.** Evaluate `html_segments.js` in the page through the provider (Playwright
+   MCP's `browser_evaluate`, or Claude in Chrome's `javascript_tool`). It returns one entry
+   per logical segment — an explicit slide container when the deck has one, otherwise a
+   heading-led section — with each segment's bounding box, verbatim text, and any DOM
+   tables. Write that payload to a `segments.json` file at any path you like — it is always
+   passed to the next steps as an explicit `--segments` flag, never assumed — and it must
+   pass `html_capture.py`'s `validate_segments`.
+2. **Plan.** `plan` is the ONLY step that decides the output directory — do this before any
+   screenshot is taken, and use the directory it prints, verbatim, for step 3.
+   ```
+   html_capture.py plan --segments segments.json --out plan.json \
+       --assets-root <assets> [--source <url-or-path>] [--max-px 1600] [--overlap 0.1]
+   ```
+   Computes the slug from `--source` (default: `segments.json`'s own `"source"` field),
+   creates `<assets>/<slug>/`, and writes `plan.json` as `{"slug", "outdir", "plan": [...]}`
+   — one capture instruction per image the provider must take. A segment shorter than
+   `--max-px` is one capture; a taller one is tiled with `--overlap` (default 10%) shared
+   with its neighbour so a line of text straddling a seam still appears whole in at least
+   one tile — vision models downscale large images, and an illegible capture yields a
+   confident, wrong transcription. Every plan entry carries a `segment` index; tiles of one
+   segment share it. The command also prints the outdir on stdout — read it from there, or
+   from `plan.json`'s `"outdir"` field; do not recompute or guess it.
+3. **Capture.** For each entry in `plan.json`'s `"plan"` list, screenshot exactly the entry's
+   `clip` region through the same provider and save it into the EXACT directory step 2
+   printed, as `p<NN>.png` (`NN` = the entry's `page` number, zero-padded, matching the plan
+   in order). One screenshot per plan entry — this is the one step in the sequence a script
+   cannot do, because only the provider can render and capture pixels. Writing into any other
+   directory is the one mistake `assemble` cannot recover from silently — it will refuse (see
+   step 4).
+4. **Assemble.**
+   `html_capture.py assemble --segments segments.json --plan plan.json --outdir <the directory step 2 printed> [--dpi 96]`
+   Asserts that `--outdir`'s basename equals the slug `plan` computed, raising a clear
+   `ValueError` naming both if they disagree — a mismatched directory fails loudly here
+   instead of producing a `pages.json` whose image markers point nowhere. Then hashes each
+   PNG that step 3 wrote, writes the `p<NN>.txt` verbatim-text sidecar and (once per segment)
+   `p<NN>.tables.md` from the segment's DOM tables, and writes `pages.json` in **exactly** the
+   shape `render_pages.py` produces — plus an additive `segment` field grouping a tall
+   segment's tiles. Because the shape matches, `vision_prep.py` needs no change to consume it.
+5. **Continue unchanged.** From here the pipeline is identical to a PPTX/PDF deck's: run
+   `vision_prep.py` against `<assets>/<slug>`, dispatch the vision subagents, then
+   `vision_assemble.py` — which merges a segment's tiles into ONE section before emitting the
+   parsed Markdown, so a citation resolves to "the segment", never to an arbitrary vertical
+   slice of it.
+
+```bash
+python <skills>/visual-parse/html_capture.py plan --segments segments.json --out plan.json --assets-root <assets>
+# plan.json's "outdir" (also printed on stdout) is the directory the provider must use:
+outdir=$(python -c "import json;print(json.load(open('plan.json'))['outdir'])")
+# provider takes one screenshot per plan entry into $outdir/pNN.png
+python <skills>/visual-parse/html_capture.py assemble --segments segments.json --plan plan.json --outdir "$outdir"
+```
+
+HTML's DOM tables extract more reliably than a rendered PDF's: `render_pages.py` infers a
+grid from `find_tables()` over a raster image, while `html_segments.js` reads real `<table>`
+cells directly, and a table is never split across tiles because the grid comes from the DOM,
+not from the image.
+
+### Security position — this pipeline does not mitigate this risk
+
+Rendering an HTML document **executes its JavaScript**. Playwright MCP and Claude in Chrome
+own the browser, so file-access and network controls (what a page is allowed to read or
+reach) are **the provider's configuration**, not this pipeline's — `html_segments.js` and
+`html_capture.py` are deterministic and have no say over what the browser was permitted to
+do before they ever ran.
+
+The concrete risk: an untrusted HTML document can call `fetch('file:///…')` (or embed a local
+path) from its own JavaScript, and whatever it gets back is rendered on the page, screenshotted,
+transcribed by the VLM, and indexed as an ordinary citable chunk in the knowledge store —
+turning "ingest this deck" into a read primitive whose output lands in the corpus. Do not
+render HTML from a source you would not otherwise trust to execute code, and configure the
+provider's own file-access and network policy before pointing it at that source. This skill
+does not sanitize HTML before rendering (stripping `<script>` breaks the JS-rendered decks
+that are much of the corpus, and a partial sanitizer only gives false confidence), so there is
+no mitigation here to rely on.
+
 ## How the classifier / retrieval change
 Nothing in the classifier or retriever changes — they just get **faithful input** instead of fragments. The classify agent now sees `ProjectAlpha Vision & Service Design Blueprint / Future State Architecture / …` instead of `Confidential — Page 4`, so tagging, embeddings, and the related layer all improve for free. For genuinely visual edge cases, `get_evidence` returns the page asset path for a capable local client to open and reason over multimodally.
 
