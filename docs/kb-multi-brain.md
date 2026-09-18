@@ -82,17 +82,29 @@ Replaces the "Namespace Detection" section of `skills/_shared/doctrine.md`.
 
 Resolution, once per skill invocation:
 
-1. **Override** — the user named a Brain in the request ("ask the acme brain..."). Match
+1. **Pinned** (Task 14) — if the project's own instructions (`CLAUDE.md`, `AGENTS.md`, or
+   the project instructions Cowork surfaces) name the Brain this project uses, resolve
+   that one and say which. **If it is named but not reachable, stop** rather than falling
+   through to discovery — a pin is an explicit instruction, and answering from a different
+   store would put the project's own citations behind numbers it never sanctioned. List
+   the Brains that ARE reachable and give the corrected pin line to paste. This step
+   supersedes the persisted-pointer idea this doc originally cut (see **Out of scope**):
+   the "pointer" turns out to already exist — it's the project's own instructions file,
+   which nobody has to build or maintain a mechanism for.
+2. **Override** — the user named a Brain in the request ("ask the acme brain..."). Match
    case-insensitively against the server segment and against each candidate's
    `about.goal`. Use it.
-2. **Discover** — scan available tools for servers carrying the surface; call `health` on
+3. **Discover** — scan available tools for servers carrying the surface; call `health` on
    each candidate.
-3. **Exactly one healthy Brain** — use it, name it in one short line, proceed.
-4. **Several** — ask the user, listing each as `connector-name — about.goal`. The
+4. **Exactly one healthy Brain** — use it, name it in one short line, proceed.
+5. **Several** — ask the user, listing each as `connector-name — about.goal`. The
    connector name is meaningful because the user chose it when adding the connector; the
    goal distinguishes two similarly named stores. If a candidate advertises a name (Part
    B), prefer it over the goal in the label; kb never requires one.
-5. **None** — the existing `/kb:connect` guidance.
+6. **None** — no Brain answered; name in one sentence what registering one takes on this
+   surface (a custom connector in Cowork, or an `mcpServers` entry in `.mcp.json` for the
+   CLI — no repo paths, they don't resolve in Cowork) and, once one is reachable, pin it in
+   the project's instructions so future invocations skip discovery.
 
 `health` is already called for `about`, which doctrine uses to set altitude, so
 disambiguation adds no round-trip beyond probing additional candidates.
@@ -111,13 +123,19 @@ mode that silently corrupts a deliverable; doctrine forbids it explicitly.
   no settings files; a user who wants silence adds `mcp__<their-server>` to their own
   `permissions.allow`, and the docs say so.
 
-#### A3. `connect`
+#### A3. `connect` — withdrawn (Task 14)
 
-Stops being a renaming instruction. It discovers and reports **every** Brain it finds,
-each with its goal and lane counts, and explains registration only when none answers. The
-`allowed-tools` literals go. Deleted outright: the "kb can only call a Brain mounted as
-`mcp__brain__*`... rename it to `brain`" paragraph, and the instruction to keep exactly
-one connector named `brain` active.
+This section originally planned to *fix* `connect` — stop it being a renaming
+instruction, have it discover and report every Brain it finds. Task 14 withdraws the skill
+instead: registering a Brain **is** adding an MCP server, which is platform plumbing kb
+cannot perform. A skill whose body reads "Customize → Connectors → Add custom connector"
+is a documentation page wearing a SKILL.md, not something an agent executes. The
+discover-and-report half of `connect`'s job (find every reachable Brain, report its goal)
+is exactly what the contract's own **Discover**/**Several** steps already do at answer
+time — there was no work left for a standalone skill once the pinned step (A1 step 1)
+removed the need to check connectivity ahead of asking a question. `skills/connect/` is
+deleted; every reference to `/kb:connect` in prose becomes inline guidance (see A1 step 6)
+or a pointer to `/kb:ask` for verification.
 
 #### A4. The verifier
 
@@ -204,7 +222,29 @@ Part B:
 ## Out of scope
 
 - Writing `.claude/settings.json` permission rules from kb.
-- Any persisted "current Brain" pointer. Considered and cut: it is CLI-only, and the CLI
-  is not the primary surface.
-- A `kb.toml` or similar registry, for the same reason.
+- Any **kb-maintained** persisted "current Brain" pointer (a `kb.toml` or similar
+  registry). Considered and cut: it is CLI-only, and the CLI is not the primary surface —
+  and nobody maintains a pointer mechanism, least of all in Cowork. **Superseded by the
+  pinned step (Task 14, A1 step 1):** the project's own instructions file (`CLAUDE.md`,
+  `AGENTS.md`, or Cowork's project instructions) already exists, is already read by every
+  agent, and needs no new mechanism — naming the Brain there once is the whole of the
+  work. kb never writes that file; the user names the Brain in it themselves.
 - Querying two Brains inside one answer. One invocation, one Brain.
+
+## Finding: skills must not depend on `../_shared/` for their rules (Task 13)
+
+Confirmed while inlining the contract: the Agent Skills format only guarantees
+same-directory/subdirectory file references resolve for a `SKILL.md` at runtime — a
+`../_shared/doctrine.md` reference from `skills/ask/SKILL.md` is not guaranteed to
+resolve. A rule that only applies when a sibling-of-parent file happens to resolve is not
+a rule. The fix: the non-negotiable contract lives once, canonically, in a delimited
+`<!-- BRAIN-CONTRACT:START -->` … `<!-- BRAIN-CONTRACT:END -->` block inside
+`skills/_shared/doctrine.md`, and every answering skill (`ask`, `explore`, `challenge`,
+`brief`, `report`) carries that block inlined **byte-identically** in its own `SKILL.md`.
+A drift test (`tests/test_skills.py::TestBrainContractIsInlined`) diffs each copy against
+the canonical block on every run, so an edit to the contract that is not propagated to all
+five copies fails CI. `agents/verifier.md` carries a deliberate, reduced subset of the
+same resolution rules (it is not itself an answering skill and the answer-format half does
+not apply to it) — consistent with the contract, but not byte-pinned by the drift test.
+Depth and worked examples may still live in `_shared/`; the rules that gate behavior may
+not.

@@ -57,17 +57,30 @@ Each project has its own Brain endpoint. Add it once per project:
    exposes, not by what the connector is called; a project-specific name just makes the
    choice readable when several Brains are connected.
 5. Enable the connector.
+6. **Pin it in this project's instructions.** Add one line naming the Brain to the project
+   instructions Cowork surfaces for this project (kb never writes this file — add the line
+   yourself):
+
+   ```
+   This project's Brain is `acme-brain`.
+   ```
+
+   A pinned Brain is the first thing kb resolves — every skill checks it before discovery,
+   so a project with one connector never has to disambiguate, and a project with several
+   always answers from the one you named. If the pin names a Brain that isn't reachable, kb
+   stops and tells you which Brains ARE reachable instead of silently answering from a
+   different one.
 
 **In two projects?** Add both Brains as connectors and leave both enabled. kb discovers
 every reachable Brain and, when more than one answers, asks which to use — listing each by
 name and by the analytical goal it reports. You can answer in advance by naming it in the
-request: "ask the acme brain about Q3 handle time".
+request ("ask the acme brain about Q3 handle time"), or pin one per project as above.
 
 ## 3. Verify
 
-Run `/kb:connect`. It calls `health` and reports whether the Brain is
-reachable. Then use `/kb:ask`, `/kb:explore`, `/kb:challenge`, `/kb:brief`,
-`/kb:report`.
+Ask a simple question with `/kb:ask` — e.g. "what data does this Brain cover?" — and
+confirm the answer cites the Brain you expect (it names which Brain it used before
+answering). Then use `/kb:explore`, `/kb:challenge`, `/kb:brief`, `/kb:report`.
 
 ## What differs from the CLI
 

@@ -118,14 +118,26 @@ This copy is what CI checks every inlined copy against; edit it here, then propa
 `health`, `search_knowledge`, `get_metric`, `get_taxonomy`, `get_evidence`,
 `find_related_content`, `list_metrics` — identify it by that surface, never by server name.
 
-1. **Override.** If the user named a Brain in the request, match it case-insensitively
+1. **Pinned.** If the project instructions (`CLAUDE.md`, `AGENTS.md`, or the project
+   instructions surfaced in Cowork) name the Brain this project uses, resolve that one and
+   say which you used. **If it is named but not reachable, stop and say so** — a pin is an
+   explicit instruction, and answering from a different store would put the project's own
+   citations behind numbers it never sanctioned. Do not fall through to discovery. List the
+   Brains that ARE reachable and give the corrected line to paste.
+2. **Override.** If the user named a Brain in the request, match it case-insensitively
    against each candidate's server-name segment and its `about.goal`. Use that Brain.
-2. **Discover.** Scan available tools for servers carrying the surface and call `health`
+3. **Discover.** Scan available tools for servers carrying the surface and call `health`
    on each candidate.
-3. **One healthy Brain.** Use it. Name it in one short line, then answer.
-4. **Several.** Ask the user which, listing each as `server-name — about.goal` (prefer an
+4. **One healthy Brain.** Use it. Name it in one short line, then answer.
+5. **Several.** Ask the user which, listing each as `server-name — about.goal` (prefer an
    advertised `about.name` over the goal when the Brain provides one). Do not guess.
-5. **None.** Say so and point to `/kb:connect`.
+6. **None.** Say so — no Brain answered — and name in one sentence what registering one
+   takes on this surface: a custom connector in Cowork, or an `mcpServers` entry in
+   `.mcp.json` for the CLI. Once one is reachable, pin it in the project's instructions so
+   future invocations skip discovery, e.g.:
+   ```
+   This project's Brain is `acme-brain`.
+   ```
 
 **One invocation binds to one Brain.** Once resolved, every call in this invocation goes to
 that same server. Never blend results from two Brains into one cited answer — a mixed

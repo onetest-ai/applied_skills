@@ -82,7 +82,7 @@ class TestHealthLine(unittest.TestCase):
                 },
             )
             self.assertEqual(res.returncode, 0)   # never breaks the session
-            self.assertIn("kb:connect", res.stdout)
+            self.assertIn("mcpServers", res.stdout)
 
 
 class TestAmbientReminder(unittest.TestCase):

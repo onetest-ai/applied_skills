@@ -121,7 +121,7 @@ class TestCoworkDoc(unittest.TestCase):
         doc = KB_ROOT / "docs" / "cowork-setup.md"
         self.assertTrue(doc.is_file(), "bundles/kb/docs/cowork-setup.md missing")
         text = read_text(doc)
-        for token in ("marketplace", "connector", "brain", "Entra", "/kb:connect"):
+        for token in ("marketplace", "connector", "brain", "Entra", "/kb:ask"):
             self.assertIn(token, text, f"cowork-setup.md missing {token!r}")
 
     def test_readme_links_cowork_doc(self):
@@ -156,6 +156,30 @@ class TestNoHardcodedBrainNamespace(unittest.TestCase):
             if "allowed-tools" in read_text(path)
         ]
         self.assertEqual(offenders, [], "skills still declare allowed-tools")
+
+
+class TestConnectSkillRemoved(unittest.TestCase):
+    """Registering a Brain is adding an MCP server — platform plumbing, not a skill."""
+
+    def test_connect_skill_is_gone(self):
+        self.assertFalse((KB_ROOT / "skills" / "connect").exists())
+
+    def test_nothing_references_the_deleted_skill(self):
+        offenders = []
+        for sub in ("skills", "agents", "docs", "hooks"):
+            root = KB_ROOT / sub
+            if not root.exists():
+                continue
+            for path in sorted(root.rglob("*")):
+                if path.is_file() and path.suffix in (".md", ".sh") and "kb:connect" in read_text(path):
+                    offenders.append(str(path.relative_to(KB_ROOT)))
+        self.assertEqual(offenders, [], "stale /kb:connect references remain")
+
+    def test_contract_resolves_a_pinned_brain_first(self):
+        text = read_text(KB_ROOT / "skills" / "_shared" / "doctrine.md")
+        for token in ("project instructions", "CLAUDE.md"):
+            self.assertIn(token, text, f"contract missing {token!r}")
+        self.assertIn("stop", text.lower())
 
 
 if __name__ == "__main__":

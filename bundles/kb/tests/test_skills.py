@@ -89,22 +89,6 @@ class TestModeSkill(unittest.TestCase, SkillContractMixin):
         ])
 
 
-class TestConnectSkill(unittest.TestCase, SkillContractMixin):
-    def test_connect_contract(self):
-        self.assert_skill("connect", required_tokens=[
-            "health", "mcp-config", "Brain",   # CLI branch preserved
-            "connector", "Entra",              # Cowork branch preserved
-            "Brain Discovery",                 # defers to the doctrine contract
-        ])
-
-    def test_connect_does_not_instruct_renaming(self):
-        from test_plugin_structure import KB_ROOT, read_text
-        text = read_text(KB_ROOT / "skills" / "connect" / "SKILL.md").lower()
-        self.assertNotIn("rename it to", text)
-        self.assertNotIn("must be literal", text)
-        self.assertNotIn("disable the other", text)
-
-
 class TestSkillsNameNoServer(unittest.TestCase):
     """kb must not hardcode an MCP server name: users register Brains under any name."""
 
@@ -112,7 +96,7 @@ class TestSkillsNameNoServer(unittest.TestCase):
 
     def test_no_skill_hardcodes_a_server_name(self):
         from test_plugin_structure import KB_ROOT, read_text
-        for name in ("ask", "brief", "challenge", "connect", "explore", "report"):
+        for name in ("ask", "brief", "challenge", "explore", "report"):
             text = read_text(KB_ROOT / "skills" / name / "SKILL.md")
             for token in self.FORBIDDEN:
                 self.assertNotIn(token, text, f"{name}: hardcodes {token!r}")
@@ -177,11 +161,9 @@ class TestBrainContractIsInlined(unittest.TestCase):
                              f"{name}: inlined contract differs from doctrine.md")
 
     def test_verifier_inlines_the_resolution_rules(self):
-        # "project instructions" (the pinned-Brain step) is not yet part of the
-        # contract; Task 14 reintroduces this token when the pin itself lands.
         from test_plugin_structure import KB_ROOT, read_text
         text = read_text(KB_ROOT / "agents" / "verifier.md")
-        for token in ("tool surface", "never blend"):
+        for token in ("tool surface", "never blend", "project instructions"):
             self.assertIn(token, text, f"verifier missing {token!r}")
 
     def test_no_skill_depends_on_a_parent_directory_reference_for_its_rules(self):

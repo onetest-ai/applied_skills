@@ -184,13 +184,12 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     docs_s = str(docs) if docs else "<docs-dir>"
     rep_s = str(reporting) if reporting else "<reporting-dir>"
     py = brain_py()
-    # No name given: step 9 is omitted entirely, not emitted as a no-op. Writing
-    # `INSERT OR REPLACE INTO meta(...) VALUES('name', '')` unconditionally would WIPE any
-    # meta.name an operator later sets by hand if this runbook is ever re-run — the exact
-    # data-loss regression `brain_sync.write_meta` is written and tested to avoid. When a
-    # name IS given, prefer the durable, reproducible route — name.txt (already written by
-    # scaffold) carries forward into meta.name via brain_sync's own seed/apply path — over
-    # raw SQL against the store.
+    # Seeding is build correctness, not a name-dependent nicety: `brain_sync.py seed`
+    # populates the `synced_files` tracking table that every later maintenance pass
+    # requires. An anonymous project (no --name) still needs it — skipping it left
+    # anonymous projects' first maintenance run failing with "synced_files table
+    # missing; run brain_sync seed first". So step 9 is ALWAYS emitted; only the note
+    # about also recording the display name is conditional on `name`.
     # step9 is interpolated into the OUTER textwrap.dedent(f"""...""") below at column 0
     # (no leading spaces before "{step9}" in that template), and the f-string is evaluated
     # BEFORE the outer dedent runs. So step9's own lines must already carry the same
@@ -198,16 +197,27 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     # (zero-indent) string would make the common leading prefix across the WHOLE outer
     # document "", turning the outer dedent into a no-op and indenting the entire generated
     # BRAIN.md by four spaces (which Markdown then renders as one indented code block).
-    step9 = ""
     if name:
-        step9_body = textwrap.dedent(f"""
-        # 9 · the Brain's name is recorded into the durable `meta` table via name.txt, not raw
-        #     SQL: it was written to `{proj/'name.txt'}` by scaffold, and brain_sync's seed/apply
-        #     path (see SKILL.md's plan/apply/seed sequence) UPSERTs it into meta.name on your
-        #     next seed/apply cycle. Re-run seed now to record it immediately:
-        "$PY" "{Path(__file__).resolve().parent/'brain_sync.py'}" seed --db "$DB" --parsed "{proj/'parsed'}" --require-goal
-        """).strip("\n")
-        step9 = "\n" + textwrap.indent(step9_body, "    ") + "\n"
+        name_note = textwrap.dedent(f"""
+        #     This also records the Brain's display name into the durable `meta` table via
+        #     name.txt, not raw SQL: it was written to `{proj/'name.txt'}` by scaffold, and
+        #     brain_sync's seed/apply path (see SKILL.md's plan/apply/seed sequence) UPSERTs
+        #     it into meta.name on this same seed call.""").strip("\n")
+    else:
+        name_note = ""
+    step9_body_lines = [
+        "# 9 · seed the `synced_files` tracking table — required before any maintenance",
+        "#     pass; an unseeded store fails its first maintenance run with \"synced_files",
+        "#     table missing\". Always run this, named project or not.",
+    ]
+    if name_note:
+        step9_body_lines.append(name_note)
+    step9_body_lines.append(
+        f'"$PY" "{Path(__file__).resolve().parent/"brain_sync.py"}" seed --db "$DB" '
+        f'--parsed "{proj/"parsed"}" --require-goal'
+    )
+    step9_body = "\n".join(step9_body_lines)
+    step9 = "\n" + textwrap.indent(step9_body, "    ") + "\n"
     deploy_section = textwrap.dedent({
         "local": """
     ## Deployment target: local
