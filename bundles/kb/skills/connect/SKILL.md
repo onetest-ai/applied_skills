@@ -39,7 +39,9 @@ Report the Brains `kb` can ground itself in, and help register one if none is re
 
 4. **Re-check.** After registration, discover again and report the result.
 
-**On approvals.** kb does not write permission rules. Brain tool calls prompt for approval
-unless the user allows them. To silence the prompts, add the Brain's server to
-`permissions.allow` in `.claude/settings.json`, e.g. `"mcp__acme-brain"` — use the
-exact name you registered the connector under.
+**On approvals.** kb never writes permission rules or settings files — that is the user's
+own file to edit. Brain tool calls prompt for approval unless the user has allowed them.
+If the prompts are unwelcome, *tell the user* they can silence them by adding the Brain's
+server to `permissions.allow` in their own `.claude/settings.json`, e.g.
+`"mcp__acme-brain"`, using the exact name they registered the connector under. Report this
+as guidance; do not edit the file.
