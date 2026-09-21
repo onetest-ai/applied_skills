@@ -570,18 +570,23 @@ def diagnose(taxonomy_path, db, out_dir, metrics_path=None, batches=4):
 
 
 def _sanitize_entry(e):
-    """Field-level type guards (mutates `e` in place): chunk_ids/example_ids keep only real
-    ints (bools excluded — `isinstance(True, int)` is true in Python); node/subject/into/
-    description must be strings when present. Returns False when the entry is unusable
-    (a non-string on a string-only field), so the caller can skip + count it."""
-    for k in ("node", "subject", "into", "description"):
+    """Field-level type guards (mutates `e` in place): node/subject/into/description/
+    disposition/reason/fix must be strings when present; chunk_ids/example_ids must be
+    lists when present (bools excluded from the ints they keep — `isinstance(True, int)` is
+    true in Python). Returns False when the entry is unusable (a non-string on a string-only
+    field, or a non-list on a list-only field), so the caller can skip + count it rather than
+    silently pass through, say, `chunk_ids: 5` or `disposition: 3`."""
+    for k in ("node", "subject", "into", "description", "disposition", "reason", "fix"):
         v = e.get(k)
         if v is not None and not isinstance(v, str):
             return False
     for k in ("chunk_ids", "example_ids"):
         v = e.get(k)
-        if isinstance(v, list):
-            e[k] = [i for i in v if isinstance(i, int) and not isinstance(i, bool)]
+        if v is None:
+            continue
+        if not isinstance(v, list):
+            return False
+        e[k] = [i for i in v if isinstance(i, int) and not isinstance(i, bool)]
     return True
 
 
@@ -713,11 +718,20 @@ def _no_tags_items(tax, work_dir, problems, skipped_files, rejections):
                 alts = [a for a in (merge_op, tag_template) if a]
                 reason = fix.get("reason") or "agent found no fitting candidates"
                 fallback = True
-        elif fix_type == "merge" and (fix.get("into") or "").strip():
-            op = {"type": "merge", "from": node, "into": fix["into"]}
-            alts = [remove_op]
-            evidence = []
-            reason = fix.get("reason")
+        elif fix_type == "merge":
+            into = (fix.get("into") or "").strip()
+            if into:
+                op = {"type": "merge", "from": node, "into": into}
+                alts = [remove_op]
+                evidence = []
+                reason = fix.get("reason")
+            else:
+                # the agent proposed a merge but named no target — same treatment as an
+                # empty tag selection: fall back to remove, keep its reason
+                op, evidence = remove_op, []
+                alts = [a for a in (merge_op, tag_template) if a]
+                reason = fix.get("reason") or "agent proposed a merge with no target"
+                fallback = True
         elif fix_type == "remove":
             op = remove_op
             alts = [a for a in (merge_op, tag_template) if a]
@@ -729,7 +743,8 @@ def _no_tags_items(tax, work_dir, problems, skipped_files, rejections):
             reason = "no fix proposed"
             fallback = True
         items.append(_make_item(tax, "no_tags", "no_tags", op, alts, evidence,
-                                {"candidates": len(candidates)}, reason, title, rejections, fallback=fallback))
+                                {"candidates": len(candidates), "candidate_ids": sorted(cand_ids)},
+                                reason, title, rejections, fallback=fallback))
     return items
 
 
@@ -845,18 +860,40 @@ def _metrics_items(tax, work_dir, problems, skipped_files, rejections):
 
 def _untagged_batch_ids(task_dir):
     """The chunk ids diagnose actually sent out for review (from batch_k.json), used to keep a
-    `map` entry from tagging a chunk outside the untagged set it was asked about."""
-    ids = set()
-    for bf in sorted(glob.glob(os.path.join(task_dir, "batch_*.json"))):
+    `map` entry from tagging a chunk outside the untagged set it was asked about.
+
+    When the task directory, or every batch file in it, is missing or unreadable, this is the
+    one thing a `map` entry can never be trusted against — so it returns an EMPTY set rather
+    than silently disabling the restriction (an empty set makes every `map` id fail the "in
+    the untagged set" check, so those tags are dropped and the informational item surfaces
+    instead of a made-up "unrestricted" tag). Noted on stderr either way."""
+    if not os.path.isdir(task_dir):
+        print(f"health: no untagged task directory at {task_dir}; treating the untagged chunk set as empty",
+              file=sys.stderr)
+        return set()
+    ids, batch_files = set(), sorted(glob.glob(os.path.join(task_dir, "batch_*.json")))
+    if not batch_files:
+        print(f"health: no untagged batch_*.json under {task_dir}; treating the untagged chunk set as empty",
+              file=sys.stderr)
+        return ids
+    readable = False
+    for bf in batch_files:
         try:
             with open(bf, encoding="utf-8") as f:
                 data = json.load(f)
-        except Exception:
+        except Exception as e:
+            print(f"health: skip {bf}: {e}", file=sys.stderr)
             continue
-        if isinstance(data, list):
-            for row in data:
-                if isinstance(row, dict) and isinstance(row.get("id"), int) and not isinstance(row.get("id"), bool):
-                    ids.add(row["id"])
+        if not isinstance(data, list):
+            print(f"health: skip {bf}: expected a list", file=sys.stderr)
+            continue
+        readable = True
+        for row in data:
+            if isinstance(row, dict) and isinstance(row.get("id"), int) and not isinstance(row.get("id"), bool):
+                ids.add(row["id"])
+    if not readable:
+        print(f"health: no readable untagged batch files under {task_dir}; treating the untagged chunk set as empty",
+              file=sys.stderr)
     return ids
 
 
@@ -867,7 +904,7 @@ def _untagged_items(tax, work_dir, problems, skipped_files, rejections):
         return []
     title = f"{count} sections have no category"
     task_dir = os.path.join(work_dir, "untagged")
-    untagged_ids = _untagged_batch_ids(task_dir) if os.path.isdir(task_dir) else set()
+    allowed_ids = _untagged_batch_ids(task_dir)   # always computed; empty means "nothing allowed"
     result_files = sorted(glob.glob(os.path.join(task_dir, "result_*.json"))) if os.path.isdir(task_dir) else []
     proposals, chunk_map = [], {}
     for rf in result_files:
@@ -904,12 +941,6 @@ def _untagged_items(tax, work_dir, problems, skipped_files, rejections):
         if bad:
             print(f"health: skip {bad} malformed entries in {rf}", file=sys.stderr)
 
-    if not proposals and not chunk_map:
-        support = {"count": count, "total": probs[0].get("total")}
-        return [{"origin": "health", "kind": "untagged_sections", "group": "untagged_sections", "title": title,
-                 "reason": "no fix proposed", "op": {"type": "keep", "node": "__untagged__"}, "alternatives": [],
-                 "evidence": [], "support": support, "status": "proposed", "_fallback": True}]
-
     items = []
     add_items, skipped = plan_additions(tax, proposals)
     running = copy.deepcopy(tax)
@@ -937,9 +968,12 @@ def _untagged_items(tax, work_dir, problems, skipped_files, rejections):
         items.append({"origin": "health", "kind": "untagged_sections", "group": "untagged_sections", "title": title,
                       "reason": s["reason"], "op": op, "alternatives": [], "evidence": [], "support": {},
                       "status": status})
+    # restrict to the untagged set BEFORE deciding whether anything usable came out of this —
+    # a `map` naming only out-of-set ids, with no proposals either, must still fall through to
+    # the informational item below, not silently vanish.
     label_to_ids = {}
     for cid, labels in chunk_map.items():
-        if untagged_ids and cid not in untagged_ids:
+        if cid not in allowed_ids:
             continue
         for label in labels:
             label_to_ids.setdefault(label, set()).add(cid)
@@ -948,7 +982,13 @@ def _untagged_items(tax, work_dir, problems, skipped_files, rejections):
             continue
         op = {"type": "tag", "node": label, "chunk_ids": sorted(ids)}
         items.append(_make_item(running, "untagged_sections", "untagged_sections", op, [], [],
-                                {"chunks": len(ids)}, None, title, rejections))
+                                {"chunks": len(ids), "candidate_ids": sorted(allowed_ids)}, None, title, rejections))
+
+    if not items:
+        support = {"count": count, "total": probs[0].get("total")}
+        return [{"origin": "health", "kind": "untagged_sections", "group": "untagged_sections", "title": title,
+                 "reason": "no fix proposed", "op": {"type": "keep", "node": "__untagged__"}, "alternatives": [],
+                 "evidence": [], "support": support, "status": "proposed", "_fallback": True}]
     return items
 
 

@@ -293,6 +293,33 @@ class HealthFieldGuardsTests(unittest.TestCase):
         self.assertEqual(auto["op"]["type"], "remove")        # the 12345-node entry never attached to it
         self.assertEqual(auto["reason"], "no fix proposed")
 
+    def test_non_list_chunk_ids_and_non_string_disposition_are_dropped_and_counted(self):
+        write_json(os.path.join(self.work, "notags", "result_0.json"), {"fixes": [
+            {"node": "Payment Plans", "fix": "tag", "chunk_ids": 5},          # chunk_ids not a list
+            {"node": "Autopay Setup", "fix": "remove", "disposition": 3},     # disposition not a string
+        ]})
+        from datetime import datetime, timezone
+        _, rv = R.build_plan("health", self.cur, work_dir=self.work, db=self.db,
+                             now=datetime(2026, 9, 21, tzinfo=timezone.utc))
+        # both entries were dropped as malformed -> both nodes fall back to "no fix proposed"
+        pp = next(i for i in rv["items"] if i["kind"] == "no_tags" and i["op"].get("node") == "Payment Plans")
+        self.assertEqual(pp["reason"], "no fix proposed")
+        auto = next(i for i in rv["items"] if i["kind"] == "no_tags" and i["op"].get("node") == "Autopay Setup")
+        self.assertEqual(auto["reason"], "no fix proposed")
+
+    def test_untagged_proposal_with_non_list_example_ids_never_crashes(self):
+        write_json(os.path.join(self.work, "untagged", "result_0.json"), {
+            "proposals": [{"name": "Bad Proposal", "level": "L1", "example_ids": "not-a-list"}]})
+        from datetime import datetime, timezone
+        _, rv = R.build_plan("health", self.cur, work_dir=self.work, db=self.db,
+                             now=datetime(2026, 9, 21, tzinfo=timezone.utc))
+        # the malformed proposal never became an add op; with nothing else usable, the
+        # informational untagged_sections item shows instead
+        self.assertFalse(any(i["op"].get("name") == "Bad Proposal" for i in rv["items"]))
+        untagged = [i for i in rv["items"] if i["kind"] == "untagged_sections"]
+        self.assertEqual(len(untagged), 1)
+        self.assertEqual(untagged[0]["op"], {"type": "keep", "node": "__untagged__"})
+
 
 class HealthUntaggedSectionsPathTests(unittest.TestCase):
     """I-4: one tag item per existing label with all its chunk_ids (aggregated from `map`),
@@ -346,6 +373,36 @@ class HealthUntaggedSectionsPathTests(unittest.TestCase):
         unknown = next(i for i in items if i["op"].get("type") == "tag"
                        and i["op"]["node"] == "Nonexistent Category")
         self.assertEqual(unknown["status"], "invalid")
+        self.assertEqual(refunds["support"]["candidate_ids"], [8, 9, 10])   # the whole untagged batch
+
+    def test_map_naming_only_out_of_set_ids_with_no_proposals_still_shows_the_item(self):
+        # I-4 gap: the "nothing usable" check must run AFTER the chunk-id filter, not before.
+        write_json(os.path.join(self.work, "untagged", "result_0.json"),
+                   {"map": {"999": ["Refunds"], "998": ["Track Delivery"]}})   # both out of the untagged set
+        _, rv = self._plan()
+        items = [i for i in rv["items"] if i["kind"] == "untagged_sections"]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["op"], {"type": "keep", "node": "__untagged__"})
+        self.assertEqual(items[0]["reason"], "no fix proposed")
+
+    def test_missing_or_unreadable_batch_files_treat_the_allowed_set_as_empty(self):
+        # simulate the untagged batch files vanishing/corrupting between diagnose and plan
+        for bf in os.listdir(os.path.join(self.work, "untagged")):
+            if bf.startswith("batch_"):
+                os.remove(os.path.join(self.work, "untagged", bf))
+        write_json(os.path.join(self.work, "untagged", "result_0.json"),
+                   {"map": {"8": ["Refunds"]}})   # a chunk that WAS legitimately untagged
+        import io
+        from contextlib import redirect_stderr
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            _, rv = self._plan()
+        items = [i for i in rv["items"] if i["kind"] == "untagged_sections"]
+        # the tag is dropped (allowed ids treated as empty, not "unrestricted"), so nothing
+        # usable came out of this and the informational item shows instead
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["op"], {"type": "keep", "node": "__untagged__"})
+        self.assertIn("untagged", buf.getvalue())
 
 
 if __name__ == "__main__":

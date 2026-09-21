@@ -282,3 +282,60 @@ class HealthAmendOkTests(unittest.TestCase):
                 "alternatives": [{"type": "metric_govern", "metric": "Porch Rate", "draft": {}}]}
         self.assertFalse(D.health_amend_ok(item, {"type": "metric_merge", "from": "Porch Rate", "into": "X"}))
         self.assertFalse(D.health_amend_ok(item, {"type": "metric_govern", "metric": "Other Metric", "draft": {}}))
+
+
+NEAR_DUP_ITEM = {
+    "id": "i-11", "origin": "health", "kind": "near_duplicate", "group": None, "status": "proposed",
+    "fingerprint": "merge|b|a", "op": {"type": "merge", "from": "B", "into": "A"},
+    "alternatives": [{"type": "keep", "node": "A"}, {"type": "merge", "from": "A", "into": "B"}]}
+
+METRIC_GOVERN_ITEM = {
+    "id": "i-12", "origin": "health", "kind": "metric_not_governed", "group": "metric_not_governed",
+    "status": "proposed", "fingerprint": "keep|porch rate|", "op": {"type": "keep", "metric": "Porch Rate"},
+    "alternatives": [{"type": "metric_govern", "metric": "Porch Rate", "draft": {}}]}
+
+NO_TAGS_TAG_ITEM = {
+    "id": "i-13", "origin": "health", "kind": "no_tags", "group": "no_tags", "status": "proposed",
+    "fingerprint": "tag|payment plans|", "op": {"type": "tag", "node": "Payment Plans", "chunk_ids": [7, 8, 9]},
+    "alternatives": [{"type": "remove", "node": "Payment Plans", "disposition": "demote"}],
+    "support": {"candidate_ids": [7, 8, 9, 10]}}
+
+
+class HealthAmendAntiSpoofTests(unittest.TestCase):
+    """Fix round 2, ruling 1: health_amend_ok must refuse an op that carries an extra field
+    (a different check than op.type/subject_of alone would catch), or that keeps the right
+    'from'/'node' but repoints 'into'/chunk_ids somewhere the item never proposed."""
+
+    def v(self, item, rec_op):
+        rec = {"review_id": RID, "item_id": item["id"], "action": "amend", "surface": "browser", "op": rec_op}
+        return D.validate_record(review([item]), taxonomy(), [], rec)
+
+    def test_extra_node_key_on_a_bare_merge_op_is_refused(self):
+        spoof = {"type": "merge", "node": "A", "from": "Refunds", "into": "Track Delivery"}
+        self.assertFalse(D.health_amend_ok(NEAR_DUP_ITEM, spoof))
+        self.assertTrue(self.v(NEAR_DUP_ITEM, spoof))
+
+    def test_extra_node_key_on_a_metric_govern_op_is_refused(self):
+        spoof = {"type": "metric_govern", "node": "Porch Rate", "metric": "Other", "draft": {}}
+        self.assertFalse(D.health_amend_ok(METRIC_GOVERN_ITEM, spoof))
+        self.assertTrue(self.v(METRIC_GOVERN_ITEM, spoof))
+
+    def test_merge_cannot_be_retargeted_to_an_arbitrary_into(self):
+        retarget = {"type": "merge", "from": "B", "into": "Some Other Node"}
+        self.assertFalse(D.health_amend_ok(NEAR_DUP_ITEM, retarget))
+        self.assertTrue(self.v(NEAR_DUP_ITEM, retarget))
+
+    def test_legit_narrower_tag_subset_is_accepted(self):
+        legit = {"type": "tag", "node": "Payment Plans", "chunk_ids": [7]}
+        self.assertTrue(D.health_amend_ok(NO_TAGS_TAG_ITEM, legit))
+
+    def test_tag_cannot_smuggle_a_chunk_outside_the_candidates(self):
+        smuggled = {"type": "tag", "node": "Payment Plans", "chunk_ids": [7, 999]}
+        self.assertFalse(D.health_amend_ok(NO_TAGS_TAG_ITEM, smuggled))
+
+    def test_legit_alternative_merge_is_accepted(self):
+        self.assertTrue(D.health_amend_ok(NEAR_DUP_ITEM, NEAR_DUP_ITEM["alternatives"][1]))
+
+    def test_legit_describe_with_real_text_is_accepted(self):
+        self.assertTrue(D.health_amend_ok(
+            HEALTH_KEEP_FALLBACK, {"type": "describe", "node": "Refunds", "description": "Money back."}))

@@ -169,19 +169,42 @@ def _item(review, item_id):
     return next((i for i in review["items"] if i["id"] == item_id), None)
 
 
+HEALTH_SUBJECT_FIELD = {"merge": "from", "metric_merge": "from", "metric_govern": "metric",
+                        "metric_edit": "metric", "metric_remove": "metric"}
+
+
 def health_amend_ok(item, op):
-    """The B4 amend rule for a health item: the op must be one of the item's own op or its
-    alternatives verbatim, OR the same type acting on the same subject as ANY of those
-    candidates (an edit — a changed description, a narrower chunk_ids selection, a filled-in
-    template's draft, …). Checking every candidate (not just the item's primary op) is what
-    lets an edited *template* alternative (e.g. `describe{node, description:""}` on a
-    fallback `keep`) through: the template itself never validates, but a same-type/same-
-    subject edit of it does. Shared by decisions.validate_record and respond's live-channel
-    revisions so the rule lives in exactly one place."""
+    """The B4 amend rule for a health item, tightened against retargeting/spoofing.
+
+    `op` is accepted only when, for some candidate `c` in `[item["op"]] + item["alternatives"]`,
+    ALL of:
+      (a) `op["type"] == c["type"]`;
+      (b) `set(op.keys()) == set(c.keys())` — an attacker can't smuggle in an extra field (e.g.
+          grafting a `"node"` onto a bare `{from, into}` merge op to make an unrelated-subject
+          check pass while the real taxonomy op still runs on `from`);
+      (c) the type's subject field is equal between `op` and `c` — `"from"` for
+          merge/metric_merge, `"metric"` for metric_govern/metric_edit/metric_remove, `"node"`
+          for everything else (checking `subject_of()`, which falls through node|from|metric|
+          name, is NOT enough on its own: it can't tell a spoofed field from the real one);
+      (d) for merge/metric_merge, `op["into"]` is one of the *same-type* candidates' `"into"`
+          values — same subject, but retargeted to an arbitrary node, must still fail;
+      (e) for tag, `set(op["chunk_ids"]) <= item["support"]["candidate_ids"]` when that key is
+          present — a human can narrow the selection or edit a `chunk_ids: []` template, but
+          never tag chunks nothing about this item ever proposed.
+    Shared by decisions.validate_record and respond's live-channel revisions."""
     cands = [item["op"]] + (item.get("alternatives") or [])
-    if op in cands:
-        return True
-    return any(op.get("type") == c.get("type") and subject_of(op) == subject_of(c) for c in cands)
+    t = op.get("type")
+    field = HEALTH_SUBJECT_FIELD.get(t, "node")
+    same_type = [c for c in cands if c.get("type") == t]
+    if not any(set(op.keys()) == set(c.keys()) and op.get(field) == c.get(field) for c in same_type):
+        return False
+    if t in ("merge", "metric_merge") and op.get("into") not in {c.get("into") for c in same_type}:
+        return False
+    if t == "tag":
+        cand_ids = (item.get("support") or {}).get("candidate_ids")
+        if cand_ids is not None and not set(op.get("chunk_ids") or []) <= set(cand_ids):
+            return False
+    return True
 
 
 def validate_record(review, base_tax, records, rec):
