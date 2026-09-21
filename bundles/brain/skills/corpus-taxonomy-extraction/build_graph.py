@@ -6,6 +6,8 @@ with plain SQL JOINs / recursive CTEs (no separate graph DB, no server).
 Tables:
   graph_nodes(id TEXT PK, label TEXT, kind TEXT, parent TEXT)   -- kind: intent_l1|intent_l2|entity_kind|capability_l1|capability_l2
   graph_edges(source TEXT, target TEXT, rel TEXT)               -- rel: subclass_of | addressed_by
+  graph_aliases(alias_id TEXT PK, node_id TEXT)                  -- old labels of renamed/merged nodes
+  meta: taxonomy_version, taxonomy_sha256                        -- which taxonomy the tags are migrated to
 
 Built from taxonomy_v0.json (intent L1/L2 hierarchy + entity kinds). Lives in the
 same .sqlite as chunks/fts/vec and facts, so one file is the whole knowledge store.
@@ -16,10 +18,19 @@ linked to the capabilities that address them with --links (intent --addressed_by
 capability). Then a problem→capability traceability question resolves as a graph JOIN
 instead of narrative synthesis.
 
+Reviewed renames/merges/removals (taxonomy_merge.py --review) are recorded as migrations in
+the taxonomy history; this script runs the ones newer than meta.taxonomy_version before it
+prunes, so tags move instead of vanishing. Building from a version older than the sibling
+current.json that would prune nodes is refused unless --yes-prune.
+
 Usage: build_graph.py --taxonomy taxonomy_v0.json --db knowledge.sqlite
        [--capabilities capabilities.json] [--links addressed_by.json]
 """
-import argparse, json, re, sqlite3
+import argparse, hashlib, json, os, re, sqlite3, sys
+from collections import Counter
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import graph_migrate as GM  # noqa: E402
 
 def nid(s): return re.sub(r"[^a-z0-9]+", "_", str(s).lower()).strip("_") or "n"
 
@@ -63,6 +74,21 @@ def build_addressed_by(links_doc, nodes, cap_prefix=CAP_PREFIX):
             skipped.append((p.get("intent"), p.get("capability")))
     return edges, skipped
 
+
+GUARDED_KINDS = ("intent_l1", "intent_l2", "entity_kind")
+
+
+def _is_current(tax_path, raw):
+    """(not_current, current_version): not_current when a sibling current.json exists and differs."""
+    cur = os.path.join(os.path.dirname(os.path.abspath(tax_path)), "current.json")
+    if not os.path.exists(cur) or os.path.abspath(cur) == os.path.abspath(tax_path):
+        return False, None
+    cur_raw = open(cur, "rb").read()
+    if hashlib.sha256(cur_raw).digest() == hashlib.sha256(raw).digest():
+        return False, None
+    return True, json.loads(cur_raw).get("version")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--taxonomy", required=True)
@@ -70,59 +96,110 @@ def main():
     ap.add_argument("--capabilities", help="second taxonomy (capabilities/pillars); reads its "
                     "capability_taxonomy or intent_taxonomy block -> capability_l1/l2 nodes")
     ap.add_argument("--links", help="intent->capability link pairs -> addressed_by edges")
+    ap.add_argument("--yes-prune", action="store_true",
+                    help="build from a taxonomy that is not current.json even though nodes and their tags "
+                         "will be pruned (intentional rollback)")
+    ap.add_argument("--reclassify-out",
+                    help="chunk ids a migration sends back to classification "
+                         "(default: <taxonomy dir>/work/reclassify.json)")
     a = ap.parse_args()
-    tax = json.load(open(a.taxonomy)); it = tax.get("intent_taxonomy", {})
+    raw = open(a.taxonomy, "rb").read()
+    tax = json.loads(raw)
+    it = tax.get("intent_taxonomy", {})
     nodes, edges = {}, []
     add_tree(it, nodes, edges, "intent_l1", "intent_l2")
     for kind in tax.get("entities", {}):
         nodes[nid(kind)] = (nid(kind), kind, "entity_kind", None)
 
-    # optional second taxonomy: capabilities / vision pillars
     if a.capabilities:
         ctax = json.load(open(a.capabilities))
         ct = ctax.get("capability_taxonomy") or ctax.get("intent_taxonomy", {})
         add_tree(ct, nodes, edges, "capability_l1", "capability_l2", id_prefix=CAP_PREFIX)
 
-    # optional cross-links: intent --addressed_by--> capability
     addressed, skipped = ([], [])
     if a.links:
         addressed, skipped = build_addressed_by(json.load(open(a.links)), nodes)
 
     c = sqlite3.connect(a.db)
-    # Non-destructive: this script OWNS the taxonomy (nodes) and the subclass_of +
-    # addressed_by edges, but must NOT touch the 'about' edges (chunk↔vertex) that
-    # classify_write manages.
+    # Non-destructive: this script OWNS the taxonomy (nodes), the subclass_of + addressed_by
+    # edges and graph_aliases, but must NOT touch 'about' edges except through a reviewed
+    # migration recorded in the taxonomy history.
     c.executescript("""
       CREATE TABLE IF NOT EXISTS graph_nodes(id TEXT PRIMARY KEY, label TEXT, kind TEXT, parent TEXT);
       CREATE TABLE IF NOT EXISTS graph_edges(source TEXT, target TEXT, rel TEXT);
+      CREATE TABLE IF NOT EXISTS graph_aliases(alias_id TEXT PRIMARY KEY, node_id TEXT);
+      CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
       CREATE INDEX IF NOT EXISTS idx_edges_src ON graph_edges(source);
       CREATE INDEX IF NOT EXISTS idx_edges_tgt ON graph_edges(target);
       CREATE INDEX IF NOT EXISTS idx_nodes_kind ON graph_nodes(kind);
     """)
-    c.execute("DELETE FROM graph_edges WHERE rel IN ('subclass_of','addressed_by')")  # rebuild owned edges
+    try:
+        start = GM.resolve_start(c, tax)
+    except GM.LegacyStoreError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        c.close()
+        sys.exit(2)
+    reclass, explained, mstats = {}, set(), Counter()
+    for _, migs in GM.pending_migrations(tax, start):
+        r, e, s = GM.run(c, migs)
+        for k, why in r.items():
+            reclass.setdefault(k, why)
+        explained |= e
+        mstats.update(s)
+
+    c.execute("DELETE FROM graph_edges WHERE rel IN ('subclass_of','addressed_by')")
     c.executemany("INSERT OR REPLACE INTO graph_nodes VALUES(?,?,?,?)", list(nodes.values()))
     c.executemany("INSERT INTO graph_edges VALUES(?,?,?)", edges + addressed)
-    # prune nodes that vanished from the taxonomy, with their dependent rows (no dangling refs)
     keep = set(nodes)
-    have_ct = bool(c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='chunk_topics'").fetchone())
-    removed = [r[0] for r in c.execute("SELECT id FROM graph_nodes")] if keep else []
-    removed = [nidv for nidv in removed if nidv not in keep]
+    have_ct = GM.has_table(c, "chunk_topics")
+    existing = c.execute("SELECT id, kind FROM graph_nodes").fetchall()
+    removed = [i for i, _ in existing if i not in keep] if keep else []
+    unexplained = [i for i, k in existing if i not in keep and k in GUARDED_KINDS and i not in explained]
+    if unexplained:
+        n_tags = 0
+        if have_ct:
+            q = ",".join("?" * len(unexplained))
+            n_tags = c.execute(f"SELECT COUNT(*) FROM chunk_topics WHERE category_id IN ({q})", unexplained).fetchone()[0]
+        sample = ", ".join(unexplained[:6]) + ("…" if len(unexplained) > 6 else "")
+        not_current, cur_version = _is_current(a.taxonomy, raw)
+        if not_current and not a.yes_prune:
+            c.rollback()
+            c.close()
+            print(f"REFUSED: building from {os.path.basename(a.taxonomy)} but current.json is version {cur_version}; "
+                  f"{len(unexplained)} node(s) and {n_tags} tag(s) exist only in the store and would be pruned: "
+                  f"{sample}. Build from taxonomy/current.json, or pass --yes-prune for an intentional rollback.",
+                  file=sys.stderr)
+            sys.exit(3)
+        print(f"⚠️  {len(unexplained)} node(s) vanished without a review op (hand edit?) — pruning them and "
+              f"{n_tags} tag(s): {sample}", file=sys.stderr)
     for nidv in removed:
         c.execute("DELETE FROM graph_nodes WHERE id=?", (nidv,))
         c.execute("DELETE FROM graph_edges WHERE rel='about' AND target=?", (nidv,))
         if have_ct:
             c.execute("DELETE FROM chunk_topics WHERE category_id=?", (nidv,))
+    c.execute("DELETE FROM graph_aliases")
+    c.executemany("INSERT OR REPLACE INTO graph_aliases VALUES(?,?)",
+                  [(nid(al), nid(canon)) for al, canon in (tax.get("aliases") or {}).items()
+                   if nid(al) not in nodes and nid(canon) in nodes])
+    version = tax.get("version") or 0
+    GM.write_version(c, version, hashlib.sha256(raw).hexdigest())
     c.commit()
-    from collections import Counter
+    if reclass:
+        out = a.reclassify_out or os.path.join(os.path.dirname(os.path.abspath(a.taxonomy)), "work", "reclassify.json")
+        GM.write_reclassify(out, version, reclass)
     kinds = Counter(n[2] for n in nodes.values())
     print(f"graph -> {a.db}: {len(nodes)} nodes {dict(kinds)}, {len(edges)} subclass_of"
           + (f", {len(addressed)} addressed_by" if addressed else "") + " edges"
           + (f"; pruned {len(removed)} vanished node(s) + their tags/about-edges" if removed else "")
           + " (about edges preserved)")
+    if any(mstats.values()) or reclass:
+        print(f"migrated tags to taxonomy v{version}: {dict(mstats)}; {len(reclass)} chunk(s) queued for "
+              f"reclassification")
     if skipped:
         print(f"⚠️  skipped {len(skipped)} addressed_by link(s) with an unknown intent/capability: "
               + ", ".join(f"{i!r}->{c_!r}" for i, c_ in skipped[:6]) + ("…" if len(skipped) > 6 else ""))
     c.close()
+
 
 if __name__ == "__main__":
     main()
