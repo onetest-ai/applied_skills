@@ -21,7 +21,8 @@ instead of narrative synthesis.
 Reviewed renames/merges/removals (taxonomy_merge.py --review) are recorded as migrations in
 the taxonomy history; this script runs the ones newer than meta.taxonomy_version before it
 prunes, so tags move instead of vanishing. Building from a version older than the sibling
-current.json that would prune nodes is refused unless --yes-prune.
+current.json, or older than the store's meta.taxonomy_version, that would prune nodes is
+refused unless --yes-prune.
 
 Usage: build_graph.py --taxonomy taxonomy_v0.json --db knowledge.sqlite
        [--capabilities capabilities.json] [--links addressed_by.json]
@@ -133,6 +134,7 @@ def main():
       CREATE INDEX IF NOT EXISTS idx_edges_tgt ON graph_edges(target);
       CREATE INDEX IF NOT EXISTS idx_nodes_kind ON graph_nodes(kind);
     """)
+    store_version = GM.read_version(c)
     try:
         start = GM.resolve_start(c, tax)
     except GM.LegacyStoreError as e:
@@ -162,13 +164,16 @@ def main():
             n_tags = c.execute(f"SELECT COUNT(*) FROM chunk_topics WHERE category_id IN ({q})", unexplained).fetchone()[0]
         sample = ", ".join(unexplained[:6]) + ("…" if len(unexplained) > 6 else "")
         not_current, cur_version = _is_current(a.taxonomy, raw)
-        if not_current and not a.yes_prune:
+        older = store_version is not None and (tax.get("version") or 0) < store_version
+        if (not_current or older) and not a.yes_prune:
             c.rollback()
             c.close()
-            print(f"REFUSED: building from {os.path.basename(a.taxonomy)} but current.json is version {cur_version}; "
-                  f"{len(unexplained)} node(s) and {n_tags} tag(s) exist only in the store and would be pruned: "
-                  f"{sample}. Build from taxonomy/current.json, or pass --yes-prune for an intentional rollback.",
-                  file=sys.stderr)
+            why = (f"current.json is version {cur_version}" if not_current
+                   else f"the store is already at taxonomy version {store_version}")
+            print(f"REFUSED: building from {os.path.basename(a.taxonomy)} (version {tax.get('version') or 0}) but "
+                  f"{why}; {len(unexplained)} node(s) and {n_tags} tag(s) exist only in the store and would be "
+                  f"pruned: {sample}. Build from taxonomy/current.json, or pass --yes-prune for an intentional "
+                  f"rollback.", file=sys.stderr)
             sys.exit(3)
         print(f"⚠️  {len(unexplained)} node(s) vanished without a review op (hand edit?) — pruning them and "
               f"{n_tags} tag(s): {sample}", file=sys.stderr)

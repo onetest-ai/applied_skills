@@ -176,6 +176,25 @@ class DriftGuardTests(unittest.TestCase):
         self.assertIn("1 tag(s)", r.stderr)
         self.assertEqual(tag_rows(self.db), before)
 
+    def test_stale_file_outside_taxonomy_dir_refused_by_store_version(self):
+        c = sqlite3.connect(self.db)
+        GM.write_version(c, 1, "sha-v1")
+        c.commit()
+        c.close()
+        stale = os.path.join(self.td.name, "elsewhere", "old.json")   # no sibling current.json
+        write_json(stale, taxonomy(version=0))
+        before = tag_rows(self.db)
+        r = build(stale, self.db)
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertIn("store is already at taxonomy version 1", r.stderr)
+        self.assertEqual(tag_rows(self.db), before)
+        c = sqlite3.connect(self.db)
+        self.assertEqual(GM.read_version(c), 1)
+        self.assertIn("payment_plans", {row[0] for row in c.execute("SELECT id FROM graph_nodes")})
+        c.close()
+        r = build(stale, self.db, "--yes-prune")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_yes_prune_overrides(self):
         r = build(os.path.join(self.tax_dir, "taxonomy_v0.json"), self.db, "--yes-prune")
         self.assertEqual(r.returncode, 0, r.stderr)
