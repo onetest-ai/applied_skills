@@ -249,3 +249,44 @@ class AdoptMetaOnlyTests(unittest.TestCase):
             code, out = cli("adopt", "--taxonomy", path, "--db", db, "--meta-only")
             self.assertEqual((code, out["only_in_file"]), (2, ["extra"]))
             self.assertIsNone(GM.read_version(sqlite3.connect(db)))
+
+
+class DescribeFlowTests(unittest.TestCase):
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.dir = os.path.join(self.td.name, "taxonomy")
+        tax = taxonomy(version=1); tax["descriptions"] = {"Refunds": "Money back."}
+        self.cur = os.path.join(self.dir, "current.json"); write_json(self.cur, tax)
+        self.db = os.path.join(self.td.name, "k.sqlite"); tagged_store(self.db, tax)
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def test_describe_prep_skips_described_nodes(self):
+        out = os.path.join(self.td.name, "dp")
+        res = R.describe_prep(self.cur, self.db, out, batches=2)
+        nodes = [e["node"] for k in range(res["batches"]) for e in json.load(open(os.path.join(out, f"batch_{k}.json")))]
+        self.assertNotIn("Refunds", nodes)
+        self.assertIn("Duplicate Charge", nodes)
+        dup = next(e for k in range(res["batches"]) for e in json.load(open(os.path.join(out, f"batch_{k}.json")))
+                   if e["node"] == "Duplicate Charge")
+        self.assertEqual(dup["parent"], "Billing & Payments")
+        self.assertIn("Refunds", dup["siblings"])
+        self.assertTrue(dup["samples"])
+        self.assertTrue(os.path.exists(os.path.join(out, "instructions.md")))
+
+    def test_plan_describe_items_and_context(self):
+        props = os.path.join(self.td.name, "props")
+        write_json(os.path.join(props, "result_0.json"), {"descriptions": [
+            {"node": "Duplicate Charge", "description": "Customer billed twice for one order."},
+            {"node": "Nope", "description": "x"}]})
+        _, rv = R.build_plan("describe", self.cur, proposals_dir=props, db=self.db, now=NOW)
+        st = {i["op"]["node"]: i["status"] for i in rv["items"]}
+        self.assertEqual(st, {"Duplicate Charge": "proposed", "Nope": "invalid"})
+        self.assertEqual(rv["items"][0]["origin"], "describe")
+        self.assertEqual(rv["context"]["title"], "Description review")
+
+    def test_context_for_browse(self):
+        _, rv = R.build_plan("browse", self.cur, now=NOW)
+        self.assertEqual(rv["context"]["title"], "Taxonomy editor")
+        self.assertIn("without a description", rv["context"]["subtitle"])

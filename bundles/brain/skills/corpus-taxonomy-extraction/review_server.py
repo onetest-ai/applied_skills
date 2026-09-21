@@ -85,7 +85,8 @@ class ReviewApp:
             t = copy.deepcopy(self.base_tax)
             return {"review": self.review,
                     "base": {"intent_taxonomy": intent(t), "entities": list(t.get("entities") or {}),
-                             "aliases": t.get("aliases") or {}, "version": t.get("version") or 0},
+                             "aliases": t.get("aliases") or {}, "version": t.get("version") or 0,
+                             "descriptions": t.get("descriptions") or {}},
                     "metrics": MG.annotate(t.get("metrics") or [], self.governed),
                     "governed_file": bool(self.governed), "counts": counts, "totals": totals,
                     "decisions": st["latest"], "proposals": list(st["proposals"].values()),
@@ -97,6 +98,7 @@ class ReviewApp:
         if level is None:
             return {"errors": [f"{label!r} is not in the taxonomy"]}
         i, out = nid(label), {"label": label, "id": nid(label), "level": level, "parent": parent}
+        out["description"] = (self.base_tax.get("descriptions") or {}).get(label)
         out["aliases"] = [a for a, c in (self.base_tax.get("aliases") or {}).items() if c == label]
         out["item"] = next((it for it in self.review["items"] if it["op"].get("node") == label), None)
         out["tags"], out["samples"], out["siblings"] = 0, [], []

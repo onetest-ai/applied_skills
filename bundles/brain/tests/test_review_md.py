@@ -60,3 +60,17 @@ class MdTests(unittest.TestCase):
     def test_examples_in_export_are_not_parsed(self):
         text = MD.export_md(self.rv, [])
         self.assertIn('    propose: rename "Old label" -> "New label"', text)
+
+
+class DescribeMdTests(unittest.TestCase):
+    def test_propose_describe_and_add_with_description(self):
+        self.assertEqual(MD.parse_propose(' describe "Refunds" "Money returned."'),
+                         {"type": "describe", "node": "Refunds", "description": "Money returned."})
+        self.assertEqual(MD.parse_propose(' add L2 "Payment Plans" under "Billing & Payments" description="Split bills."'),
+                         {"type": "add", "level": "L2", "name": "Payment Plans", "parent": "Billing & Payments",
+                          "description": "Split bills."})
+
+    def test_describe_decision_on_describe_item(self):
+        item = {"id": "i-1", "origin": "describe", "op": {"type": "describe", "node": "Refunds", "description": "a"}}
+        self.assertEqual(MD.parse_decision(' describe: "Better text."', item),
+                         ("amend", {"type": "describe", "node": "Refunds", "description": "Better text."}, None))

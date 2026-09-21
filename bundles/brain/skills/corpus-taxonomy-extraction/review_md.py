@@ -29,6 +29,8 @@ def _summary(item):
     if op["type"] == "add":
         where = f" (under {op['parent']})" if op.get("parent") else ""
         return f"+ {op['level']} **{op['name']}**{where}"
+    if op["type"] == "describe":
+        return f"~ describe **{op['node']}**"
     where = f" (under {item['parent']})" if item.get("parent") else ""
     return f"{item['level']} **{op['node']}**{where}"
 
@@ -50,7 +52,8 @@ def export_md(review, records):
              "Fill in each `decision:` line; leave it blank to decide later.",
              "Refresh proposals: approve | reject: <reason> | rename: \"New label\" | reparent: \"L1 label\" | reopen",
              "First-build nodes: keep | rename: \"New\" | merge: \"Into\" | move: \"L1\" | split: \"A\" \"B\" | "
-             "remove: demote <reason> | remove: entity:<kind>", ""]
+             "remove: demote <reason> | remove: entity:<kind> | describe: \"New text\"",
+             "Description items: approve | describe: \"New text\" | reject: <reason>", ""]
     if not review.get("evidence_available", True):
         lines += ["> Induction evidence not kept for this Brain; showing tagged chunks instead.", ""]
     for item in review["items"]:
@@ -66,6 +69,10 @@ def export_md(review, records):
             lines.append(f"⚑ {f['kind']}: {f.get('reason') or ', '.join(f.get('with', []))}")
         if item["status"] == "suppressed":
             lines.append(f"(rejected before: {item['prior'].get('reason')}; write `reopen` to bring it back)")
+        if item["op"].get("description"):
+            lines.append(f"> proposed: {item['op']['description']}")
+        if sup.get("current"):
+            lines.append(f"> current: {sup['current']}")
         for e in (item.get("evidence") or [])[:2]:
             if e.get("quote"):
                 lines.append(f"> \"{e['quote']}\"" + (f" — {e['source']}" if e.get("source") else ""))
@@ -81,6 +88,8 @@ def export_md(review, records):
               '    propose: remove "Label" entity:<kind>',
               '    propose: add L1 "Name"',
               '    propose: add L2 "Name" under "Parent"',
+              '    propose: add L2 "Name" under "Parent" description="Text"',
+              '    propose: describe "Label" "New text."',
               '    propose: metric_edit "Metric" source_type=computable grain=branch',
               '    propose: metric_merge "From" -> "Into"',
               '    propose: metric_remove "Metric" <reason>',
@@ -119,6 +128,10 @@ def parse_decision(value, item):
     if word == "amend":
         return "amend", json.loads(rest), None
     args = shlex.split(rest)
+    if word == "describe":
+        if item["origin"] not in ("describe", "induction"):
+            raise ValueError(f"describe decisions need a describe or induction item, not {item['origin']!r}")
+        return "amend", {"type": "describe", "node": node, "description": _arg(args, 0, "a description")}, None
     if item["origin"] == "refine":
         if word == "rename":
             return "amend", {**op, "name": _arg(args, 0, "a new label")}, None
@@ -141,14 +154,19 @@ def parse_decision(value, item):
 def parse_propose(rest):
     t = shlex.split(rest)
     kind = _arg(t, 0, "an op")
+    if kind == "describe":
+        return {"type": "describe", "node": _arg(t, 1, "a label"), "description": _arg(t, 2, "a description")}
     if kind == "add":
         level, name = _arg(t, 1, "L1 or L2").upper(), _arg(t, 2, "a name")
-        parent = None
+        parent, idx = None, 3
         if level == "L2":
             if _arg(t, 3, "`under`") != "under":
                 raise ValueError('write: add L2 "Name" under "Parent"')
-            parent = _arg(t, 4, "a parent")
-        return {"type": "add", "level": level, "name": name, "parent": parent}
+            parent, idx = _arg(t, 4, "a parent"), 5
+        op = {"type": "add", "level": level, "name": name, "parent": parent}
+        if idx < len(t) and t[idx].startswith("description="):
+            op["description"] = t[idx][len("description="):]
+        return op
     if kind in ("rename", "merge", "move", "split", "metric_merge"):
         src = _arg(t, 1, "a label")
         if _arg(t, 2, "->") != "->":

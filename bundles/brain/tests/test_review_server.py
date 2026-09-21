@@ -156,6 +156,20 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(app.decide({"action": "approve", "item_id": item["id"]})[0], 200)
             self.assertEqual(D.effective_ops(rv, D.read(app.decisions_path)), [])
 
+    def test_state_and_node_carry_descriptions_and_context(self):
+        code, st = self.req("GET", "/api/state")
+        self.assertIn("descriptions", st["base"])
+        self.assertIn("context", st["review"])
+        code, node = self.req("GET", "/api/node/Refunds")
+        self.assertIn("description", node)
+
+    def test_clear_undoes_a_decision(self):
+        op = {"type": "describe", "node": "Refunds", "description": "Money returned."}
+        code, out = self.req("POST", "/api/decision", {"action": "propose", "op": op})
+        self.assertEqual(code, 200, out)
+        code, out = self.req("POST", "/api/decision", {"action": "withdraw", "item_id": out["record"]["item_id"]})
+        self.assertEqual(code, 200, out)
+
 
 class TimeoutTests(unittest.TestCase):
     def test_timeout_exits_3(self):

@@ -4,8 +4,9 @@
 It never writes a taxonomy file — `taxonomy_merge.py --review … --apply` does that.
 Every subcommand prints one JSON line on stdout (serve prints it on exit).
 
-  plan      --mode draft|drift|browse [--taxonomy taxonomy/current.json] [--proposals DIR]
-            [--consolidated F] [--db K.sqlite] [--decisions D]
+  plan          --mode draft|drift|browse|describe [--taxonomy taxonomy/current.json] [--proposals DIR]
+                [--consolidated F] [--db K.sqlite] [--decisions D]
+  describe-prep --taxonomy taxonomy/current.json --db K.sqlite --out DIR [--batches 5] [--all]
   serve     --review R --db K.sqlite [--metrics F] [--port 0] [--no-browser] [--timeout 3600] [--reviewer NAME]
   record    --review R (--action A [--item ID] [--op JSON] [--reason T] | --submit) [--reviewer NAME]
   status    --review R
@@ -20,6 +21,7 @@ reviewer clicks Submit, and the exit output (one JSON line) re-invokes the agent
 moves, splits, removals and metric edits come from the review app or an imported Markdown file.
 """
 import argparse
+import glob
 import hashlib
 import json
 import os
@@ -30,9 +32,24 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import decisions as D  # noqa: E402
 import graph_migrate as GM  # noqa: E402
-from taxo_io import (CURRENT, atomic_write_bytes, fingerprint, intent, load_json, nid, node_ids,  # noqa: E402
-                     reviewer_name, sha256_bytes)
+from taxo_io import (CURRENT, atomic_write_bytes, fingerprint, intent, load_json, locate, nid, node_ids,  # noqa: E402
+                     one_line, reviewer_name, sha256_bytes)
 from taxonomy_merge import load_proposals, plan_additions  # noqa: E402
+
+DESCRIBE_INSTRUCTIONS = """# Drafting category descriptions
+
+For each node below, write a description in the output file `result_k.json`:
+
+```json
+{"descriptions": [{"node": "<label>", "description": "<text>"}]}
+```
+
+Rules:
+- One or two plain sentences.
+- Say what the category covers and how it differs from its siblings.
+- Base it on the samples; no numbers or claims that are not in the samples.
+- If there are no samples, describe it from the label and its siblings only, and keep it short.
+"""
 
 
 def tax_dir_of(review_path):
@@ -154,8 +171,107 @@ def _drift_items(tax, proposals_dir, c, rejections, stats, skipped_files):
     return out
 
 
+def _describe_items(tax, proposals_dir, counts, rejections, skipped_files):
+    descs = tax.get("descriptions") or {}
+    seen = {}
+    for rf in sorted(glob.glob(os.path.join(proposals_dir, "result_*.json"))):
+        try:
+            with open(rf, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            print("skip", rf, e, file=sys.stderr)
+            skipped_files.append(rf)
+            continue
+        for d in (data.get("descriptions") or []) if isinstance(data, dict) else []:
+            node = (d.get("node") or "").strip()
+            if not node or node in seen:
+                continue
+            seen[node] = one_line(d.get("description") or "").strip()
+    items = []
+    for node, text in seen.items():
+        op = {"type": "describe", "node": node, "description": text}
+        level, parent = locate(tax, node)
+        support = {"current": descs.get(node), "tags": counts.get(nid(node), 0)}
+        if level is None:
+            items.append({"origin": "describe", "op": op, "level": None, "parent": None, "status": "invalid",
+                          "reason": f"{node!r} is not in the taxonomy", "support": support})
+            continue
+        if not text:
+            items.append({"origin": "describe", "op": op, "level": level, "parent": parent, "status": "invalid",
+                          "reason": "empty description", "support": support})
+            continue
+        prior = D.match_rejection(fingerprint(op), rejections)
+        item = {"origin": "describe", "op": op, "level": level, "parent": parent,
+                "status": "suppressed" if prior else "proposed", "support": support}
+        if prior:
+            item["prior"] = {k: prior.get(k) for k in ("review_id", "reason", "reviewer", "ts")}
+        items.append(item)
+    return items
+
+
+def _context(mode, tax, items, stats, version):
+    it = intent(tax)
+    labels = list(it["tree"]) + [k for kids in it["tree"].values() for k in kids] + list(it["unassigned_l2"])
+    descs = tax.get("descriptions") or {}
+    if mode == "draft":
+        flagged = sum(1 for i in items if i.get("flags"))
+        return {"title": "First-build review",
+                "subtitle": f"Draft taxonomy · {len(labels)} categories · {flagged} flagged"}
+    if mode == "drift":
+        proposals = sum(1 for i in items if i["status"] in ("proposed", "suppressed"))
+        subtitle = f"Taxonomy v{version} → v{version + 1} · {proposals} proposals"
+        if stats:
+            subtitle += f" · {stats.get('untagged_chunks', 0)} chunks without a category"
+        return {"title": "Refresh review", "subtitle": subtitle}
+    if mode == "browse":
+        without = sum(1 for l in labels if not (descs.get(l) or "").strip())
+        return {"title": "Taxonomy editor",
+                "subtitle": f"v{version} · {len(labels)} categories · {without} without a description"}
+    if mode == "describe":
+        drafted = sum(1 for i in items if i["status"] == "proposed")
+        return {"title": "Description review", "subtitle": f"v{version} · {drafted} drafted descriptions"}
+    raise ValueError(f"unknown mode {mode!r}")
+
+
+def describe_prep(taxonomy_path, db, out_dir, batches=5, all_nodes=False):
+    tax = load_json(taxonomy_path)
+    it = intent(tax)
+    descs = tax.get("descriptions") or {}
+    c = _ro(db)
+    rows = []
+    for l1, kids in it["tree"].items():
+        rows.append((l1, "L1", None))
+        rows += [(k, "L2", l1) for k in kids]
+    rows += [(x, "L2", None) for x in it["unassigned_l2"]]
+    entries = []
+    for label, level, parent in rows:
+        if not all_nodes and (descs.get(label) or "").strip():
+            continue
+        if level == "L1":
+            siblings = [x for x in it["tree"] if x != label][:30]
+        else:
+            pool = it["tree"].get(parent, []) if parent else it["unassigned_l2"]
+            siblings = [x for x in pool if x != label][:30]
+        entries.append({"node": label, "level": level, "parent": parent, "siblings": siblings,
+                        "current": descs.get(label), "samples": _samples(c, nid(label), 5)})
+    if c:
+        c.close()
+    n = len(entries)
+    groups = []
+    if n:
+        b = max(1, min(batches, n))
+        size = -(-n // b)  # ceil
+        groups = [entries[i:i + size] for i in range(0, n, size)]
+    os.makedirs(out_dir, exist_ok=True)
+    for k, group in enumerate(groups):
+        atomic_write_bytes(os.path.join(out_dir, f"batch_{k}.json"),
+                           (json.dumps(group, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
+    atomic_write_bytes(os.path.join(out_dir, "instructions.md"), DESCRIBE_INSTRUCTIONS.encode("utf-8"))
+    return {"nodes": n, "batches": len(groups), "out": out_dir}
+
+
 def build_plan(mode, taxonomy_path, proposals_dir=None, consolidated=None, db=None, decisions_path=None, now=None):
-    if mode in ("drift", "browse") and os.path.basename(taxonomy_path) != CURRENT:
+    if mode in ("drift", "browse", "describe") and os.path.basename(taxonomy_path) != CURRENT:
         raise ValueError(f"{mode} reviews are planned on taxonomy/{CURRENT}, not {taxonomy_path}. If this Brain "
                          f"predates {CURRENT}, run `taxonomy_review.py adopt --taxonomy <the version the store "
                          f"was built from> --db <db>` first")
@@ -181,6 +297,10 @@ def build_plan(mode, taxonomy_path, proposals_dir=None, consolidated=None, db=No
         items, evidence = _drift_items(tax, proposals_dir, c, rejections, stats, skipped_files), True
     elif mode == "browse":
         items, evidence = [], True
+    elif mode == "describe":
+        if not proposals_dir:
+            raise ValueError("describe mode needs --proposals")
+        items, evidence = _describe_items(tax, proposals_dir, counts, rejections, skipped_files), True
     else:
         raise ValueError(f"unknown mode {mode!r}")
     for n, item in enumerate(items):
@@ -188,8 +308,9 @@ def build_plan(mode, taxonomy_path, proposals_dir=None, consolidated=None, db=No
         item["id"] = "i-" + hashlib.sha1(f"{rid}|{n}|{item['fingerprint']}".encode()).hexdigest()[:6]
     review = {"schema": 1, "review_id": rid, "mode": mode, "created": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
               "base": {"path": os.path.abspath(taxonomy_path), "version": version, "sha256": sha},
-              "evidence_available": evidence, "stats": stats, "items": items}
-    if mode == "drift":
+              "evidence_available": evidence, "stats": stats, "items": items,
+              "context": _context(mode, tax, items, stats, version)}
+    if mode in ("drift", "describe"):
         review["skipped_files"] = skipped_files
     path = os.path.join(tax_dir, "reviews", f"review_{rid}.json")
     data = (json.dumps(review, indent=1, ensure_ascii=False) + "\n").encode("utf-8")
@@ -351,6 +472,11 @@ def cmd_import_md(a):
     return 0
 
 
+def cmd_describe_prep(a):
+    _out(describe_prep(a.taxonomy, a.db, a.out, batches=a.batches, all_nodes=a.all))
+    return 0
+
+
 def cmd_gap(a):
     import metrics_gap as MG
     tax = load_json(a.taxonomy)
@@ -366,7 +492,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Plan, record and serve taxonomy reviews.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("plan")
-    p.add_argument("--mode", required=True, choices=["draft", "drift", "browse"])
+    p.add_argument("--mode", required=True, choices=["draft", "drift", "browse", "describe"])
     p.add_argument("--taxonomy", default=os.path.join("taxonomy", CURRENT))
     p.add_argument("--proposals")
     p.add_argument("--consolidated")
@@ -417,6 +543,13 @@ def main(argv=None):
     p.add_argument("--reviewer")
     p.add_argument("--decisions")
     p.set_defaults(fn=cmd_import_md)
+    p = sub.add_parser("describe-prep")
+    p.add_argument("--taxonomy", default=os.path.join("taxonomy", CURRENT))
+    p.add_argument("--db", required=True)
+    p.add_argument("--out", required=True)
+    p.add_argument("--batches", type=int, default=5)
+    p.add_argument("--all", action="store_true", help="include nodes that already have a description")
+    p.set_defaults(fn=cmd_describe_prep)
     p = sub.add_parser("gap", help="write taxonomy/work/metrics_gap.md (ungoverned computable metrics)")
     p.add_argument("--taxonomy", default=os.path.join("taxonomy", CURRENT))
     p.add_argument("--metrics")
