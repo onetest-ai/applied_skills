@@ -11,7 +11,7 @@ Every subcommand prints one JSON line on stdout (serve prints it on exit).
   status    --review R
   export-md --review R --out F
   import-md --review R --md F [--submit]
-  adopt     --taxonomy taxonomy/taxonomy_vN.json --db K.sqlite [--force]
+  adopt     --taxonomy taxonomy/taxonomy_vN.json --db K.sqlite [--meta-only] [--force]
   gap       [--taxonomy F] [--metrics F] [--out F]
 
 In a Claude Code session, run `serve` in the BACKGROUND and end the turn: it exits when the
@@ -153,6 +153,10 @@ def _drift_items(tax, proposals_dir, c, rejections, stats):
 
 
 def build_plan(mode, taxonomy_path, proposals_dir=None, consolidated=None, db=None, decisions_path=None, now=None):
+    if mode in ("drift", "browse") and os.path.basename(taxonomy_path) != CURRENT:
+        raise ValueError(f"{mode} reviews are planned on taxonomy/{CURRENT}, not {taxonomy_path}. If this Brain "
+                         f"predates {CURRENT}, run `taxonomy_review.py adopt --taxonomy <the version the store "
+                         f"was built from> --db <db>` first")
     raw = open(taxonomy_path, "rb").read()
     tax = json.loads(raw)
     tax_dir = os.path.dirname(os.path.abspath(taxonomy_path))
@@ -274,9 +278,18 @@ def cmd_adopt(a):
         _out({"status": "refused", "reason": "this taxonomy does not match the store's graph",
               "only_in_file": only_file, "only_in_db": only_db})
         return 2
+    if a.meta_only:
+        # The store's tags already match this version; current.json (if any) is left alone —
+        # e.g. it is already ahead and build_graph will migrate the store up to it.
+        GM.write_version(c, tax.get("version") or 0, sha256_bytes(raw))
+        c.commit()
+        c.close()
+        _out({"status": "adopted", "meta_only": True, "version": tax.get("version") or 0, "nodes": len(file_ids)})
+        return 0
     if os.path.exists(cur) and open(cur, "rb").read() != raw and not a.force:
         c.close()
-        _out({"status": "refused", "reason": f"{cur} exists and differs; pass --force to replace it"})
+        _out({"status": "refused", "reason": f"{cur} exists and differs; pass --meta-only to record only the "
+                                             f"store's version, or --force (only if the user asked) to replace it"})
         return 2
     atomic_write_bytes(cur, raw)
     GM.write_version(c, tax.get("version") or 0, sha256_bytes(raw))
@@ -370,6 +383,8 @@ def main(argv=None):
     p = sub.add_parser("adopt")
     p.add_argument("--taxonomy", required=True)
     p.add_argument("--db", required=True)
+    p.add_argument("--meta-only", action="store_true",
+                   help="only record this version in the store's meta (never touches current.json)")
     p.add_argument("--force", action="store_true")
     p.set_defaults(fn=cmd_adopt)
     p = sub.add_parser("serve")

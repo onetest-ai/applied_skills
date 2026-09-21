@@ -224,6 +224,21 @@ class ApplyReviewTests(unittest.TestCase):
         self.assertEqual(open(self.cur, "rb").read(), cur_bytes)
         self.assertIsNone(D.review_state(D.read(self.dec), self.rid)["applied"])
 
+    def test_refuses_non_draft_review_not_based_on_current(self):
+        v1 = os.path.join(self.dir, "taxonomy_v1.json")
+        write_json(v1, taxonomy(version=1))
+        os.remove(self.cur)
+        self.review["base"] = {"path": v1, "version": 1, "sha256": IO.sha256_file(v1)}
+        write_json(self.review_path, self.review)          # mode stays "browse"
+        self.propose({"type": "add", "level": "L1", "name": "AI & Automation"})
+        self.submit()
+        with self.assertRaises(M.Refused) as cm:
+            M.apply_review(self.review_path)
+        self.assertIn("adopt", str(cm.exception))
+        self.assertFalse(os.path.exists(self.cur))
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "taxonomy_v2.json")))
+        self.assertIsNone(D.review_state(D.read(self.dec), self.rid)["applied"])
+
     def test_no_ops_is_no_changes(self):
         self.submit()
         self.assertEqual(M.apply_review(self.review_path)["status"], "no_changes")

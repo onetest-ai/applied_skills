@@ -136,10 +136,15 @@ def apply_review(review_path, decisions_path=None):
         raise Refused(f"review {rid} was already applied ({st['applied'].get('out')})")
     if not os.path.exists(base["path"]) or sha256_file(base["path"]) != base["sha256"]:
         raise Refused(f"{base['path']} changed since review {rid} was planned; plan a new review")
-    is_draft = os.path.abspath(base["path"]) != os.path.abspath(cur)
+    is_draft = review.get("mode") == "draft"
     if is_draft and os.path.exists(cur):
         raise Refused("a ratified taxonomy (current.json) already exists; review changes against it "
                       "in browse or drift mode")
+    if not is_draft and os.path.abspath(base["path"]) != os.path.abspath(cur):
+        raise Refused(f"review {rid} ({review.get('mode')}) was planned on {base['path']}, not on {cur}; a "
+                      f"browse or drift review must be planned on current.json. If this Brain predates "
+                      f"current.json, run `taxonomy_review.py adopt --taxonomy <the version the store was "
+                      f"built from> --db <db>` first, then plan the review again")
     entries = D.effective_ops(review, records)
     errs = D.authorship_errors(entries)
     if errs:

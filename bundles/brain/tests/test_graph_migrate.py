@@ -107,6 +107,7 @@ class BuildGraphMigrationTests(unittest.TestCase):
         r = build(self.cur, self.db)
         self.assertEqual(r.returncode, 2)
         self.assertIn("adopt", r.stderr)
+        self.assertIn("--meta-only", r.stderr)
 
     def test_malformed_reclassify_file_aborts_and_changes_nothing(self):
         before = tag_rows(self.db)
@@ -146,7 +147,7 @@ class WriteReclassifyTests(unittest.TestCase):
 
 
 class DriftGuardTests(unittest.TestCase):
-    """Primo shape: v1 = v0 + L2s (legacy add-only history, no migrations), store built from v1."""
+    """Legacy shape: v1 = v0 + L2s (legacy add-only history, no migrations), store built from v1."""
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()

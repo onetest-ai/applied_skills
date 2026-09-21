@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 import decisions as D
 import graph_migrate as GM
 import taxonomy_review as R
-import taxo_io as IO
 from taxo_fixtures import TAGS, tagged_store, taxonomy, write_json
 
 NOW = datetime(2026, 9, 21, 14, 2, 55, tzinfo=timezone.utc)
@@ -80,6 +79,15 @@ class PlanTests(unittest.TestCase):
         pp = next(i for i in rv["items"] if i["op"]["name"] == "Payment Plans")
         self.assertEqual(pp["support"]["projected_coverage_gain_pts"], 12.5)   # 1 untagged of 8 chunks
         self.assertEqual(rv["stats"], {"total_chunks": 8, "untagged_chunks": 1})
+
+    def test_browse_and_drift_on_a_version_file_are_refused_naming_adopt(self):
+        v1 = os.path.join(self.dir, "taxonomy_v1.json")
+        write_json(v1, taxonomy(version=1))
+        for mode in ("browse", "drift"):
+            code, out = cli("plan", "--mode", mode, "--taxonomy", v1, "--proposals", self.td.name)
+            self.assertEqual((code, out["status"]), (2, "error"))
+            self.assertIn("adopt", out["errors"][0])
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "reviews")))
 
     def test_plan_refuses_to_overwrite_a_differing_review(self):
         path, rv1 = R.build_plan("draft", self.v0, db=self.db, now=NOW)
@@ -187,3 +195,38 @@ class GapCliTests(unittest.TestCase):
             code, out = cli("gap", "--taxonomy", cur)
             self.assertEqual(code, 0)
             self.assertIn("| Porch Rate |", open(out["out"]).read())
+
+
+class AdoptMetaOnlyTests(unittest.TestCase):
+    def test_meta_only_sets_meta_and_leaves_current_untouched(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = os.path.join(td, "taxonomy")
+            v1 = os.path.join(d, "taxonomy_v1.json")
+            write_json(v1, taxonomy(version=1))
+            cur = os.path.join(d, "current.json")
+            ahead = taxonomy(version=2)
+            ahead["intent_taxonomy"]["tree"]["Transform"].append("Roadmap")
+            write_json(cur, ahead)
+            cur_bytes = open(cur, "rb").read()
+            db = os.path.join(td, "k.sqlite")
+            tagged_store(db, taxonomy(version=1))
+            code, out = cli("adopt", "--taxonomy", v1, "--db", db)       # without --meta-only: refused
+            self.assertEqual(code, 2)
+            self.assertIn("--meta-only", out["reason"])
+            self.assertIsNone(GM.read_version(sqlite3.connect(db)))
+            code, out = cli("adopt", "--taxonomy", v1, "--db", db, "--meta-only")
+            self.assertEqual((code, out["status"], out["meta_only"]), (0, "adopted", True))
+            self.assertEqual(GM.read_version(sqlite3.connect(db)), 1)
+            self.assertEqual(open(cur, "rb").read(), cur_bytes)
+
+    def test_meta_only_still_checks_the_node_set(self):
+        with tempfile.TemporaryDirectory() as td:
+            bad = taxonomy(version=1)
+            bad["intent_taxonomy"]["tree"]["Transform"].append("Extra")
+            path = os.path.join(td, "taxonomy", "taxonomy_v1.json")
+            write_json(path, bad)
+            db = os.path.join(td, "k.sqlite")
+            tagged_store(db, taxonomy(version=1))
+            code, out = cli("adopt", "--taxonomy", path, "--db", db, "--meta-only")
+            self.assertEqual((code, out["only_in_file"]), (2, ["extra"]))
+            self.assertIsNone(GM.read_version(sqlite3.connect(db)))

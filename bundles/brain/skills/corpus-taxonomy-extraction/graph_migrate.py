@@ -66,7 +66,7 @@ def resolve_start(c, tax):
         raise LegacyStoreError(
             "the store has tags but no meta.taxonomy_version, and the taxonomy history carries "
             "migrations. Run `taxonomy_review.py adopt --taxonomy <the version this store was built "
-            "from> --db <db>` first, then rebuild.")
+            "from> --db <db>` (add --meta-only if taxonomy/current.json already exists) first, then rebuild.")
     return tax.get("version") or 0
 
 
