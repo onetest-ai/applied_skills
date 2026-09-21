@@ -23,7 +23,7 @@ import decisions as D  # noqa: E402
 import graph_migrate as GM  # noqa: E402
 import metrics_gap as MG  # noqa: E402
 import taxo_impact as TI  # noqa: E402
-from taxo_io import intent, load_json, locate, nid, reviewer_name, sha256_file  # noqa: E402
+from taxo_io import intent, load_json, locate, nid, reviewer_name, sha256_file, utc_now  # noqa: E402
 from taxo_ops import ChangesetError, validate as validate_ops  # noqa: E402
 
 UI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "review_ui.html")
@@ -31,10 +31,14 @@ EXIT = {"submitted": 0, "timeout": 3, "cancelled": 4}
 
 
 class ReviewApp:
-    def __init__(self, review_path, db_path=None, decisions_path=None, metrics_path=None, reviewer=None):
+    def __init__(self, review_path, db_path=None, decisions_path=None, metrics_path=None, reviewer=None,
+                 live_channel=False):
         self.review = load_json(review_path)
         self.tax_dir = os.path.dirname(os.path.dirname(os.path.abspath(review_path)))
         self.decisions_path = decisions_path or D.default_path(self.tax_dir)
+        self.requests_path = os.path.join(self.tax_dir, "work", "requests.jsonl")
+        self.responses_path = os.path.join(self.tax_dir, "work", "responses.jsonl")
+        self.live_channel = bool(live_channel)
         base = self.review["base"]
         if sha256_file(base["path"]) != base["sha256"]:
             raise ValueError(f"{base['path']} changed since this review was planned; plan a new review")
@@ -61,6 +65,42 @@ class ReviewApp:
     def _has(self, table):
         return self.db is not None and GM.has_table(self.db, table)
 
+    @staticmethod
+    def _read_jsonl(path):
+        if not os.path.exists(path):
+            return []
+        out = []
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(rec, dict):
+                    out.append(rec)
+        return out
+
+    def _requests(self):
+        """The latest record per request id, filtered to this review."""
+        latest = {}
+        for rec in self._read_jsonl(self.requests_path):
+            if rec.get("id"):
+                latest[rec["id"]] = rec
+        return {rid: rec for rid, rec in latest.items() if rec.get("review_id") == self.review["review_id"]}
+
+    def _revisions(self):
+        """{item_id: latest response record}, filtered to this review's items."""
+        item_ids = {i["id"] for i in self.review["items"]}
+        out = {}
+        for rec in self._read_jsonl(self.responses_path):
+            iid = rec.get("item_id")
+            if iid in item_ids:
+                out[iid] = rec
+        return out
+
     def _total_impact(self, records):
         try:
             return TI.impact(self.db, self.base_tax, self._ops(records))
@@ -83,6 +123,11 @@ class ReviewApp:
             caps_path = os.path.join(self.tax_dir, "capabilities.json")
             caps = load_json(caps_path) if os.path.exists(caps_path) else None
             t = copy.deepcopy(self.base_tax)
+            revisions = self._revisions()
+            # A response record marks its request as answered here, in memory only — nothing
+            # on disk is ever rewritten.
+            requests = {rid: (dict(rec, status="answered") if rec.get("item_id") in revisions else rec)
+                        for rid, rec in self._requests().items()}
             return {"review": self.review,
                     "base": {"intent_taxonomy": intent(t), "entities": list(t.get("entities") or {}),
                              "aliases": t.get("aliases") or {}, "version": t.get("version") or 0,
@@ -91,7 +136,8 @@ class ReviewApp:
                     "governed_file": bool(self.governed), "counts": counts, "totals": totals,
                     "decisions": st["latest"], "proposals": list(st["proposals"].values()),
                     "submitted": bool(st["submit"]), "reviewer": self.reviewer, "has_db": self.db is not None,
-                    "capabilities": caps, "impact": self._total_impact(records)}
+                    "capabilities": caps, "impact": self._total_impact(records),
+                    "requests": requests, "revisions": revisions, "live_channel": self.live_channel}
 
     def node(self, label):
         level, parent = locate(copy.deepcopy(self.base_tax), label)
@@ -178,6 +224,64 @@ class ReviewApp:
                 rec["impact"] = TI.delta(self.db, self.base_tax, self._ops(records), rec["op"])
             return 200, {"record": D.append(self.decisions_path, rec)}
 
+    def decisions(self, body):
+        """POST /api/decisions {"records":[...]}. All-or-nothing: validates every record in
+        order against the review's records plus the accepted-so-far set, then appends all of
+        them or none."""
+        records_in = body.get("records")
+        if not isinstance(records_in, list) or not records_in:
+            return 400, {"errors": ["records must be a non-empty list"], "index": 0}
+        with self.lock:
+            if self.closing:
+                return self.CLOSED
+            accepted = self._records()
+            prepared = []
+            for idx, body_rec in enumerate(records_in):
+                if not isinstance(body_rec, dict) or body_rec.get("action") not in D.ITEM_ACTIONS:
+                    action = body_rec.get("action") if isinstance(body_rec, dict) else body_rec
+                    return 400, {"errors": [f"action must be one of {sorted(D.ITEM_ACTIONS)}, not {action!r}"],
+                                 "index": idx}
+                rec = {k: body_rec[k] for k in ("action", "item_id", "op", "reason") if body_rec.get(k) is not None}
+                rec.update({"review_id": self.review["review_id"], "reviewer": self.reviewer, "surface": "browser"})
+                if rec.get("action") == "propose" and not rec.get("item_id"):
+                    rec["item_id"] = D.new_human_id()
+                item = next((i for i in self.review["items"] if i["id"] == rec.get("item_id")), None)
+                if item and rec.get("action") in ("reject", "reopen"):
+                    rec["fingerprint"] = item["fingerprint"]
+                errs = D.validate_record(self.review, self.base_tax, accepted, rec)
+                if errs:
+                    return 400, {"errors": errs, "index": idx}
+                if rec["action"] == "propose":
+                    rec["impact"] = TI.delta(self.db, self.base_tax, self._ops(accepted), rec["op"])
+                accepted = accepted + [rec]
+                prepared.append(rec)
+            out = [D.append(self.decisions_path, rec) for rec in prepared]
+            return 200, {"records": out}
+
+    def request(self, body):
+        """POST /api/request {"item_id","note"}. Requires an existing plan item and a
+        non-empty note; refused (409) once the session is closed."""
+        with self.lock:
+            if self.closing:
+                return self.CLOSED
+            item_id = body.get("item_id")
+            item = next((i for i in self.review["items"] if i["id"] == item_id), None)
+            if item is None:
+                return 400, {"errors": [f"{item_id!r} is not an item of this review"]}
+            note = (body.get("note") or "").strip()
+            if not note:
+                return 400, {"errors": ["a redo request needs a note"]}
+            rec = {"id": "q-" + secrets.token_hex(3), "ts": utc_now(), "review_id": self.review["review_id"],
+                   "item_id": item_id, "note": note, "status": "open"}
+            os.makedirs(os.path.dirname(self.requests_path), exist_ok=True)
+            line = (json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8")
+            fd = os.open(self.requests_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+            try:
+                os.write(fd, line)
+            finally:
+                os.close(fd)
+            return 200, {"request": rec}
+
     def submit(self, body):
         with self.lock:
             if self.closing:
@@ -259,6 +363,7 @@ def make_handler(app):
             except json.JSONDecodeError:
                 return self._send(400, {"errors": ["request body is not JSON"]})
             routes = {"/api/impact": app.impact_of, "/api/decision": app.decide,
+                      "/api/decisions": app.decisions, "/api/request": app.request,
                       "/api/submit": app.submit, "/api/cancel": app.cancel}
             fn = routes.get(u.path)
             if fn is None:

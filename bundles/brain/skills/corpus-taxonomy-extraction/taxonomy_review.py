@@ -468,7 +468,7 @@ def cmd_adopt(a):
 def cmd_serve(a):
     import review_server as S
     app = S.ReviewApp(a.review, db_path=a.db, decisions_path=a.decisions, metrics_path=a.metrics,
-                      reviewer=a.reviewer)
+                      reviewer=a.reviewer, live_channel=a.watch_hint)
     return S.serve(app, port=a.port, open_browser=not a.no_browser, timeout=a.timeout)
 
 
@@ -644,6 +644,9 @@ def main(argv=None):
     p.add_argument("--no-browser", action="store_true")
     p.add_argument("--timeout", type=int, default=3600)
     p.add_argument("--reviewer")
+    p.add_argument("--watch-hint", action="store_true",
+                   help="Claude Code will Monitor requests.jsonl; state().live_channel tells the UI to say "
+                        "\"Claude is revising…\" instead of \"Queued for next run\"")
     p.set_defaults(fn=cmd_serve)
     p = sub.add_parser("export-md")
     p.add_argument("--review", required=True)

@@ -9,6 +9,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 import decisions as D
+import health as H
 import review_server as S
 import taxonomy_review as R
 from taxo_fixtures import tagged_store, taxonomy, write_json
@@ -189,6 +190,19 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(code, 200, out)
             self.assertEqual(app.state()["decisions"][item["id"]]["action"], "clear")
 
+    def test_batch_decisions_all_or_none(self):
+        ok = {"action": "propose", "op": {"type": "describe", "node": "Refunds", "description": "Money back."}}
+        bad = {"action": "propose", "op": {"type": "describe", "node": "Nope", "description": "x"}}
+        code, out = self.req("POST", "/api/decisions", {"records": [ok, bad]})
+        self.assertEqual((code, out["index"]), (400, 1))
+        self.assertFalse(os.path.exists(self.dec))
+        code, out = self.req("POST", "/api/decisions", {"records": [ok]})
+        self.assertEqual((code, len(out["records"])), (200, 1))
+
+    def test_request_appends_and_state_shows_it(self):
+        code, out = self.req("POST", "/api/request", {"item_id": "i-missing", "note": "x"})
+        self.assertEqual(code, 400)
+
     def test_v2_ui_contract(self):
         html = open(S.UI, encoding="utf-8").read()
         for needle in ("/api/state", "/api/node/", "/api/chunk/", "/api/impact", "/api/decision", "/api/submit",
@@ -221,3 +235,61 @@ class TimeoutTests(unittest.TestCase):
             self.assertEqual(code, 409)
             self.assertEqual(app.outcome["status"], "timeout")
             self.assertEqual(D.read(D.default_path(os.path.dirname(cur))), [])
+
+
+class HealthLiveChannelTests(unittest.TestCase):
+    """B4/B6: a request against a health review, and the server-side view of a Claude revision
+    recorded via `respond`, into state()'s requests/revisions."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.dir = os.path.join(self.td.name, "taxonomy")
+        tax = taxonomy(version=1)
+        tax["intent_taxonomy"]["tree"]["Billing & Payments"].append("Payment Plans")
+        self.cur = os.path.join(self.dir, "current.json"); write_json(self.cur, tax)
+        self.db = os.path.join(self.td.name, "k.sqlite"); tagged_store(self.db, tax)
+        self.work = os.path.join(self.dir, "work", "health")
+        H.diagnose(self.cur, self.db, self.work)
+        self.path, self.rv = R.build_plan("health", self.cur, work_dir=self.work, db=self.db, now=NOW)
+        self.dec = os.path.join(self.dir, "decisions.jsonl")
+        self.app = S.ReviewApp(self.path, db_path=self.db, live_channel=True)
+        self.codes = []
+        self.t = threading.Thread(target=lambda: self.codes.append(
+            S.serve(self.app, open_browser=False, timeout=10, out=open(os.devnull, "w"), err=open(os.devnull, "w"))))
+        self.t.start()
+        self.assertTrue(self.app.ready.wait(5))
+        self.base = self.app.url.split("/?")[0]
+
+    def tearDown(self):
+        if self.t.is_alive():
+            self.req("POST", "/api/cancel", {})
+        self.t.join(5)
+        self.td.cleanup()
+
+    def req(self, method, path, body=None):
+        data = json.dumps(body).encode() if body is not None else None
+        r = urllib.request.Request(self.base + path, data=data, method=method)
+        r.add_header("X-Review-Token", self.app.token)
+        r.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(r, timeout=5) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read())
+
+    def test_request_then_revision_flow(self):
+        item = self.rv["items"][0]
+        code, out = self.req("POST", "/api/request", {"item_id": item["id"], "note": "please retry"})
+        self.assertEqual(code, 200, out)
+        rid = out["request"]["id"]
+        code, st = self.req("GET", "/api/state")
+        self.assertEqual(code, 200, st)
+        self.assertEqual(st["requests"][rid]["status"], "open")
+        self.assertTrue(st["live_channel"])
+        resp_path = os.path.join(self.dir, "work", "responses.jsonl")
+        os.makedirs(os.path.dirname(resp_path), exist_ok=True)
+        op = {"type": "keep", "node": "x"}
+        with open(resp_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"request_id": rid, "item_id": item["id"], "op": op, "ts": "t"}) + "\n")
+        code, st = self.req("GET", "/api/state")
+        self.assertEqual(st["revisions"][item["id"]]["op"], op)
