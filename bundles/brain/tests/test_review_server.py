@@ -213,6 +213,13 @@ class ServerTests(unittest.TestCase):
             self.assertNotIn(banned, html)
         self.assertNotIn("bar-s", html)  # no share bars in the taxonomy list
 
+    def test_health_ui_contract(self):
+        html = open(S.UI, encoding="utf-8").read()
+        for needle in ("/api/decisions", "/api/request", "Accept all remaining", "Redo with a note",
+                       "Revised by Claude", "Queued for the next run", "Needs a definition",
+                       "Possible duplicates", "Quoted from documents"):
+            self.assertIn(needle, html)
+
 
 class TimeoutTests(unittest.TestCase):
     def test_timeout_exits_3(self):

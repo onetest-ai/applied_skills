@@ -75,7 +75,7 @@ code{font-family:var(--mono);font-size:.86em;background:var(--sunk);padding:1px 
 .nav hr{border:0;border-top:1px solid var(--line);margin:8px 4px}
 .nav .hint{font-size:12px;color:var(--ink-3);padding:4px 10px;line-height:1.9}
 .viewhost{min-height:0;min-width:0;display:flex;flex-direction:column}
-.view{flex:1;min-height:0;display:grid;grid-template-columns:minmax(260px,380px) minmax(0,1fr)}
+.view{flex:1;min-height:0;display:grid;grid-template-columns:minmax(260px,380px) minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
 .view.single{display:block;overflow:auto}
 .list{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;min-width:0}
 .ltools{flex:none;border-bottom:1px solid var(--line);display:flex;flex-direction:column}
@@ -181,6 +181,42 @@ input[type=checkbox]{accent-color:var(--accent)}
 .toast button{all:unset;cursor:pointer;font-weight:600;color:var(--accent-soft);text-decoration:underline;white-space:nowrap}
 .toast button:focus-visible{outline:2px solid var(--paper);outline-offset:2px}
 .done{padding:40px 22px;display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+
+/* health: grouped problems */
+.gtools{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.gprog{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.gprog .track{width:120px;height:6px;border-radius:3px;background:var(--line);overflow:hidden}
+.gprog .track i{display:block;height:100%;background:var(--accent)}
+.gpart{font:600 12px var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);margin:6px 0 -6px}
+/* A group's table scrolls inside the detail pane, so its title and Accept all stay in view. */
+.twrap{overflow:auto;border:1px solid var(--line);border-radius:8px;flex:0 1 auto;min-height:160px}
+.gtable{width:100%;min-width:620px;border-collapse:collapse;table-layout:fixed;font-size:14px}
+.gtable th{position:sticky;top:0;z-index:1;text-align:left;font:600 11.5px var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);padding:8px;border-bottom:1px solid var(--line-2);background:var(--sunk)}
+.gtable td{padding:8px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere;min-width:0}
+.gtable tr:last-child>td{border-bottom:0}
+.gtable tr{scroll-margin-top:40px}
+.gtable tr.cur>td{background:var(--accent-soft)}
+.gtable tr.rdone>td{color:var(--ink-3)}
+.gtable tr.rpanel>td{background:var(--sunk);padding:12px 14px 16px}
+.gtable select{font-size:13px;padding:5px 6px}
+.gtable .acts{display:flex;gap:6px;flex-wrap:wrap}
+.gtable .sub{display:block;font-size:12px;color:var(--ink-3)}
+.rowpick{all:unset;cursor:pointer;font-weight:600;overflow-wrap:anywhere}
+.rowpick:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.fix{font:12.5px/1.5 var(--mono)}
+.fix>span,.fix>div{display:block;white-space:pre-wrap;overflow-wrap:anywhere}
+.fix .plus{color:var(--ok)} .fix .minus{color:var(--bad)} .fix .ctx{color:var(--ink-3)}
+.panelbox{display:flex;flex-direction:column;gap:12px;min-width:0}
+.cands{display:flex;flex-direction:column;gap:6px}
+.cand{display:grid;grid-template-columns:20px minmax(0,1fr);gap:8px;align-items:start;cursor:pointer}
+.cand input{margin-top:4px}
+.revised{border:1px solid var(--info);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;background:var(--paper)}
+.revised>b{color:var(--info)}
+.nwrap{display:flex;align-items:center;min-width:0}
+.nwrap>.node{flex:1;min-width:0}
+.fixlink{flex:none;margin:0 14px 0 4px}
+.mhint{font-size:13px;color:var(--ink-2);padding:0 14px 10px;overflow-wrap:anywhere}
+.pair{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
 .empty{padding:28px 22px;display:flex;flex-direction:column;gap:8px}
 
 @media (max-width:860px){
@@ -230,6 +266,8 @@ const api = {
   chunk(id){ return this.get("/api/chunk/" + encodeURIComponent(id)); },
   impact(op){ return this.post("/api/impact", {op}); },
   decide(rec){ return this.post("/api/decision", rec); },
+  decideMany(records){ return this.post("/api/decisions", {records}); },   // all-or-nothing
+  request(itemId, note){ return this.post("/api/request", {item_id:itemId, note}); },
   submit(){ return this.post("/api/submit", {}); },
   cancel(){ return this.post("/api/cancel", {}); },
 };
@@ -243,8 +281,11 @@ const $ = id => document.getElementById(id);
 // ---------------------------------------------------------------- state
 let S = null;          // /api/state payload
 let closed = null;     // {title, body} once the session is over
-const U = {view:null, inboxSel:null, treeSel:null, filter:"all", sort:"tree", q:"", mtab:null, mSel:null, mq:"", sheet:false};
-let nodeCache = {};
+// inboxSel is an item id or "g:<kind>" for a health group; gRow is the current row inside it.
+// tagDraft holds a no-tags row's selection only while it is empty (a non-empty one is posted).
+const U = {view:null, inboxSel:null, gRow:null, treeSel:null, filter:"all", sort:"tree", q:"", mtab:null, mSel:null, mq:"",
+  sheet:false, redo:null, redoText:"", tagDraft:{}};
+let nodeCache = {}, chunkCache = {};
 let P = {m:{}, adds:[]};   // pending ops, recomputed on each render
 
 const latest = id => S.decisions[id];
@@ -254,7 +295,31 @@ const isDecided = it => { const d = latest(it.id); return !!d && d.action !== "c
 const actionable = () => S.review.items.filter(isActionable);
 const changeCount = () => actionable().filter(isDecided).length + S.proposals.length;
 const itemOp = it => { const d = latest(it.id); return d && d.action === "amend" && isDecided(it) ? d.op : it.op; };
-const itemTitle = it => it.op.name || it.op.node || it.op.metric || "";
+const isHealth = it => it.origin === "health";
+const subjectOf = op => op.node === "__untagged__" ? "Untagged sections" : (op.node || op.from || op.metric || op.name || "");
+const itemTitle = it => isHealth(it) ? (it.group ? subjectOf(it.op) : (it.title || subjectOf(it.op))) : (it.op.name || it.op.node || it.op.metric || "");
+// Ops compare by content, not key order; tag chunk_ids compare as sets.
+function canon(v){
+  if (Array.isArray(v)) return v.map(canon);
+  if (v && typeof v === "object"){ const o = {}; for (const k of Object.keys(v).sort()) o[k] = canon(v[k]); return o; }
+  return v;
+}
+function sameOp(a, b){
+  if (!a || !b) return false;
+  if (a.type === "tag" && b.type === "tag") return a.node === b.node && JSON.stringify([...(a.chunk_ids || [])].sort((x, y) => x - y)) === JSON.stringify([...(b.chunk_ids || [])].sort((x, y) => x - y));
+  return JSON.stringify(canon(a)) === JSON.stringify(canon(b));
+}
+// A template alternative is an empty-payload op that exists only to be edited into a real one.
+const isTemplate = op => (op.type === "describe" && !String(op.description || "").trim())
+  || (op.type === "tag" && !(op.chunk_ids || []).length) || (op.type === "metric_govern" && !Object.keys(op.draft || {}).length);
+const candidatesOf = it => [it.op].concat(it.alternatives || []);
+function candIndex(it, op){
+  const f = t => (t === "merge" || t === "metric_merge") ? "from" : t.startsWith("metric_") ? "metric" : "node";
+  const cs = candidatesOf(it);
+  const exact = cs.findIndex(c => sameOp(c, op)); if (exact >= 0) return exact;
+  return cs.findIndex(c => c.type === op.type && c[f(c.type)] === op[f(op.type)] && (c.into === undefined || c.into === op.into));
+}
+const suppressedLocked = it => it.status === "suppressed" && (latest(it.id) || {}).action !== "reopen";
 const descOf = l => ((S.base.descriptions || {})[l] || "").trim();
 const cnt = l => num(S.counts[slug(l)]);
 const inductionItem = l => S.review.items.find(i => i.origin === "induction" && i.op.node === l);
@@ -296,7 +361,8 @@ function pending(){
   return {m, adds};
 }
 const MARK = {add:["+","add"], describe:["✎","chg"], rename:["~","chg"], move:["~","chg"], split:["~","chg"],
-  merge:["⊕","chg"], remove:["×","del"], metric_add:["+","add"], metric_edit:["~","chg"], metric_merge:["⊕","chg"], metric_remove:["×","del"]};
+  merge:["⊕","chg"], remove:["×","del"], metric_add:["+","add"], metric_edit:["~","chg"], metric_merge:["⊕","chg"], metric_remove:["×","del"],
+  tag:["#","add"], metric_govern:["✓","add"]};
 function mark(op){ const [c, k] = MARK[op.type] || ["?", "chg"]; return `<span class="ic ${esc(k)}" title="pending: ${esc(op.type.replace("_", " "))}">${esc(c)}</span>`; }
 
 // ---------------------------------------------------------------- words
@@ -309,7 +375,9 @@ function opText(op){
     case "move": return `Move “${op.node}” under ${op.new_parent}`;
     case "split": return `Split “${op.node}” into ${(op.into || []).map(x => "“" + x + "”").join(", ")}${op.retire ? " and retire it" : ""}`;
     case "remove": return `Remove “${op.node}”${String(op.disposition || "").startsWith("entity:") ? " (becomes a " + op.disposition.slice(7) + " entity)" : ""}`;
-    case "keep": return `Keep “${op.node}”`;
+    case "keep": return op.node === "__untagged__" ? "Leave the untagged sections for now" : `Keep “${op.node || op.metric}”`;
+    case "tag": return `Tag ${plural((op.chunk_ids || []).length, "section")} with “${op.node}”`;
+    case "metric_govern": return `Draft a governed definition for “${op.metric}”${(op.draft || {}).key ? " (" + op.draft.key + ")" : ""}`;
     case "metric_add": return `Add metric “${op.metric}”`;
     case "metric_edit": return `Edit metric “${op.metric}” (${Object.keys(op.fields || {}).join(", ").replace("source_type", "type")})`;
     case "metric_merge": return `Merge metric “${op.from}” into “${op.into}”`;
@@ -346,7 +414,11 @@ function diffHTML(op){
       if (String(op.disposition).startsWith("entity:")) plus(`${op.disposition.slice(7)} entity: ${op.node}`);
       else ctx("label demoted; its sections are re-tagged");
       if (op.reason) ctx("reason: " + op.reason); break;
-    case "keep": ctx(`${op.node}   ${secs(op.node)} · no change`); break;
+    case "keep": ctx(op.node === "__untagged__" ? "untagged sections · no change" : op.metric ? `${op.metric} · no change` : `${op.node}   ${secs(op.node)} · no change`); break;
+    case "tag": { const ids = op.chunk_ids || []; ctx(`${op.node}   ${secs(op.node)}`);
+      plus(`${plural(ids.length, "section")}:${ids.slice(0, 12).map(x => "#" + x).join(", ")}${ids.length > 12 ? ", …" : ""}`); ctx("no tag is removed"); break; }
+    case "metric_govern": { const d = op.draft || {}; ctx(op.metric);
+      for (const k of ["key", "family", "unit", "grain", "desc"]) if (d[k]) plus(`${k}: ${d[k]}`); break; }
     case "metric_add": plus(`${op.metric} · ${op.source_type} · grain ${op.grain || "—"}`); if (op.definition) plus("  " + op.definition); break;
     case "metric_edit": { const m = S.metrics.find(x => x.metric === op.metric) || {};
       ctx(op.metric); for (const [k, v] of Object.entries(op.fields || {})){ const lab = k === "source_type" ? "type" : k; minus(`${lab}: ${m[k] ?? "—"}`); plus(`${lab}: ${v ?? "—"}`); } break; }
@@ -402,26 +474,93 @@ function renderNav(){
     ["metrics", "Metrics", S.metrics.length, false], ["changes", "Your changes", S.proposals.length, false]];
   $("nav").innerHTML = items.map(([k, l, c, hot]) =>
     `<button type="button" data-act="view" data-v="${esc(k)}" aria-current="${U.view === k}">${esc(l)}<span class="cnt ${hot ? "hot" : ""}">${num(c)}</span></button>`).join("")
-    + `<hr><div class="hint">Inbox keys: <span class="kbd">J</span>/<span class="kbd">K</span> move · <span class="kbd">A</span> approve · <span class="kbd">R</span> reject · <span class="kbd">U</span> undo</div>`;
+    + `<hr><div class="hint">Inbox keys: <span class="kbd">J</span>/<span class="kbd">K</span> move · <span class="kbd">A</span> approve / accept · <span class="kbd">R</span> reject / skip · <span class="kbd">U</span> undo</div>`;
 }
 
 function renderView(){
   const host = $("view"), prevRows = host.querySelector(".rows"), keep = prevRows && prevRows.dataset.v === U.view ? prevRows.scrollTop : 0;
+  // A group of 150 rows re-renders on every decision; keep the detail pane where it was.
+  const detKey = () => U.view + "|" + (U.view === "inbox" ? U.inboxSel : U.view === "metrics" ? U.mSel + "|" + U.mtab : JSON.stringify(U.treeSel));
+  const prevDet = host.querySelector("#detail"), same = !!prevDet && prevDet.dataset.k === detKey();
+  const keepDet = same ? prevDet.scrollTop : 0, keepT = same ? [...prevDet.querySelectorAll(".twrap")].map(t => t.scrollTop) : [];
   host.innerHTML = U.view === "inbox" ? inboxView() : U.view === "taxonomy" ? taxonomyView()
     : U.view === "metrics" ? metricsView() : changesView();
   const rows = host.querySelector(".rows");
   if (rows){ rows.scrollTop = keep; const s = rows.querySelector(".sel"); if (s) s.scrollIntoView({block:"nearest"}); }
+  const det = host.querySelector("#detail");
+  if (det){
+    det.dataset.k = detKey(); det.scrollTop = keepDet;
+    det.querySelectorAll(".twrap").forEach((t, i) => { t.scrollTop = keepT[i] || 0; });
+    const panel = det.querySelector("tr.rpanel"), cur = det.querySelector("tr.cur");
+    if (panel) panel.scrollIntoView({block:"nearest"});
+    if (cur) cur.scrollIntoView({block:"nearest"});
+  }
   if (U.view === "inbox") afterInbox();
   if (U.view === "taxonomy") afterTaxonomy();
 }
 
 // ---------------------------------------------------------------- inbox
+// Inbox entries: one per health group (all rows with that `group`), one per other item.
+function inboxEntries(){
+  const groups = {}, out = [];
+  for (const it of actionable()){
+    if (isHealth(it) && it.group){
+      if (!groups[it.group]){ groups[it.group] = {type:"group", id:"g:" + it.group, kind:it.group, rows:[]}; out.push(groups[it.group]); }
+      groups[it.group].rows.push(it);
+    } else out.push({type:"item", id:it.id, it});
+  }
+  return out;
+}
+const entryOpen = e => e.type === "group" ? e.rows.some(r => !isDecided(r)) : !isDecided(e.it);
 function inboxOrder(){
-  const a = actionable(), flagFirst = it => (it.flags && it.flags.length) ? 0 : 1;
-  const todo = a.filter(i => !isDecided(i)).sort((x, y) => flagFirst(x) - flagFirst(y));
-  return {todo, done: a.filter(isDecided)};
+  const es = inboxEntries(), flagFirst = e => (e.type === "item" && e.it.flags && e.it.flags.length) ? 0 : 1;
+  const todo = es.filter(entryOpen).sort((x, y) => flagFirst(x) - flagFirst(y));
+  return {todo, done: es.filter(e => !entryOpen(e))};
+}
+// J/K walk every row of every group and every individual item, in list order.
+function navPositions(){
+  const {todo, done} = inboxOrder(), out = [];
+  for (const e of todo.concat(done)){
+    if (e.type === "group") for (const r of e.rows) out.push({sel:e.id, row:r.id, it:r});
+    else out.push({sel:e.id, row:null, it:e.it});
+  }
+  return out;
+}
+const groupOf = kind => inboxEntries().find(e => e.type === "group" && e.kind === kind);
+// After Accept/Skip on the current row, move to the next undecided row of the same group.
+function advanceRow(id){
+  if (!String(U.inboxSel || "").startsWith("g:") || U.gRow !== id) return;
+  const g = groupOf(U.inboxSel.slice(2)); if (!g) return;
+  const i = g.rows.findIndex(r => r.id === id);
+  const next = g.rows.slice(i + 1).find(r => !isDecided(r)) || g.rows.find(r => !isDecided(r));
+  if (next) U.gRow = next.id;
+}
+
+const KIND_WORDS = {missing_description:"Missing description", no_tags:"No tagged sections", untagged_sections:"Untagged sections",
+  near_duplicate:"Near-duplicate", off_axis:"Off-axis category", similar_metrics:"Similar metrics", metric_not_governed:"Not governed",
+  refresh_proposal:"New category"};
+const GROUP_WORDS = {missing_description:["category has no description", "categories have no description"],
+  no_tags:["category has no tagged sections", "categories have no tagged sections"],
+  metric_not_governed:["metric can't be computed yet", "metrics can't be computed yet"]};
+function groupTitle(e){
+  const w = GROUP_WORDS[e.kind];
+  return w ? plural(e.rows.length, w[0], w[1]) : (e.rows[0].title || KIND_WORDS[e.kind] || e.kind);
+}
+function fixSummary(rows){
+  const W = {describe:["drafted description"], tag:["tag proposal"], merge:["merge"], remove:["removal"], add:["new category", "new categories"],
+    metric_govern:["governed draft"], keep:["keep as is", "keep as is"], none:["with no fix proposed", "with no fix proposed"]};
+  const c = {}, order = [];
+  for (const it of rows){ const k = it.reason === "no fix proposed" ? "none" : it.op.type; if (!c[k]){ c[k] = 0; order.push(k); } c[k]++; }
+  return order.map(k => { const w = W[k] || [k.replace("_", " ")]; return num(c[k]) + " " + (c[k] === 1 ? w[0] : (w[1] || w[0] + "s")); }).join(" · ");
+}
+const GROUP_ICON = {missing_description:["✎", "chg"], no_tags:["∅", "flag"], untagged_sections:["+", "add"], metric_not_governed:["✓", "chg"]};
+function groupRow(e){
+  const und = e.rows.filter(r => !isDecided(r)).length, [c, k] = GROUP_ICON[e.kind] || ["!", "flag"];
+  return `<button type="button" class="item ${U.inboxSel === e.id ? "sel" : ""}" data-act="pick-item" data-id="${esc(e.id)}"><span class="ic ${esc(k)}" title="group">${esc(c)}</span><span class="t">${esc(groupTitle(e))}</span><span class="st">${und ? `<span class="pill warn">${num(und)} of ${num(e.rows.length)} left</span>` : `<span class="pill ok">all decided</span>`}</span><span class="s">${esc(fixSummary(e.rows))}</span></button>`;
 }
 function itemIcon(it){
+  if (isHealth(it)) return it.kind === "near_duplicate" || it.kind === "similar_metrics" ? `<span class="ic flag" title="possible duplicate">≈</span>`
+    : it.kind === "off_axis" ? `<span class="ic flag" title="flagged">!</span>` : `<span class="ic chg" title="health">·</span>`;
   if (it.origin === "describe") return `<span class="ic chg" title="description">✎</span>`;
   if (it.origin === "refine") return `<span class="ic add" title="new category">+</span>`;
   if (it.flags && it.flags.length) return `<span class="ic flag" title="flagged">!</span>`;
@@ -431,6 +570,7 @@ const where = it => it.level === "L1" ? "L1" : it.level === "entity" ? "Entity k
 function flagWords(f){ return f.kind === "near_duplicate" ? `Near-duplicate of ${(f.with || []).map(x => "“" + x + "”").join(", ")}` : (f.reason ? `Off-axis: ${f.reason}` : String(f.kind)); }
 function itemSub(it){
   const s = it.support || {};
+  if (isHealth(it)) return [KIND_WORDS[it.kind] || it.kind, it.reason].filter(Boolean).join(" · ");
   if (it.origin === "refine") return `${it.op.level === "L1" ? "New L1" : "New L2 under " + (it.op.parent || "—")} · ${plural(s.chunks, "chunk")}`;
   if (it.origin === "describe") return `Description · ${where(it)} · ${num(s.tags)} tagged`;
   const f = (it.flags || []).map(flagWords).join(" · ");
@@ -441,26 +581,289 @@ function decisionPill(it){
   const d = latest(it.id);
   if (!d || d.action === "clear") return it.status === "suppressed" ? `<span class="pill mute">rejected before</span>` : "";
   if (d.action === "reopen") return `<span class="pill warn">reopened</span>`;
-  if (d.action === "reject") return `<span class="pill bad">rejected</span>`;
-  if (d.action === "amend") return `<span class="pill info">${esc(AMEND_WORD[d.op.type] || "amended")}</span>`;
-  return `<span class="pill ok">${it.origin === "induction" ? "kept" : "approved"}</span>`;
+  if (d.action === "reject") return `<span class="pill bad">${d.reason === SKIP_REASON ? "skipped" : "rejected"}</span>`;
+  if (d.action === "amend") return `<span class="pill info">${esc(isHealth(it) ? "changed" : AMEND_WORD[d.op.type] || "amended")}</span>`;
+  return `<span class="pill ok">${it.origin === "induction" ? "kept" : isHealth(it) ? "accepted" : "approved"}</span>`;
 }
 function itemRow(it){
   return `<button type="button" class="item ${U.inboxSel === it.id ? "sel" : ""}" data-act="pick-item" data-id="${esc(it.id)}">${itemIcon(it)}<span class="t">${esc(itemTitle(it))}</span><span class="st">${decisionPill(it)}</span><span class="s">${esc(itemSub(it))}</span></button>`;
 }
+const entryRow = e => e.type === "group" ? groupRow(e) : itemRow(e.it);
 function inboxView(){
   const {todo, done} = inboxOrder(), all = todo.concat(done);
   const skipped = S.review.items.filter(i => !isActionable(i));
-  if (!all.find(i => i.id === U.inboxSel)) U.inboxSel = (all[0] || {}).id || null;
+  if (!all.find(e => e.id === U.inboxSel)) U.inboxSel = (all[0] || {}).id || null;
   const skippedHTML = skipped.length ? `<details class="skipped"><summary>${plural(skipped.length, "item")} skipped automatically</summary>${skipped.map(i =>
     `<div><b>${esc(itemTitle(i))}</b> — ${esc(i.reason || i.status)}</div>`).join("")}</details>` : "";
   const list = `<div class="list"><div class="rows" data-v="inbox">
-    ${todo.length ? `<div class="lgroup">To review · ${num(todo.length)}</div>` + todo.map(itemRow).join("") : (all.length ? `<div class="lgroup">All reviewed</div>` : "")}
-    ${done.length ? `<div class="lgroup">Decided · ${num(done.length)}</div>` + done.map(itemRow).join("") : ""}
+    ${todo.length ? `<div class="lgroup">To review · ${num(todo.length)}</div>` + todo.map(entryRow).join("") : (all.length ? `<div class="lgroup">All reviewed</div>` : "")}
+    ${done.length ? `<div class="lgroup">Decided · ${num(done.length)}</div>` + done.map(entryRow).join("") : ""}
     ${!all.length ? `<div class="empty"><b>Nothing waiting for a decision.</b><p class="note">Make changes in Taxonomy or Metrics; they collect under Your changes.</p></div>` : ""}
     ${skippedHTML}</div></div>`;
-  const it = all.find(i => i.id === U.inboxSel);
-  return `<div class="view">${list}<div class="detail" id="detail">${it ? itemDetail(it) : `<div class="note">Nothing selected.</div>`}</div></div>`;
+  const e = all.find(x => x.id === U.inboxSel);
+  return `<div class="view">${list}<div class="detail" id="detail">${!e ? `<div class="note">Nothing selected.</div>` : e.type === "group" ? groupDetail(e) : itemDetail(e.it)}</div></div>`;
+}
+
+// ---------------------------------------------------------------- health: groups, rows, redo
+const SKIP_REASON = "Skipped";
+const canAccept = it => !isDecided(it) && !suppressedLocked(it) && !isTemplate(it.op) && !(U.tagDraft[it.id] && !U.tagDraft[it.id].length);
+function shortOp(op){
+  if (isTemplate(op)) return op.type === "describe" ? "Write a description…" : op.type === "tag" ? "Pick sections to tag…" : "Draft a governed definition…";
+  switch (op.type){
+    case "describe": return "Use the drafted description";
+    case "tag": return `Tag ${plural((op.chunk_ids || []).length, "section")}`;
+    case "merge": case "metric_merge": return `Merge into “${op.into}”`;
+    case "remove": return String(op.disposition || "").startsWith("entity:") ? `Make it a ${op.disposition.slice(7)} entity` : "Remove it (demote)";
+    case "keep": return "Leave as is";
+    case "add": return `Add “${op.name}”`;
+    case "metric_govern": return `Govern as ${(op.draft || {}).key || "…"}`;
+    default: return opText(op);
+  }
+}
+// Individual items can offer merges in either direction, so name both sides.
+const altWords = c => (c.type === "merge" || c.type === "metric_merge") && !isTemplate(c) ? `Merge “${c.from}” into “${c.into}”` : shortOp(c);
+function lineDiff(op, it){
+  const P = t => `<span class="plus">+ ${esc(t)}</span>`, M = t => `<span class="minus">− ${esc(t)}</span>`, C = t => `<span class="ctx">${esc(t)}</span>`;
+  switch (op.type){
+    case "describe": return P(op.description || "");
+    case "tag": { const ids = op.chunk_ids || []; return P(`${plural(ids.length, "section")}: ${ids.slice(0, 8).map(x => "#" + x).join(", ")}${ids.length > 8 ? ", …" : ""}`); }
+    case "merge": case "metric_merge": return M(op.from) + P("into " + op.into);
+    case "remove": return M(op.node) + (String(op.disposition || "").startsWith("entity:") ? P(op.disposition.slice(7) + " entity") : C("label demoted; sections re-tagged"));
+    case "keep": return C(it && it.reason === "no fix proposed" ? "No fix proposed. Pick one, or leave as is." : "no change");
+    case "add": return P(`${op.name}${op.parent ? " under " + op.parent : " (L1)"}`) + (op.description ? C(op.description) : "");
+    case "metric_govern": { const d = op.draft || {}; return P([d.key, d.family, d.unit, d.grain ? "grain " + d.grain : ""].filter(Boolean).join(" · ")) + (d.desc ? C(d.desc) : ""); }
+    default: return C(opText(op));
+  }
+}
+function healthImpact(op){
+  switch (op.type){
+    case "describe": return "No tagged sections change. The description guides the classifier and is returned with the taxonomy.";
+    case "tag": return `Adds “${op.node}” to ${plural((op.chunk_ids || []).length, "section")}. No tag is removed.`;
+    case "merge": return `“${op.from}” is merged into “${op.into}”. Its tagged sections move, and the old name is kept as an alias.`;
+    case "remove": return String(op.disposition || "").startsWith("entity:") ? `“${op.node}” becomes a ${op.disposition.slice(7)} entity; its sections are re-tagged.` : `“${op.node}” is removed; its sections are re-tagged.`;
+    case "keep": return op.node === "__untagged__" ? "Nothing changes. The sections stay untagged until the next health check." : "Nothing changes; the problem is marked as reviewed.";
+    case "add": return `Adds a new ${op.level}. Sections get it when Claude re-tags.`;
+    case "metric_govern": return "Records a draft governed definition for you to confirm after submit. The app never edits the governed metrics file.";
+    case "metric_merge": return `“${op.from}” is merged into “${op.into}” and kept as a variant.`;
+    default: return "";
+  }
+}
+// The op an Edit starts from: the current fix when it is editable, else the first editable candidate.
+const EDITABLE = {describe:"describe", metric_govern:"h-govern", add:"rename-add"};
+function editBase(it){
+  const op = itemOp(it);
+  if (EDITABLE[op.type]) return op;
+  return candidatesOf(it).find(c => EDITABLE[c.type]) || null;
+}
+const tagCand = it => candidatesOf(it).find(c => c.type === "tag") || null;
+// The sections a tag row offers: every FTS candidate for a no-tags row, else the proposed ids.
+function tagChoices(it){
+  if (!tagCand(it)) return [];
+  const cand = (it.support || {}).candidate_ids;
+  return it.kind === "no_tags" && Array.isArray(cand) ? cand : (tagCand(it).chunk_ids || []);
+}
+function tagChosen(it){
+  if (U.tagDraft[it.id]) return U.tagDraft[it.id];
+  const op = itemOp(it);
+  return op.type === "tag" ? op.chunk_ids || [] : [];
+}
+function rowCtx(it, base){
+  const label = subjectOf(base);
+  return {label, itemId:it.id, baseOp:base, metric:base.metric, draft:base.draft || {},
+    desc: base.type === "describe" ? (base.description || "") : descOf(label)};
+}
+// The label for a candidate the reviewer edited (a narrowed tag, their own description, …).
+function editedWords(op){
+  switch (op.type){
+    case "tag": return `Tag ${plural((op.chunk_ids || []).length, "ticked section")}`;
+    case "describe": return "Your description";
+    case "metric_govern": return `Your draft (${(op.draft || {}).key || "…"})`;
+    case "add": return `Add “${op.name}” (edited)`;
+    default: return shortOp(op);
+  }
+}
+function altSelect(it){
+  const cs = candidatesOf(it); if (cs.length < 2) return `<span class="note">—</span>`;
+  const ci = candIndex(it, itemOp(it));
+  return `<select data-alt="${esc(it.id)}" aria-label="Fix for ${esc(itemTitle(it))}" ${suppressedLocked(it) ? "disabled" : ""}>${cs.map((c, i) =>
+    opt(i, (i === 0 ? "Recommended: " : "") + (i === ci && !sameOp(c, itemOp(it)) ? editedWords(itemOp(it)) : shortOp(c)), i === ci)).join("")}</select>`;
+}
+function rowActions(it){
+  const id = esc(it.id);
+  if (isDecided(it)) return `${decisionPill(it)} <button type="button" class="linkbtn" data-act="undo-item" data-id="${id}">Undo</button>`;
+  if (suppressedLocked(it)) return `<span class="pill mute" title="${esc((it.prior || {}).reason || "")}">rejected before</span><div class="acts"><button type="button" class="btn sm" data-act="reopen" data-id="${id}">Reopen</button></div>`;
+  return `<div class="acts"><button type="button" class="btn sm ok" data-act="approve" data-id="${id}" ${canAccept(it) ? "" : "disabled"}>Accept</button>${editBase(it) || tagCand(it)
+    ? `<button type="button" class="btn sm" data-act="row-edit" data-id="${id}">Edit</button>` : ""}<button type="button" class="btn sm" data-act="skip" data-id="${id}">Skip</button></div>`;
+}
+function rowNote(it){
+  const s = it.support || {};
+  if (it.kind === "missing_description") return plural(s.tags, "tagged section");
+  if (it.kind === "no_tags") return plural((s.candidate_ids || []).length, "candidate section");
+  if (it.kind === "metric_not_governed") return s.sources != null ? plural(Array.isArray(s.sources) ? s.sources.length : s.sources, "source") : "";
+  if (s.chunks != null) return plural(s.chunks, "section");
+  return "";
+}
+function rowHTML(it){
+  const cur = U.gRow === it.id, id = esc(it.id), note = rowNote(it);
+  return `<tr class="${cur ? "cur" : ""} ${isDecided(it) ? "rdone" : ""}" data-row="${id}"><td><button type="button" class="rowpick" data-act="pick-row" data-id="${id}" aria-expanded="${cur}">${esc(itemTitle(it))}</button>${note ? `<span class="sub">${esc(note)}</span>` : ""}</td>
+    <td class="fix">${lineDiff(itemOp(it), it)}</td><td>${altSelect(it)}</td><td>${rowActions(it)}</td></tr>`
+    + (cur ? `<tr class="rpanel"><td colspan="4">${rowPanel(it)}</td></tr>` : "");
+}
+function candBrief(it, cid){
+  const e = (it.evidence || []).find(x => x && x.chunk_id === cid && x.preview != null);
+  if (e) return e;
+  const c = chunkCache[cid];
+  if (c && !c.errors) return {chunk_id:cid, source:c.source, title:c.title, preview:String(c.text || "").split(/\s+/).join(" ").trim().slice(0, 240)};
+  return c ? {chunk_id:cid, preview:"(couldn't load this section)"} : null;
+}
+function candsHTML(it){
+  const ids = tagChoices(it), chosen = new Set(tagChosen(it)), lock = isDecided(it) && latest(it.id).action === "reject" || suppressedLocked(it);
+  const rows = ids.map(cid => { const b = candBrief(it, cid);
+    return `<div class="quote"><label class="cand"><input type="checkbox" data-tag="${esc(it.id)}" value="${esc(cid)}" ${chosen.has(cid) ? "checked" : ""} ${lock ? "disabled" : ""}><span>${b ? esc(b.preview) : `<span class="note">Loading…</span>`}</span></label><small>#${esc(cid)}${b && b.source ? " · " + esc(b.source) : ""}${b && b.title ? " · " + esc(b.title) : ""} · <button type="button" class="linkbtn" data-act="chunk" data-id="${esc(cid)}">full text</button></small></div>`; }).join("");
+  if (!ids.length) return `<div class="section" data-cands="${esc(it.id)}"><b>Candidate sections</b><p class="note">Search found no sections that mention it, so there is nothing to tag. Merge or remove it, or leave it as is.</p></div>`;
+  const empty = U.tagDraft[it.id] && !U.tagDraft[it.id].length ? `<div class="decided warn"><span>No section selected, so Accept is off. Tick at least one, or pick another fix.</span></div>` : "";
+  return `<div class="section" data-cands="${esc(it.id)}"><b>Candidate sections</b><span class="note">Tick the sections that belong in “${esc(tagCand(it).node)}”. ${num(chosen.size)} of ${plural(ids.length, "section")} selected. Changing the selection changes the fix.</span>${empty}<div class="cands">${rows}</div></div>`;
+}
+function rowPanel(it){
+  const parts = [];
+  if (it.reason && it.reason !== "no fix proposed") parts.push(`<p><b>Why:</b> ${esc(it.reason)}</p>`);
+  else if (it.reason) parts.push(`<p class="note">Claude proposed no fix for this one. Pick one from the list, edit one, or leave it as is.</p>`);
+  const op = itemOp(it);
+  if (op.type !== "keep") parts.push(`<div class="impact">${esc(healthImpact(op))}</div>`);
+  if (tagCand(it)) parts.push(candsHTML(it));
+  parts.push(whyHTML(it));
+  parts.push(`<div id="formslot"></div>`);
+  parts.push(redoHTML(it));
+  return `<div class="panelbox">${parts.join("")}</div>`;
+}
+function groupTable(rows){
+  return `<div class="twrap"><table class="gtable"><colgroup><col style="width:25%"><col style="width:33%"><col style="width:22%"><col style="width:20%"></colgroup>
+    <thead><tr><th scope="col">Subject</th><th scope="col">Recommended fix</th><th scope="col">Alternatives</th><th scope="col">Decision</th></tr></thead>
+    <tbody>${rows.map(rowHTML).join("")}</tbody></table></div>`;
+}
+function groupDetail(e){
+  const rows = e.rows;
+  if (!rows.find(r => r.id === U.gRow)) U.gRow = (rows.find(r => !isDecided(r)) || rows[0]).id;
+  const decided = rows.filter(isDecided).length, open = rows.filter(canAccept).length;
+  let body;
+  if (e.kind === "untagged_sections"){
+    const adds = rows.filter(r => r.op.type === "add"), tags = rows.filter(r => r.op.type === "tag"), rest = rows.filter(r => r.op.type !== "add" && r.op.type !== "tag");
+    body = [["New categories", adds], ["Assign to existing", tags], ["Other", rest]].filter(([, r]) => r.length)
+      .map(([t, r]) => `<div class="gpart">${esc(t)} · ${num(r.length)}</div>${groupTable(r)}`).join("");
+  } else body = groupTable(rows);
+  return `<span class="where">Health check · ${esc(KIND_WORDS[e.kind] || e.kind)}</span><h3>${esc(groupTitle(e))}</h3>
+    <p class="note">${esc(fixSummary(rows))}</p>
+    <div class="gtools"><span class="gprog">${num(decided)} of ${num(rows.length)} decided<span class="track"><i style="width:${rows.length ? (100 * decided / rows.length) : 0}%"></i></span></span>
+      <button type="button" class="btn ok" data-act="accept-all" data-kind="${esc(e.kind)}" ${open ? "" : "disabled"}>Accept all remaining (${num(open)})</button>
+      <span class="note"><span class="kbd">J</span>/<span class="kbd">K</span> rows · <span class="kbd">A</span> accept · <span class="kbd">R</span> skip</span></div>
+    ${body}`;
+}
+function lastRequest(id){ let q = null; for (const r of Object.values(S.requests || {})) if (r.item_id === id) q = r; return q; }
+function redoHTML(it){
+  const q = lastRequest(it.id), rev = (S.revisions || {})[it.id], id = esc(it.id);
+  let status = "";
+  if (rev && rev.op){
+    const taken = isDecided(it) && sameOp(itemOp(it), rev.op);
+    status = `<div class="revised"><b>Revised by Claude</b>${q ? `<span class="note">Your note: “${esc(q.note)}”</span>` : ""}${diffHTML(rev.op)}${rev.reason ? `<p>${esc(rev.reason)}</p>` : ""}
+      ${taken ? `<span><span class="pill ok">approved</span></span>` : `<div class="dock flat"><button type="button" class="btn ok sm" data-act="rev-approve" data-id="${id}">Approve</button></div>`}</div>`;
+  } else if (q && q.status === "open"){
+    status = `<div class="decided info"><span>${S.live_channel ? "Claude is revising…" : "Queued for the next run. Claude reads the note when you next run the health check."} Your note: “${esc(q.note)}”</span></div>`;
+  }
+  const form = U.redo === it.id
+    ? `<div class="opform"><label>What should Claude do differently? <textarea id="redoNote" rows="3">${esc(U.redoText)}</textarea></label><div class="err" id="rerr" role="alert"></div>
+        <div class="frow"><button type="button" class="btn primary" data-act="redo-send" data-id="${id}">Send</button><button type="button" class="btn" data-act="redo-cancel">Cancel</button></div></div>`
+    : `<div><button type="button" class="linkbtn" data-act="redo-open" data-id="${id}">Redo with a note…</button></div>`;
+  return `<div class="section">${status}${form}</div>`;
+}
+function healthDetail(it){
+  const op = itemOp(it), s = it.support || {}, facts = [], id = esc(it.id);
+  if (it.kind === "near_duplicate"){
+    const [a, b] = it.title.split(" looks like ");
+    if (s.tags_a != null) facts.push(`<span class="pill mute wrap">${esc(a || "A")}: ${esc(plural(s.tags_a, "tagged section"))}</span>`);
+    if (s.tags_b != null) facts.push(`<span class="pill mute wrap">${esc(b || "B")}: ${esc(plural(s.tags_b, "tagged section"))}</span>`);
+    if (s.overlap != null) facts.push(`<span class="pill warn">${esc(num(s.overlap) + " shared")}</span>`);
+  }
+  if (it.kind === "off_axis" && s.tags != null) facts.push(`<span class="pill mute">${esc(plural(s.tags, "tagged section"))}</span>`);
+  if (it.kind === "similar_metrics" && s.score != null) facts.push(`<span class="pill warn">${esc(Math.round(num(s.score) * 100) + "% alike")}</span>`);
+  let acts;
+  if (isDecided(it)){
+    const d = latest(it.id), text = d.action === "reject" ? (d.reason === SKIP_REASON ? "Skipped. Nothing changes for it." : `Rejected: ${d.reason}.`)
+      : d.action === "amend" ? `${opText(op)}. Applied on submit.` : `Accepted: ${opText(op)}. Applied on submit.`;
+    acts = `<div class="decided ${d.action === "reject" ? "bad" : d.action === "amend" ? "info" : "ok"}"><span>${esc(text)}</span><button type="button" data-act="undo-item" data-id="${id}">Undo</button></div>`;
+  } else if (suppressedLocked(it)){
+    const prior = it.prior || {};
+    acts = `<div class="decided warn"><span>Rejected before: ${esc(prior.reason || "no reason recorded")}${prior.reviewer ? " (" + esc(prior.reviewer) + ")" : ""}.</span></div>
+      <div class="dock"><button type="button" class="btn" data-act="reopen" data-id="${id}">Reopen</button><span class="note">Reopen to accept or change it.</span></div>`;
+  } else {
+    const alts = (it.alternatives || []).map((c, i) => `<button type="button" class="btn" data-act="h-alt" data-id="${id}" data-i="${num(i + 1)}">${esc(altWords(c))}</button>`).join("");
+    acts = `<div class="dock"><button type="button" class="btn ok" data-act="approve" data-id="${id}" ${canAccept(it) ? "" : "disabled"}>Accept: ${esc(altWords(it.op))}</button>${alts}
+      <button type="button" class="btn" data-act="skip" data-id="${id}">Skip</button><span class="note"><span class="kbd">A</span> <span class="kbd">R</span> <span class="kbd">J</span>/<span class="kbd">K</span></span></div>`;
+  }
+  return `<span class="where">Health check · ${esc(KIND_WORDS[it.kind] || it.kind)}</span><h3>${esc(it.title || itemTitle(it))}</h3>
+    ${facts.length ? `<div class="facts">${facts.join("")}</div>` : ""}
+    <div class="section"><b>${isDecided(it) ? "Your decision" : "Claude recommends"}</b>${op.type === "keep" && it.reason === "no fix proposed" ? `<p class="note">No fix proposed. Pick one below, or leave it as is.</p>` : diffHTML(op)}</div>
+    <div class="impact">${esc(healthImpact(op))}</div>
+    ${it.reason && it.reason !== "no fix proposed" ? `<div class="section"><b>Why</b><p>${esc(it.reason)}</p></div>` : ""}
+    ${whyHTML(it)}
+    <div id="nodeSlot"></div>
+    ${acts}
+    <div id="formslot"></div>
+    ${redoHTML(it)}`;
+}
+// Pick candidate i of an item: the recommended fix approves, a real alternative amends, and a
+// template opens its editor (nothing is posted until the edit is saved).
+async function pickCandidate(it, i){
+  const c = candidatesOf(it)[i]; if (!c) return;
+  if (isTemplate(c)){
+    if (it.group) U.gRow = it.id;
+    if (c.type === "tag"){ U.tagDraft[it.id] = []; renderView(); const b = document.querySelector(`[data-tag="${CSS.escape(it.id)}"]`); if (b) b.focus(); return; }
+    renderView(); openForm(EDITABLE[c.type], rowCtx(it, c)); return;
+  }
+  delete U.tagDraft[it.id];
+  if (i === 0) await send({action:"approve", item_id:it.id}, `Accepted “${itemTitle(it)}”: ${altWords(c)}`);
+  else await send({action:"amend", item_id:it.id, op:c}, `“${itemTitle(it)}”: ${altWords(c)}`);
+}
+async function onTagToggle(box){
+  const it = S.review.items.find(i => i.id === box.dataset.tag); if (!it) return;
+  if (busy){ box.checked = !box.checked; return; }   // one decision at a time
+  const order = tagChoices(it), set = new Set(tagChosen(it)), cid = Number(box.value);
+  if (box.checked) set.add(cid); else set.delete(cid);
+  const ids = order.filter(x => set.has(x));
+  if (!ids.length){
+    U.tagDraft[it.id] = [];
+    // An empty selection is no fix: a decided row goes back to undecided rather than keep a stale subset.
+    if (isDecided(it) && itemOp(it).type === "tag"){
+      const ok = await send({action:"clear", item_id:it.id}, `No section selected: “${itemTitle(it)}” is undecided again`, restoreRec(it.id, latest(it.id)));
+      if (!ok){ delete U.tagDraft[it.id]; renderView(); }
+    } else renderView();
+    return;
+  }
+  delete U.tagDraft[it.id];
+  const op = Object.assign({}, tagCand(it), {chunk_ids:ids});
+  const rec = sameOp(op, it.op) ? {action:"approve", item_id:it.id} : {action:"amend", item_id:it.id, op};
+  const ok = await send(rec, `“${tagCand(it).node}”: ${plural(ids.length, "section")} selected`);
+  if (!ok) renderView();
+}
+// J/K and row clicks inside an open group only move the current row: no full re-render.
+function moveRow(id){
+  const det = $("detail"), it = S.review.items.find(i => i.id === id);
+  const row = det && det.querySelector(`tr[data-row="${CSS.escape(id)}"]`);
+  U.gRow = id;
+  if (!row || !it){ renderView(); return; }
+  const old = det.querySelector("tr.cur");
+  if (old){ old.classList.remove("cur"); const b = old.querySelector(".rowpick"); if (b) b.setAttribute("aria-expanded", "false"); }
+  const p = det.querySelector("tr.rpanel"); if (p) p.remove();
+  row.classList.add("cur"); row.querySelector(".rowpick").setAttribute("aria-expanded", "true");
+  row.insertAdjacentHTML("afterend", `<tr class="rpanel"><td colspan="4">${rowPanel(it)}</td></tr>`);
+  row.nextElementSibling.scrollIntoView({block:"nearest"}); row.scrollIntoView({block:"nearest"});
+  afterInbox();
+}
+async function loadCands(it){
+  const missing = tagChoices(it).filter(cid => !candBrief(it, cid));
+  if (!missing.length) return;
+  await Promise.all(missing.map(cid => api.chunk(cid).then(c => { chunkCache[cid] = c; }, () => { chunkCache[cid] = {errors:true}; })));
+  const box = document.querySelector(`[data-cands="${CSS.escape(it.id)}"]`);
+  if (box && U.view === "inbox" && (U.gRow === it.id || U.inboxSel === it.id)) box.outerHTML = candsHTML(it);
 }
 function itemImpact(it){
   const s = it.support || {}, d = latest(it.id);
@@ -521,6 +924,7 @@ function itemActions(it){
     <button type="button" class="btn" data-act="form" data-form="describe">Edit description</button>${keys}</div>`;
 }
 function itemDetail(it){
+  if (isHealth(it)) return healthDetail(it);
   const s = it.support || {}, op = itemOp(it);
   const facts = [];
   if (it.origin === "refine"){
@@ -543,12 +947,18 @@ function itemDetail(it){
     <div id="formslot"></div>`;
 }
 async function afterInbox(){
+  if (String(U.inboxSel || "").startsWith("g:")){
+    const row = actionable().find(i => i.id === U.gRow);
+    if (row && tagCand(row)) loadCands(row);
+    return;
+  }
   const it = actionable().find(i => i.id === U.inboxSel);
-  if (!it || !it.op.node || ((it.support || {}).samples || []).length) return;
+  if (it && tagCand(it)) loadCands(it);
+  if (!it || !it.op.node || it.op.node === "__untagged__" || ((it.support || {}).samples || []).length) return;
   const n = await getNode(it.op.node);
   const slot = $("nodeSlot");
   if (!slot || U.view !== "inbox" || U.inboxSel !== it.id || !n || n.errors || !n.samples.length) return;
-  slot.innerHTML = `<div class="section"><b>${it.origin === "describe" ? "What's tagged with it" : "Why Claude proposed it"}</b>${n.samples.map(s => quoteHTML(s.preview, "#" + s.chunk_id + " · " + (s.source || ""), s.chunk_id)).join("")}</div>`;
+  slot.innerHTML = `<div class="section"><b>${it.origin === "describe" || isHealth(it) ? "What's tagged with it" : "Why Claude proposed it"}</b>${n.samples.map(s => quoteHTML(s.preview, "#" + s.chunk_id + " · " + (s.source || ""), s.chunk_id)).join("")}</div>`;
 }
 async function getNode(label){
   if (!nodeCache[label]){ try { nodeCache[label] = await api.node(label); } catch(e){ nodeCache[label] = {errors:[errText(e)]}; } }
@@ -563,9 +973,21 @@ function treeFilter(l){
   const q = U.q.trim().toLowerCase();
   return !q || l.toLowerCase().includes(q) || aliasesOf(l).some(a => a.toLowerCase().includes(q));
 }
+// Health items (no tags / missing description) per node, rebuilt for each tree render.
+let HFIX = {};
+function healthFixes(){
+  const m = {};
+  for (const it of actionable()) if (isHealth(it) && (it.kind === "no_tags" || it.kind === "missing_description")) (m[subjectOf(it.op)] = m[subjectOf(it.op)] || []).push(it);
+  return m;
+}
 function nodeRow(l, cls){
   const n = cnt(l), p = P.m[l], sel = U.treeSel && U.treeSel.kind === "node" && U.treeSel.label === l;
-  return `<button type="button" class="node ${cls} ${n ? "" : "dead"} ${sel ? "sel" : ""}" data-act="pick-node" data-label="${esc(l)}" title="${esc(l)}">${p ? mark(p.op) : ""}${flagsOf(l).length ? `<span class="flagc" title="flagged">⚑</span>` : ""}<span class="lbl">${esc(l)}</span><span class="n">${n}</span></button>`;
+  const btn = `<button type="button" class="node ${cls} ${n ? "" : "dead"} ${sel ? "sel" : ""}" data-act="pick-node" data-label="${esc(l)}" title="${esc(l)}">${p ? mark(p.op) : ""}${flagsOf(l).length ? `<span class="flagc" title="flagged">⚑</span>` : ""}<span class="lbl">${esc(l)}</span><span class="n">${n}</span></button>`;
+  const fx = HFIX[l] || [];
+  if (!fx.length) return btn;
+  // One link per row (the no-tags fix first when a node has both); the title names every problem.
+  const to = fx.find(i => i.kind === "no_tags") || fx[0];
+  return `<div class="nwrap">${btn}<button type="button" class="linkbtn fixlink" data-act="goto-row" data-id="${esc(to.id)}" title="${esc(fx.map(i => KIND_WORDS[i.kind]).join(" and ") + ": open the proposed fix in the Inbox")}">fix proposed</button></div>`;
 }
 function pendingRow(a, cls){
   const key = a.src.proposal ? "p:" + a.src.proposal : "i:" + a.src.item;
@@ -573,6 +995,7 @@ function pendingRow(a, cls){
   return `<button type="button" class="node ${cls} newrow ${sel ? "sel" : ""}" data-act="pick-pending" data-key="${esc(key)}" title="${esc(a.op.name)}">${mark(a.op)}<span class="lbl">${esc(a.op.name)}</span><span class="n">new</span></button>`;
 }
 function treeRowsHTML(){
+  HFIX = healthFixes();
   const t = tree(), bySize = (a, b) => cnt(b) - cnt(a), plain = U.filter === "all" && !U.q.trim();
   let tops = l1s(); if (U.sort === "size") tops = tops.slice().sort(bySize);
   const addsL2 = P.adds.filter(a => a.op.type === "add" && a.op.level === "L2"), addsL1 = P.adds.filter(a => a.op.type === "add" && a.op.level === "L1");
@@ -680,35 +1103,107 @@ function nodeDetail(n){
 }
 
 // ---------------------------------------------------------------- metrics
-const MTABS_GOVERNED = [["not", "Not modeled"], ["cand", "Probably governed"], ["yes", "Governed"], ["stated", "Stated only"]];
-// Without a governed metrics file nothing can be called "not modeled": computable metrics are "unknown".
-const MTABS_UNKNOWN = [["unknown", "Governed status unknown"], ["stated", "Stated only"]];
-const mtabs = () => S.governed_file ? MTABS_GOVERNED : MTABS_UNKNOWN;
+// Tabs, each with a one-line meaning. "cand" (a probable governed match) sits under Governed.
+const MTAB = {
+  not:["Needs a definition", "Not modeled: no governed definition matches, so kb answers questions about these as “not modeled”."],
+  dup:["Possible duplicates", "Pairs whose names or variants are at least 85% alike. If a pair is one thing, merge one into the other."],
+  stated:["Quoted from documents", "Informational only: figures the documents state. kb quotes them; it doesn't compute them."],
+  yes:["Governed", "kb computes these from the governed metric layer. A “probable” match needs its name and grain checked."],
+  unknown:["Unknown", "No governed metrics file (schema/metrics.<corpus>.json) was found, so nobody knows yet whether kb can compute these."],
+};
+const mtabs = () => S.governed_file ? ["not", "dup", "stated", "yes"] : ["unknown", "dup", "stated"];
 const computableBucket = () => S.governed_file ? "not" : "unknown";
 function mBucket(m){
   if (m.source_type === "stated") return "stated";
   if (!S.governed_file) return "unknown";
   const g = (m.governed || {}).status;
-  return g === "yes" ? "yes" : g === "candidate" ? "cand" : "not";
+  return g === "yes" || g === "candidate" ? "yes" : "not";
+}
+// difflib.SequenceMatcher(None, a, b).ratio() — the server's 0.85 similar-metrics rule.
+function seqRatio(a, b){
+  if (!a.length && !b.length) return 1;
+  let matches = 0;
+  const stack = [[0, a.length, 0, b.length]];
+  while (stack.length){
+    const [alo, ahi, blo, bhi] = stack.pop();
+    let bi = alo, bj = blo, bk = 0, prev = new Map();
+    for (let i = alo; i < ahi; i++){
+      const cur = new Map();
+      for (let j = blo; j < bhi; j++) if (a[i] === b[j]){ const k = (prev.get(j - 1) || 0) + 1; cur.set(j, k); if (k > bk){ bi = i - k + 1; bj = j - k + 1; bk = k; } }
+      prev = cur;
+    }
+    if (!bk) continue;
+    matches += bk;
+    if (alo < bi && blo < bj) stack.push([alo, bi, blo, bj]);
+    if (bi + bk < ahi && bj + bk < bhi) stack.push([bi + bk, ahi, bj + bk, bhi]);
+  }
+  return 2 * matches / (a.length + b.length);
+}
+const normName = s => String(s || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+// Pairs from the plan's similar_metrics items; without any, the same rule computed here.
+function dupPairs(){
+  const items = S.review.items.filter(i => i.kind === "similar_metrics");
+  if (items.length) return items.map(it => {
+    const names = []; for (const c of candidatesOf(it)) for (const n of [c.metric, c.from, c.into]) if (n && !names.includes(n)) names.push(n);
+    return {a:names[0], b:names[1], score:num((it.support || {}).score), item:it};
+  }).filter(p => p.a && p.b);
+  const out = [], ms = S.metrics;
+  for (let i = 0; i < ms.length; i++) for (let j = i + 1; j < ms.length; j++){
+    const A = ms[i], B = ms[j];
+    if (normName(A.metric) === normName(B.metric)) continue;
+    let best = 0;
+    for (const na of [A.metric].concat(A.variants || [])) for (const nb of [B.metric].concat(B.variants || [])){
+      const x = normName(na), y = normName(nb); if (!x || !y) continue;
+      best = Math.max(best, x === y ? 1 : seqRatio(x, y));
+    }
+    if (best >= 0.85) out.push({a:A.metric, b:B.metric, score:Math.round(best * 100) / 100, item:null});
+  }
+  return out;
+}
+// Merge-picker ranking: bigram Dice on the lowercased name.
+function dice(x, y){
+  const bg = s => { const o = new Map(); s = String(s).toLowerCase(); for (let i = 0; i < s.length - 1; i++){ const g = s.slice(i, i + 2); o.set(g, (o.get(g) || 0) + 1); } return o; };
+  const A = bg(x), B = bg(y); let na = 0, nb = 0, both = 0;
+  for (const v of A.values()) na += v; for (const v of B.values()) nb += v;
+  for (const [g, v] of A) both += Math.min(v, B.get(g) || 0);
+  return na + nb ? 2 * both / (na + nb) : (String(x).toLowerCase() === String(y).toLowerCase() ? 1 : 0);
 }
 function metricsView(){
   const counts = {}; for (const m of S.metrics){ const b = mBucket(m); counts[b] = (counts[b] || 0) + 1; }
-  if (!U.mtab || !mtabs().some(([k]) => k === U.mtab)) U.mtab = (mtabs().find(([k]) => counts[k]) || mtabs()[0])[0];
+  const pairs = dupPairs(); counts.dup = pairs.length;
+  if (!U.mtab || !mtabs().includes(U.mtab)) U.mtab = mtabs().find(k => counts[k]) || mtabs()[0];
   const q = U.mq.trim().toLowerCase();
-  const rows = S.metrics.filter(m => mBucket(m) === U.mtab && (!q || m.metric.toLowerCase().includes(q)));
-  const adds = P.adds.filter(a => a.op.type === "metric_add" && (a.op.source_type === "stated" ? "stated" : computableBucket()) === U.mtab);
-  if (U.mSel !== "__new" && !String(U.mSel || "").startsWith("pending:") && !rows.find(m => m.metric === U.mSel)) U.mSel = rows.length ? rows[0].metric : null;
-  const tabs = mtabs().map(([k, l]) => `<button type="button" class="chip" data-act="mtab" data-t="${esc(k)}" aria-pressed="${U.mtab === k}">${esc(l)} · ${num(counts[k])}</button>`).join("");
-  const icon = b => b === "unknown" ? `<span class="ic mute">?</span>` : b === "not" ? `<span class="ic del">×</span>` : b === "yes" ? `<span class="ic add">✓</span>` : b === "cand" ? `<span class="ic flag">?</span>` : `<span class="ic mute">“</span>`;
-  const list = rows.map(m => { const p = P.m[m.metric];
-    return `<button type="button" class="item ${U.mSel === m.metric ? "sel" : ""}" data-act="pick-metric" data-name="${esc(m.metric)}">${p ? mark(p.op) : icon(mBucket(m))}<span class="t">${esc(m.metric)}</span><span class="st"><span class="pill mute">${esc(m.source_type)}</span></span><span class="s">grain: ${esc(m.grain || "—")} · ${esc(plural(m.n_sources, "source"))}</span></button>`; }).join("")
-    + adds.map(a => `<button type="button" class="item ${U.mSel === "pending:" + a.src.proposal ? "sel" : ""}" data-act="pick-metric" data-name="pending:${esc(a.src.proposal)}">${mark(a.op)}<span class="t">${esc(a.op.metric)}</span><span class="st"><span class="pill ok">new</span></span><span class="s">grain: ${esc(a.op.grain || "—")}</span></button>`).join("");
+  const tabs = mtabs().map(k => `<button type="button" class="chip" data-act="mtab" data-t="${esc(k)}" aria-pressed="${U.mtab === k}">${esc(MTAB[k][0])} · ${num(counts[k])}</button>`).join("");
+  let list;
+  if (U.mtab === "dup"){
+    const shown = pairs.map((p, i) => [p, i]).filter(([p]) => !q || p.a.toLowerCase().includes(q) || p.b.toLowerCase().includes(q));
+    if (!String(U.mSel || "").startsWith("pair:") || !shown.some(([, i]) => "pair:" + i === U.mSel)) U.mSel = shown.length ? "pair:" + shown[0][1] : null;
+    list = shown.map(([p, i]) => `<button type="button" class="item ${U.mSel === "pair:" + i ? "sel" : ""}" data-act="pick-metric" data-name="pair:${esc(i)}"><span class="ic flag">≈</span><span class="t">${esc(p.a)} ≈ ${esc(p.b)}</span><span class="st">${p.item ? decisionPill(p.item) : ""}</span><span class="s">${esc(Math.round(p.score * 100) + "% alike" + (p.item ? " · Claude reviewed this pair" : ""))}</span></button>`).join("");
+  } else {
+    const rows = S.metrics.filter(m => mBucket(m) === U.mtab && (!q || m.metric.toLowerCase().includes(q)));
+    const adds = P.adds.filter(a => a.op.type === "metric_add" && (a.op.source_type === "stated" ? "stated" : computableBucket()) === U.mtab);
+    if (U.mSel !== "__new" && !String(U.mSel || "").startsWith("pending:") && !rows.find(m => m.metric === U.mSel)) U.mSel = rows.length ? rows[0].metric : null;
+    const icon = m => { const b = mBucket(m); return b === "unknown" ? `<span class="ic mute">?</span>` : b === "not" ? `<span class="ic del">×</span>` : b === "yes" ? ((m.governed || {}).status === "candidate" ? `<span class="ic flag" title="probable match">?</span>` : `<span class="ic add">✓</span>`) : `<span class="ic mute">“</span>`; };
+    list = rows.map(m => { const p = P.m[m.metric];
+      return `<button type="button" class="item ${U.mSel === m.metric ? "sel" : ""}" data-act="pick-metric" data-name="${esc(m.metric)}">${p ? mark(p.op) : icon(m)}<span class="t">${esc(m.metric)}</span><span class="st"><span class="pill mute">${esc((m.governed || {}).status === "candidate" && mBucket(m) === "yes" ? "probable" : m.source_type)}</span></span><span class="s">grain: ${esc(m.grain || "—")} · ${esc(plural(m.n_sources, "source"))}</span></button>`; }).join("")
+      + adds.map(a => `<button type="button" class="item ${U.mSel === "pending:" + a.src.proposal ? "sel" : ""}" data-act="pick-metric" data-name="pending:${esc(a.src.proposal)}">${mark(a.op)}<span class="t">${esc(a.op.metric)}</span><span class="st"><span class="pill ok">new</span></span><span class="s">grain: ${esc(a.op.grain || "—")}</span></button>`).join("");
+  }
   return `<div class="view"><div class="list"><div class="ltools">
       <div class="lrow"><button type="button" class="btn primary sm" data-act="new-metric">+ Add metric</button><input type="search" id="mq" placeholder="Search metrics" aria-label="Search metrics" value="${esc(U.mq)}"></div>
       <div class="filters" role="group" aria-label="Status">${tabs}</div>
-      ${S.governed_file ? "" : `<p class="note" style="padding:0 14px 10px">No governed metrics file (schema/metrics.&lt;corpus&gt;.json) was found, so governed status is unknown.</p>`}</div>
+      <p class="mhint">${esc(MTAB[U.mtab][1])}</p></div>
     <div class="rows" data-v="metrics">${list || `<div class="empty"><p class="note">No metrics here.</p></div>`}</div></div>
-    <div class="detail" id="detail">${metricDetailHTML()}</div></div>`;
+    <div class="detail" id="detail">${U.mtab === "dup" && String(U.mSel || "").startsWith("pair:") ? pairDetailHTML(pairs[Number(U.mSel.slice(5))]) : metricDetailHTML()}</div></div>`;
+}
+function pairDetailHTML(p){
+  if (!p) return `<p class="note">Select a pair.</p>`;
+  const card = n => { const m = S.metrics.find(x => x.metric === n) || {metric:n};
+    return `<div class="card"><div class="head"><b>${esc(n)}</b><span class="pill mute">${esc(m.source_type || "—")}</span></div><span class="note">grain ${esc(m.grain || "—")} · ${esc(plural(m.n_sources, "source"))}</span><p>${m.definition ? esc(m.definition) : `<span class="note">No definition recorded.</span>`}</p>${(m.variants || []).length ? `<span class="note">Also written as ${esc(m.variants.join(", "))}</span>` : ""}</div>`; };
+  let acts;
+  if (p.item) acts = `<div class="decided info"><span>Claude reviewed this pair${isDecided(p.item) ? "; you decided: " + esc(opText(itemOp(p.item))) : ": " + esc(opText(p.item.op))}. Decide it in the Inbox.</span><button type="button" data-act="goto-row" data-id="${esc(p.item.id)}">Open in Inbox</button></div>`;
+  else if (P.m[p.a] || P.m[p.b]) acts = `<div class="decided info"><span>One of these already has a change pending in this review. Withdraw it in Your changes to merge them.</span></div>`;
+  else acts = `<div class="dock flat"><button type="button" class="btn" data-act="pair-merge" data-from="${esc(p.b)}" data-into="${esc(p.a)}">Merge “${esc(p.b)}” into “${esc(p.a)}”</button><button type="button" class="btn" data-act="pair-merge" data-from="${esc(p.a)}" data-into="${esc(p.b)}">Merge “${esc(p.a)}” into “${esc(p.b)}”</button></div>`;
+  return `<span class="where">Possible duplicate · ${esc(Math.round(p.score * 100) + "% alike")}</span><h3>${esc(p.a)} ≈ ${esc(p.b)}</h3><div class="pair">${card(p.a)}${card(p.b)}</div>${acts}`;
 }
 function governedWords(m){
   const g = m.governed || {};
@@ -726,7 +1221,7 @@ function metricDetailHTML(){
     return `<span class="where">Your change</span><h3>${esc(p.op.metric)}</h3>${diffHTML(p.op)}<div class="dock flat"><button type="button" class="btn" data-act="withdraw" data-id="${esc(p.item_id)}">Withdraw</button></div>`;
   }
   const m = S.metrics.find(x => x.metric === U.mSel);
-  if (!m) return `<p class="note">Select a metric. Not modeled ones come first: kb answers those as “not modeled”.</p>`;
+  if (!m) return `<p class="note">Select a metric. Those that need a definition come first: kb answers them as “not modeled”.</p>`;
   const p = P.m[m.metric], [cls, words] = governedWords(m), sv = m.stated_values || [];
   const acts = p ? `<div class="decided info"><span>Pending in this review: ${esc(opText(p.op))}. Withdraw it to edit again.</span>${p.src.proposal ? `<button type="button" data-act="withdraw" data-id="${esc(p.src.proposal)}">Withdraw</button>` : ""}</div>`
     : `<div class="dock flat"><button type="button" class="btn" data-act="form" data-form="m-edit">Edit type / grain / definition</button><button type="button" class="btn" data-act="form" data-form="m-merge">Merge into…</button><button type="button" class="btn bad" data-act="form" data-form="m-remove">Remove</button></div>`;
@@ -747,7 +1242,7 @@ function changesView(){
   }).join("");
   const decided = actionable().filter(isDecided).map(it => {
     const d = latest(it.id), amendedKeep = it.origin === "induction" && d.action === "amend";
-    const text = d.action === "reject" ? `Rejected “${itemTitle(it)}”: ${d.reason}` : d.action === "amend" ? opText(d.op) : it.origin === "induction" ? `Keep “${itemTitle(it)}”` : opText(it.op);
+    const text = d.action === "reject" ? (d.reason === SKIP_REASON ? `Skipped “${itemTitle(it)}”` : `Rejected “${itemTitle(it)}”: ${d.reason}`) : d.action === "amend" ? opText(d.op) : it.origin === "induction" ? `Keep “${itemTitle(it)}”` : opText(it.op);
     return `<div class="srow">${decisionPill(it)}<span style="flex:1">${esc(text)}</span>${amendedKeep
       ? `<button type="button" class="btn sm" data-act="approve" data-id="${esc(it.id)}" data-revert="1">Revert to keep</button>`
       : `<button type="button" class="btn sm" data-act="undo-item" data-id="${esc(it.id)}">Undo</button>`}</div>`;
@@ -815,8 +1310,21 @@ function formSpec(kind, c){
       return {title:`Edit “${m.metric}”`, fields:`<label>Type <select name="source_type">${known ? "" : opt("", `— unchanged (${m.source_type || "not set"}) —`, true)}${TYPES.map(t => opt(t, t, m.source_type === t)).join("")}</select></label><label>Grain <input type="text" name="grain" value="${esc(m.grain || "")}"></label><label>Definition <textarea name="definition" rows="3">${esc(m.definition || "")}</textarea></label>`,
       build: f => { const fields = {}; for (const k of ["source_type", "grain", "definition"]){ const v = fval(f, k); if (v !== init[k] && !(k === "source_type" && !v)) fields[k] = v || null; }
         return Object.keys(fields).length ? {type:"metric_edit", metric:m.metric, fields} : null; }}; }
-    case "m-merge": { const m = c.metric; return {title:`Merge “${m.metric}” into…`, fields:`<label>Into <select name="into">${S.metrics.filter(x => x.metric !== m.metric).map(x => x.metric).sort((a, b) => a.localeCompare(b)).map(x => opt(x, x)).join("")}</select></label>`,
+    case "m-merge": { const m = c.metric;
+      // No default: the reviewer must pick. Most similar names first; the top five say how similar.
+      const ranked = S.metrics.filter(x => x.metric !== m.metric).map(x => [x.metric, dice(m.metric, x.metric)])
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+      return {title:`Merge “${m.metric}” into…`, fields:`<label>Into <select name="into">${opt("", "— choose a metric —", true)}${ranked.map(([n, sc], i) =>
+        opt(n, i < 5 ? `${n} · ${Math.round(sc * 100)}% similar name` : n)).join("")}</select></label><span class="note">Most similar names first.</span>`,
       build: f => { const v = fval(f, "into"); return v ? {type:"metric_merge", from:m.metric, into:v} : null; }}; }
+    case "h-govern": { const d = c.draft || {}, keys = ["key", "family", "unit", "grain", "desc"];
+      const lab = {key:"Key (a-z, 0-9, _)", family:"Family", unit:"Unit", grain:"Grain", desc:"Definition"};
+      return {title:`Governed definition for “${c.metric}”`, noImpact:true,
+        fields: keys.map(k => k === "desc" ? `<label>${esc(lab[k])}<textarea name="desc" rows="3">${esc(d.desc || "")}</textarea></label>`
+          : `<label>${esc(lab[k])}${k === "key" ? ` <span class="req">required</span>` : ""}<input type="text" name="${esc(k)}" value="${esc(d[k] || "")}" autocomplete="off"></label>`).join(""),
+        build: f => { const draft = {}; for (const k of keys) draft[k] = fval(f, k);
+          if (!/^[a-z0-9_]+$/.test(draft.key)) return null;
+          const op = {type:"metric_govern", metric:c.metric, draft}; return sameOp(op, c.baseOp) ? null : op; }}; }
     case "m-remove": { const m = c.metric; return {title:`Remove “${m.metric}”`, fields:`<label>Reason <span class="req">required</span><input type="text" name="reason" autocomplete="off"></label>`,
       build: f => { const r = fval(f, "reason"); return r ? {type:"metric_remove", metric:m.metric, reason:r} : null; }}; }
     case "m-add": return {title:"Add metric", ok:"Add to changes", fields:`<label>Name <span class="req">required</span><input type="text" name="metric" autocomplete="off"></label><label>Type <select name="source_type">${TYPES.map(t => opt(t, t)).join("")}</select></label><label>Grain <input type="text" name="grain" placeholder="e.g. branch, month"></label><label>Definition <textarea name="definition" rows="3"></textarea></label>`,
@@ -850,6 +1358,7 @@ function openForm(kind, c){
     const imp = $("fimp");
     if (!op){ clearTimeout(formTimer); formSeq++; $("fdiff").innerHTML = ""; imp.hidden = true; return; }
     $("fdiff").innerHTML = diffHTML(op);
+    if (spec.noImpact) return;
     clearTimeout(formTimer);
     formTimer = setTimeout(async () => {
       const mine = ++formSeq;
@@ -912,6 +1421,7 @@ async function sendNow(rec, msg, undoOverride, beforeRender){
     return false;
   }
   if (rec.item_id && rec.action !== "propose" && rec.action !== "withdraw") hist[rec.item_id] = prev;
+  if (rec.item_id && rec.action !== "clear") delete U.tagDraft[rec.item_id];   // a recorded fix replaces an empty draft
   let undo = undoOverride || null;
   if (!undo){
     if (rec.action === "propose") undo = {action:"withdraw", item_id:out.record.item_id};
@@ -927,6 +1437,29 @@ async function sendNow(rec, msg, undoOverride, beforeRender){
   toast(msg, undo);
   return true;
 }
+// POST /api/decisions: all records or none. Undo is one batch restoring each previous record.
+async function sendBatch(recs, msg, undoOverride, beforeRender){
+  if (busy || !recs.length) return false;
+  busy = true;
+  try {
+    const prevs = recs.map(r => S.decisions[r.item_id] || null);
+    let out;
+    try { out = await api.decideMany(recs); }
+    catch(e){
+      if (e.status === 409){ onClosed(); return false; }
+      const bad = e.index != null && recs[e.index] ? S.review.items.find(i => i.id === recs[e.index].item_id) : null;
+      toast(`Nothing was recorded. ${bad ? "“" + itemTitle(bad) + "”: " : ""}${errText(e)}`, null, true);
+      return false;
+    }
+    recs.forEach((r, i) => { hist[r.item_id] = prevs[i]; if (r.action !== "clear") delete U.tagDraft[r.item_id]; });
+    const undo = undoOverride || recs.map((r, i) => restoreRec(r.item_id, prevs[i]));
+    try { S = await api.state(); nodeCache = {}; } catch(e){ toast(errText(e), null, true); return true; }
+    if (beforeRender) beforeRender(out);
+    render();
+    toast(msg, undo);
+    return true;
+  } finally { busy = false; }
+}
 let toastTimer = null, undoRec = null;
 function toast(msg, undo, bad){
   undoRec = undo || null;
@@ -937,8 +1470,13 @@ function toast(msg, undo, bad){
 async function doUndo(){
   if (!undoRec || busy) return;   // keep the Undo offer if a decision is still in flight
   const r = undoRec; undoRec = null; $("toastHost").innerHTML = "";
+  if (Array.isArray(r)){ await sendBatch(r, `Undone (${plural(r.length, "decision")})`); return; }
   // send() offers a redo in its own toast; after undoing a decision, keep that item selected.
-  await send(r, "Undone", null, () => { if (r.item_id && r.action !== "withdraw" && U.view === "inbox") U.inboxSel = r.item_id; });
+  await send(r, "Undone", null, () => {
+    if (!r.item_id || r.action === "withdraw" || U.view !== "inbox") return;
+    const it = S.review.items.find(i => i.id === r.item_id);
+    if (it && isHealth(it) && it.group){ U.inboxSel = "g:" + it.group; U.gRow = it.id; } else U.inboxSel = r.item_id;
+  });
 }
 function onClosed(){
   closed = {title:"This review session is closed.", body:"It was submitted, cancelled or timed out, so nothing more is recorded. Ask Claude to reopen the review to continue."};
@@ -946,8 +1484,8 @@ function onClosed(){
 }
 
 // ---------------------------------------------------------------- submit sheet
-const GROUPS = ["Add", "Describe", "Rename", "Merge", "Move", "Split", "Remove", "Metrics", "Rejected"];
-const GROUP_OF = {add:"Add", describe:"Describe", rename:"Rename", merge:"Merge", move:"Move", split:"Split", remove:"Remove"};
+const GROUPS = ["Add", "Describe", "Rename", "Merge", "Move", "Split", "Remove", "Tag", "Metrics", "Rejected"];
+const GROUP_OF = {add:"Add", describe:"Describe", rename:"Rename", merge:"Merge", move:"Move", split:"Split", remove:"Remove", tag:"Tag"};
 function renderSheet(){
   const host = $("sheetHost");
   if (!U.sheet){ host.innerHTML = ""; return; }
@@ -969,17 +1507,21 @@ function renderSheet(){
   const warn = !und ? "" : mode === "drift" ? `${plural(und, "proposal")} not reviewed. They aren't added or rejected, and come back next refresh.`
     : mode === "draft" ? `${plural(und, "category", "categories")} not reviewed. They're kept as they are.`
     : mode === "describe" ? `${plural(und, "description")} not reviewed. They aren't applied; Claude can draft them again later.`
+    : mode === "health" ? `${plural(und, "problem")} not decided. Nothing is applied for them; the next health check finds them again.`
     : `${plural(und, "item")} not reviewed.`;
   const imp = S.impact || {}, re = num(imp.chunks_reclassified), n = changeCount(), next = num(S.base.version) + 1;
   const steps = [`Claude applies your decisions as taxonomy v${next} and points current.json at it.`,
     mode === "draft" ? "Claude builds the graph and tags every section with the categories you kept." : "Tags move with renames and merges; nothing tagged is lost.",
     re ? `About ${plural(re, "section")} are re-tagged by agents (a few minutes).` : "Only sections your changes touch are re-tagged.",
     "Claude reports the result, including coverage, in the chat."];
+  const finalOps = actionable().filter(isDecided).map(it => { const d = latest(it.id); return d.action === "amend" ? d.op : d.action === "approve" ? it.op : null; }).filter(Boolean);
+  if (finalOps.some(o => o.type === "tag")) steps.splice(2, 0, "Approved tags are added to their sections. No tag is removed.");
+  if (finalOps.some(o => o.type === "metric_govern")) steps.splice(steps.length - 1, 0, "Governed-metric drafts go to a work file; Claude asks before editing the governed metrics file.");
   const body = GROUPS.filter(k => g[k].length).map(k => `<div class="sgroup"><h4>${esc(k === "Rejected" ? "Rejected (won't be proposed again)" : k)} · ${num(g[k].length)}</h4>${g[k].join("")}</div>`).join("");
   host.innerHTML = `<div class="sheet" data-act="sheet-bg"><div class="panel" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" tabindex="-1" id="sheetPanel">
     <h3 id="sheetTitle">Submit this review</h3>
     ${body || `<p class="note">No changes. Submitting records that you reviewed the taxonomy and changed nothing.</p>`}
-    ${kept ? `<p class="note">${plural(kept, "category", "categories")} kept as they are.</p>` : ""}
+    ${kept ? `<p class="note">${mode === "health" ? plural(kept, "problem") + " marked as reviewed with no change." : plural(kept, "category", "categories") + " kept as they are."}</p>` : ""}
     ${imp.errors ? `<div class="impact warn">${esc(impactWords(imp))}</div>` : S.has_db && (S.proposals.length || n) ? `<div class="impact">Altogether: ${esc(impactWords(imp))}</div>` : ""}
     ${warn ? `<div class="impact warn">${esc(warn)}</div>` : ""}
     <div class="next"><b>What happens next, in Claude Code</b><ol>${steps.map(s => `<li>${esc(s)}</li>`).join("")}</ol></div>
@@ -997,7 +1539,7 @@ document.addEventListener("click", async ev => {
   const item = id ? S.review.items.find(i => i.id === id) : null;
   switch (a){
     case "view": U.view = el.dataset.v; render(); break;
-    case "pick-item": U.inboxSel = id; renderView(); break;
+    case "pick-item": U.inboxSel = id; if (String(id).startsWith("g:")) U.gRow = null; renderView(); break;
     case "pick-node": U.treeSel = {kind:"node", label:el.dataset.label}; if (U.view !== "taxonomy"){ U.view = "taxonomy"; render(); } else renderView(); break;
     case "pick-pending": U.treeSel = {kind:"pending", key:el.dataset.key}; renderView(); break;
     case "new-cat": U.treeSel = {kind:"new", parent: el.dataset.parent || ""}; renderView(); break;
@@ -1006,8 +1548,47 @@ document.addEventListener("click", async ev => {
     case "mtab": U.mtab = el.dataset.t; U.mSel = null; renderView(); break;
     case "pick-metric": U.mSel = el.dataset.name; renderView(); break;
     case "new-metric": U.mSel = "__new"; renderView(); openForm("m-add", {}); break;
-    case "approve": if (item) await send({action:"approve", item_id:item.id},
-      el.dataset.revert ? `Reverted “${itemTitle(item)}” to keep` : item.origin === "induction" ? `Kept “${itemTitle(item)}”` : `Approved “${itemTitle(item)}”`); break;
+    case "approve": if (item){ delete U.tagDraft[item.id]; await send({action:"approve", item_id:item.id},
+      el.dataset.revert ? `Reverted “${itemTitle(item)}” to keep` : item.origin === "induction" ? `Kept “${itemTitle(item)}”` : isHealth(item) ? `Accepted “${itemTitle(item)}”` : `Approved “${itemTitle(item)}”`,
+      null, () => advanceRow(item.id)); } break;
+    case "skip": if (item) await send({action:"reject", item_id:item.id, reason:SKIP_REASON}, `Skipped “${itemTitle(item)}”`, null, () => advanceRow(item.id)); break;
+    case "pick-row": if (item) moveRow(item.id); break;
+    case "row-edit": if (item){
+      if (item.group) U.gRow = item.id;
+      const base = editBase(item);
+      renderView();
+      if (base) openForm(EDITABLE[base.type], rowCtx(item, base));
+      else { const b = document.querySelector(`[data-tag="${CSS.escape(item.id)}"]`); if (b) b.focus(); }
+    } break;
+    case "h-alt": if (item) await pickCandidate(item, num(el.dataset.i)); break;
+    case "accept-all": { const g = groupOf(el.dataset.kind); if (!g) break;
+      const recs = g.rows.filter(canAccept).map(r => ({action:"approve", item_id:r.id}));
+      await sendBatch(recs, `Accepted ${plural(recs.length, "fix", "fixes")} in “${groupTitle(g)}”`); break; }
+    case "rev-approve": { const rev = item && (S.revisions || {})[item.id]; if (!rev) break;
+      delete U.tagDraft[item.id];
+      await send(sameOp(rev.op, item.op) ? {action:"approve", item_id:item.id} : {action:"amend", item_id:item.id, op:rev.op}, `Approved Claude's revision for “${itemTitle(item)}”`); break; }
+    case "redo-open": if (item){ U.redo = item.id; U.redoText = ""; if (item.group) U.gRow = item.id; renderView(); const t = $("redoNote"); if (t) t.focus(); } break;
+    case "redo-cancel": U.redo = null; U.redoText = ""; renderView(); break;
+    case "redo-send": { const note = U.redoText.trim(); if (!item) break;
+      if (!note){ const e = $("rerr"); if (e) e.textContent = "Write what Claude should change first."; break; }
+      if (busy) break;
+      busy = true;
+      try {
+        await api.request(item.id, note);
+        U.redo = null; U.redoText = "";
+        S = await api.state(); render();
+        toast(S.live_channel ? `Sent. Claude is revising “${itemTitle(item)}”.` : `Queued for the next run: “${itemTitle(item)}”.`);
+      } catch(e){ if (e.status === 409) onClosed(); else { const r = $("rerr"); if (r) r.textContent = errText(e); else toast(errText(e), null, true); } }
+      finally { busy = false; }
+      break; }
+    case "goto-row": if (item){
+      U.view = "inbox";
+      if (isHealth(item) && item.group){ U.inboxSel = "g:" + item.group; U.gRow = item.id; } else U.inboxSel = item.id;
+      render();
+      const r = document.querySelector(`[data-row="${CSS.escape(item.id)}"]`); if (r) r.scrollIntoView({block:"center"});
+    } break;
+    case "pair-merge": await send({action:"propose", op:{type:"metric_merge", from:el.dataset.from, into:el.dataset.into}},
+      `Added to your changes: merge metric “${el.dataset.from}” into “${el.dataset.into}”`); break;
     case "reject": if (item) await send({action:"reject", item_id:item.id, reason:el.dataset.reason}, `Rejected “${itemTitle(item)}”: ${el.dataset.reason}`); break;
     case "reopen": if (item) await send({action:"reopen", item_id:item.id}, `Reopened “${itemTitle(item)}”`); break;
     case "undo-item": if (item && isDecided(item)) await send(undoRecFor(item), `Undid the decision on “${itemTitle(item)}”`, restoreRec(item.id, latest(item.id))); break;
@@ -1040,7 +1621,17 @@ document.addEventListener("click", async ev => {
       break;
   }
 });
+document.addEventListener("change", ev => {
+  const t = ev.target; if (!S) return;
+  if (t.dataset && t.dataset.tag){ onTagToggle(t); return; }
+  if (t.dataset && t.dataset.alt){
+    const it = S.review.items.find(i => i.id === t.dataset.alt); if (!it) return;
+    if (busy){ renderView(); return; }
+    pickCandidate(it, num(t.value));
+  }
+});
 document.addEventListener("input", ev => {
+  if (ev.target.id === "redoNote"){ U.redoText = ev.target.value; return; }
   if (ev.target.id === "mq"){ U.mq = ev.target.value; const pos = ev.target.selectionStart; renderView(); const m = $("mq"); m.focus(); m.setSelectionRange(pos, pos); }
 });
 document.addEventListener("keydown", ev => {
@@ -1049,10 +1640,16 @@ document.addEventListener("keydown", ev => {
   if (U.view !== "inbox" || U.sheet || ev.metaKey || ev.ctrlKey || ev.altKey) return;
   const t = ev.target;
   if (t && (t.isContentEditable || /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName))) return;
-  const {todo, done} = inboxOrder(), order = todo.concat(done), i = order.findIndex(x => x.id === U.inboxSel), it = order[i];
+  // Positions cover every group row and every individual item, so J/K cross between them.
+  const pos = navPositions();
+  let i = pos.findIndex(p => p.sel === U.inboxSel && (p.row === null || p.row === U.gRow));
+  if (i < 0) i = pos.findIndex(p => p.sel === U.inboxSel);
+  const it = i >= 0 ? pos[i].it : null, go = p => { if (p.row && p.sel === U.inboxSel){ moveRow(p.row); return; } U.inboxSel = p.sel; if (p.row) U.gRow = p.row; renderView(); };
   const k = ev.key.toLowerCase();
-  if (k === "j" && i < order.length - 1){ U.inboxSel = order[i + 1].id; renderView(); }
-  else if (k === "k" && i > 0){ U.inboxSel = order[i - 1].id; renderView(); }
+  if (k === "j" && i < pos.length - 1) go(pos[i + 1]);
+  else if (k === "k" && i > 0) go(pos[i - 1]);
+  else if (k === "a" && it && isHealth(it)){ if (canAccept(it)) send({action:"approve", item_id:it.id}, `Accepted “${itemTitle(it)}”`, null, () => advanceRow(it.id)); }
+  else if (k === "r" && it && isHealth(it)){ if (!isDecided(it) && !suppressedLocked(it)) send({action:"reject", item_id:it.id, reason:SKIP_REASON}, `Skipped “${itemTitle(it)}”`, null, () => advanceRow(it.id)); }
   else if (k === "a" && it && !isDecided(it) && !(it.status === "suppressed" && !((latest(it.id) || {}).action === "reopen")))
     send({action:"approve", item_id:it.id}, it.origin === "induction" ? `Kept “${itemTitle(it)}”` : `Approved “${itemTitle(it)}”`);
   else if (k === "r" && it && !isDecided(it) && REJECT_REASONS[it.origin]){
@@ -1063,6 +1660,24 @@ document.addEventListener("keydown", ev => {
   else return;
   ev.preventDefault();
 });
+
+// While a redo request is open with no revision yet, poll every 5 s. A change re-renders,
+// unless the reviewer is typing, in which case it waits for the next tick.
+let pollRender = false;
+const needsPoll = () => !!S && !closed && !S.submitted && Object.values(S.requests || {}).some(q => q.status === "open" && !(S.revisions || {})[q.item_id]);
+const typing = () => { const a = document.activeElement; return !!a && (a.tagName === "TEXTAREA" || a.tagName === "SELECT" || (a.tagName === "INPUT" && a.type !== "checkbox")); };
+setInterval(async () => {
+  if (busy || closed || !S) return;
+  if (pollRender && !typing() && !U.sheet){ pollRender = false; render(); }
+  if (!needsPoll()) return;
+  let st;
+  try { st = await api.state(); } catch(e){ if (e.status === 409) onClosed(); return; }
+  if (busy || closed) return;
+  const sig = x => JSON.stringify([x.requests, x.revisions, x.submitted]);
+  if (sig(st) === sig(S)) return;
+  S = st; nodeCache = {};
+  if (typing() || U.sheet) pollRender = true; else render();
+}, 5000);
 
 api.state().then(st => {
   S = st;
