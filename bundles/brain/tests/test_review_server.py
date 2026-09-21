@@ -140,7 +140,7 @@ class ServerTests(unittest.TestCase):
     def test_ui_offers_revert_to_keep_and_closes_header_after_submit(self):
         html = open(S.UI, encoding="utf-8").read()
         self.assertIn("Revert to keep", html)
-        self.assertIn("Revert it in Changes", html)
+        self.assertIn("Revert it in Your changes", html)
         self.assertIn("closeHeader()", html)
 
     def test_revert_to_keep_undoes_a_draft_amend(self):
@@ -188,6 +188,16 @@ class ServerTests(unittest.TestCase):
             code, out = app.decide({"action": "clear", "item_id": item["id"]})
             self.assertEqual(code, 200, out)
             self.assertEqual(app.state()["decisions"][item["id"]]["action"], "clear")
+
+    def test_v2_ui_contract(self):
+        html = open(S.UI, encoding="utf-8").read()
+        for needle in ("/api/state", "/api/node/", "/api/chunk/", "/api/impact", "/api/decision", "/api/submit",
+                       "/api/cancel", '"clear"', "New category", "Add sub-category", "Missing description",
+                       "Review &amp; submit", "Your changes", "Not modeled", "What happens next"):
+            self.assertIn(needle, html)
+        for banned in ("confirm(", "alert(", "prompt(", "https://", "http://"):
+            self.assertNotIn(banned, html)
+        self.assertNotIn("bar-s", html)  # no share bars in the taxonomy list
 
 
 class TimeoutTests(unittest.TestCase):
