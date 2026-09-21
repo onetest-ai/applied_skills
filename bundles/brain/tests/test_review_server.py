@@ -293,3 +293,35 @@ class HealthLiveChannelTests(unittest.TestCase):
             f.write(json.dumps({"request_id": rid, "item_id": item["id"], "op": op, "ts": "t"}) + "\n")
         code, st = self.req("GET", "/api/state")
         self.assertEqual(st["revisions"][item["id"]]["op"], op)
+
+    def test_revision_tracks_the_items_latest_request_not_a_stale_one(self):
+        item = self.rv["items"][0]
+        resp_path = os.path.join(self.dir, "work", "responses.jsonl")
+        os.makedirs(os.path.dirname(resp_path), exist_ok=True)
+
+        # q-1: requested, answered.
+        code, out = self.req("POST", "/api/request", {"item_id": item["id"], "note": "first pass"})
+        self.assertEqual(code, 200, out)
+        q1 = out["request"]["id"]
+        stale_op = {"type": "keep", "node": "stale"}
+        with open(resp_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"request_id": q1, "item_id": item["id"], "op": stale_op, "ts": "t1"}) + "\n")
+
+        # q-2: a newer request on the same item, not yet answered.
+        code, out = self.req("POST", "/api/request", {"item_id": item["id"], "note": "second pass"})
+        self.assertEqual(code, 200, out)
+        q2 = out["request"]["id"]
+
+        code, st = self.req("GET", "/api/state")
+        self.assertEqual(code, 200, st)
+        self.assertEqual(st["requests"][q1]["status"], "answered")
+        self.assertEqual(st["requests"][q2]["status"], "open")
+        self.assertNotIn(item["id"], st["revisions"])   # the stale q-1 answer must not surface
+
+        # q-2 is answered: now the revision is q-2's op.
+        fresh_op = {"type": "keep", "node": "fresh"}
+        with open(resp_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"request_id": q2, "item_id": item["id"], "op": fresh_op, "ts": "t2"}) + "\n")
+        code, st = self.req("GET", "/api/state")
+        self.assertEqual(st["requests"][q2]["status"], "answered")
+        self.assertEqual(st["revisions"][item["id"]]["op"], fresh_op)

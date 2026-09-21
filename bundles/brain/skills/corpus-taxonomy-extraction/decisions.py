@@ -34,7 +34,10 @@ def new_human_id():
     return "h-" + uuid.uuid4().hex[:6]
 
 
-def append(path, record):
+def _stamp_and_check(record):
+    """schema+ts stamping plus append's own shape checks, shared by `append` and
+    `append_many`. Raises DecisionLogError instead of returning errors, so a bad record
+    aborts the whole batch before anything is written."""
     rec = {"schema": SCHEMA, "ts": utc_now(), **record}
     action = rec.get("action")
     if action not in ITEM_ACTIONS | REVIEW_ACTIONS:
@@ -45,6 +48,11 @@ def append(path, record):
         raise DecisionLogError("reject needs a reason")
     if action in ("propose", "amend") and not isinstance(rec.get("op"), dict):
         raise DecisionLogError(f"{action} needs an op")
+    return rec
+
+
+def append(path, record):
+    rec = _stamp_and_check(record)
     line = (json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
     try:
@@ -52,6 +60,24 @@ def append(path, record):
     finally:
         os.close(fd)
     return rec
+
+
+def append_many(path, records):
+    """Append every record in `records` (schema/ts stamped and checked exactly as `append`
+    does) in a single `os.write` on one O_APPEND fd, so a crash mid-write can never leave a
+    partial batch on disk. If any record fails `append`'s own checks, DecisionLogError is
+    raised before the file is opened, and nothing is written."""
+    built = [_stamp_and_check(r) for r in records]
+    if not built:
+        return built
+    data = b"".join((json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+                    for rec in built)
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    try:
+        os.write(fd, data)
+    finally:
+        os.close(fd)
+    return built
 
 
 def read(path):

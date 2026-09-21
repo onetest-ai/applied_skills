@@ -84,21 +84,22 @@ class ReviewApp:
         return out
 
     def _requests(self):
-        """The latest record per request id, filtered to this review."""
+        """The latest record per request id, filtered to this review, in first-seen (i.e.
+        creation) order — updating an id's value never moves its position, so iterating this
+        dict visits each item's requests oldest-to-newest."""
         latest = {}
         for rec in self._read_jsonl(self.requests_path):
             if rec.get("id"):
                 latest[rec["id"]] = rec
         return {rid: rec for rid, rec in latest.items() if rec.get("review_id") == self.review["review_id"]}
 
-    def _revisions(self):
-        """{item_id: latest response record}, filtered to this review's items."""
-        item_ids = {i["id"] for i in self.review["items"]}
+    def _responses_by_request_id(self):
+        """{request_id: latest response record}. `respond` always writes a `request_id`."""
         out = {}
         for rec in self._read_jsonl(self.responses_path):
-            iid = rec.get("item_id")
-            if iid in item_ids:
-                out[iid] = rec
+            rid = rec.get("request_id")
+            if rid:
+                out[rid] = rec
         return out
 
     def _total_impact(self, records):
@@ -123,11 +124,24 @@ class ReviewApp:
             caps_path = os.path.join(self.tax_dir, "capabilities.json")
             caps = load_json(caps_path) if os.path.exists(caps_path) else None
             t = copy.deepcopy(self.base_tax)
-            revisions = self._revisions()
-            # A response record marks its request as answered here, in memory only — nothing
-            # on disk is ever rewritten.
-            requests = {rid: (dict(rec, status="answered") if rec.get("item_id") in revisions else rec)
-                        for rid, rec in self._requests().items()}
+            item_ids = {i["id"] for i in self.review["items"]}
+            requests = self._requests()
+            responses = self._responses_by_request_id()
+            # A response record marks its OWN request as answered here, in memory only —
+            # nothing on disk is ever rewritten. Matching by request_id (not item_id) means a
+            # newer open request on the same item is never mistaken for one a stale response
+            # already answered.
+            requests = {rid: (dict(rec, status="answered") if rid in responses else rec)
+                        for rid, rec in requests.items()}
+            # revisions[item_id] is the response to that item's LATEST request only. An item
+            # whose latest request has no response yet is omitted (the UI then shows "Claude
+            # is revising…"/"Queued for next run"), even if an earlier request WAS answered.
+            last_request_for_item = {}
+            for rid, rec in requests.items():
+                iid = rec.get("item_id")
+                if iid in item_ids:
+                    last_request_for_item[iid] = rid
+            revisions = {iid: responses[rid] for iid, rid in last_request_for_item.items() if rid in responses}
             return {"review": self.review,
                     "base": {"intent_taxonomy": intent(t), "entities": list(t.get("entities") or {}),
                              "aliases": t.get("aliases") or {}, "version": t.get("version") or 0,
@@ -255,7 +269,7 @@ class ReviewApp:
                     rec["impact"] = TI.delta(self.db, self.base_tax, self._ops(accepted), rec["op"])
                 accepted = accepted + [rec]
                 prepared.append(rec)
-            out = [D.append(self.decisions_path, rec) for rec in prepared]
+            out = D.append_many(self.decisions_path, prepared)
             return 200, {"records": out}
 
     def request(self, body):

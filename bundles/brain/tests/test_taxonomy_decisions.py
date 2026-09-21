@@ -37,6 +37,25 @@ class LogTests(unittest.TestCase):
             with self.assertRaises(D.DecisionLogError):
                 D.append(os.path.join(td, "d.jsonl"), {"review_id": RID, "item_id": "i-1", "action": "reject"})
 
+    def test_append_many_writes_all_records_in_one_call(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = os.path.join(td, "decisions.jsonl")
+            records = [{"review_id": RID, "item_id": "i-1", "action": "approve", "surface": "browser"},
+                      {"review_id": RID, "item_id": "i-2", "action": "approve", "surface": "browser"}]
+            out = D.append_many(p, records)
+            self.assertEqual(len(out), 2)
+            self.assertTrue(all(r.get("schema") and r.get("ts") for r in out))
+            self.assertEqual([r["action"] for r in D.read(p)], ["approve", "approve"])
+
+    def test_append_many_rejects_the_whole_batch_before_writing(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = os.path.join(td, "decisions.jsonl")
+            records = [{"review_id": RID, "item_id": "i-1", "action": "approve", "surface": "browser"},
+                      {"review_id": RID, "item_id": "i-2", "action": "reject"}]   # reject needs a reason
+            with self.assertRaises(D.DecisionLogError):
+                D.append_many(p, records)
+            self.assertFalse(os.path.exists(p))
+
 
 class StateTests(unittest.TestCase):
     def test_last_write_wins_and_withdraw(self):
