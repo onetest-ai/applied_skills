@@ -590,13 +590,14 @@ function treeRowsHTML(){
   if (plain) out += addsL1.map(a => pendingRow(a, "l1")).join("");
   const un = (S.base.intent_taxonomy.unassigned_l2 || []).filter(treeFilter);
   if (un.length) out += `<div class="lgroup">Not under any L1</div>` + un.map(k => nodeRow(k, "")).join("");
-  const ents = (S.base.entities || []).filter(treeFilter);
+  const ents = U.filter === "nodesc" ? [] : (S.base.entities || []).filter(treeFilter);
   if (ents.length) out += `<div class="lgroup">Entity kinds</div>` + ents.map(k => nodeRow(k, "")).join("");
   return out || `<div class="empty"><p class="note">Nothing matches.</p></div>`;
 }
 function taxonomyView(){
   const labels = allLabels().concat(S.base.entities || []);
-  const c = {flagged: labels.filter(l => flagsOf(l).length).length, notags: labels.filter(l => !cnt(l)).length, nodesc: labels.filter(l => !descOf(l)).length};
+  // "Missing description" counts intent L1+L2 only, the same definition as the plan's subtitle.
+  const c = {flagged: labels.filter(l => flagsOf(l).length).length, notags: labels.filter(l => !cnt(l)).length, nodesc: allLabels().filter(l => !descOf(l)).length};
   const filters = [["all", "All", null], ["flagged", "Flagged", c.flagged], ["notags", "No tags", c.notags], ["nodesc", "Missing description", c.nodesc]]
     .map(([k, l, n]) => `<button type="button" class="chip" data-act="filter" data-f="${esc(k)}" aria-pressed="${U.filter === k}">${esc(l)}${n != null ? " · " + num(n) : ""}</button>`).join("");
   const sorts = [["tree", "Tree order"], ["size", "Largest"]]
@@ -679,21 +680,26 @@ function nodeDetail(n){
 }
 
 // ---------------------------------------------------------------- metrics
-const MTABS = [["not", "Not modeled"], ["cand", "Probably governed"], ["yes", "Governed"], ["stated", "Stated only"]];
+const MTABS_GOVERNED = [["not", "Not modeled"], ["cand", "Probably governed"], ["yes", "Governed"], ["stated", "Stated only"]];
+// Without a governed metrics file nothing can be called "not modeled": computable metrics are "unknown".
+const MTABS_UNKNOWN = [["unknown", "Governed status unknown"], ["stated", "Stated only"]];
+const mtabs = () => S.governed_file ? MTABS_GOVERNED : MTABS_UNKNOWN;
+const computableBucket = () => S.governed_file ? "not" : "unknown";
 function mBucket(m){
   if (m.source_type === "stated") return "stated";
+  if (!S.governed_file) return "unknown";
   const g = (m.governed || {}).status;
   return g === "yes" ? "yes" : g === "candidate" ? "cand" : "not";
 }
 function metricsView(){
   const counts = {}; for (const m of S.metrics){ const b = mBucket(m); counts[b] = (counts[b] || 0) + 1; }
-  if (!U.mtab) U.mtab = (MTABS.find(([k]) => counts[k]) || MTABS[0])[0];
+  if (!U.mtab || !mtabs().some(([k]) => k === U.mtab)) U.mtab = (mtabs().find(([k]) => counts[k]) || mtabs()[0])[0];
   const q = U.mq.trim().toLowerCase();
   const rows = S.metrics.filter(m => mBucket(m) === U.mtab && (!q || m.metric.toLowerCase().includes(q)));
-  const adds = P.adds.filter(a => a.op.type === "metric_add" && (a.op.source_type === "stated" ? "stated" : "not") === U.mtab);
+  const adds = P.adds.filter(a => a.op.type === "metric_add" && (a.op.source_type === "stated" ? "stated" : computableBucket()) === U.mtab);
   if (U.mSel !== "__new" && !String(U.mSel || "").startsWith("pending:") && !rows.find(m => m.metric === U.mSel)) U.mSel = rows.length ? rows[0].metric : null;
-  const tabs = MTABS.map(([k, l]) => `<button type="button" class="chip" data-act="mtab" data-t="${esc(k)}" aria-pressed="${U.mtab === k}">${esc(l)} · ${num(counts[k])}</button>`).join("");
-  const icon = b => b === "not" ? `<span class="ic del">×</span>` : b === "yes" ? `<span class="ic add">✓</span>` : b === "cand" ? `<span class="ic flag">?</span>` : `<span class="ic mute">“</span>`;
+  const tabs = mtabs().map(([k, l]) => `<button type="button" class="chip" data-act="mtab" data-t="${esc(k)}" aria-pressed="${U.mtab === k}">${esc(l)} · ${num(counts[k])}</button>`).join("");
+  const icon = b => b === "unknown" ? `<span class="ic mute">?</span>` : b === "not" ? `<span class="ic del">×</span>` : b === "yes" ? `<span class="ic add">✓</span>` : b === "cand" ? `<span class="ic flag">?</span>` : `<span class="ic mute">“</span>`;
   const list = rows.map(m => { const p = P.m[m.metric];
     return `<button type="button" class="item ${U.mSel === m.metric ? "sel" : ""}" data-act="pick-metric" data-name="${esc(m.metric)}">${p ? mark(p.op) : icon(mBucket(m))}<span class="t">${esc(m.metric)}</span><span class="st"><span class="pill mute">${esc(m.source_type)}</span></span><span class="s">grain: ${esc(m.grain || "—")} · ${esc(plural(m.n_sources, "source"))}</span></button>`; }).join("")
     + adds.map(a => `<button type="button" class="item ${U.mSel === "pending:" + a.src.proposal ? "sel" : ""}" data-act="pick-metric" data-name="pending:${esc(a.src.proposal)}">${mark(a.op)}<span class="t">${esc(a.op.metric)}</span><span class="st"><span class="pill ok">new</span></span><span class="s">grain: ${esc(a.op.grain || "—")}</span></button>`).join("");
@@ -765,7 +771,10 @@ function ctxFor(kind){
     const n = nodeCache[U.treeSel.label]; if (!n || n.errors) return null;
     const ind = inductionItem(n.label);
     let itemId = ind && isActionable(ind) ? ind.id : null;
-    if (!itemId && kind === "describe" && n.item && n.item.origin === "describe" && n.item.status === "proposed") itemId = n.item.id;
+    // Amend an undecided or approved description proposal; a rejected one stays rejected and the
+    // edit becomes a fresh proposal (amending it would silently overturn the reject).
+    const di = n.item && n.item.origin === "describe" && n.item.status === "proposed" ? n.item : null;
+    if (!itemId && kind === "describe" && di && (latest(di.id) || {}).action !== "reject") itemId = di.id;
     return {label: n.label, level: n.level, parent: n.parent, itemId, desc: n.description || ""};
   }
   if (U.view === "metrics") return {metric: S.metrics.find(m => m.metric === U.mSel)};
@@ -800,8 +809,11 @@ function formSpec(kind, c){
         <label>Description <span class="req">required</span><textarea name="description" rows="3" placeholder="What belongs here, and how it differs from its neighbours"></textarea></label>`,
       build: f => { const n = fval(f, "name"), d = fval(f, "description"), p = fval(f, "parent"); if (!n || !d) return null;
         return {type:"add", level: p ? "L2" : "L1", name:n, parent: p || null, description:d}; }};
-    case "m-edit": { const m = c.metric; return {title:`Edit “${m.metric}”`, fields:`<label>Type <select name="source_type">${TYPES.map(t => opt(t, t, m.source_type === t)).join("")}</select></label><label>Grain <input type="text" name="grain" value="${esc(m.grain || "")}"></label><label>Definition <textarea name="definition" rows="3">${esc(m.definition || "")}</textarea></label>`,
-      build: f => { const fields = {}; for (const k of ["source_type", "grain", "definition"]){ const v = fval(f, k); if ((m[k] || "") !== v) fields[k] = v || null; }
+    case "m-edit": { const m = c.metric, known = TYPES.includes(m.source_type);
+      // Compare against what the form started with, so only fields the user changed are sent.
+      const init = {source_type: known ? m.source_type : "", grain: String(m.grain || "").trim(), definition: String(m.definition || "").trim()};
+      return {title:`Edit “${m.metric}”`, fields:`<label>Type <select name="source_type">${known ? "" : opt("", `— unchanged (${m.source_type || "not set"}) —`, true)}${TYPES.map(t => opt(t, t, m.source_type === t)).join("")}</select></label><label>Grain <input type="text" name="grain" value="${esc(m.grain || "")}"></label><label>Definition <textarea name="definition" rows="3">${esc(m.definition || "")}</textarea></label>`,
+      build: f => { const fields = {}; for (const k of ["source_type", "grain", "definition"]){ const v = fval(f, k); if (v !== init[k] && !(k === "source_type" && !v)) fields[k] = v || null; }
         return Object.keys(fields).length ? {type:"metric_edit", metric:m.metric, fields} : null; }}; }
     case "m-merge": { const m = c.metric; return {title:`Merge “${m.metric}” into…`, fields:`<label>Into <select name="into">${S.metrics.filter(x => x.metric !== m.metric).map(x => x.metric).sort((a, b) => a.localeCompare(b)).map(x => opt(x, x)).join("")}</select></label>`,
       build: f => { const v = fval(f, "into"); return v ? {type:"metric_merge", from:m.metric, into:v} : null; }}; }
@@ -836,7 +848,7 @@ function openForm(kind, c){
     $("fok").disabled = !op; $("ferr").textContent = "";
     if (spec.noPreview) return;
     const imp = $("fimp");
-    if (!op){ $("fdiff").innerHTML = ""; imp.hidden = true; return; }
+    if (!op){ clearTimeout(formTimer); formSeq++; $("fdiff").innerHTML = ""; imp.hidden = true; return; }
     $("fdiff").innerHTML = diffHTML(op);
     clearTimeout(formTimer);
     formTimer = setTimeout(async () => {
@@ -856,7 +868,7 @@ function openForm(kind, c){
     else if (amend){ rec = {action:"amend", item_id:c.itemId, op}; msg = opText(op); }
     else { rec = {action:"propose", op}; msg = "Added to your changes: " + opText(op); }
     const after = kind === "add" ? out => { U.treeSel = {kind:"pending", key:"p:" + out.record.item_id}; }
-      : kind === "m-add" ? out => { U.mtab = op.source_type === "stated" ? "stated" : "not"; U.mSel = "pending:" + out.record.item_id; } : null;
+      : kind === "m-add" ? out => { U.mtab = op.source_type === "stated" ? "stated" : computableBucket(); U.mSel = "pending:" + out.record.item_id; } : null;
     const ok = await send(rec, msg, null, after);
     if (!ok && $("fok")) $("fok").disabled = false;
   };
@@ -865,6 +877,16 @@ function openForm(kind, c){
 }
 
 // ---------------------------------------------------------------- decisions, undo, toast
+// The record each item had before its latest decision in this tab, so an Undo restores the
+// full previous state (e.g. a reopen), not just "undecided".
+const hist = {};
+function undoRecFor(it){
+  if (Object.prototype.hasOwnProperty.call(hist, it.id)) return restoreRec(it.id, hist[it.id]);
+  const d = latest(it.id);
+  // A suppressed item can only have been approved or amended after a reopen.
+  if (it.status === "suppressed" && d && (d.action === "approve" || d.action === "amend")) return {action:"reopen", item_id:it.id};
+  return {action:"clear", item_id:it.id};
+}
 function restoreRec(itemId, prev){
   if (prev && prev.action !== "clear"){
     const r = {action:prev.action, item_id:itemId};
@@ -873,8 +895,14 @@ function restoreRec(itemId, prev){
   }
   return {action:"clear", item_id:itemId};
 }
+let busy = false;
 async function send(rec, msg, undoOverride, beforeRender){
-  const prev = rec.item_id ? S.decisions[rec.item_id] : null;
+  if (busy) return false;   // a double click or key repeat must not append a second record
+  busy = true;
+  try { return await sendNow(rec, msg, undoOverride, beforeRender); } finally { busy = false; }
+}
+async function sendNow(rec, msg, undoOverride, beforeRender){
+  const prev = rec.item_id ? (S.decisions[rec.item_id] || null) : null;
   const before = U.view === "inbox" ? inboxOrder().todo.map(i => i.id) : [];
   let out;
   try { out = await api.decide(rec); }
@@ -883,6 +911,7 @@ async function send(rec, msg, undoOverride, beforeRender){
     const el = $("ferr"); if (el) el.textContent = errText(e); else toast(errText(e), null, true);
     return false;
   }
+  if (rec.item_id && rec.action !== "propose" && rec.action !== "withdraw") hist[rec.item_id] = prev;
   let undo = undoOverride || null;
   if (!undo){
     if (rec.action === "propose") undo = {action:"withdraw", item_id:out.record.item_id};
@@ -906,7 +935,7 @@ function toast(msg, undo, bad){
   toastTimer = setTimeout(() => { $("toastHost").innerHTML = ""; undoRec = null; }, bad ? 8000 : 5000);
 }
 async function doUndo(){
-  if (!undoRec) return;
+  if (!undoRec || busy) return;   // keep the Undo offer if a decision is still in flight
   const r = undoRec; undoRec = null; $("toastHost").innerHTML = "";
   // send() offers a redo in its own toast; after undoing a decision, keep that item selected.
   await send(r, "Undone", null, () => { if (r.item_id && r.action !== "withdraw" && U.view === "inbox") U.inboxSel = r.item_id; });
@@ -981,8 +1010,8 @@ document.addEventListener("click", async ev => {
       el.dataset.revert ? `Reverted “${itemTitle(item)}” to keep` : item.origin === "induction" ? `Kept “${itemTitle(item)}”` : `Approved “${itemTitle(item)}”`); break;
     case "reject": if (item) await send({action:"reject", item_id:item.id, reason:el.dataset.reason}, `Rejected “${itemTitle(item)}”: ${el.dataset.reason}`); break;
     case "reopen": if (item) await send({action:"reopen", item_id:item.id}, `Reopened “${itemTitle(item)}”`); break;
-    case "undo-item": if (item) await send({action:"clear", item_id:item.id}, `Undid the decision on “${itemTitle(item)}”`, restoreRec(item.id, latest(item.id))); break;
-    case "withdraw": { const p = S.proposals.find(x => x.item_id === id);
+    case "undo-item": if (item && isDecided(item)) await send(undoRecFor(item), `Undid the decision on “${itemTitle(item)}”`, restoreRec(item.id, latest(item.id))); break;
+    case "withdraw": { const p = !busy && S.proposals.find(x => x.item_id === id);   // a repeat click is ignored
       if (p) await send({action:"withdraw", item_id:p.item_id}, "Withdrawn: " + opText(p.op), {action:"propose", op:p.op}); break; }
     case "form": openForm(el.dataset.form, ctxFor(el.dataset.form)); break;
     case "form-cancel": { const s = $("formslot"); if (s) s.innerHTML = "";

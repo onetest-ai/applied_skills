@@ -118,15 +118,39 @@ def authorship_errors(entries):
 
 
 def standing_rejections(records):
-    out = {}
+    """Rejections in force, keyed by fingerprint.
+
+    A reject stands until a reopen of the same fingerprint (in any review) lifts it. A `clear`
+    (the app's Undo) reverts its item's own reject or reopen when that was the item's last
+    action: a cleared reject no longer stands, and a cleared reopen restores what it lifted.
+    `clear` records carry no fingerprint, so they are matched by (review_id, item_id).
+    """
+    out, lifted, last, undo = {}, {}, {}, {}
     for r in records:
+        a, key = r.get("action"), (r.get("review_id"), r.get("item_id"))
         fp = r.get("fingerprint")
-        if not fp:
-            continue
-        if r["action"] == "reject":
+        if a == "clear":
+            u = undo.pop(key, None)
+            if u and last.get(key) in ("reject", "reopen"):
+                kind, ufp, rec, before = u
+                if kind == "reject" and out.get(ufp) is rec:
+                    if before is None:
+                        out.pop(ufp, None)
+                    else:
+                        out[ufp] = before
+                elif kind == "reopen" and before is not None and ufp not in out:
+                    out[ufp] = before
+        elif a == "reject" and fp:
+            undo[key] = ("reject", fp, r, out.get(fp))
             out[fp] = r
-        elif r["action"] == "reopen":
-            out.pop(fp, None)
+        elif a == "reopen" and fp:
+            rec = out.pop(fp, None) or lifted.get(fp)
+            lifted[fp] = rec
+            undo[key] = ("reopen", fp, r, rec)
+        elif a in ITEM_ACTIONS:
+            undo.pop(key, None)
+        if a in ITEM_ACTIONS:
+            last[key] = a
     return out
 
 

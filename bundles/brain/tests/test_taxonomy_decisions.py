@@ -81,6 +81,50 @@ class SuppressionTests(unittest.TestCase):
         rej = D.standing_rejections(recs)
         self.assertEqual(list(rej), ["add|l1|q3 offsite|"])
 
+    def test_cleared_reject_does_not_stand(self):
+        fp = "add|l1|q3 offsite|"
+        recs = [{"review_id": "A", "item_id": "i-1", "action": "reject", "fingerprint": fp, "reason": "no"},
+                {"review_id": "A", "item_id": "i-1", "action": "clear"}]
+        self.assertEqual(D.standing_rejections(recs), {})
+
+    def test_cleared_reject_restores_the_earlier_rejection(self):
+        fp = "add|l1|q3 offsite|"
+        first = {"review_id": "A", "item_id": "i-1", "action": "reject", "fingerprint": fp, "reason": "first"}
+        recs = [first, {"review_id": "B", "item_id": "i-9", "action": "reject", "fingerprint": fp, "reason": "again"},
+                {"review_id": "B", "item_id": "i-9", "action": "clear"}]
+        self.assertIs(D.standing_rejections(recs)[fp], first)
+
+    def test_cleared_reopen_restores_the_rejection(self):
+        fp = "add|l1|q3 offsite|"
+        recs = [{"review_id": "A", "item_id": "i-1", "action": "reject", "fingerprint": fp, "reason": "no"},
+                {"review_id": "B", "item_id": "i-7", "action": "reopen", "fingerprint": fp},
+                {"review_id": "B", "item_id": "i-7", "action": "clear"}]
+        self.assertEqual(D.standing_rejections(recs)[fp]["reason"], "no")
+
+    def test_cross_review_reopen_still_lifts(self):
+        fp = "add|l1|q3 offsite|"
+        recs = [{"review_id": "A", "item_id": "i-1", "action": "reject", "fingerprint": fp, "reason": "no"},
+                {"review_id": "B", "item_id": "i-7", "action": "reopen", "fingerprint": fp}]
+        self.assertEqual(D.standing_rejections(recs), {})
+
+    def test_clear_of_an_approve_leaves_rejections_alone(self):
+        fp = "add|l1|q3 offsite|"
+        recs = [{"review_id": "A", "item_id": "i-1", "action": "reject", "fingerprint": fp, "reason": "no"},
+                {"review_id": "B", "item_id": "i-7", "action": "reopen", "fingerprint": fp},
+                {"review_id": "B", "item_id": "i-7", "action": "approve"},
+                {"review_id": "B", "item_id": "i-7", "action": "clear"}]
+        self.assertEqual(D.standing_rejections(recs), {})
+
+    def test_reopen_after_undone_reopen_can_be_undone_again(self):
+        fp = "add|l1|q3 offsite|"
+        recs = [{"review_id": "A", "item_id": "i-1", "action": "reject", "fingerprint": fp, "reason": "no"},
+                {"review_id": "B", "item_id": "i-7", "action": "reopen", "fingerprint": fp},
+                {"review_id": "B", "item_id": "i-7", "action": "approve"},
+                {"review_id": "B", "item_id": "i-7", "action": "clear"},
+                {"review_id": "B", "item_id": "i-7", "action": "reopen", "fingerprint": fp},
+                {"review_id": "B", "item_id": "i-7", "action": "clear"}]
+        self.assertIn(fp, D.standing_rejections(recs))
+
     def test_fuzzy_match_same_level_and_parent(self):
         rej = {"add|l1|q3 offsite|": {"reason": "no"}}
         self.assertIsNotNone(D.match_rejection("add|l1|q3 offsites|", rej))
