@@ -90,7 +90,12 @@ def plan_additions(tax, proposals, fuzzy=0.88):
                 continue
             dup = near(name, {i["name"] for i in items if i["level"] == level}, fuzzy)
             if dup:
-                by_name[dup]["sources"].append(p)
+                existing = by_name[dup]
+                existing["sources"].append(p)
+                if not existing.get("description"):
+                    d = (p.get("description") or "").strip()
+                    if d:
+                        existing["description"] = d
                 skip(p, name, f"dup of {level} '{dup}'", "dup_new")
                 continue
             parent = None
@@ -101,7 +106,8 @@ def plan_additions(tax, proposals, fuzzy=0.88):
                 if not parent:
                     skip(p, name, f"L2 parent '{raw_parent or '—'}' not an existing/new L1", "invalid")
                     continue
-            item = {"level": level, "name": name, "parent": parent, "sources": [p]}
+            item = {"level": level, "name": name, "parent": parent, "sources": [p],
+                    "description": (p.get("description") or "").strip() or None}
             items.append(item)
             by_name[name] = item
     return items, skipped
@@ -196,7 +202,12 @@ def legacy_apply(a, tax, items):
         return 0
 
     version = (tax.get("version") or 0) + 1
-    ops = [{"type": "add", "level": i["level"], "name": i["name"], "parent": i["parent"]} for i in items]
+    ops = []
+    for i in items:
+        op = {"type": "add", "level": i["level"], "name": i["name"], "parent": i["parent"]}
+        if i.get("description"):
+            op["description"] = i["description"]
+        ops.append(op)
     try:
         new, _, applied = apply_ops(tax, ops)
     except ChangesetError as e:

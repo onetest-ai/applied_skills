@@ -25,6 +25,15 @@ def majority(members, field):
     vals = [m.get(field) for m in members if m.get(field)]
     return Counter(vals).most_common(1)[0][0] if vals else None
 
+def best_description(members):
+    vals = [(m.get("description") or "").strip() for m in members]
+    vals = [v for v in vals if v]
+    if not vals:
+        return None
+    cnt = Counter(vals)
+    top = max(cnt.values())
+    return max((v for v in cnt if cnt[v] == top), key=len)
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--consolidated", required=True)
@@ -85,6 +94,7 @@ def main():
             pass
 
     l1_labels = [c["canonical_guess"] for c in l1]
+    descriptions = {c["canonical_guess"]: d for c in intents if (d := best_description(c["members"]))}
 
     # ---- review flags (advisory only; taxonomy above is unchanged) ----
     dup_groups = near_duplicate_labels(l1_labels)
@@ -107,6 +117,8 @@ def main():
            "entities": {k: [c["canonical_guess"] for c in v] for k, v in ents.items()},
            "demoted": demoted.most_common(),
            "review_flags": review_flags}
+    if descriptions:
+        out["descriptions"] = descriptions
     json.dump(out, open(a.out_json, "w"), indent=2)
 
     if dup_groups or off_axis:
@@ -132,11 +144,16 @@ def main():
         conf = c.get("avg_confidence")
         L.append(f"\n### {c['canonical_guess']}  _(L1, {c['n_sources']} src"
                  + (f", conf {conf}" if conf else "") + ")_")
+        d = descriptions.get(c["canonical_guess"])
+        if d:
+            L.append(f"  _{d}_")
         if len(c["variants"]) > 1:
             L.append(f"  - ⚠️ variants to merge: {c['variants']}")
         for k in sorted(kids, key=lambda x: -x["n_mentions"]):
+            kd = descriptions.get(k["canonical_guess"])
             L.append(f"  - {k['canonical_guess']}"
-                     + (f"  ⚠️{k['variants']}" if len(k['variants']) > 1 else ""))
+                     + (f"  ⚠️{k['variants']}" if len(k['variants']) > 1 else "")
+                     + (f" — {kd}" if kd else ""))
     if unassigned:
         L.append("\n### (L2 without a matched L1 parent)")
         for k in unassigned:

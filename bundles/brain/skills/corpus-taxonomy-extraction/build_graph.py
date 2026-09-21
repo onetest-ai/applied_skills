@@ -112,10 +112,14 @@ def main():
     for kind in tax.get("entities", {}):
         nodes[nid(kind)] = (nid(kind), kind, "entity_kind", None)
 
+    node_desc = {i: (tax.get("descriptions") or {}).get(v[1]) for i, v in nodes.items()}
+
     if a.capabilities:
         ctax = json.load(open(a.capabilities))
         ct = ctax.get("capability_taxonomy") or ctax.get("intent_taxonomy", {})
         add_tree(ct, nodes, edges, "capability_l1", "capability_l2", id_prefix=CAP_PREFIX)
+        cdesc = ctax.get("descriptions") or {}
+        node_desc.update({i: cdesc.get(v[1]) for i, v in nodes.items() if i not in node_desc})
 
     addressed, skipped = ([], [])
     if a.links:
@@ -134,6 +138,8 @@ def main():
       CREATE INDEX IF NOT EXISTS idx_edges_tgt ON graph_edges(target);
       CREATE INDEX IF NOT EXISTS idx_nodes_kind ON graph_nodes(kind);
     """)
+    if "description" not in {r[1] for r in c.execute("PRAGMA table_info(graph_nodes)")}:
+        c.execute("ALTER TABLE graph_nodes ADD COLUMN description TEXT")
     store_version = GM.read_version(c)
     try:
         start = GM.resolve_start(c, tax)
@@ -150,7 +156,8 @@ def main():
         mstats.update(s)
 
     c.execute("DELETE FROM graph_edges WHERE rel IN ('subclass_of','addressed_by')")
-    c.executemany("INSERT OR REPLACE INTO graph_nodes VALUES(?,?,?,?)", list(nodes.values()))
+    c.executemany("INSERT OR REPLACE INTO graph_nodes(id,label,kind,parent,description) VALUES(?,?,?,?,?)",
+                  [(*v, node_desc.get(k)) for k, v in nodes.items()])
     c.executemany("INSERT INTO graph_edges VALUES(?,?,?)", edges + addressed)
     keep = set(nodes)
     have_ct = GM.has_table(c, "chunk_topics")

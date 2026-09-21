@@ -24,16 +24,18 @@ def main():
     ap.add_argument("--chunks", help="comma list of chunk ids — prep ONLY these chunks (incremental reclassify)")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
-    it = json.load(open(a.taxonomy)).get("intent_taxonomy", {})
+    tax = json.load(open(a.taxonomy))
+    it = tax.get("intent_taxonomy", {})
     tree = it.get("tree", {})
     l1s = sorted(set(it.get("l1", [])) | set(tree.keys()))
+    desc = tax.get("descriptions") or {}
     with open(os.path.join(a.out, "vocab.md"), "w") as f:
         f.write("# Taxonomy — allowed categories (use EXACT names). Assign the MOST SPECIFIC that fits:\n"
                 "# an **L2** (indented) when the chunk is specifically about it, else its **L1**.\n\n")
         for l1 in l1s:
-            f.write(f"- {l1}\n")
+            f.write(f"- {l1}" + (f" — {desc[l1]}" if desc.get(l1) else "") + "\n")
             for l2 in (tree.get(l1) or []):
-                f.write(f"    - {l2}\n")
+                f.write(f"    - {l2}" + (f" — {desc[l2]}" if desc.get(l2) else "") + "\n")
     with open(os.path.join(a.out, "instructions.md"), "w") as f:
         f.write(
             "# Classify each chunk against the taxonomy (L1 + L2)\n\n"
@@ -41,7 +43,8 @@ def main():
             "ABOUT (0–3). **Prefer the most specific level:** pick an **L2** when the chunk is "
             "specifically about that sub-topic; otherwise pick its **L1**. You may mix L1 and L2. "
             "Use EXACT names. If a chunk is generic/administrative and fits none, return an empty "
-            "list — do NOT force a tag.\n\n"
+            "list — do NOT force a tag. Descriptions (after the —) define each category's boundary; "
+            "use them to choose between similar labels.\n\n"
             "Output ONE JSON file `result_<k>.json` mapping chunk id -> list of category names "
             "(each an EXACT L1 or L2 label):\n"
             '  {"12": ["Unauthorized items"], "13": [], "14": ["Track Delivery","Billing & Payments"]}\n'

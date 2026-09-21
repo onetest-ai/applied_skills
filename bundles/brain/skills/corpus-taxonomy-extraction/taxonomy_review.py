@@ -123,6 +123,8 @@ def _drift_items(tax, proposals_dir, c, rejections, stats, skipped_files):
     out = []
     for i in items:
         op = {"type": "add", "level": i["level"], "name": i["name"], "parent": i["parent"]}
+        if i.get("description"):
+            op["description"] = i["description"]
         ids = sorted({int(x) for p in i["sources"] for x in (p.get("example_ids") or [])
                       if str(x).lstrip("-").isdigit()})
         support = {"chunks": len(ids)}

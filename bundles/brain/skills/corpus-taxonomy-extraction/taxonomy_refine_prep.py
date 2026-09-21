@@ -26,14 +26,16 @@ def main():
     ap.add_argument("--docs", help="restrict to these source relpaths (comma list)")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
-    it = json.load(open(a.taxonomy)).get("intent_taxonomy", {})
+    tax = json.load(open(a.taxonomy))
+    it = tax.get("intent_taxonomy", {})
     tree = it.get("tree", {}); l1s = sorted(set(it.get("l1", [])) | set(tree.keys()))
+    desc = tax.get("descriptions") or {}
     with open(os.path.join(a.out, "vocab.md"), "w") as f:
         f.write("# CURRENT taxonomy (already exists — do NOT re-propose these; only propose what's missing)\n\n")
         for l1 in l1s:
-            f.write(f"- {l1}\n")
+            f.write(f"- {l1}" + (f" — {desc[l1]}" if desc.get(l1) else "") + "\n")
             for l2 in (tree.get(l1) or []):
-                f.write(f"    - {l2}\n")
+                f.write(f"    - {l2}" + (f" — {desc[l2]}" if desc.get(l2) else "") + "\n")
     with open(os.path.join(a.out, "instructions.md"), "w") as f:
         f.write(
             "# Propose ADDITIVE taxonomy terms for the untagged chunks\n\n"
@@ -44,13 +46,17 @@ def main():
             "  a new **L2** under a named existing (or newly proposed) **L1** parent (preferred — most new\n"
             "  concepts are sub-topics), or a new **L1** only when it's a genuinely new top-level theme.\n\n"
             "Rules: additive only — never rename/replace existing terms. Be conservative: propose a term "
-            "only if several chunks share it. Give a short evidence quote and example chunk ids.\n\n"
+            "only if several chunks share it. Give a short evidence quote and example chunk ids. Give every "
+            "proposed term a one-sentence description.\n\n"
             "Output ONE JSON file `result_<k>.json`:\n"
             '  {\n'
             '    "proposals": [\n'
             '      {"name":"Proof of Delivery","level":"L2","parent":"Delivery & Pickup Management",\n'
+            '       "description":"one sentence: what this covers and how it differs from its siblings",\n'
             '       "evidence":"AI-verified proof of delivery + push notification","example_ids":[123,456]},\n'
-            '      {"name":"AI & Automation","level":"L1","parent":null,"evidence":"…","example_ids":[789]}\n'
+            '      {"name":"AI & Automation","level":"L1","parent":null,\n'
+            '       "description":"one sentence: what this covers and how it differs from its siblings",\n'
+            '       "evidence":"…","example_ids":[789]}\n'
             '    ],\n'
             '    "map": {"123":["Track Delivery"]}   // chunks that DO fit an existing category after all\n'
             '  }\n')
