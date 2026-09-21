@@ -15,9 +15,15 @@ By default this is INCREMENTAL: it replaces the tags only for the chunk ids pres
 in the result files (delete-then-insert per chunk), so re-classifying a few changed
 docs leaves every other chunk's tags intact. Pass --reset to rebuild the whole table.
 
-Usage: classify_write.py --db knowledge.sqlite --results <dir> [--reset]
+graph_aliases table (written by build_graph for reviewed renames/merges) lets old labels
+resolve to their current node ids.
+
+Usage: classify_write.py --db knowledge.sqlite --results <dir> [--reset] [--reclassify-done PATH]
 """
-import argparse, glob, json, os, re, sqlite3
+import argparse, glob, json, os, re, sqlite3, sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import taxo_io  # noqa: E402
 
 def nid(s): return re.sub(r"[^a-z0-9]+", "_", str(s).lower()).strip("_") or "n"
 
@@ -25,6 +31,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True); ap.add_argument("--results", required=True)
     ap.add_argument("--reset", action="store_true", help="rebuild the whole chunk_topics table (default: only the chunks in the results)")
+    ap.add_argument("--reclassify-done", help="taxonomy/work/reclassify.json — remove the chunk ids just written "
+                    "(the file is deleted once empty)")
     a = ap.parse_args()
     c = sqlite3.connect(a.db)
     if a.reset:
@@ -66,9 +74,10 @@ def main():
     for cid in results:
         c.execute("DELETE FROM chunk_topics WHERE chunk_id=?", (cid,))
         c.execute("DELETE FROM graph_edges WHERE rel='about' AND source=?", (f"chunk:{cid}",))
-    # resolve each label against the graph: id -> (label, kind, parent_id)
     node = {i: (lbl, kind, par) for i, lbl, kind, par in
             c.execute("SELECT id,label,kind,parent FROM graph_nodes")}
+    # old labels of reviewed renames/merges resolve to their node (build_graph writes graph_aliases)
+    alias = dict(c.execute("SELECT alias_id, node_id FROM graph_aliases")) if "graph_aliases" in tables else {}
 
     n_assign, n_l2, n_chunks, skipped = 0, 0, 0, 0
     for cid, labels in results.items():
@@ -83,6 +92,7 @@ def main():
             n_assign += 1
         for lbl in (labels or []):
             cat = nid(lbl)
+            if cat not in node and cat in alias: cat = alias[cat]
             if node and cat not in node: skipped += 1; continue     # keep to the graph vocabulary
             label, kind, parent = node.get(cat, (lbl, "intent_l1", None))
             put(cat, label, kind)
@@ -96,6 +106,17 @@ def main():
           + (f" ({skipped} off-vocabulary dropped)" if skipped else ""))
     dist = c.execute("SELECT category_label, count(*) FROM chunk_topics GROUP BY category_id ORDER BY 2 DESC LIMIT 8").fetchall()
     print("top categories:", dist)
+    if a.reclassify_done and os.path.exists(a.reclassify_done):
+        with open(a.reclassify_done, encoding="utf-8") as f:
+            data = json.load(f)
+        for cid in results:
+            data["reasons"].pop(str(cid), None)
+        data["chunk_ids"] = sorted(int(k) for k in data["reasons"])
+        if data["chunk_ids"]:
+            taxo_io.atomic_write_bytes(a.reclassify_done, taxo_io.dump_bytes(data))
+        else:
+            os.remove(a.reclassify_done)
+        print(f"reclassify queue: {len(data['chunk_ids'])} chunk(s) left")
     c.close()
 
 if __name__ == "__main__":
