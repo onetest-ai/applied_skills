@@ -46,7 +46,7 @@ brain-maintenance.toml             # required maintenance planner profile
 brain.deploy.toml                  # optional external-adapter profile; no secrets
 parsed/manifest.json               # {source, md} mapping for final parsed documents
 schema/knowledge.sqlite OR configured DB path
-schema/taxonomy*.json              # approved taxonomy
+taxonomy/taxonomy_vN.json          # approved taxonomy (latest ratified version)
 ./brain                            # launcher
 ```
 
