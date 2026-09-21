@@ -739,7 +739,7 @@ def _make_item(tax, kind, group, op, alternatives, evidence, support, reason, ti
         item["status"] = "invalid"
         item["reason"] = "; ".join(errs)
         return item
-    prior = D.match_rejection(fingerprint(op), rejections)
+    prior = D.match_rejection(fingerprint(op, kind), rejections)
     if prior:
         item["status"] = "suppressed"
         item["prior"] = {k: prior.get(k) for k in ("review_id", "reason", "reviewer", "ts")}

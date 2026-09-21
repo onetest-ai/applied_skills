@@ -12,7 +12,7 @@ import sys
 import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from taxo_io import utc_now  # noqa: E402
+from taxo_io import SUBSTANCE_TYPES, fingerprint, utc_now  # noqa: E402
 from taxo_ops import subject_of, validate as validate_ops  # noqa: E402
 
 SCHEMA = 1
@@ -180,12 +180,32 @@ def standing_rejections(records):
     return out
 
 
+def _legacy_rejection_matches(fp, rfp, rec):
+    """An old-format rejection (type + subject only, see taxo_io.SUBSTANCE_TYPES) matches `fp`
+    only when its substance can be recovered and is the same: the rejection record carries its
+    op and that op fingerprints to `fp`. Otherwise it no longer suppresses anything — showing an
+    item once more beats hiding a genuinely new proposal (a different chunk set, new text). A
+    legacy `keep` never matches: the problem kind it was rejected for is not recoverable."""
+    t, subject, target = (rfp.split("|") + ["", "", ""])[:3]
+    if t not in SUBSTANCE_TYPES or target or rfp.count("|") != 2:
+        return False
+    if not fp.startswith(f"{t}|{subject}|") or fp == rfp:
+        return False
+    op = rec.get("op")
+    return t != "keep" and isinstance(op, dict) and op.get("type") == t and fingerprint(op) == fp
+
+
 def match_rejection(fp, rejections, fuzzy=0.88):
     if fp in rejections:
         return rejections[fp]
+    for rfp, rec in rejections.items():
+        if _legacy_rejection_matches(fp, rfp, rec):
+            return rec
     t, lvl, name, parent = (fp.split("|") + ["", "", "", ""])[:4]
     for rfp, rec in rejections.items():
         rt, rl, rn, rp = (rfp.split("|") + ["", "", "", ""])[:4]
+        if name.startswith("#") or rn.startswith("#"):
+            continue   # substance digests match exactly or not at all
         if (rt, rl, rp) == (t, lvl, parent) and difflib.SequenceMatcher(None, name, rn).ratio() >= fuzzy:
             return rec
     return None

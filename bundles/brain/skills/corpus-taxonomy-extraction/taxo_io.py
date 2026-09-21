@@ -32,16 +32,44 @@ def one_line(s):
     return " ".join((s or "").split())
 
 
-def fingerprint(op):
-    """Identity of an idea across refreshes (used for suppression and item ids)."""
+# Op types whose fingerprint carries their substance (not just type + subject), so rejecting one
+# proposal suppresses only the same proposal again: a tag's chunk set, a description's text, a
+# removal's disposition, a governed draft's key, a health `keep`'s problem kind. A fingerprint of
+# one of these types with an EMPTY third field predates that and is "legacy" (see
+# decisions.match_rejection for how legacy rejections are honoured).
+SUBSTANCE_TYPES = ("tag", "describe", "remove", "metric_govern", "keep")
+
+
+def _digest(text):
+    return "#" + hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
+
+
+def fingerprint(op, kind=None):
+    """Identity of an idea across refreshes (used for suppression and item ids).
+
+    `kind` is the health problem kind; it only affects `keep`, so a rejected keep on a
+    near-duplicate never suppresses a keep on an off-axis or ungoverned-metric problem."""
     t = op["type"]
     if t == "add":
         return f"add|{op['level'].lower()}|{norm(op['name'])}|{norm(op.get('parent'))}"
     subject = op.get("node") or op.get("from") or op.get("metric") or ""
-    target = op.get("new_name") or op.get("into") or op.get("new_parent") or ""
+    if t == "tag":
+        ids = sorted({i for i in (op.get("chunk_ids") or []) if isinstance(i, int) and not isinstance(i, bool)})
+        return f"tag|{norm(subject)}|{_digest(','.join(map(str, ids)))}"
+    if t == "describe":
+        text = op.get("description")
+        return f"describe|{norm(subject)}|{_digest(one_line(text if isinstance(text, str) else '').casefold())}"
+    if t == "remove":
+        target = op.get("disposition") or ""
+    elif t == "metric_govern":
+        target = (op.get("draft") or {}).get("key") if isinstance(op.get("draft"), dict) else ""
+    elif t == "keep":
+        target = kind or ""
+    else:
+        target = op.get("new_name") or op.get("into") or op.get("new_parent") or ""
     if isinstance(target, list):
         target = " ".join(target)
-    return f"{t}|{norm(subject)}|{norm(target)}"
+    return f"{t}|{norm(subject)}|{norm(target if isinstance(target, str) else '')}"
 
 
 def intent(tax):
