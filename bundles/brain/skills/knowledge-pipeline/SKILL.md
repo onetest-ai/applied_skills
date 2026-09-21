@@ -67,11 +67,11 @@ For a deliberately selected single file use `source adopt --root <key> <relative
 
 **4. Configure the numbers lane (only if there are workbooks).** The narrative/graph lanes need no config, but the marts do: walk the user through editing `schema/families.<corpus>.json` to describe their workbooks (glob, layout, sheets, measures). Use `tabular-semantic-layer` (its `profile_workbooks.py` inspects real files) — this is the one step that genuinely needs their input. If they have no workbooks, skip and note the numbers lane will be empty.
 
-**5. Walk the build.** For the complete orchestration contract, read the installed bundle's `AGENT_README.md` when available (source checkout: `bundles/brain/AGENT_README.md`). Create a todo per phase and run in order. Visual corpora have **three** agentic stages: VLM transcription of flagged pages, taxonomy induction, and per-section classification. The top-level coding agent launches those subagents; no script or MCP server launches them automatically. Assemble VLM-enriched Markdown before taxonomy/index/classification, checkpoint long phases, validate every batch result, and never silently continue past a failed step.
+**5. Walk the build.** For the complete orchestration contract, read the installed bundle's `AGENT_README.md` when available (source checkout: `bundles/brain/AGENT_README.md`). Create a todo per phase and run in order. Visual corpora have **three** agentic stages: VLM transcription of flagged pages, taxonomy induction, and per-section classification. The top-level coding agent launches those subagents; no script or MCP server launches them automatically. Between induction and the graph build sits the user's gate: the draft taxonomy review in the local app (`corpus-taxonomy-extraction` → "A. Draft review"). You run `serve` in the background and end your turn; the user reviews and submits in the browser; you apply it and continue. Assemble VLM-enriched Markdown before taxonomy/index/classification, checkpoint long phases, validate every batch result, and never silently continue past a failed step.
 
 **6. Verify + first answer.**
 ```bash
-python .../knowledge-pipeline/onboard.py verify --db <proj>/schema/knowledge.sqlite
+"$PY" .../knowledge-pipeline/onboard.py verify --db <proj>/schema/knowledge.sqlite
 ```
 Report per-lane row counts (it flags any empty lane) and the smoke-query result. Then answer the user's first real question via **hybrid-retrieval** to prove all lanes fire, and point them at the `vault/` to browse.
 
@@ -88,16 +88,17 @@ Re-runnable: `onboard.py scan --docs <dir>` is a standalone preflight; re-runnin
 ## Build (run once per corpus; re-run to refresh)
 ```bash
 DB=<project>/schema/knowledge.sqlite
+PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-requirements <bundle>/requirements.txt python
 # 1a. parse transcripts → Markdown (VTT/SRT corpora — use --merge-cues to join same-speaker cues into speaker turns):
 #     WARNING: omitting --merge-cues produces one chunk per cue (~50-100 chars each), which agents
 #     classify as empty [] and retrieval quality degrades severely. Always pass --merge-cues N > 1 for VTT/SRT.
-python .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats vtt,srt --merge-cues 10
+"$PY" .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats vtt,srt --merge-cues 10
 # 1b. parse narrative docs → Markdown. TEXT pages via pymupdf (torch-free):
-python .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf,md,markdown,txt,html,htm
+"$PY" .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf,md,markdown,txt,html,htm
 #     HTML with no browser degrades to DOM text (fidelity: degraded) via the same command; an
 #     HTML deck needs a browser to capture — see the visual-parse capture step below.
 # 1v. VISUAL/diagram/table pages (slide decks, flows, timelines) — the visual-parse skill:
-python .../visual-parse/render_pages.py --doc <deck.pdf> --out <project>/assets     # PNG + text + table grids; flag visual pages
+"$PY" .../visual-parse/render_pages.py --doc <deck.pdf> --out <project>/assets     # PNG + text + table grids; flag visual pages
 #     HTML deck with a browser (full fidelity, images + VLM transcription): run the
 #     visual-parse skill's capture step (html_segments.js → html_capture.py plan → screenshots
 #     → html_capture.py assemble) to produce this same <project>/assets/<slug>/pages.json first.
@@ -107,29 +108,31 @@ python .../visual-parse/render_pages.py --doc <deck.pdf> --out <project>/assets 
 #     document for one source. When 1b skipped the deck as `skipped-js-rendered` (no text, so
 #     no manifest row was written for it), there is nothing to overwrite — the capture path's
 #     output is the ONLY parsed document that will ever exist for that source.
-python .../visual-parse/vision_prep.py --render-dir <project>/assets/<slug> --out <project>/vision --db "$DB"
+"$PY" .../visual-parse/vision_prep.py --render-dir <project>/assets/<slug> --out <project>/vision --db "$DB"
 #    → 🤖 dispatch VISION subagents (cheap) → vision/result_k.json {img_sha: faithful markdown}
-python .../visual-parse/vision_assemble.py --render-dir <project>/assets/<slug> --out <project>/parsed/<doc>.md --results <project>/vision --db "$DB"
+"$PY" .../visual-parse/vision_assemble.py --render-dir <project>/assets/<slug> --out <project>/parsed/<doc>.md --results <project>/vision --db "$DB"
 # 2. (optional) induce taxonomy → taxonomy/taxonomy_v0.json  [map→reduce→judge→emit; see that skill]
-#    then review it: taxonomy_review.py plan --mode draft … → serve (background) → taxonomy_merge.py --review … --apply
+#    👤 then the user ratifies it in the review app: corpus-taxonomy-extraction → "A. Draft review"
+#    (plan --mode draft → serve in the background, end your turn → on submit, taxonomy_merge.py --review … --apply
+#    writes taxonomy/current.json, which steps 4–5 read)
 # 3. narrative index — heading-aware sections (shared chunker) → chunks+FTS+vector
-python .../knowledge-index/knowledge_index.py index --db "$DB" --corpus <project>/parsed --reset
+"$PY" .../knowledge-index/knowledge_index.py index --db "$DB" --corpus <project>/parsed --reset
 # 4. taxonomy graph (vertices = L1/L2) into the SAME db
-python .../corpus-taxonomy-extraction/build_graph.py --taxonomy <project>/taxonomy/current.json --db "$DB"
+"$PY" .../corpus-taxonomy-extraction/build_graph.py --taxonomy <project>/taxonomy/current.json --db "$DB"
 # 5. per-section taxonomy tags — LOW-TIER AGENTS (meaning is agentic), not a script:
-python .../corpus-taxonomy-extraction/classify_prep.py --db "$DB" --taxonomy <project>/taxonomy/current.json --out <project>/classify --batches 25
+"$PY" .../corpus-taxonomy-extraction/classify_prep.py --db "$DB" --taxonomy <project>/taxonomy/current.json --out <project>/classify --batches 25
 #    --batches controls chunks-per-agent: too few batches → agent hits context limit and writes nothing.
 #    Rule of thumb: ceil(total_chunks / 1000) batches. Default 25 handles corpora up to ~25k chunks safely.
 #    Agents write result_k.json into the SAME <project>/classify/ dir as the batch files (not a subdir).
 #    → dispatch N Haiku subagents: each reads classify/{instructions,vocab,batch_k}.md/json → writes classify/result_k.json
-python .../corpus-taxonomy-extraction/classify_write.py --db "$DB" --results <project>/classify   # -> chunk_topics + graph 'about' edges
+"$PY" .../corpus-taxonomy-extraction/classify_write.py --db "$DB" --results <project>/classify   # -> chunk_topics + graph 'about' edges
 # 5b. semantic 'related' layer — cosine kNN over the vectors we already store (no re-embed, no API)
-python .../knowledge-index/knowledge_index.py related --db "$DB"                                   # -> related(chunk_id, related_id, score)
+"$PY" .../knowledge-index/knowledge_index.py related --db "$DB"                                   # -> related(chunk_id, related_id, score)
 # 6. numeric marts (Excel → facts) into the SAME db
-python .../tabular-semantic-layer/build_marts.py --root <reporting> --config <project>/schema/families.<corpus>.json --out-dir <project>/marts --db "$DB"
+"$PY" .../tabular-semantic-layer/build_marts.py --root <reporting> --config <project>/schema/families.<corpus>.json --out-dir <project>/marts --db "$DB"
 # 7. (OPTIONAL) Obsidian vault — a DISPOSABLE view of the store, regenerable anytime.
 #    Skip it in the default build; export on demand (debugging / a human wants to browse):
-python .../corpus-taxonomy-extraction/to_obsidian.py --db "$DB" --out <project>/vault --clean --assets <project>/assets   # or: ./brain vault
+"$PY" .../corpus-taxonomy-extraction/to_obsidian.py --db "$DB" --out <project>/vault --clean --assets <project>/assets   # or: ./brain vault
 # 8. record document hashes so future updates can diff (see "Updating" below)
 #    seed also UPSERTs the durable meta table (goal from goal.txt, audience from
 #    brain.toml [project].audience) that health() exposes as `about`. Re-run seed
@@ -138,7 +141,7 @@ python .../corpus-taxonomy-extraction/to_obsidian.py --db "$DB" --out <project>/
 #    store (empty meta.goal); a changed goal is flagged as GOAL DRIFT (it reshapes the
 #    whole taxonomy). `apply` (publish path) also refreshes meta, so a build can't ship
 #    ungoverned. Inspect the recorded goal/audience anytime with `./brain about`.
-python .../knowledge-pipeline/brain_sync.py seed --db "$DB" --parsed <project>/parsed --require-goal
+"$PY" .../knowledge-pipeline/brain_sync.py seed --db "$DB" --parsed <project>/parsed --require-goal
 ```
 Chunk ids are deterministic (`f(source, section-ordinal)`), so an unchanged document with unchanged section boundaries keeps its ids across rebuilds. During an update, changed documents are delete-then-reindexed and their new chunk ids are explicitly reclassified; unchanged documents keep their tags/graph edges.
 Result: one `knowledge.sqlite` — `chunks`/`chunks_fts`/`chunks_vec` (a chunk = a section = an Obsidian note), `chunk_topics` (real per-section taxonomy tags via low-tier agents), `facts` (marts), `graph_nodes`/`graph_edges` (taxonomy vertices + `subclass_of` + `about` edges to chunks). Check the `build_marts` audit (`--strict` in CI). The vault is generated from the store, so notes, retrieval chunks, tags, and graph all reference the same ids.
@@ -154,25 +157,25 @@ Read `bundles/brain/AGENT_README.md` for the authoritative source-to-store updat
 
 ```bash
 # After changed sources have gone through render → vision_prep → agents → vision_assemble:
-python .../knowledge-pipeline/brain_sync.py plan  --db "$DB" --parsed <project>/parsed
+"$PY" .../knowledge-pipeline/brain_sync.py plan  --db "$DB" --parsed <project>/parsed
 # show/approve the delta; plan ensures `documents` exists, so validate the DB path first
-python .../knowledge-pipeline/brain_sync.py apply --db "$DB" --parsed <project>/parsed --out <project>
+"$PY" .../knowledge-pipeline/brain_sync.py apply --db "$DB" --parsed <project>/parsed --out <project>
 # apply snapshots first and writes sync_plan.json; preserve the snapshot for rollback
 
 # Use a fresh result directory; scripts do not clean stale result_*.json:
-python .../corpus-taxonomy-extraction/classify_prep.py \
+"$PY" .../corpus-taxonomy-extraction/classify_prep.py \
   --db "$DB" --taxonomy <tax> --out <fresh-cls-run> --chunks <ids from sync_plan.json>
 # → low-tier text subagents → <fresh-cls-run>/result_k.json; validate complete ID coverage
-python .../corpus-taxonomy-extraction/classify_write.py --db "$DB" --results <fresh-cls-run>
-python .../corpus-taxonomy-extraction/build_graph.py --db "$DB" --taxonomy <tax>
-python .../knowledge-index/knowledge_index.py related --db "$DB"
-python .../corpus-taxonomy-extraction/to_obsidian.py \
+"$PY" .../corpus-taxonomy-extraction/classify_write.py --db "$DB" --results <fresh-cls-run>
+"$PY" .../corpus-taxonomy-extraction/build_graph.py --db "$DB" --taxonomy <tax>
+"$PY" .../knowledge-index/knowledge_index.py related --db "$DB"
+"$PY" .../corpus-taxonomy-extraction/to_obsidian.py \
   --db "$DB" --out <project>/vault --clean --assets <project>/assets
 # Re-run build_marts --strict only when reporting inputs/config changed.
 # On failure: brain_sync.py rollback --db "$DB" (then reconcile parsed/assets/vault).
 ```
 
-What each lane does on change: **RAG** — per-doc delete+reindex with deterministic source+ordinal ids; **tags/graph** — only changed chunks are re-tagged; **marts** — full idempotent recompute when reporting changes; **vault** — `--clean` reconciles removed notes. Taxonomy is reused by default; agents only propose additions, and every change goes through the taxonomy review app.
+What each lane does on change: **RAG** — per-doc delete+reindex with deterministic source+ordinal ids; **tags/graph** — only changed chunks are re-tagged; **marts** — full idempotent recompute when reporting changes; **vault** — `--clean` reconciles removed notes. Taxonomy is reused by default; agents only propose additions, and every change goes through the taxonomy review app. After the update, if many changed chunks come back untagged or the user asks to refresh or clean up the taxonomy, offer the health review (`corpus-taxonomy-extraction` → "B. Health review"); if the user wants to change categories themselves, use "D. Browse and edit". `brain-maintenance` covers the whole update, including this offer.
 
 > Migrating an OLD store (built before deterministic source+ordinal ids): do one full rebuild (steps 3–8 above with `index --reset`) once; then incremental updates apply.
 
@@ -213,7 +216,7 @@ Borrowed from a disk-first research discipline — use it when a question needs 
 Rules: plan first; disk is truth, memory is scratch; checkpoint every ~10 steps or ~150K tokens; assemble the final report from checkpoints; on interruption `ls` the workspace and resume from the last checkpoint. For a single-shot question, skip the workspace — just route via `hybrid-retrieval`.
 
 ## Corpus-specific vs generic
-Generic (these skills): all the code. Project-specific (the consuming repo): `schema/families.<corpus>.json`, `schema/metrics.<corpus>.json`, the goal string, `taxonomy_v0.json`, and the built `knowledge.sqlite`. Keep project data in the project, never in the skills.
+Generic (these skills): all the code. Project-specific (the consuming repo): `schema/families.<corpus>.json`, `schema/metrics.<corpus>.json`, the goal string, `taxonomy/` (versions, `current.json`, `decisions.jsonl`), and the built `knowledge.sqlite`. Keep project data in the project, never in the skills.
 
 ## Deps
 `sqlite3` (stdlib) + `sqlite-vec`, `fastembed` (RAG, onnx — no torch), `pymupdf`/`openpyxl` (parse/marts), `pandas`/`pyarrow` (marts). **Torch-free** (docling retired). `.pptx/.docx` also need LibreOffice `soffice` (system dep). Install into the skills' own isolated venv (`install.sh --deps`), or `uv run --with-requirements`.

@@ -19,7 +19,7 @@ No required cloud service and no lock-in. Copy `knowledge.sqlite` for text/graph
 |---|---|---|
 | **knowledge-pipeline** | 🎛️ build orchestrator — create and answer | `SKILL.md` (build & answer sequence) |
 | **brain-maintenance** | 🔄 update/release planner — read-only status plus agent-gated update and external deployment guidance | `maintenance.py`, profile template, safety gates |
-| **corpus-taxonomy-extraction** | 🏷️ meaning: parse, induce taxonomy, build graph, tag sections, emit vault | `parse_corpus.py`, `consolidate.py`, `emit_taxonomy.py`, `chunking.py`, `build_graph.py`, `classify_prep.py`, `classify_write.py`, `to_obsidian.py` |
+| **corpus-taxonomy-extraction** | 🏷️ meaning: parse, induce taxonomy, review it in a local app, build graph, tag sections, emit vault | `parse_corpus.py`, `consolidate.py`, `emit_taxonomy.py`, `taxonomy_review.py` + `review_server.py` + `review_ui.html` (review app), `taxonomy_merge.py`, `taxonomy_refine_prep.py`, `chunking.py`, `build_graph.py`, `classify_prep.py`, `classify_write.py`, `to_obsidian.py` |
 | **knowledge-index** | 🔎 narrative: heading-aware chunks → FTS5 + vectors | `knowledge_index.py`, `chunking.py` (shared) |
 | **tabular-semantic-layer** | 🔢 numbers: Excel → deterministic `facts` | `build_marts.py`, `profile_workbooks.py`, `families.example.json`, `metrics.example.json` |
 | **hybrid-retrieval** | 🧭 answer: route each sub-claim to the right lane, fuse, cite | `query.py` |
@@ -45,7 +45,7 @@ flowchart TD
 
     subgraph orch ["orchestrated by knowledge-pipeline"]
         direction TB
-        cte --> md["Markdown + taxonomy_v0 + graph"]:::mean
+        cte --> md["Markdown + reviewed taxonomy + graph"]:::mean
         md --> vault[("Obsidian vault · human canon")]:::mean
         md --> ki["knowledge-index"]:::mean
         ki --> chunks["chunks + FTS5 + vector"]:::mean
@@ -235,7 +235,9 @@ In other words, “agentic” does not mean an invisible daemon. A human asks an
   goal.txt
   name.txt                        # optional display name; empty = anonymous Brain, still fully functional
   schema/                         # families/metrics config + usually knowledge.sqlite
-  taxonomy/taxonomy_vN.json       # reviewed vocabulary; source of truth
+  taxonomy/current.json           # reviewed vocabulary every step reads (copy of the latest taxonomy_vN.json)
+  taxonomy/taxonomy_vN.json       # ratified versions; immutable
+  taxonomy/decisions.jsonl        # append-only record of review decisions; commit it
   parsed/                         # final, VLM-enriched Markdown consumed by brain_sync
   assets/<doc-slug>/
     pages.json                    # page routing decision + img_sha
@@ -266,7 +268,7 @@ flowchart TD
     P --> VP["vision_prep.py: flagged AND uncached pages only"]
     VP --> VA["Vision subagents → result_k.json"]
     VA --> AS["vision_assemble.py → final parsed/*.md + page_render cache"]
-    AS --> TX["Taxonomy agents: map → reduce → judge → reviewed taxonomy_vN.json"]
+    AS --> TX["Taxonomy agents: map → reduce → judge → draft review → taxonomy/current.json"]
     AS --> IX["knowledge_index.py --reset"]
     TX --> GR["build_graph.py"]
     IX --> CP["classify_prep.py"]
@@ -304,7 +306,7 @@ The generic text-only `parse_corpus.py` remains useful for corpora known not to 
 7. Run `brain_sync.py plan`; show the added/changed/deleted/unchanged summary to the human. It now opens an existing initialized store read-only. Then run `apply`, which snapshots SQLite, deletes removed documents, re-embeds only added/changed parsed docs, and writes `sync_plan.json`. Preserve the snapshot as operational recovery even though the database changes are committed as one transaction.
 8. Run `classify_prep.py --chunks <sync_plan.reclassify_chunk_ids>`, dispatch text subagents, validate results, and run incremental `classify_write.py` **without `--reset`**.
 9. Rebuild graph and related; rebuild marts only if reporting workbooks changed; regenerate the vault with `--clean`; run verify.
-10. Keep the current taxonomy unless coverage indicates vocabulary drift. Taxonomy changes are a separate, human-reviewed operation in the taxonomy review app: agents only propose additions; renames, merges and removals are human decisions whose tags are migrated, never silently pruned.
+10. Keep the current taxonomy unless coverage indicates vocabulary drift. Taxonomy changes are a separate, human-reviewed operation in the taxonomy review app: agents only propose additions; renames, merges and removals are human decisions whose tags are migrated, never silently pruned. When coverage drops or the taxonomy has no descriptions, the agent offers the health review (see [Reviewing the taxonomy](#reviewing-the-taxonomy)).
 
 ```text
 source change
@@ -359,7 +361,7 @@ You do not need to run every command manually. From the brain project, ask a cap
 The agent should create a visible task list and checkpoints. You approve:
 
 - the analytical goal and input paths;
-- the initial taxonomy or an additive taxonomy diff;
+- the initial taxonomy and every later taxonomy change, in the local review app ([guide](../../docs/taxonomy-review-guide.md));
 - the `brain_sync plan`, especially deletions;
 - any failed/partial VLM or classification batches;
 - completion only after verification.
@@ -385,7 +387,7 @@ Taxonomy induction is the **first agentic step, right after parsing** — and ev
 
 ```mermaid
 flowchart TD
-    P["1 · parse (+ visual-parse)<br/>docs → parsed/*.md"] --> TX["2 · 🤖 TAXONOMY induction<br/>parsed/ + goal → taxonomy_v0.json<br/><i>map → reduce → judge → emit · human-gated</i>"]
+    P["1 · parse (+ visual-parse)<br/>docs → parsed/*.md"] --> TX["2 · 🤖 TAXONOMY induction<br/>parsed/ + goal → taxonomy_v0.json → 👤 draft review → current.json<br/><i>map → reduce → judge → emit · human-gated</i>"]
     P --> IDX["3 · index<br/>chunks + FTS + vector"]
     TX --> G["4 · build_graph<br/>taxonomy → graph_nodes / edges (L1/L2)"]
     TX --> CL["5 · 🤖 classify<br/>chunk × taxonomy-vocab → chunk_topics + about-edges"]
@@ -404,12 +406,13 @@ flowchart TD
 1. **map** — low-tier (Haiku) subagents, per document, extract candidate terms (intent classes, entities, metrics) each with an evidence quote, source, and confidence → one JSON per doc. The bulk context lives and dies inside each subagent.
 2. **reduce** — `consolidate.py` deterministically clusters near-duplicates (stdlib difflib); a low-tier agent adjudicates **only the ambiguous** merges ("Chicago" vs "CHI").
 3. **judge** — an LLM-as-judge scores coverage/coherence and flags low-confidence/unmapped terms.
-4. **emit** — `taxonomy_v0.json` (+ `.md`): human-reviewable, **versioned**, with a *demoted* list.
+4. **emit** — `taxonomy_v0.json` (+ `.md`): the draft, with a *demoted* list.
+5. **draft review** — the user ratifies the draft in the local review app; `taxonomy_merge.py` then writes `taxonomy_v1.json` and `taxonomy/current.json`.
 
 The **goal string is a noise filter** — extraction is scoped to the analytical goal. Prefer **seed-guided over schema-free**: anchor on any existing taxonomy doc (a "Taxonomy Compendium") and extend it.
 
 ### Where it lives
-`taxonomy_v0.json` is a **project artifact** — it lives in the consuming project (with `families.<corpus>.json`, the goal, the built store), **never in the store or the skills**. It is *loaded into* the store as `graph_nodes` by `build_graph`, but the source-of-truth JSON stays a file so it can be reviewed, versioned, and changed through the taxonomy review app (`taxonomy_review.py`; `taxonomy_merge.py --review … --apply` then writes the ratified version and `taxonomy/current.json`) — never edit `current.json` by hand.
+The taxonomy (`taxonomy/`: the draft `taxonomy_v0.json`, the ratified `taxonomy_vN.json` versions, `current.json` and `decisions.jsonl`) is a **project artifact** — it lives in the consuming project (with `families.<corpus>.json`, the goal, the built store), **never in the store or the skills**. It is *loaded into* the store as `graph_nodes` by `build_graph`, but the source-of-truth JSON stays a file so it can be reviewed, versioned, and changed through the taxonomy review app (`taxonomy_review.py`; `taxonomy_merge.py --review … --apply` then writes the ratified version and `taxonomy/current.json`) — never edit `current.json` by hand.
 
 ### How the visual/VLM parse affects it
 The parse stack now transcribes visual pages (flows, timelines, diagrams) via `visual-parse` instead of dropping them to fragments. Since induction reads `parsed/`, **its input is now richer** — concepts that previously lived only on slides ("ProjectAlpha Vision & Service Design Blueprint", phase/framework/capability names) become visible to the map step, so a freshly-induced taxonomy covers **more**. Consequence:
@@ -429,14 +432,22 @@ During the complete agent-orchestrated update, `./brain update` is the parsed→
 
 **Why vocabulary change is gated and reviewed:** chunk ids are deterministic from source path + section ordinal, while graph node ids are `slug(label)`. **Adding** L1/L2 is safe (`build_graph` rebuilds `subclass_of` and preserves valid `about` edges), so **agents only add**. **Renaming, merging, moving, splitting or removing** a category changes/removes its node id, so those are human decisions made in the taxonomy review app: a reviewed rename or merge is recorded as a migration in the taxonomy history, and `build_graph` runs that migration before pruning, so the tags move with the node instead of being lost. An unreviewed label change has no such migration, so `build_graph` would prune the node and delete its dependent `chunk_topics` and `about` edges — destructive classification loss — which is exactly why every vocabulary change must go through the review app. Building from a version older than `taxonomy/current.json` that would prune nodes is refused unless `--yes-prune`.
 
-### Refreshing the taxonomy — **assisted** (agent proposes, human decides)
-When the signal appears (a rising share of **untagged** chunks), grow the taxonomy without breaking anything:
-1. **`taxonomy_refine_prep.py`** — gather the UNTAGGED chunks + the current L1/L2 vocab, batch them.
-2. **(low-tier agents)** — propose additions: a new **L2 under a named parent L1** (preferred) or a new **L1**, with evidence → `result_k.json`. (Or map a chunk the classifier missed to an existing category.)
-3. **`taxonomy_review.py` → `taxonomy_merge.py --review … --apply`** — the proposals open in the local review app (dedup against vocabulary + aliases, earlier rejections suppressed); the human approves/rejects/amends and submits; merge applies exactly that and writes `taxonomy/current.json`.
-4. **Deterministic downstream** — `build_graph` (adds the new vertices, preserves `about` edges) → reclassify the affected chunks (`classify_prep --docs/--chunks` → agents → `classify_write`) → refresh `related` and (optionally) the vault.
+### Reviewing the taxonomy
 
-**The health review is the default way to check and fix the taxonomy.** `taxonomy_review.py diagnose` finds every problem deterministically: categories with no description or no tagged sections, untagged sections, near-duplicate and off-axis labels, and similar or ungoverned metrics. Low-cost agents then draft a specific fix for each one that needs judgment (a description, the sections to tag, a merge direction, a governed-metric draft). The user decides in the review app's grouped inbox and can send any proposal back with **Redo with a note**, which Claude answers live in Claude Code. Approved fixes are applied by `taxonomy_merge.py`; approved tags are added by `classify_write.py --merge`, which never removes a tag; governed-metric drafts go to a work file and reach `schema/metrics.<corpus>.json` only if the user agrees. **Category descriptions** drafted this way are carried through the taxonomy into the classifier's vocabulary (`vocab.md`), the graph, the MCP `get_taxonomy` tool and the Obsidian vault, so they sharpen tagging and let kb say what a category means. See `corpus-taxonomy-extraction` → "Health review".
+Every taxonomy decision is made in a **local review app**: `taxonomy_review.py serve` runs a small stdlib web server on `127.0.0.1` (no network, no extra dependency), opens a browser tab and exits when the user submits. You never start it by hand: ask Claude, and it plans the review, starts the app, waits, and applies what you submitted. **[The taxonomy review guide](../../docs/taxonomy-review-guide.md)** walks through the app for maintainers.
+
+| Review | When | What you see |
+|---|---|---|
+| **Draft** | first build, right after induction | every drafted category, to keep or change |
+| **Health** (the default later) | "check / refresh / clean up the taxonomy", or when coverage drops | grouped problems with a proposed fix each |
+| **Refine** | only new categories for untagged sections | agent proposals for new L1/L2s |
+| **Browse** | you want to change categories or metrics yourself | the whole tree and metric inventory, no proposals |
+
+**The health review** finds every problem deterministically (`taxonomy_review.py diagnose`): categories with no description or no tagged sections, untagged sections, near-duplicate and off-axis labels, and similar or ungoverned metrics. Low-cost agents then draft a specific fix for each one that needs judgment (a description, the sections to tag, a merge direction, a governed-metric draft). You decide in the app's grouped inbox and can send any proposal back with **Redo with a note**, which Claude answers live in Claude Code. Approved fixes are applied by `taxonomy_merge.py`; approved tags are added by `classify_write.py --merge`, which never removes a tag; governed-metric drafts go to a work file and reach `schema/metrics.<corpus>.json` only if you agree.
+
+**Category descriptions** are carried through the taxonomy into the classifier's vocabulary (`vocab.md`), the graph (`graph_nodes.description`), the MCP `get_taxonomy` tool and the Obsidian vault, so they sharpen tagging and let kb say what a category means.
+
+**After a review is applied**, `build_graph` runs the tag migrations of reviewed renames and merges, queues the affected sections in `taxonomy/work/reclassify.json`, and the agent reclassifies only those. Exact commands for every procedure: `corpus-taxonomy-extraction` → "Reviewing and editing the taxonomy".
 
 **Classification is L1 + L2:** the classifier assigns the *most specific* fit (an L2 when the chunk is specifically about it, else its L1), and an L2 **rolls up its parent L1** automatically — so both granularities are queryable and L1 filters still catch L2-tagged chunks.
 
@@ -498,4 +509,4 @@ The low-tier map/classify steps assume a subagent mechanism with a model overrid
 
 ## Generic vs project-specific
 
-The bundle ships **only generic code**. Everything corpus-specific — `families.<corpus>.json`, `metrics.<corpus>.json`, the goal string, `taxonomy_v0.json`, and the built `knowledge.sqlite` — stays in the consuming project, never in the skills.
+The bundle ships **only generic code**. Everything corpus-specific — `families.<corpus>.json`, `metrics.<corpus>.json`, the goal string, the `taxonomy/` directory, and the built `knowledge.sqlite` — stays in the consuming project, never in the skills.

@@ -20,7 +20,7 @@ Every advertised tool property carries a concrete primitive schema, with a `null
 | `search_knowledge` | Hybrid BM25 + vector narrative retrieval |
 | `get_current_fact` | Current or as-of mutable fact with retained history |
 | `get_question_status` | Open/resolved question linked across meeting sources |
-| `get_taxonomy` | Explore taxonomy nodes, edges, and tagged sections |
+| `get_taxonomy` | Explore taxonomy nodes, edges, and tagged sections; the looked-up node (`label=`) and each listed node carry a `description` when the store has one (built from a described taxonomy); `subclasses` entries do not |
 | `find_related_content` | Read precomputed semantic neighbors |
 | `get_evidence` | Inspect one cited section and optional page/table text |
 | `health` | Check knowledge lanes and deployed knowledge version; also returns `about: {name, goal, audience}` |

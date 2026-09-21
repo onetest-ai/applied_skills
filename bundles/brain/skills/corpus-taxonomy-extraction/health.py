@@ -1042,7 +1042,7 @@ def _structure_items(tax, work_dir, problems, skipped_files, rejections):
             alts, reason = [default_remove], fix.get("reason")
         else:
             op, alts, reason, fallback = keep_op, [default_remove], "no fix proposed", True
-        title = f"{node} doesn't look like a call reason"
+        title = f"{node} doesn't look like an intent category"
         items.append(_make_item(tax, "off_axis", None, op, alts, [], {"tags": p.get("tags")}, reason, title,
                                 rejections, fallback=fallback))
     return items

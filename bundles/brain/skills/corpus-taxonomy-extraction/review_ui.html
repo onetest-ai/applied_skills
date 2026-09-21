@@ -950,7 +950,7 @@ function itemDescHTML(it){
   const cur = descOf(it.op.node), pend = op.type === "describe" ? op.description : null;
   return `<div class="section"><b>Description</b>${pend ? `<p>${esc(pend)}</p><p class="note">Edited in this review.</p>` : cur ? `<p>${esc(cur)}</p>` : `<p class="note">No description yet. Edit description adds one.</p>`}</div>`;
 }
-const REJECT_REASONS = {refine:["Not a call reason", "Too narrow", "Duplicate"], describe:["Inaccurate", "Too vague", "Duplicate of a sibling"]};
+const REJECT_REASONS = {refine:["Out of scope for the goal", "Too narrow", "Duplicate"], describe:["Inaccurate", "Too vague", "Duplicate of a sibling"]};
 function itemActions(it){
   const d = latest(it.id), id = esc(it.id);
   if (isDecided(it)){

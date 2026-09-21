@@ -81,7 +81,8 @@ def main():
         items = [{"id": r[0], "source": r[1], "title": r[2], "preview": " ".join((r[3] or "").split())} for r in b]
         json.dump(items, open(os.path.join(a.out, f"batch_{k}.json"), "w"), indent=1); made += 1
     print(f"prepared {len(rows)} UNTAGGED chunks into {made} batch(es) -> {a.out}\n"
-          f"→ dispatch agents (read instructions.md + vocab.md + batch_k.json) → result_k.json, then: taxonomy_merge.py")
+          f"→ dispatch agents (read instructions.md + vocab.md + batch_k.json) → result_k.json, then: taxonomy_review.py plan --mode drift "
+          f"--taxonomy <current.json> --proposals {a.out} --db <db> → serve → taxonomy_merge.py --review <review> --apply")
     con.close()
 
 if __name__ == "__main__":

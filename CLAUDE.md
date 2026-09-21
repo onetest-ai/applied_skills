@@ -40,7 +40,7 @@ There is no build step and no linter config. `uv` resolves dependencies per invo
 
 ## Architecture
 
-**Build (brain), in order:** source registry → parse (`corpus-taxonomy-extraction/parse_corpus.py`, plus `visual-parse` for slide decks and HTML) → taxonomy induction → `knowledge-index` (FTS5 + sqlite-vec chunks) and `tabular-semantic-layer` (numeric marts) → `brain_sync` applies the delta into `knowledge.sqlite`. `knowledge-pipeline` orchestrates; `brain-maintenance` re-runs it.
+**Build (brain), in order:** source registry → parse (`corpus-taxonomy-extraction/parse_corpus.py`, plus `visual-parse` for slide decks and HTML) → taxonomy induction → the user ratifies the draft in the local review app (`taxonomy_review.py` → `taxonomy_merge.py`, writing `taxonomy/current.json`) → `knowledge-index` (FTS5 + sqlite-vec chunks) and `tabular-semantic-layer` (numeric marts) → `brain_sync` applies the delta into `knowledge.sqlite`. `knowledge-pipeline` orchestrates; `brain-maintenance` re-runs it. Every later taxonomy change is a review in the same app (health, refine, browse); agents only add, humans decide renames/merges/removals.
 
 **Serve:** `mcp/brain/fastmcp_server.py` wraps `semantic_core.py` and exposes read-only tools (`search_knowledge`, `get_metric`, `get_taxonomy`, `get_evidence`, …). It derives its own identity from the store's `meta` table, so a deployed Brain describes itself.
 
@@ -60,6 +60,16 @@ These are the things that take several files to see, and that tests pass while v
 
 **`brain_sync` links parsed docs to registered sources.** A registered source with no parsed output lands in `blocked_missing_parsed` and aborts `apply` — which is why a parser that cannot handle a format must skip it *with a reason in the manifest* rather than emit nothing silently.
 
+**`taxonomy_merge.py` is the only code that creates a taxonomy version.** It writes `taxonomy_vN.json` (refusing if it exists: versions are immutable) and then `current.json` with **identical bytes** (`taxo_io.write_version_and_current`); `adopt` only copies an existing version. Byte identity is load-bearing: a review's `base.sha256`, `build_graph`'s drift guard and `adopt` all compare raw bytes, so re-serialising `current.json` (different indent, key order) makes every planned review refuse to apply and the graph build refuse or prune.
+
+**`build_graph` moves tags only through `history[].migrations`.** `taxonomy_merge` records the migrations `taxo_ops.apply_ops` returns; `build_graph` runs those newer than `meta.taxonomy_version`, then prunes every node no longer in the taxonomy, with its `chunk_topics` and `about` edges. A new op type that changes node ids without emitting a migration passes its own tests and deletes those tags on the next build, with only a stderr warning.
+
+**`decisions.jsonl` is append-only, and "agents only add" is enforced by surface, not by the app.** Records are only appended (`decisions.append`/`append_many`, one `O_APPEND` write); `requests.jsonl`/`responses.jsonl` follow the same rule, a later line superseding an earlier one by id. `authorship_errors` limits non-human surfaces (`record`'s `terminal`/`script`) to `AGENT_ALLOWED` ops; the `browser` and `markdown` surfaces, stamped by `review_server`/`import-md` rather than sent by the client, may enter any op. Do not add skill rules to the human surfaces, and do not let an agent path claim a human surface.
+
+**Review item ids are frozen in the review file.** `plan` derives each id from the review id, item position and fingerprint, then writes the review once (`taxonomy/reviews/review_<id>.json`, never overwritten). Decisions, redo requests, `respond` and `redo-prep` all look items up by that id in the file; re-deriving items (re-running `health_items`, re-planning) produces different ids that match nothing in the log.
+
+**Health plan items carry a public `fallback: true`.** `health.py` marks a safe default (no usable agent fix) with an internal `_fallback`; `build_plan` counts it for the context line, then replaces it with `fallback: true` (present only when true). `review_ui.html` relies on that field to keep fallbacks out of **Accept all remaining** and its counts; dropping or renaming it in the plan makes the app batch-accept defaults as if they were recommendations.
+
 **`meta` carries `goal`, `audience` and optional `name`.** `write_meta` UPSERTs `goal`/`audience` unconditionally from their source files, but `name` **only when `name.txt` is non-empty** — no existing project has one, and an unconditional write would clear a `meta.name` set by hand. Do not "tidy" that asymmetry into consistency.
 
 ## Conventions
@@ -73,7 +83,7 @@ These are the things that take several files to see, and that tests pass while v
 
 ## In flight
 
-PR #26 (`feat/html-ingestion`) adds HTML deck ingestion: DOM-based segmentation, a second producer of the visual-lane artifact layout (`html_capture.py`), a `# fidelity:` preamble line, and a PyMuPDF text fallback. If it has merged, the two invariants above about field values and the preamble are load-bearing for that code — check `git log` before assuming this section is current.
+PR #26 (HTML deck ingestion) has merged, so the invariants above about visual-lane field values and the preamble are load-bearing for `html_capture.py` and the `# fidelity:` line. `feat/taxonomy-workbench` adds the taxonomy review workbench (review app, decisions log, versioned taxonomy, health review); check `git log` before assuming this section is current.
 
 ## Working on skills
 

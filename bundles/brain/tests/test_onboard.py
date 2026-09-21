@@ -96,6 +96,9 @@ class OnboardSourceConfigTests(unittest.TestCase):
             self.assertIn("skip if taxonomy/current.json already exists", plan)
             self.assertIn("taxonomy_merge.py\" --review", plan)
             self.assertLess(plan.index("taxonomy_merge.py\" --review"), plan.index("build_graph.py"))
+            # later reviews: the maintainer learns how to start one, and every command reads current.json
+            self.assertIn("## Taxonomy review (after the first build)", plan)
+            self.assertIn("taxonomy_review.py\" plan --mode browse", plan)
             for line in plan.splitlines():
                 if "build_graph.py" in line or "classify_prep.py" in line:
                     self.assertIn("current.json", line)

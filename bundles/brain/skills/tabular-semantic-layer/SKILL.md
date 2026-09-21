@@ -15,7 +15,7 @@ Answer numeric questions over big spreadsheet reporting **deterministically**. T
 
 - You have structured reporting workbooks (often 10s–100s of MB, many sheets) and need exact figures, drill-down, or aggregates.
 - You already have (or will derive) conformed dimensions + a computable-metric inventory — typically from `corpus-taxonomy-extraction`.
-- To decide which metrics to govern next, have the user open the taxonomy review app's **Metrics** tab — you run `taxonomy_review.py plan --mode browse` and then `serve` in the background, and the user reviews in the browser — or run `taxonomy_review.py gap --taxonomy taxonomy/current.json` yourself (add `--metrics schema/metrics.<corpus>.json` when the project has more than one governed metrics file) and read the `taxonomy/work/metrics_gap.md` it writes: computable metrics induced from the corpus with no entry in `metrics.<corpus>.json`.
+- To decide which metrics to govern next, either have the user open the taxonomy review app's **Metrics** view (`corpus-taxonomy-extraction` → "D. Browse and edit": you run `"$PY" <skills>/corpus-taxonomy-extraction/taxonomy_review.py plan --mode browse --taxonomy taxonomy/current.json --db <db>`, then `serve --review <review> --db <db>` in the background, and the user reviews in the browser), or run `"$PY" <skills>/corpus-taxonomy-extraction/taxonomy_review.py gap --taxonomy taxonomy/current.json` yourself (add `--metrics schema/metrics.<corpus>.json` when the project has more than one governed metrics file) and read the `taxonomy/work/metrics_gap.md` it writes: computable metrics induced from the corpus with no entry in `metrics.<corpus>.json`. `$PY` is BRAIN.md's interpreter; these scripts are stdlib only, so any Python 3.9+ also works. A health review (`corpus-taxonomy-extraction` → "B. Health review") can also draft governed definitions; add them to `metrics.<corpus>.json` only when the user agrees.
 
 **Not for:** stated targets/one-off figures in prose/slides (that's the narrative lane), or when you don't yet know the dimensions/metrics (run the taxonomy skill first).
 
@@ -32,7 +32,7 @@ catalog   metrics.json → governed metric definitions (the contract consumed at
 Answering questions from the marts is a separate concern — the **`hybrid-retrieval`** skill owns `query.py` and the routing/composition. This skill only *builds* the store + catalog.
 
 ### profile_workbooks.py
-`python profile_workbooks.py --root <dir> --out profiles.json` — openpyxl read_only; per sheet: detected header, columns, row estimate, samples. Cheap even on 130 MB books. Grounds the schema design.
+`"$PY" <skills>/tabular-semantic-layer/profile_workbooks.py --root <dir> --out profiles.json` — openpyxl read_only; per sheet: detected header, columns, row estimate, samples. Cheap even on 130 MB books. Grounds the schema design.
 
 ### families.<corpus>.json — corpus-specific config, lives in the PROJECT
 This file and `metrics.<corpus>.json` are **project data, not part of the skill** — keep them under your repo (e.g. `<project>/schema/`), and pass their paths as args. The skill ships only generic code plus `families.example.json` / `metrics.example.json` templates to copy from.
@@ -40,7 +40,7 @@ This file and `metrics.<corpus>.json` are **project data, not part of the skill*
 One block per metric family: `glob`, `month_from` (`filename`|`wide_banner`|`matrix_header`), `layout` (`long`|`wide_month`|`matrix_month_cols`), `grains` (grain→{sheet, dim_header}), `measures` (canonical→raw column text, or a **list of alternative header substrings** when headers vary month to month, e.g. `["FCR % - 7 Days","7-Day FCR"]`), optional `header_row`, a `dimension_map` for explicit aliases, and `conform_titlecase` (dims like branch/region whose casing varies across families — canonicalized so they join). Adding a month = drop the file + re-run. A new family = one new config block (bounded by metrics, not files).
 
 ### build_marts.py (generic loader)
-`python build_marts.py --root <reporting dir> --config <project>/schema/families.<corpus>.json --out-dir <project>/marts`
+`"$PY" <skills>/tabular-semantic-layer/build_marts.py --root <reporting dir> --config <project>/schema/families.<corpus>.json --out-dir <project>/marts`
 Emits long facts `(family, metric, grain, entity, month, value, source_file)` → `facts.parquet` + `knowledge.sqlite`, plus **`build_audit.json`**. Handles four layouts:
 - `long` — grain sheet, dim rows, measures across columns.
 - `wide_month` — unpivots month-banner column blocks (e.g. adjustments); dim label may sit on the banner row or the header row (both are searched).

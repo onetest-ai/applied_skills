@@ -44,7 +44,12 @@ PROJECT/
     knowledge.sqlite
     families.<corpus>.json
     metrics.<corpus>.json
-  taxonomy/taxonomy_vN.json
+  taxonomy/
+    taxonomy_v0.json               # emitted draft, ratified in the draft review
+    taxonomy_vN.json               # ratified versions; immutable
+    current.json                   # byte copy of the latest version; every step reads it
+    decisions.jsonl                # append-only review decisions; commit it
+    reviews/  work/                # frozen review files; agent task dirs and queues
   parsed/
   assets/
   vision/
@@ -212,7 +217,9 @@ map agents per document
 
 Prefer seed-guided induction when the corpus contains an authoritative taxonomy. Keep the approved taxonomy under `PROJECT/taxonomy/`.
 
-The human gate is runnable: plan the first-build review of the emitted draft, serve it in the background and end the turn (the user decides in the browser), then apply it once `serve` exits with `status: submitted`. Applying creates `$TAX` (`taxonomy/current.json`), which every later step reads:
+Write the reduce output to `taxonomy/work/consolidated.json` (the draft review reads its evidence there) and emit to `taxonomy/taxonomy_v0.json`.
+
+The human gate is runnable: plan the first-build review of the emitted draft, serve it in the background and end the turn (the user decides in the browser), then apply it once `serve` exits with `status: submitted`. `serve` binds `127.0.0.1` on a free port, prints `review app: <url>` on stderr and opens the browser; if no browser opened, give the user that URL from the background task's output. It exits on submit, on "close without submitting" (`cancelled`) or after `--timeout` seconds (default 3600); decisions are saved, so run `serve` again to continue. The review scripts are stdlib only. Applying creates `$TAX` (`taxonomy/current.json`), which every later step reads. Full procedure: `corpus-taxonomy-extraction` → "A. Draft review".
 
 ```bash
 cd "$PROJECT"
@@ -389,16 +396,18 @@ Then reconcile derived views:
 
 Re-run `build_marts.py --strict` only if reporting workbooks or their schema config changed. It is a full idempotent recomputation, not a row-level delta.
 
-### Update phase 4 — taxonomy drift gate
+### Update phase 4 — taxonomy gate
 
-Reuse the existing taxonomy by default. Check the share and examples of newly untagged chunks. If the update introduces concepts the vocabulary cannot express:
+Reuse the existing taxonomy by default. If `$TAX` is missing, or `build_graph` stops because the store has tags and no `meta.taxonomy_version`, tell the human and follow `corpus-taxonomy-extraction` → "F. Upgrading an older Brain" with their confirmation. Then check the share of untagged chunks and whether the taxonomy has descriptions:
 
-1. run `taxonomy_refine_prep.py` on untagged/affected chunks;
-2. dispatch proposal agents;
-3. run `taxonomy_review.py plan --mode drift --taxonomy "$TAX" --proposals <dir> --db "$DB"`;
-4. run `taxonomy_review.py serve --review <path> --db "$DB"` in the background, tell the human the review tab is open, and end the turn — the process exits when they submit;
-5. run `taxonomy_merge.py --review <path> --apply` (it refuses unsubmitted reviews);
-6. run `build_graph.py --taxonomy "$TAX" --db "$DB"`, then, if `$PROJECT/taxonomy/work/reclassify.json` exists, reclassify its chunk ids into a fresh directory named after the file's `version` `<N>`:
+```bash
+"$PY" -c 'import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);t=c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0];u=c.execute("SELECT COUNT(*) FROM chunks WHERE id NOT IN (SELECT chunk_id FROM chunk_topics)").fetchone()[0];print(u,"of",t,"chunks untagged")' "$DB"
+"$PY" -c 'import json,sys;print(len(json.load(open(sys.argv[1])).get("descriptions") or {}),"categories described")' "$TAX"
+```
+
+If the update introduced concepts the vocabulary cannot express (a rising untagged share), the taxonomy has no descriptions, or the human asks to refresh or clean up the taxonomy, tell the human and offer the **health review**. Run it only if they agree, following `corpus-taxonomy-extraction` → "B. Health review" end to end: `taxonomy_review.py diagnose` → fix subagents per task dir → `plan --mode health --work …` → `serve --watch-hint` in the background with a Monitor on `taxonomy/work/requests.jsonl` for redo requests → on submit `taxonomy_merge.py --review <review> --apply` → `build_graph.py` → reclassify (below) → `classify_write.py --merge` for approved tags → offer governed-metric drafts. When the human wants only new-category proposals for untagged chunks, use "C. Refine review" (`taxonomy_refine_prep.py` → proposal subagents → `plan --mode drift`) instead; when they want to edit categories themselves, "D. Browse and edit".
+
+After any applied review, run `build_graph.py --taxonomy "$TAX" --db "$DB"`, then, if `$PROJECT/taxonomy/work/reclassify.json` exists, reclassify its chunk ids into a fresh directory named after the file's `version` `<N>`:
 
 ```bash
 IDS=$("$PY" -c 'import json,sys;print(",".join(map(str,json.load(open(sys.argv[1]))["chunk_ids"])))' \
@@ -413,7 +422,7 @@ IDS=$("$PY" -c 'import json,sys;print(",".join(map(str,json.load(open(sys.argv[1
 
 Never reuse the first-build `classify/` directory (or any directory that already holds `result_*.json`): `classify_write` reads every result file there, so stale results would overwrite the new tags and `--reclassify-done` would drop the queue as done.
 
-Never apply taxonomy changes outside a submitted review. `taxonomy/decisions.jsonl` is the approval record and belongs in the project's git.
+Never apply taxonomy changes outside a submitted review, except with `taxonomy_merge.py --without-review` when the human explicitly asked to skip the review ("E. Without review"). `taxonomy/decisions.jsonl` is the approval record and belongs in the project's git.
 
 ### Update phase 5 — verify or rollback
 

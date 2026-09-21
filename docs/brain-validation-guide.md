@@ -378,9 +378,10 @@ Check: `ls "$PROJECT/map/"*.json | wc -l` must equal file count in `map_parsed/`
 **Stage 3 — Reduce (deterministic):**
 
 ```bash
+mkdir -p "$PROJECT/taxonomy/work"
 $VENV $SKILLS/corpus-taxonomy-extraction/consolidate.py \
   --map-dir "$PROJECT/map" \
-  --out     "$PROJECT/consolidated.json" \
+  --out     "$PROJECT/taxonomy/work/consolidated.json" \
   --threshold 0.86
 ```
 
@@ -390,21 +391,35 @@ was not run. Check: `ls "$PROJECT/map/"*.json 2>/dev/null | wc -l`
 **Stage 4 — Emit:**
 
 ```bash
-mkdir -p "$PROJECT/taxonomy"
 $VENV $SKILLS/corpus-taxonomy-extraction/emit_taxonomy.py \
-  --consolidated "$PROJECT/consolidated.json" \
+  --consolidated "$PROJECT/taxonomy/work/consolidated.json" \
   --map-dir      "$PROJECT/map" \
   --out-json     "$PROJECT/taxonomy/taxonomy_v0.json" \
   --out-md       "$PROJECT/taxonomy/taxonomy_v0.md" \
   --goal         "$(cat $PROJECT/goal.txt)"
 ```
 
-Review `$PROJECT/taxonomy/taxonomy_v0.md` — the `review_flags` section is advisory only.
+`$PROJECT/taxonomy/taxonomy_v0.md` is a readable copy of the draft; its `review_flags` section is advisory only.
 
-Set `TAXO` to the new file:
+**Stage 5 — Draft review (you decide in the browser):**
+
+Nothing downstream reads the draft until it is ratified. In Claude Code, ask Claude to "review the draft taxonomy"; it runs these commands, with `serve` in the background, and applies the review when you submit. By hand:
 
 ```bash
-TAXO=/path/to/taxonomy.json
+cd "$PROJECT"
+$VENV $SKILLS/corpus-taxonomy-extraction/taxonomy_review.py plan --mode draft \
+  --taxonomy taxonomy/taxonomy_v0.json            # prints {"review": "<path>", ...}
+$VENV $SKILLS/corpus-taxonomy-extraction/taxonomy_review.py serve --review <that path>
+# a browser tab opens on 127.0.0.1; decide, then click Review & submit — serve exits
+$VENV $SKILLS/corpus-taxonomy-extraction/taxonomy_merge.py --review <that path> --apply
+```
+
+The last command writes `taxonomy/taxonomy_v1.json` and `taxonomy/current.json`. See [the taxonomy review guide](taxonomy-review-guide.md) for the app.
+
+Set `TAXO` to the ratified taxonomy:
+
+```bash
+TAXO="$PROJECT/taxonomy/current.json"
 ```
 
 ---
@@ -682,7 +697,7 @@ unset AWS_SESSION_TOKEN
      --db       "$PROJECT/schema/knowledge.sqlite"
    ```
 
-   **What this does:** reads the L1/L2 category hierarchy from `taxonomy_v0.json` and
+   **What this does:** reads the L1/L2 category hierarchy from `$TAXO` and
    writes two tables into SQLite:
 
    - **`graph_nodes`** — one row per category: `id`, `label`, `kind` (intent_l1 or
@@ -700,9 +715,13 @@ unset AWS_SESSION_TOKEN
    `graph_edges`. That table is created by `build_graph.py` — if you reverse the order,
    `classify_write` aborts with `ERROR: graph_edges table not found`.
 
-   **Safe to re-run:** `build_graph.py` only deletes `subclass_of` edges (taxonomy
-   structure). It never touches `about` edges written by `classify_write`. You can
-   rebuild the graph after updating the taxonomy without losing any classification work.
+   **Safe to re-run:** `build_graph.py` rebuilds `subclass_of` edges (taxonomy
+   structure) and keeps the `about` edges written by `classify_write` for every category
+   that is still in the taxonomy. A category that left the taxonomy is pruned with its
+   tags, unless it left through a reviewed rename or merge: those tags are migrated. So
+   change the taxonomy only through the review app, and in a project with
+   `taxonomy/current.json` always build from that file (building from an older version
+   that would prune categories is refused unless `--yes-prune`).
 
 4. Write classification results back to SQLite:
    ```bash
@@ -1017,14 +1036,15 @@ combined answers.
 After the initial build (TC-1 through TC-6), the brain needs periodic updates as new
 source files arrive. This is the job of the `brain-maintenance` skill.
 
-The workflow has four phases, each gated — you do not proceed to the next unless the
+The workflow has five phases (one optional), each gated — you do not proceed to the next unless the
 current phase passes:
 
 | Phase | What it does | Tool |
 |-------|-------------|------|
-| **Plan** | `maintenance.py` reads `brain-maintenance.toml`, scans sources for new/changed/missing files, writes a diff plan | `onboard.py` → `maintenance.py --plan` |
-| **Apply** | Parse new files, re-index without `--reset`, write new chunks | `parse_corpus.py` + `knowledge_index.py index` (no --reset) |
-| **Classify delta** | Run classification only on *new* chunks (not the whole corpus) | `classify_prep.py --unclassified-only` + agents + `classify_write.py` |
+| **Plan** | `maintenance.py` reads `brain-maintenance.toml`, scans sources for new/changed/missing files, writes a read-only status report | `maintenance.py status` |
+| **Apply** | Parse new files, then apply the parsed delta: snapshot, re-embed added/changed docs, write `sync_plan.json` | `parse_corpus.py` + `brain_sync.py plan` / `apply` (`./brain plan` / `./brain update`) |
+| **Classify delta** | Run classification only on *new* chunks (not the whole corpus) | `classify_prep.py --chunks <sync_plan.json reclassify_chunk_ids>` + agents + `classify_write.py` (no `--reset`) |
+| **Taxonomy (optional)** | If many new chunks stay untagged, review the taxonomy in the local app (the health review) | ask Claude; see [the taxonomy review guide](taxonomy-review-guide.md) |
 | **Verify** | Confirm chunk counts increased, taxonomy graph still healthy, smoke queries still return | `onboard.py verify` |
 
 **When to set up brain-maintenance:**
@@ -1048,10 +1068,11 @@ root = "$PROJECT"
 
 Then run `maintenance.py`:
 ```bash
-$VENV $SKILLS/brain-maintenance/maintenance.py --profile $PROJECT/brain-maintenance.toml --plan
+$VENV $SKILLS/brain-maintenance/maintenance.py status --profile $PROJECT/brain-maintenance.toml \
+  --out $PROJECT/.brain-maintenance/runs/status.json
 ```
 
-It prints a read-only plan showing which files will be added, updated, or flagged for
+It writes a read-only status report showing which files will be added, updated, or flagged for
 removal. Review it, then execute each phase.
 
 **Safety rule:** `maintenance.py` never mutates sources, parsed artifacts, or SQLite.

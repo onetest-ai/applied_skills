@@ -314,6 +314,9 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
 
     # 2b · 👤 human review of the draft — the local review app runs until the reviewer submits.
     #      Agent: run `serve` in the BACKGROUND and end the turn; its exit wakes you.
+    #      serve binds 127.0.0.1 on a free port, prints "review app: <url>" on stderr and opens
+    #      the browser; it exits on submit, on cancel, or after --timeout seconds (default 3600).
+    #      Apply only when its JSON line says "submitted"; otherwise run serve again to continue.
     #      First build only — skip if taxonomy/current.json already exists.
     REVIEW=$("$PY" "{CTE/'taxonomy_review.py'}" plan --mode draft --taxonomy "{proj/'taxonomy'/'taxonomy_v0.json'}" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["review"])')
     "$PY" "{CTE/'taxonomy_review.py'}" serve --review "$REVIEW"
@@ -343,6 +346,22 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
 {step9}
     # verify the built store
     "$PY" "{Path(__file__).resolve()}" verify --db "$DB"
+    ```
+
+    ## Taxonomy review (after the first build)
+    Every later taxonomy change goes through the same local review app. Ask Claude to
+    "review the taxonomy" (the health review: every problem with a proposed fix) or to
+    "open the taxonomy editor" (browse: change categories and metrics yourself). Claude
+    follows corpus-taxonomy-extraction/SKILL.md → "Reviewing and editing the taxonomy":
+    it plans the review, runs `serve` in the background, applies what you submit, then
+    rebuilds the graph and reclassifies the affected sections. To open the editor by hand:
+
+    ```bash
+    "$PY" "{CTE/'taxonomy_review.py'}" plan --mode browse --taxonomy "{proj/'taxonomy'/'current.json'}" --db "$DB"
+    "$PY" "{CTE/'taxonomy_review.py'}" serve --review <the "review" path it printed> --db "$DB"
+    "$PY" "{CTE/'taxonomy_merge.py'}" --review <that path> --apply        # after you submit
+    "$PY" "{CTE/'build_graph.py'}" --taxonomy "{proj/'taxonomy'/'current.json'}" --db "$DB"
+    # then, if taxonomy/work/reclassify.json exists, reclassify those chunks (see the skill)
     ```
 
     ## Answer
