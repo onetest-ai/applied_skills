@@ -90,6 +90,17 @@ enabled = false
         self.assertEqual(report["parsed_delta"]["unchanged"], ["a.pdf.md"])
         self.assertEqual(before, after)
 
+    def test_status_reports_taxonomy_review_state(self):
+        tdir = self.project / "schema"
+        (tdir / "reviews").mkdir()
+        (tdir / "reviews" / "review_r-1.json").write_text('{"review_id": "r-1"}', encoding="utf-8")
+        (tdir / "decisions.jsonl").write_text('{"review_id":"r-1","action":"submit"}\n', encoding="utf-8")
+        (tdir / "work").mkdir()
+        (tdir / "work" / "reclassify.json").write_text('{"chunk_ids":[1,2,3],"reasons":{}}', encoding="utf-8")
+        report = M.build_status(M.load_profile(self.profile))
+        self.assertEqual(report["taxonomy_review"], {"current_json": False, "latest_review": "r-1",
+                                                     "submitted_unapplied": ["r-1"], "pending_reclassify": 3})
+
     def test_required_empty_lane_blocks(self):
         self.profile.write_text(self.profile.read_text().replace("required_lanes = []", "required_lanes = [\"narrative\"]"))
         report = M.build_status(M.load_profile(self.profile))

@@ -663,6 +663,60 @@ class TestFinalizeErrorFlags(unittest.TestCase):
         self.assertIn("search_knowledge", blob)
 
 
+class GetTaxonomyDescriptionsTests(FixtureCase):
+    """Test that get_taxonomy returns descriptions when the store has them."""
+
+    def setUp(self):
+        super().setUp()
+        # Rebuild graph_nodes with description column
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.execute("DROP TABLE graph_nodes")
+            con.executescript(
+                """
+                CREATE TABLE graph_nodes(id TEXT PRIMARY KEY, label TEXT, kind TEXT, parent TEXT, description TEXT);
+                """
+            )
+            con.executemany("INSERT INTO graph_nodes VALUES(?,?,?,?,?)", [
+                ("sales", "Sales", "topic", None, "Sales operations and revenue management"),
+                ("retail", "Retail", "segment", "sales", "Retail channel segment"),
+                ("ops", "Operations", "topic", None, None),
+            ])
+
+    def test_get_taxonomy_by_label_includes_description(self):
+        """When a node has a description, get_taxonomy(label=...) returns it."""
+        taxonomy = core.get_taxonomy("sales")
+        self.assertEqual(taxonomy["status"], "ok")
+        self.assertIn("description", taxonomy["node"])
+        self.assertEqual(taxonomy["node"]["description"], "Sales operations and revenue management")
+
+    def test_get_taxonomy_by_label_null_description(self):
+        """Nodes without descriptions return None or are omitted gracefully."""
+        taxonomy = core.get_taxonomy("ops")
+        self.assertEqual(taxonomy["status"], "ok")
+        self.assertIn("description", taxonomy["node"])
+        self.assertIsNone(taxonomy["node"]["description"])
+
+    def test_get_taxonomy_nodes_list_includes_descriptions(self):
+        """get_taxonomy() without label returns all nodes with descriptions."""
+        taxonomy = core.get_taxonomy()
+        self.assertEqual(taxonomy["status"], "ok")
+        nodes = taxonomy["nodes"]
+        self.assertEqual(len(nodes), 3)
+        # Check that description field exists
+        for node in nodes:
+            self.assertIn("description", node)
+        # Verify specific descriptions
+        sales_node = next((n for n in nodes if n["id"] == "sales"), None)
+        self.assertIsNotNone(sales_node)
+        self.assertEqual(sales_node["description"], "Sales operations and revenue management")
+        retail_node = next((n for n in nodes if n["id"] == "retail"), None)
+        self.assertIsNotNone(retail_node)
+        self.assertEqual(retail_node["description"], "Retail channel segment")
+        ops_node = next((n for n in nodes if n["id"] == "ops"), None)
+        self.assertIsNotNone(ops_node)
+        self.assertIsNone(ops_node["description"])
+
+
 class BrainIdentityTests(FixtureCase):
     def _server(self):
         import fastmcp_server as fs

@@ -87,19 +87,25 @@ def main():
     # taxonomy topic notes = graph vertices, under _topics/
     topic_rel = {}   # label -> vault relpath
     if has_graph:
+        has_desc = "description" in {r[1] for r in c.execute("PRAGMA table_info(graph_nodes)")}
+        desc_by_label = dict(c.execute(
+            "SELECT label, description FROM graph_nodes WHERE description IS NOT NULL")) if has_desc else {}
         label_by_id = {nid_: lbl for nid_, lbl, _ in c.execute("SELECT id,label,kind FROM graph_nodes")}
         for _, lbl in c.execute("SELECT id,label FROM graph_nodes"):
             topic_rel[lbl] = f"_topics/{slug(lbl)}"
         for nid_, lbl in c.execute("SELECT id,label FROM graph_nodes WHERE kind='intent_l1'"):
             kids = [label_by_id.get(s, s) for (s,) in
                     c.execute("SELECT source FROM graph_edges WHERE rel='subclass_of' AND target=?", (nid_,))]
-            body = fm(["taxonomy/l1"]) + f"# {lbl}\n\n## Subcategories\n\n" + \
+            d = desc_by_label.get(lbl)
+            body = fm(["taxonomy/l1"]) + f"# {lbl}\n\n" + (f"> {d}\n\n" if d else "") + "## Subcategories\n\n" + \
                    ("".join(f"- {link(topic_rel.get(k, '_topics/'+slug(k)), k)}\n" for k in kids) or "_none_\n") + \
                    "\n> Backlinks below = source notes tagged with this topic.\n"
             write(a.out, f"_topics/{slug(lbl)}", body); notes += 1
             for k in kids:
+                kd = desc_by_label.get(k)
                 write(a.out, f"_topics/{slug(k)}",
-                      fm(["taxonomy/l2"]) + f"# {k}\n\nParent: {link('_topics/'+slug(lbl), lbl)}\n"); notes += 1
+                      fm(["taxonomy/l2"]) + f"# {k}\n\n" + (f"> {kd}\n\n" if kd else "") +
+                      f"Parent: {link('_topics/'+slug(lbl), lbl)}\n"); notes += 1
 
     # per-chunk topics (real per-section categories)
     topics = {}

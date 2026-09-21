@@ -1,0 +1,1777 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Taxonomy review</title>
+<style>
+:root{
+  --ground:#F2F4F0; --paper:#FFFFFF; --sunk:#EEF1EB; --ink:#18201C; --ink-2:#4A554F; --ink-3:#7A857F;
+  --line:#DCE2DC; --line-2:#C7D0C8; --accent:#4F6420; --accent-soft:#E7EDD6; --on-accent:#FFFFFF;
+  --ok:#2F7A4B; --ok-soft:#DDF0E3; --warn:#9A6400; --warn-soft:#FBEFD6; --bad:#B03A2E; --bad-soft:#F8E0DC;
+  --info:#2F5E8C; --info-soft:#E0EAF4;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --display:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#111513; --paper:#191F1C; --sunk:#151A17; --ink:#E6EBE7; --ink-2:#B3BDB7; --ink-3:#86918B;
+    --line:#29312D; --line-2:#38423D; --accent:#A9C46A; --accent-soft:#283218; --on-accent:#131A0B;
+    --ok:#6FCB8E; --ok-soft:#17301E; --warn:#E5B35A; --warn-soft:#332811; --bad:#EE8A7E; --bad-soft:#381C18;
+    --info:#8DB7E2; --info-soft:#172839; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#111513; --paper:#191F1C; --sunk:#151A17; --ink:#E6EBE7; --ink-2:#B3BDB7; --ink-3:#86918B;
+  --line:#29312D; --line-2:#38423D; --accent:#A9C46A; --accent-soft:#283218; --on-accent:#131A0B;
+  --ok:#6FCB8E; --ok-soft:#17301E; --warn:#E5B35A; --warn-soft:#332811; --bad:#EE8A7E; --bad-soft:#381C18;
+  --info:#8DB7E2; --info-soft:#172839; color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--ground);color:var(--ink);font:15px/1.5 var(--sans);display:flex;flex-direction:column;height:100vh;overflow:hidden}
+h3{font:700 21px/1.25 var(--display);margin:0;letter-spacing:-.01em;overflow-wrap:anywhere}
+p{margin:0;max-width:72ch}
+code{font-family:var(--mono);font-size:.86em;background:var(--sunk);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.kbd{font:600 11px/1 var(--mono);border:1px solid var(--line-2);border-bottom-width:2px;border-radius:4px;padding:2px 5px;color:var(--ink-2);background:var(--paper)}
+.note{font-size:14px;color:var(--ink-3)}
+.err{color:var(--bad);font-size:14px}
+.err:empty{display:none}
+[hidden]{display:none!important}
+
+/* header */
+.bar{flex:none;display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--paper);flex-wrap:wrap}
+.bar .ttl{display:flex;flex-direction:column;gap:1px;min-width:0}
+.bar .ttl b{font:600 16px var(--display);overflow-wrap:anywhere}
+.bar .ttl span{font-size:13px;color:var(--ink-3);overflow-wrap:anywhere}
+.sp{flex:1}
+.prog{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap}
+.prog .track{width:120px;height:6px;border-radius:3px;background:var(--line);overflow:hidden}
+.prog .track i{display:block;height:100%;background:var(--accent);transition:width .2s}
+
+/* buttons */
+.btn{font:600 14px/1 var(--sans);padding:9px 13px;border-radius:7px;border:1px solid var(--line-2);background:var(--paper);color:var(--ink);cursor:pointer;display:inline-flex;gap:8px;align-items:center;white-space:nowrap}
+.btn:hover{border-color:var(--ink-3)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.sm{padding:6px 10px;font-size:13px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.primary .count{background:rgba(255,255,255,.22);border-radius:999px;padding:2px 7px;font-size:12px;font-variant-numeric:tabular-nums}
+.btn.ok{color:var(--ok);border-color:var(--ok)} .btn.bad{color:var(--bad);border-color:var(--bad)}
+.linkbtn{all:unset;cursor:pointer;color:var(--info);font-size:12px;text-decoration:underline}
+.linkbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* frame */
+.app{flex:1;min-height:0;display:grid;grid-template-columns:200px minmax(0,1fr);background:var(--paper)}
+.app.solo{grid-template-columns:minmax(0,1fr)}
+.nav{border-right:1px solid var(--line);padding:10px 8px;display:flex;flex-direction:column;gap:2px;background:var(--sunk);overflow:auto}
+.nav button{all:unset;cursor:pointer;display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:7px;font-size:14px;color:var(--ink-2);white-space:nowrap}
+.nav button:focus-visible{outline:2px solid var(--accent)}
+.nav button[aria-current="true"]{background:var(--paper);color:var(--ink);font-weight:600;box-shadow:0 0 0 1px var(--line)}
+.nav .cnt{margin-left:auto;font:600 11px var(--mono);color:var(--ink-3);font-variant-numeric:tabular-nums}
+.nav .cnt.hot{color:var(--on-accent);background:var(--accent);border-radius:999px;padding:1px 7px}
+.nav hr{border:0;border-top:1px solid var(--line);margin:8px 4px}
+.nav .hint{font-size:12px;color:var(--ink-3);padding:4px 10px;line-height:1.9}
+.viewhost{min-height:0;min-width:0;display:flex;flex-direction:column}
+.view{flex:1;min-height:0;display:grid;grid-template-columns:minmax(260px,380px) minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
+.view.single{display:block;overflow:auto}
+.list{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;min-width:0}
+.ltools{flex:none;border-bottom:1px solid var(--line);display:flex;flex-direction:column}
+.lrow{display:flex;gap:8px;align-items:center;padding:10px 14px 0}
+.lrow input{flex:1;min-width:0}
+.rows{flex:1;min-height:0;overflow:auto;padding-bottom:12px}
+.lgroup{font:600 11px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);padding:14px 14px 6px}
+.detail{padding:20px 22px 40px;display:flex;flex-direction:column;gap:16px;min-width:0;min-height:0;overflow:auto}
+.detail .where{font:12px var(--mono);color:var(--ink-3);overflow-wrap:anywhere}
+.section{display:flex;flex-direction:column;gap:8px}
+.section>b{font-size:14px}
+
+/* inbox items */
+.item{all:unset;box-sizing:border-box;cursor:pointer;display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:2px 10px;padding:10px 14px;border-left:3px solid transparent;width:100%}
+.item:hover{background:var(--sunk)} .item:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.item.sel{background:var(--accent-soft);border-left-color:var(--accent)}
+.item .t{font-size:14.5px;font-weight:600;line-height:1.3;overflow-wrap:anywhere}
+.item .s{grid-column:2;font-size:12.5px;color:var(--ink-3);overflow-wrap:anywhere}
+.item .st{grid-row:1/3;grid-column:3;align-self:center}
+.ic{align-self:start;font:700 13px/1.4 var(--mono);text-align:center;border-radius:4px;display:inline-block;min-width:18px;padding:0 3px}
+.ic.add{color:var(--ok);background:var(--ok-soft)} .ic.chg{color:var(--info);background:var(--info-soft)} .ic.del{color:var(--bad);background:var(--bad-soft)} .ic.flag{color:var(--warn);background:var(--warn-soft)} .ic.mute{color:var(--ink-3);background:var(--sunk)}
+.pill{font:600 11px/1 var(--mono);padding:4px 8px;border-radius:999px;white-space:nowrap;display:inline-block}
+.pill.ok{background:var(--ok-soft);color:var(--ok)} .pill.bad{background:var(--bad-soft);color:var(--bad)} .pill.info{background:var(--info-soft);color:var(--info)} .pill.mute{background:var(--sunk);color:var(--ink-3)} .pill.warn{background:var(--warn-soft);color:var(--warn)}
+.pill.wrap{white-space:normal;line-height:1.35;overflow-wrap:anywhere}
+.facts{display:flex;gap:8px;flex-wrap:wrap}
+.skipped{margin:10px 14px;font-size:13px;color:var(--ink-3)}
+.skipped summary{cursor:pointer;font-weight:600}
+.skipped div{padding:4px 0;overflow-wrap:anywhere}
+
+/* diff, quotes, impact */
+.diff{border:1px solid var(--line);border-radius:8px;overflow:hidden;font:13px/1.6 var(--mono)}
+.diff div{padding:4px 12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.diff .ctx{color:var(--ink-3)} .diff .plus{background:var(--ok-soft);color:var(--ok)} .diff .minus{background:var(--bad-soft);color:var(--bad)}
+.quote{border-left:2px solid var(--line-2);padding:4px 12px;color:var(--ink-2);font-size:14.5px;overflow-wrap:anywhere}
+.quote small{display:block;font:11.5px var(--mono);color:var(--ink-3);margin-top:2px}
+.quote .full{white-space:pre-wrap;font-size:13.5px;margin-top:6px;padding:8px 10px;background:var(--sunk);border-radius:6px;max-height:320px;overflow:auto}
+.impact{display:flex;gap:10px;align-items:center;padding:10px 12px;border-radius:8px;background:var(--info-soft);color:var(--info);font-size:14px;overflow-wrap:anywhere}
+.impact.warn{background:var(--warn-soft);color:var(--warn)}
+.descbox{border:1px solid var(--line);border-radius:8px;padding:12px;display:flex;gap:12px;align-items:flex-start}
+.descbox p{flex:1;min-width:0;overflow-wrap:anywhere}
+.descbox.empty{border-style:dashed;color:var(--ink-3)}
+
+/* decision dock */
+.dock{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-top:14px;border-top:1px solid var(--line)}
+.dock.flat{border:0;padding:0}
+.reason{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.chip{font:600 13px var(--sans);padding:6px 10px;border-radius:999px;border:1px solid var(--line-2);background:var(--paper);color:var(--ink-2);cursor:pointer;white-space:nowrap}
+.chip:hover{border-color:var(--ink-3)}
+.chip.rej:hover{border-color:var(--bad);color:var(--bad)}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.decided{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;font-size:14px;overflow-wrap:anywhere}
+.decided.ok{background:var(--ok-soft);color:var(--ok)} .decided.bad{background:var(--bad-soft);color:var(--bad)} .decided.info{background:var(--info-soft);color:var(--info)} .decided.warn{background:var(--warn-soft);color:var(--warn)}
+.decided span{flex:1;min-width:0}
+.decided button{all:unset;cursor:pointer;font-weight:600;text-decoration:underline;white-space:nowrap}
+.decided button:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+
+/* forms */
+.opform{display:flex;flex-direction:column;gap:10px;background:var(--sunk);padding:14px;border-radius:8px}
+.opform .ftitle{font-size:14px;overflow-wrap:anywhere}
+.opform label{display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:600;color:var(--ink-2)}
+.opform label.inline{flex-direction:row;align-items:center;gap:8px;font-weight:400}
+.opform .frow{display:flex;gap:8px;flex-wrap:wrap}
+.req{color:var(--bad);font-weight:600}
+select,input[type=text],input[type=search],textarea{font:14px var(--sans);padding:8px 10px;border-radius:7px;border:1px solid var(--line-2);background:var(--paper);color:var(--ink);max-width:100%;width:100%}
+textarea{resize:vertical;min-height:64px;line-height:1.45}
+input[type=checkbox]{accent-color:var(--accent)}
+
+/* taxonomy tree */
+.filters{display:flex;gap:6px;flex-wrap:wrap;padding:10px 14px}
+.filters+.filters{padding-top:0}
+.node{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;gap:8px;width:100%;padding:7px 14px;font-size:14px;min-height:34px}
+.node:hover{background:var(--sunk)} .node.sel{background:var(--accent-soft)}
+.node:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.node.l1{font-weight:600}
+.node.l2{padding-left:32px;color:var(--ink-2)}
+.node.dead .lbl,.node.dead .n{color:var(--ink-3);opacity:.75}
+.node.addrow{color:var(--accent);font-size:13px;font-weight:600}
+.node.newrow .lbl{font-style:italic}
+.node .lbl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.node .n{font:12px var(--mono);color:var(--ink-3);font-variant-numeric:tabular-nums;flex:none}
+.node .ic{font-size:12px;flex:none}
+.flagc{color:var(--warn);flex:none;font-size:13px}
+.sibs{display:flex;flex-direction:column}
+.sibs .node{padding-left:0;padding-right:0;border-bottom:1px solid var(--line)}
+.sibs .node:last-child{border-bottom:0}
+
+/* changes, sheet */
+.card{border:1px solid var(--line);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.card .head{display:flex;gap:10px;align-items:flex-start}
+.card .head b{flex:1;min-width:0;overflow-wrap:anywhere}
+.sheet{position:fixed;inset:0;background:rgba(10,14,12,.38);display:flex;justify-content:flex-end;z-index:5}
+.sheet .panel{width:min(460px,100%);background:var(--paper);height:100%;padding:20px;display:flex;flex-direction:column;gap:14px;overflow:auto;border-left:1px solid var(--line)}
+.sgroup{display:flex;flex-direction:column;gap:6px}
+.sgroup h4{margin:0;font:600 12px var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3)}
+.srow{display:flex;gap:8px;font-size:14px;align-items:baseline;overflow-wrap:anywhere}
+.srow>span:not(.ic){min-width:0}
+.next{background:var(--sunk);border-radius:8px;padding:12px;font-size:14px;display:flex;flex-direction:column;gap:6px}
+.next ol{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px}
+.sfoot{display:flex;gap:8px;margin-top:auto;flex-wrap:wrap;align-items:center;padding-top:8px}
+.toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 14px;border-radius:8px;font-size:14px;display:flex;gap:14px;align-items:center;box-shadow:0 10px 30px -10px rgba(0,0,0,.4);z-index:6;max-width:calc(100vw - 32px)}
+.toast span{overflow-wrap:anywhere}
+.toast.bad{background:var(--bad);color:var(--paper)}
+.toast button{all:unset;cursor:pointer;font-weight:600;color:var(--accent-soft);text-decoration:underline;white-space:nowrap}
+.toast button:focus-visible{outline:2px solid var(--paper);outline-offset:2px}
+.done{padding:40px 22px;display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+
+/* health: grouped problems */
+.gtools{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.gprog{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.gprog .track{width:120px;height:6px;border-radius:3px;background:var(--line);overflow:hidden}
+.gprog .track i{display:block;height:100%;background:var(--accent)}
+.gpart{font:600 12px var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);margin:6px 0 -6px}
+/* A group's table scrolls inside the detail pane, so its title and Accept all stay in view. */
+.twrap{overflow:auto;border:1px solid var(--line);border-radius:8px;flex:0 1 auto;min-height:160px}
+.gtable{width:100%;min-width:620px;border-collapse:collapse;table-layout:fixed;font-size:14px}
+.gtable th{position:sticky;top:0;z-index:1;text-align:left;font:600 11.5px var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);padding:8px;border-bottom:1px solid var(--line-2);background:var(--sunk)}
+.gtable td{padding:8px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere;min-width:0}
+.gtable tr:last-child>td{border-bottom:0}
+.gtable tr{scroll-margin-top:40px}
+.gtable tr.cur>td{background:var(--accent-soft)}
+.gtable tr.rdone>td{color:var(--ink-3)}
+.gtable tr.rpanel>td{background:var(--sunk);padding:12px 14px 16px}
+.gtable select{font-size:13px;padding:5px 6px}
+.gtable .acts{display:flex;gap:6px;flex-wrap:wrap}
+.gtable .sub{display:block;font-size:12px;color:var(--ink-3)}
+.rowpick{all:unset;cursor:pointer;font-weight:600;overflow-wrap:anywhere}
+.rowpick:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.fix{font:12.5px/1.5 var(--mono)}
+.fix>span,.fix>div{display:block;white-space:pre-wrap;overflow-wrap:anywhere}
+.fix .plus{color:var(--ok)} .fix .minus{color:var(--bad)} .fix .ctx{color:var(--ink-3)}
+.panelbox{display:flex;flex-direction:column;gap:12px;min-width:0}
+.cands{display:flex;flex-direction:column;gap:6px}
+.cand{display:grid;grid-template-columns:20px minmax(0,1fr);gap:8px;align-items:start;cursor:pointer}
+.cand input{margin-top:4px}
+.revised{border:1px solid var(--info);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;background:var(--paper)}
+.revised>b{color:var(--info)}
+.nwrap{display:flex;align-items:center;min-width:0}
+.nwrap>.node{flex:1;min-width:0}
+.fixlink{flex:none;margin:0 14px 0 4px}
+.mhint{font-size:13px;color:var(--ink-2);padding:0 14px 10px;overflow-wrap:anywhere}
+.pair{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.empty{padding:28px 22px;display:flex;flex-direction:column;gap:8px}
+
+@media (max-width:860px){
+  body{height:auto;min-height:100%;overflow:auto}
+  .app{grid-template-columns:1fr}
+  .nav{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line)}
+  .nav hr,.nav .hint{display:none}
+  .view{grid-template-columns:1fr;display:flex;flex-direction:column}
+  .list{border-right:0;border-bottom:1px solid var(--line);max-height:45vh}
+  .detail{overflow:visible}
+  .prog .track{width:80px}
+}
+@media (prefers-reduced-motion:reduce){
+  *{transition:none!important;animation:none!important;scroll-behavior:auto!important}
+}
+</style>
+</head>
+<body>
+<header class="bar" id="bar">
+  <div class="ttl" id="ttl"><b id="ctxTitle">Taxonomy review</b><span id="ctxSub">Loading…</span></div>
+  <div class="sp"></div>
+  <div class="prog" id="prog" hidden><span id="progT"></span><span class="track"><i id="progB" style="width:0"></i></span></div>
+  <button class="btn primary" id="openSubmit" type="button" data-act="open-sheet" hidden>Review &amp; submit <span class="count" id="subCount">0</span></button>
+</header>
+<div class="app" id="app">
+  <nav class="nav" id="nav" aria-label="Views"></nav>
+  <main class="viewhost" id="view"></main>
+</div>
+<div id="sheetHost"></div>
+<div id="toastHost" aria-live="polite"></div>
+<script>
+"use strict";
+const HEADER = "X-Review-Token";
+const TOKEN = new URLSearchParams(location.search).get("t") || "";
+async function call(path, opts){
+  const r = await fetch(path, opts);
+  let j;
+  try { j = await r.json(); } catch(e){ j = {errors:["the server sent an unreadable response (" + r.status + ")"]}; }
+  if (!r.ok){ if (!j || typeof j !== "object") j = {errors:[String(j)]}; j.status = r.status; throw j; }
+  return j;
+}
+const api = {
+  get(p){ return call(p, {headers:{[HEADER]:TOKEN}}); },
+  post(p, b){ return call(p, {method:"POST", headers:{[HEADER]:TOKEN, "Content-Type":"application/json"}, body:JSON.stringify(b || {})}); },
+  state(){ return this.get("/api/state"); },
+  node(label){ return this.get("/api/node/" + encodeURIComponent(label)); },
+  chunk(id){ return this.get("/api/chunk/" + encodeURIComponent(id)); },
+  impact(op){ return this.post("/api/impact", {op}); },
+  decide(rec){ return this.post("/api/decision", rec); },
+  decideMany(records){ return this.post("/api/decisions", {records}); },   // all-or-nothing
+  request(itemId, note){ return this.post("/api/request", {item_id:itemId, note}); },
+  submit(){ return this.post("/api/submit", {}); },
+  cancel(){ return this.post("/api/cancel", {}); },
+};
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const slug = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+const num = x => { const n = Number(x); return Number.isFinite(n) ? n : 0; };
+const plural = (n, one, many) => num(n) + " " + (num(n) === 1 ? one : (many || one + "s"));
+const errText = e => (e && Array.isArray(e.errors)) ? e.errors.join("; ") : String(e && e.message || e);
+const $ = id => document.getElementById(id);
+
+// ---------------------------------------------------------------- state
+let S = null;          // /api/state payload
+let closed = null;     // {title, body} once the session is over
+// inboxSel is an item id or "g:<kind>" for a health group; gRow is the current row inside it.
+// tagDraft holds a no-tags row's selection only while it is empty (a non-empty one is posted).
+const U = {view:null, inboxSel:null, gRow:null, treeSel:null, filter:"all", sort:"tree", q:"", mtab:null, mSel:null, mq:"",
+  sheet:false, redo:null, redoText:"", tagDraft:{}, batchFail:null};
+let nodeCache = {}, chunkCache = {};
+let P = {m:{}, adds:[]};   // pending ops, recomputed on each render
+
+const latest = id => S.decisions[id];
+const isActionable = it => it.status === "proposed" || it.status === "suppressed";
+// A reopen puts a suppressed item back in the queue; it is not a decision of its own.
+const isDecided = it => { const d = latest(it.id); return !!d && d.action !== "clear" && d.action !== "reopen"; };
+const actionable = () => S.review.items.filter(isActionable);
+const changeCount = () => actionable().filter(isDecided).length + S.proposals.length;
+const itemOp = it => { const d = latest(it.id); return d && d.action === "amend" && isDecided(it) ? d.op : it.op; };
+const isHealth = it => it.origin === "health";
+const subjectOf = op => op.node === "__untagged__" ? "Untagged sections" : (op.node || op.from || op.metric || op.name || "");
+const itemTitle = it => isHealth(it) ? (it.group ? subjectOf(it.op) : (it.title || subjectOf(it.op))) : (it.op.name || it.op.node || it.op.metric || "");
+// Ops compare by content, not key order; tag chunk_ids compare as sets.
+function canon(v){
+  if (Array.isArray(v)) return v.map(canon);
+  if (v && typeof v === "object"){ const o = {}; for (const k of Object.keys(v).sort()) o[k] = canon(v[k]); return o; }
+  return v;
+}
+function sameOp(a, b){
+  if (!a || !b) return false;
+  if (a.type === "tag" && b.type === "tag") return a.node === b.node && JSON.stringify([...(a.chunk_ids || [])].sort((x, y) => x - y)) === JSON.stringify([...(b.chunk_ids || [])].sort((x, y) => x - y));
+  return JSON.stringify(canon(a)) === JSON.stringify(canon(b));
+}
+// A template alternative is an empty-payload op that exists only to be edited into a real one.
+const isTemplate = op => (op.type === "describe" && !String(op.description || "").trim())
+  || (op.type === "tag" && !(op.chunk_ids || []).length) || (op.type === "metric_govern" && !Object.keys(op.draft || {}).length);
+const candidatesOf = it => [it.op].concat(it.alternatives || []);
+const suppressedLocked = it => it.status === "suppressed" && (latest(it.id) || {}).action !== "reopen";
+const descOf = l => ((S.base.descriptions || {})[l] || "").trim();
+const cnt = l => num(S.counts[slug(l)]);
+const inductionItem = l => S.review.items.find(i => i.origin === "induction" && i.op.node === l);
+const flagsOf = l => { const it = inductionItem(l); return (it && it.flags) || []; };
+const aliasesOf = l => Object.keys(S.base.aliases || {}).filter(a => S.base.aliases[a] === l);
+const tree = () => S.base.intent_taxonomy.tree;
+const l1s = () => Object.keys(tree());
+function parentOf(l){ for (const [p, kids] of Object.entries(tree())) if (kids.includes(l)) return p; return null; }
+function allLabels(){
+  const t = tree(), out = [];
+  for (const [l1, kids] of Object.entries(t)){ out.push(l1); out.push(...kids); }
+  out.push(...(S.base.intent_taxonomy.unassigned_l2 || []));
+  return out;
+}
+function sameLevel(c){
+  const t = tree();
+  if (c.level === "L1") return l1s().filter(l => l !== c.label).sort((a, b) => a.localeCompare(b)).map(l => [l, l]);
+  const out = [];
+  for (const [p, kids] of Object.entries(t)) for (const k of kids) if (k !== c.label) out.push([k, k + " — " + p]);
+  for (const k of S.base.intent_taxonomy.unassigned_l2 || []) if (k !== c.label) out.push([k, k]);
+  return out.sort((a, b) => a[1].localeCompare(b[1]));
+}
+
+function pending(){
+  const m = {}, adds = [];
+  const put = (op, src) => {
+    if (!op || op.type === "keep") return;
+    if (op.type === "add" || op.type === "metric_add"){ adds.push({op, src}); m[op.name || op.metric] = {op, src}; return; }
+    const s = op.node || op.from || op.metric;
+    if (s) m[s] = {op, src};
+  };
+  for (const it of S.review.items){
+    if (!isActionable(it) || !isDecided(it)) continue;
+    const d = latest(it.id);
+    if (d.action === "approve") put(it.op, {item:it.id});
+    else if (d.action === "amend") put(d.op, {item:it.id});
+  }
+  for (const p of S.proposals) put(p.op, {proposal:p.item_id});
+  return {m, adds};
+}
+const MARK = {add:["+","add"], describe:["✎","chg"], rename:["~","chg"], move:["~","chg"], split:["~","chg"],
+  merge:["⊕","chg"], remove:["×","del"], metric_add:["+","add"], metric_edit:["~","chg"], metric_merge:["⊕","chg"], metric_remove:["×","del"],
+  tag:["#","add"], metric_govern:["✓","add"]};
+function mark(op){ const [c, k] = MARK[op.type] || ["?", "chg"]; return `<span class="ic ${esc(k)}" title="pending: ${esc(op.type.replace("_", " "))}">${esc(c)}</span>`; }
+
+// ---------------------------------------------------------------- words
+function opText(op){
+  switch (op.type){
+    case "add": return op.level === "L1" ? `Add “${op.name}” as a top-level category` : `Add “${op.name}” under ${op.parent}`;
+    case "describe": return `Describe “${op.node}”`;
+    case "rename": return `Rename “${op.node}” to “${op.new_name}”`;
+    case "merge": return `Merge “${op.from}” into “${op.into}”`;
+    case "move": return `Move “${op.node}” under ${op.new_parent}`;
+    case "split": return `Split “${op.node}” into ${(op.into || []).map(x => "“" + x + "”").join(", ")}${op.retire ? " and retire it" : ""}`;
+    case "remove": return `Remove “${op.node}”${String(op.disposition || "").startsWith("entity:") ? " (becomes a " + op.disposition.slice(7) + " entity)" : ""}`;
+    case "keep": return op.node === "__untagged__" ? "Leave the untagged sections for now" : `Keep “${op.node || op.metric}”`;
+    case "tag": return `Tag ${plural((op.chunk_ids || []).length, "section")} with “${op.node}”`;
+    case "metric_govern": return `Draft a governed definition for “${op.metric}”${(op.draft || {}).key ? " (" + op.draft.key + ")" : ""}`;
+    case "metric_add": return `Add metric “${op.metric}”`;
+    case "metric_edit": return `Edit metric “${op.metric}” (${Object.keys(op.fields || {}).join(", ").replace("source_type", "type")})`;
+    case "metric_merge": return `Merge metric “${op.from}” into “${op.into}”`;
+    case "metric_remove": return `Remove metric “${op.metric}”`;
+    default: return op.type;
+  }
+}
+function impactWords(i, op){
+  if (!S.has_db) return "No store attached, so the tag impact can't be counted.";
+  if (!i) return "";
+  if (i.errors) return "Can't apply: " + i.errors.join("; ");
+  const parts = [];
+  if (num(i.tags_repointed)) parts.push(plural(i.tags_repointed, "tagged section") + (num(i.tags_repointed) === 1 ? " moves" : " move"));
+  if (num(i.chunks_reclassified)) parts.push(num(i.chunks_reclassified) + " re-tagged");
+  if (num(i.tags_deleted)) parts.push(num(i.tags_deleted) + " deleted");
+  if (num(i.tags_deduplicated)) parts.push(plural(i.tags_deduplicated, "duplicate tag") + " merged");
+  if (num(i.chunks_left_untagged_until_reclassify)) parts.push(num(i.chunks_left_untagged_until_reclassify) + " untagged until re-tagged");
+  if (!parts.length) parts.push("No tagged sections change");
+  if (op && (op.type === "rename" || op.type === "merge")) parts.push("alias kept");
+  return parts.join(" · ");
+}
+function diffHTML(op){
+  const L = [], ctx = t => L.push(["ctx", t]), plus = t => L.push(["plus", t]), minus = t => L.push(["minus", t]);
+  const secs = l => plural(cnt(l), "section");
+  switch (op.type){
+    case "add": ctx(op.parent || "(top level)"); plus((op.parent ? "  " : "") + op.name); break;
+    case "describe": { const cur = descOf(op.node); ctx(op.node); if (cur) minus(cur); else ctx("(no description)"); plus(op.description || ""); break; }
+    case "rename": minus(`${op.node}   ${secs(op.node)}`); plus(`${op.new_name}   +${secs(op.node)} · “${op.node}” kept as alias`); break;
+    case "merge": minus(`${op.from}   ${secs(op.from)}`); plus(`${op.into}   +${secs(op.from)} · “${op.from}” kept as alias`); break;
+    case "move": minus(`${parentOf(op.node) || "(no parent)"} › ${op.node}`); plus(`${op.new_parent} › ${op.node}`); break;
+    case "split": (op.retire ? minus : ctx)(`${op.node}   ${secs(op.node)}`);
+      for (const n of op.into || []) plus(`  ${n}${(op.descriptions || {})[n] ? " — " + op.descriptions[n] : ""}`); break;
+    case "remove": minus(`${op.node}   ${secs(op.node)}`);
+      if (String(op.disposition).startsWith("entity:")) plus(`${op.disposition.slice(7)} entity: ${op.node}`);
+      else ctx("label demoted; its sections are re-tagged");
+      if (op.reason) ctx("reason: " + op.reason); break;
+    case "keep": ctx(op.node === "__untagged__" ? "untagged sections · no change" : op.metric ? `${op.metric} · no change` : `${op.node}   ${secs(op.node)} · no change`); break;
+    case "tag": { const ids = op.chunk_ids || []; ctx(`${op.node}   ${secs(op.node)}`);
+      plus(`${plural(ids.length, "section")}:${ids.slice(0, 12).map(x => "#" + x).join(", ")}${ids.length > 12 ? ", …" : ""}`); ctx("no tag is removed"); break; }
+    case "metric_govern": { const d = op.draft || {}; ctx(op.metric);
+      for (const k of ["key", "family", "unit", "grain", "desc"]) if (d[k]) plus(`${k}: ${d[k]}`); break; }
+    case "metric_add": plus(`${op.metric} · ${op.source_type} · grain ${op.grain || "—"}`); if (op.definition) plus("  " + op.definition); break;
+    case "metric_edit": { const m = S.metrics.find(x => x.metric === op.metric) || {};
+      ctx(op.metric); for (const [k, v] of Object.entries(op.fields || {})){ const lab = k === "source_type" ? "type" : k; minus(`${lab}: ${m[k] ?? "—"}`); plus(`${lab}: ${v ?? "—"}`); } break; }
+    case "metric_merge": minus(op.from); plus(`${op.into} · “${op.from}” kept as a variant`); break;
+    case "metric_remove": minus(op.metric); if (op.reason) ctx("reason: " + op.reason); break;
+    default: ctx(JSON.stringify(op));
+  }
+  return `<div class="diff">${L.map(([c, t]) => `<div class="${esc(c)}">${c === "plus" ? "+ " : c === "minus" ? "− " : "  "}${esc(t)}</div>`).join("")}</div>`;
+}
+
+// ---------------------------------------------------------------- render
+async function reload(){ stateEpoch++; S = await api.state(); nodeCache = {}; render(); }
+
+function closeHeader(){
+  for (const id of ["openSubmit", "prog"]){ const el = $(id); el.hidden = true; if (el.tagName === "BUTTON") el.disabled = true; }
+}
+
+function render(){
+  pollRender = false;   // this render shows the latest state; nothing deferred is left
+  renderHeader();
+  if (closed || S.submitted){ renderDone(); return; }
+  P = pending();
+  renderNav();
+  renderView();
+  renderSheet();
+}
+
+function renderHeader(){
+  const ctx = S.review.context || {};
+  $("ctxTitle").textContent = ctx.title || "Taxonomy review";
+  $("ctxSub").textContent = ctx.subtitle || `${S.review.mode} · v${num(S.base.version)}`;
+  $("ttl").title = S.review.review_id;
+  if (closed || S.submitted){ closeHeader(); return; }
+  const a = actionable(), d = a.filter(isDecided).length;
+  $("prog").hidden = !a.length;
+  $("progT").textContent = `${d} of ${a.length} reviewed`;
+  $("progB").style.width = a.length ? (100 * d / a.length) + "%" : "0";
+  $("openSubmit").hidden = false;
+  $("subCount").textContent = String(changeCount());
+}
+
+function renderDone(){
+  closeHeader();
+  $("nav").hidden = true; $("app").classList.add("solo");
+  $("sheetHost").innerHTML = "";
+  const c = closed || {title:"Submitted. Back to Claude Code.",
+    body:"Claude has been told and applies the review next. You can close this tab; the chat shows progress and the new coverage."};
+  $("view").innerHTML = `<div class="done"><h3>${esc(c.title)}</h3><p>${esc(c.body)}</p></div>`;
+}
+
+function renderNav(){
+  const todo = actionable().filter(i => !isDecided(i)).length;
+  const items = [["inbox", "Inbox", todo, todo > 0], ["taxonomy", "Taxonomy", allLabels().length, false],
+    ["metrics", "Metrics", S.metrics.length, false], ["changes", "Your changes", S.proposals.length, false]];
+  $("nav").innerHTML = items.map(([k, l, c, hot]) =>
+    `<button type="button" data-act="view" data-v="${esc(k)}" aria-current="${U.view === k}">${esc(l)}<span class="cnt ${hot ? "hot" : ""}">${num(c)}</span></button>`).join("")
+    + `<hr><div class="hint">Inbox keys: <span class="kbd">J</span>/<span class="kbd">K</span> move · <span class="kbd">A</span> approve / accept · <span class="kbd">R</span> reject / skip · <span class="kbd">U</span> undo</div>`;
+}
+
+function renderView(){
+  const host = $("view"), prevRows = host.querySelector(".rows"), keep = prevRows && prevRows.dataset.v === U.view ? prevRows.scrollTop : 0;
+  // A group of 150 rows re-renders on every decision; keep the detail pane where it was.
+  const detKey = () => U.view + "|" + (U.view === "inbox" ? U.inboxSel : U.view === "metrics" ? U.mSel + "|" + U.mtab : JSON.stringify(U.treeSel));
+  const prevDet = host.querySelector("#detail"), same = !!prevDet && prevDet.dataset.k === detKey();
+  const keepDet = same ? prevDet.scrollTop : 0, keepT = same ? [...prevDet.querySelectorAll(".twrap")].map(t => t.scrollTop) : [];
+  host.innerHTML = U.view === "inbox" ? inboxView() : U.view === "taxonomy" ? taxonomyView()
+    : U.view === "metrics" ? metricsView() : changesView();
+  const rows = host.querySelector(".rows");
+  if (rows){ rows.scrollTop = keep; const s = rows.querySelector(".sel"); if (s) s.scrollIntoView({block:"nearest"}); }
+  const det = host.querySelector("#detail");
+  if (det){
+    det.dataset.k = detKey(); det.scrollTop = keepDet;
+    det.querySelectorAll(".twrap").forEach((t, i) => { t.scrollTop = keepT[i] || 0; });
+    const panel = det.querySelector("tr.rpanel"), cur = det.querySelector("tr.cur");
+    if (panel) panel.scrollIntoView({block:"nearest"});
+    if (cur) cur.scrollIntoView({block:"nearest"});
+  }
+  if (U.view === "inbox") afterInbox();
+  if (U.view === "taxonomy") afterTaxonomy();
+}
+
+// ---------------------------------------------------------------- inbox
+// Inbox entries: one per health group (all rows with that `group`), one per other item.
+function inboxEntries(){
+  const groups = {}, out = [];
+  for (const it of actionable()){
+    if (isHealth(it) && it.group){
+      if (!groups[it.group]){ groups[it.group] = {type:"group", id:"g:" + it.group, kind:it.group, rows:[]}; out.push(groups[it.group]); }
+      groups[it.group].rows.push(it);
+    } else out.push({type:"item", id:it.id, it});
+  }
+  return out;
+}
+const entryOpen = e => e.type === "group" ? e.rows.some(r => !isDecided(r)) : !isDecided(e.it);
+function inboxOrder(){
+  const es = inboxEntries(), flagFirst = e => (e.type === "item" && e.it.flags && e.it.flags.length) ? 0 : 1;
+  const todo = es.filter(entryOpen).sort((x, y) => flagFirst(x) - flagFirst(y));
+  return {todo, done: es.filter(e => !entryOpen(e))};
+}
+// J/K walk every row of every group and every individual item, in list order.
+function navPositions(){
+  const {todo, done} = inboxOrder(), out = [];
+  for (const e of todo.concat(done)){
+    if (e.type === "group") for (const r of e.rows) out.push({sel:e.id, row:r.id, it:r});
+    else out.push({sel:e.id, row:null, it:e.it});
+  }
+  return out;
+}
+const groupOf = kind => inboxEntries().find(e => e.type === "group" && e.kind === kind);
+// After Accept/Skip on the current row, move to the next undecided row of the same group.
+function advanceRow(id){
+  if (!String(U.inboxSel || "").startsWith("g:") || U.gRow !== id) return;
+  const g = groupOf(U.inboxSel.slice(2)); if (!g) return;
+  const i = g.rows.findIndex(r => r.id === id);
+  const next = g.rows.slice(i + 1).find(r => !isDecided(r)) || g.rows.find(r => !isDecided(r));
+  if (next) U.gRow = next.id;
+}
+
+const KIND_WORDS = {missing_description:"Missing description", no_tags:"No tagged sections", untagged_sections:"Untagged sections",
+  near_duplicate:"Near-duplicate", off_axis:"Off-axis category", similar_metrics:"Similar metrics", metric_not_governed:"Not governed",
+  refresh_proposal:"New category"};
+const GROUP_WORDS = {missing_description:["category has no description", "categories have no description"],
+  no_tags:["category has no tagged sections", "categories have no tagged sections"],
+  metric_not_governed:["metric can't be computed yet", "metrics can't be computed yet"]};
+function groupTitle(e){
+  const w = GROUP_WORDS[e.kind];
+  return w ? plural(e.rows.length, w[0], w[1]) : (e.rows[0].title || KIND_WORDS[e.kind] || e.kind);
+}
+function fixSummary(rows){
+  const W = {describe:["drafted description"], tag:["tag proposal"], merge:["merge"], remove:["removal"], add:["new category", "new categories"],
+    metric_govern:["governed draft"], keep:["keep as is", "keep as is"], none:["with no fix proposed", "with no fix proposed"]};
+  const c = {}, order = [];
+  for (const it of rows){ const k = it.reason === "no fix proposed" ? "none" : it.op.type; if (!c[k]){ c[k] = 0; order.push(k); } c[k]++; }
+  return order.map(k => { const w = W[k] || [k.replace("_", " ")]; return num(c[k]) + " " + (c[k] === 1 ? w[0] : (w[1] || w[0] + "s")); }).join(" · ");
+}
+const GROUP_ICON = {missing_description:["✎", "chg"], no_tags:["∅", "flag"], untagged_sections:["+", "add"], metric_not_governed:["✓", "chg"]};
+function groupRow(e){
+  const und = e.rows.filter(r => !isDecided(r)).length, [c, k] = GROUP_ICON[e.kind] || ["!", "flag"];
+  return `<button type="button" class="item ${U.inboxSel === e.id ? "sel" : ""}" data-act="pick-item" data-id="${esc(e.id)}"><span class="ic ${esc(k)}" title="group">${esc(c)}</span><span class="t">${esc(groupTitle(e))}</span><span class="st">${und ? `<span class="pill warn">${num(und)} of ${num(e.rows.length)} left</span>` : `<span class="pill ok">all decided</span>`}</span><span class="s">${esc(fixSummary(e.rows))}</span></button>`;
+}
+function itemIcon(it){
+  if (isHealth(it)) return it.kind === "near_duplicate" || it.kind === "similar_metrics" ? `<span class="ic flag" title="possible duplicate">≈</span>`
+    : it.kind === "off_axis" ? `<span class="ic flag" title="flagged">!</span>` : `<span class="ic chg" title="health">·</span>`;
+  if (it.origin === "describe") return `<span class="ic chg" title="description">✎</span>`;
+  if (it.origin === "refine") return `<span class="ic add" title="new category">+</span>`;
+  if (it.flags && it.flags.length) return `<span class="ic flag" title="flagged">!</span>`;
+  return `<span class="ic mute" title="category">·</span>`;
+}
+const where = it => it.level === "L1" ? "L1" : it.level === "entity" ? "Entity kind" : it.parent ? `L2 under ${it.parent}` : "L2";
+function flagWords(f){ return f.kind === "near_duplicate" ? `Near-duplicate of ${(f.with || []).map(x => "“" + x + "”").join(", ")}` : (f.reason ? `Off-axis: ${f.reason}` : String(f.kind)); }
+function itemSub(it){
+  const s = it.support || {};
+  if (isHealth(it)) return [KIND_WORDS[it.kind] || it.kind, it.reason].filter(Boolean).join(" · ");
+  if (it.origin === "refine") return `${it.op.level === "L1" ? "New L1" : "New L2 under " + (it.op.parent || "—")} · ${plural(s.chunks, "chunk")}`;
+  if (it.origin === "describe") return `Description · ${where(it)} · ${num(s.tags)} tagged`;
+  const f = (it.flags || []).map(flagWords).join(" · ");
+  return `${where(it)} · ${num(s.tags ?? cnt(it.op.node))} tagged${f ? " · " + f : ""}`;
+}
+const AMEND_WORD = {rename:"renamed", merge:"merge", move:"moved", remove:"remove", split:"split", describe:"edited", add:"amended"};
+function decisionPill(it){
+  const d = latest(it.id);
+  if (!d || d.action === "clear") return it.status === "suppressed" ? `<span class="pill mute">rejected before</span>` : "";
+  if (d.action === "reopen") return `<span class="pill warn">reopened</span>`;
+  if (d.action === "reject") return `<span class="pill bad">${d.reason === SKIP_REASON ? "skipped" : "rejected"}</span>`;
+  if (d.action === "amend") return `<span class="pill info">${esc(isHealth(it) ? "changed" : AMEND_WORD[d.op.type] || "amended")}</span>`;
+  return `<span class="pill ok">${it.origin === "induction" ? "kept" : isHealth(it) ? "accepted" : "approved"}</span>`;
+}
+function itemRow(it){
+  return `<button type="button" class="item ${U.inboxSel === it.id ? "sel" : ""}" data-act="pick-item" data-id="${esc(it.id)}">${itemIcon(it)}<span class="t">${esc(itemTitle(it))}</span><span class="st">${decisionPill(it)}</span><span class="s">${esc(itemSub(it))}</span></button>`;
+}
+const entryRow = e => e.type === "group" ? groupRow(e) : itemRow(e.it);
+function inboxView(){
+  const {todo, done} = inboxOrder(), all = todo.concat(done);
+  const skipped = S.review.items.filter(i => !isActionable(i));
+  if (!all.find(e => e.id === U.inboxSel)) U.inboxSel = (all[0] || {}).id || null;
+  const skippedHTML = skipped.length ? `<details class="skipped"><summary>${plural(skipped.length, "item")} skipped automatically</summary>${skipped.map(i =>
+    `<div><b>${esc(itemTitle(i))}</b> — ${esc(i.reason || i.status)}</div>`).join("")}</details>` : "";
+  const list = `<div class="list"><div class="rows" data-v="inbox">
+    ${todo.length ? `<div class="lgroup">To review · ${num(todo.length)}</div>` + todo.map(entryRow).join("") : (all.length ? `<div class="lgroup">All reviewed</div>` : "")}
+    ${done.length ? `<div class="lgroup">Decided · ${num(done.length)}</div>` + done.map(entryRow).join("") : ""}
+    ${!all.length ? `<div class="empty"><b>Nothing waiting for a decision.</b><p class="note">Make changes in Taxonomy or Metrics; they collect under Your changes.</p></div>` : ""}
+    ${skippedHTML}</div></div>`;
+  const e = all.find(x => x.id === U.inboxSel);
+  return `<div class="view">${list}<div class="detail" id="detail">${!e ? `<div class="note">Nothing selected.</div>` : e.type === "group" ? groupDetail(e) : itemDetail(e.it)}</div></div>`;
+}
+
+// ---------------------------------------------------------------- health: groups, rows, redo
+// Older logs may hold a reject with this reason; Skip itself no longer records anything.
+const SKIP_REASON = "Skipped";
+// A fallback is a safe default, not an agent's real proposal; the plan marks it `fallback: true`.
+// Plans written before that field existed still say "no fix proposed" on their fallbacks.
+const isFallback = it => it.fallback === true || it.reason === "no fix proposed";
+// Skip is navigation only: the item stays undecided, and the next undecided row or item opens.
+function skipFrom(it){
+  const pos = navPositions(), i = pos.findIndex(p => p.it.id === it.id);
+  const order = i < 0 ? pos : pos.slice(i + 1).concat(pos.slice(0, i));
+  const next = order.find(p => p.it.id !== it.id && !isDecided(p.it));
+  if (!next){ toast("Nothing else is waiting for a decision."); return; }
+  if (next.row && next.sel === U.inboxSel) moveRow(next.row);
+  else { U.inboxSel = next.sel; if (next.row) U.gRow = next.row; renderView(); }
+}
+// Labels an accepted fix consumes (mirrors taxo_ops._conflicts): a merge's `from`, a rename,
+// a remove, a retiring split. A row on such a label, or targeting it, would be refused as a
+// conflict, so bulk accept leaves it out instead of failing the whole batch.
+const CONSUMES = {rename:1, merge:1, remove:1, metric_merge:1, metric_remove:1};
+const opSubject = op => op.node || op.from || op.metric || op.name;
+const opTarget = op => op.type === "merge" || op.type === "metric_merge" ? op.into : op.type === "move" ? op.new_parent : op.type === "add" ? op.parent : null;
+function consumedLabels(){
+  const out = {}, put = op => { if (op && (CONSUMES[op.type] || (op.type === "split" && op.retire)) && opSubject(op)) out[opSubject(op)] = op.type; };
+  for (const it of S.review.items){
+    if (!isActionable(it) || !isDecided(it)) continue;
+    const d = latest(it.id);
+    if (d.action === "approve") put(it.op); else if (d.action === "amend") put(d.op);
+  }
+  for (const p of S.proposals || []) put(p.op);
+  return out;
+}
+const blockedByDecided = (it, c) => { const op = itemOp(it), s = opSubject(op), t = opTarget(op); return !!((s && c[s]) || (t && c[t])); };
+const batchable = (it, c) => canAccept(it) && !isFallback(it) && !blockedByDecided(it, c || consumedLabels());
+const canAccept = it => !isDecided(it) && !suppressedLocked(it) && !isTemplate(it.op) && !(U.tagDraft[it.id] && !U.tagDraft[it.id].length);
+function shortOp(op){
+  if (isTemplate(op)) return op.type === "describe" ? "Write a description…" : op.type === "tag" ? "Pick sections to tag…" : "Draft a governed definition…";
+  switch (op.type){
+    case "describe": return "Use the drafted description";
+    case "tag": return `Tag ${plural((op.chunk_ids || []).length, "section")}`;
+    case "merge": case "metric_merge": return `Merge into “${op.into}”`;
+    case "remove": return String(op.disposition || "").startsWith("entity:") ? `Make it a ${op.disposition.slice(7)} entity` : "Remove it (demote)";
+    case "keep": return "Leave as is";
+    case "add": return `Add “${op.name}”`;
+    case "metric_govern": return `Govern as ${(op.draft || {}).key || "…"}`;
+    default: return opText(op);
+  }
+}
+// Individual items can offer merges in either direction, so name both sides.
+const altWords = c => (c.type === "merge" || c.type === "metric_merge") && !isTemplate(c) ? `Merge “${c.from}” into “${c.into}”` : shortOp(c);
+function lineDiff(op, it){
+  const P = t => `<span class="plus">+ ${esc(t)}</span>`, M = t => `<span class="minus">− ${esc(t)}</span>`, C = t => `<span class="ctx">${esc(t)}</span>`;
+  switch (op.type){
+    case "describe": return P(op.description || "");
+    case "tag": { const ids = op.chunk_ids || []; return P(`${plural(ids.length, "section")}: ${ids.slice(0, 8).map(x => "#" + x).join(", ")}${ids.length > 8 ? ", …" : ""}`); }
+    case "merge": case "metric_merge": return M(op.from) + P("into " + op.into);
+    case "remove": return M(op.node) + (String(op.disposition || "").startsWith("entity:") ? P(op.disposition.slice(7) + " entity") : C("label demoted; sections re-tagged"));
+    case "keep": return C(it && it.reason === "no fix proposed" ? "No fix proposed. Pick one, or leave as is." : "no change");
+    case "add": return P(`${op.name}${op.parent ? " under " + op.parent : " (L1)"}`) + (op.description ? C(op.description) : "");
+    case "metric_govern": { const d = op.draft || {}; return P([d.key, d.family, d.unit, d.grain ? "grain " + d.grain : ""].filter(Boolean).join(" · ")) + (d.desc ? C(d.desc) : ""); }
+    default: return C(opText(op));
+  }
+}
+function healthImpact(op){
+  switch (op.type){
+    case "describe": return "No tagged sections change. The description guides the classifier and is returned with the taxonomy.";
+    case "tag": return `Adds “${op.node}” to ${plural((op.chunk_ids || []).length, "section")}. No tag is removed.`;
+    case "merge": return `“${op.from}” is merged into “${op.into}”. Its tagged sections move, and the old name is kept as an alias.`;
+    case "remove": return String(op.disposition || "").startsWith("entity:") ? `“${op.node}” becomes a ${op.disposition.slice(7)} entity; its sections are re-tagged.` : `“${op.node}” is removed; its sections are re-tagged.`;
+    case "keep": return op.node === "__untagged__" ? "Nothing changes. The sections stay untagged until the next health check." : "Nothing changes; the problem is marked as reviewed.";
+    case "add": return `Adds a new ${op.level}. Sections get it when Claude re-tags.`;
+    case "metric_govern": return "Records a draft governed definition for you to confirm after submit. The app never edits the governed metrics file.";
+    case "metric_merge": return `“${op.from}” is merged into “${op.into}” and kept as a variant.`;
+    default: return "";
+  }
+}
+// The op an Edit starts from: the current fix when it is editable, else the first editable candidate.
+const EDITABLE = {describe:"describe", metric_govern:"h-govern", add:"rename-add"};
+function editBase(it){
+  const op = itemOp(it);
+  if (EDITABLE[op.type]) return op;
+  return candidatesOf(it).find(c => EDITABLE[c.type]) || null;
+}
+const tagCand = it => candidatesOf(it).find(c => c.type === "tag") || null;
+// The sections a tag row offers: every FTS candidate for a no-tags row, else the proposed ids.
+function tagChoices(it){
+  if (!tagCand(it)) return [];
+  const cand = (it.support || {}).candidate_ids;
+  return it.kind === "no_tags" && Array.isArray(cand) ? cand : (tagCand(it).chunk_ids || []);
+}
+function tagChosen(it){
+  if (U.tagDraft[it.id]) return U.tagDraft[it.id];
+  const op = itemOp(it);
+  return op.type === "tag" ? op.chunk_ids || [] : [];
+}
+function rowCtx(it, base){
+  const label = subjectOf(base);
+  return {label, itemId:it.id, baseOp:base, metric:base.metric, draft:base.draft || {},
+    desc: base.type === "describe" ? (base.description || "") : descOf(label)};
+}
+// The label for a candidate the reviewer edited (a narrowed tag, their own description, …).
+function editedWords(op){
+  switch (op.type){
+    case "tag": return `Tag ${plural((op.chunk_ids || []).length, "ticked section")}`;
+    case "describe": return "Your description";
+    case "metric_govern": return `Your draft (${(op.draft || {}).key || "…"})`;
+    case "add": return `Add “${op.name}” (edited)`;
+    default: return shortOp(op);
+  }
+}
+function altSelect(it){
+  const cs = candidatesOf(it); if (cs.length < 2) return `<span class="note">—</span>`;
+  // When the current fix is an edit (not exactly a candidate), it gets its own leading option, so
+  // every candidate — the recommended one included — stays pickable with a change event.
+  const cur = itemOp(it), ci = cs.findIndex(c => sameOp(c, cur));
+  return `<select data-alt="${esc(it.id)}" aria-label="Fix for ${esc(itemTitle(it))}" ${suppressedLocked(it) ? "disabled" : ""}>${ci < 0 ? opt("", "— edited: " + editedWords(cur) + " —", true) : ""}${cs.map((c, i) =>
+    opt(i, (i === 0 ? "Recommended: " : "") + shortOp(c), i === ci)).join("")}</select>`;
+}
+function rowActions(it){
+  const id = esc(it.id);
+  if (isDecided(it)) return `${decisionPill(it)} <button type="button" class="linkbtn" data-act="undo-item" data-id="${id}">Undo</button>`;
+  if (suppressedLocked(it)) return `<span class="pill mute" title="${esc((it.prior || {}).reason || "")}">rejected before</span><div class="acts"><button type="button" class="btn sm" data-act="reopen" data-id="${id}">Reopen</button></div>`;
+  return `<div class="acts"><button type="button" class="btn sm ok" data-act="approve" data-id="${id}" ${canAccept(it) ? "" : "disabled"}>Accept</button>${editBase(it) || tagCand(it)
+    ? `<button type="button" class="btn sm" data-act="row-edit" data-id="${id}">Edit</button>` : ""}<button type="button" class="btn sm" data-act="skip" data-id="${id}">Skip</button></div>`;
+}
+function rowNote(it){
+  const s = it.support || {};
+  if (it.kind === "missing_description") return plural(s.tags, "tagged section");
+  if (it.kind === "no_tags") return plural((s.candidate_ids || []).length, "candidate section");
+  if (it.kind === "near_duplicate") return plural(s.tags, "tagged section");
+  if (it.kind === "metric_not_governed") return s.sources != null ? plural(Array.isArray(s.sources) ? s.sources.length : s.sources, "source") : "";
+  if (s.chunks != null) return plural(s.chunks, "section");
+  return "";
+}
+function rowHTML(it){
+  const cur = U.gRow === it.id, id = esc(it.id), note = rowNote(it);
+  return `<tr class="${cur ? "cur" : ""} ${isDecided(it) ? "rdone" : ""}" data-row="${id}"><td><button type="button" class="rowpick" data-act="pick-row" data-id="${id}" aria-expanded="${cur}">${esc(itemTitle(it))}</button>${revisionWaiting(it) ? ` <span class="pill info" title="Claude revised this fix; open the row to approve it">revised</span>` : ""}${note ? `<span class="sub">${esc(note)}</span>` : ""}</td>
+    <td class="fix">${lineDiff(itemOp(it), it)}</td><td>${altSelect(it)}</td><td>${rowActions(it)}</td></tr>`
+    + (cur ? `<tr class="rpanel"><td colspan="4">${rowPanel(it)}</td></tr>` : "");
+}
+function candBrief(it, cid){
+  const e = (it.evidence || []).find(x => x && x.chunk_id === cid && x.preview != null);
+  if (e) return e;
+  const c = chunkCache[cid];
+  if (c && !c.errors) return {chunk_id:cid, source:c.source, title:c.title, preview:String(c.text || "").split(/\s+/).join(" ").trim().slice(0, 240)};
+  return c ? {chunk_id:cid, preview:"(couldn't load this section)"} : null;
+}
+function candsHTML(it){
+  const ids = tagChoices(it), chosen = new Set(tagChosen(it)), lock = isDecided(it) && latest(it.id).action === "reject" || suppressedLocked(it);
+  const rows = ids.map(cid => { const b = candBrief(it, cid);
+    return `<div class="quote"><label class="cand"><input type="checkbox" data-tag="${esc(it.id)}" value="${esc(cid)}" ${chosen.has(cid) ? "checked" : ""} ${lock ? "disabled" : ""}><span>${b ? esc(b.preview) : `<span class="note">Loading…</span>`}</span></label><small>#${esc(cid)}${b && b.source ? " · " + esc(b.source) : ""}${b && b.title ? " · " + esc(b.title) : ""} · <button type="button" class="linkbtn" data-act="chunk" data-id="${esc(cid)}">full text</button></small></div>`; }).join("");
+  if (!ids.length) return `<div class="section" data-cands="${esc(it.id)}"><b>Candidate sections</b><p class="note">Search found no sections that mention it, so there is nothing to tag. Merge or remove it, or leave it as is.</p></div>`;
+  const empty = U.tagDraft[it.id] && !U.tagDraft[it.id].length ? `<div class="decided warn"><span>No section selected, so Accept is off. Tick at least one, or pick another fix.</span></div>` : "";
+  return `<div class="section" data-cands="${esc(it.id)}"><b>Candidate sections</b><span class="note">Tick the sections that belong in “${esc(tagCand(it).node)}”. ${num(chosen.size)} of ${plural(ids.length, "section")} selected. Changing the selection changes the fix.</span>${empty}<div class="cands">${rows}</div></div>`;
+}
+function rowPanel(it){
+  const parts = [];
+  if (it.reason && it.reason !== "no fix proposed") parts.push(`<p><b>Why:</b> ${esc(it.reason)}</p>`);
+  else if (it.reason) parts.push(`<p class="note">Claude proposed no fix for this one. Pick one from the list, edit one, or leave it as is.</p>`);
+  const op = itemOp(it);
+  if (op.type !== "keep") parts.push(`<div class="impact">${esc(healthImpact(op))}</div>`);
+  if (tagCand(it)) parts.push(candsHTML(it));
+  parts.push(whyHTML(it));
+  parts.push(`<div id="formslot"></div>`);
+  parts.push(redoHTML(it));
+  return `<div class="panelbox">${parts.join("")}</div>`;
+}
+function groupTable(rows){
+  return `<div class="twrap"><table class="gtable"><colgroup><col style="width:25%"><col style="width:33%"><col style="width:22%"><col style="width:20%"></colgroup>
+    <thead><tr><th scope="col">Subject</th><th scope="col">Recommended fix</th><th scope="col">Alternatives</th><th scope="col">Decision</th></tr></thead>
+    <tbody>${rows.map(rowHTML).join("")}</tbody></table></div>`;
+}
+function groupDetail(e){
+  const rows = e.rows;
+  if (!rows.find(r => r.id === U.gRow)) U.gRow = (rows.find(r => !isDecided(r)) || rows[0]).id;
+  const cons = consumedLabels(), decided = rows.filter(isDecided).length, open = rows.filter(r => batchable(r, cons)).length, fb = rows.filter(r => canAccept(r) && isFallback(r)).length;
+  const blocked = rows.filter(r => canAccept(r) && !isFallback(r) && blockedByDecided(r, cons)).length;
+  let f = U.batchFail && U.batchFail.kind === e.kind ? U.batchFail : null, bad = f ? S.review.items.find(i => i.id === f.recs[f.index].item_id) : null;
+  // Once the refused row is decided on its own, the banner no longer applies.
+  if (f && (!bad || isDecided(bad))){ U.batchFail = null; f = null; bad = null; }
+  const others = f ? f.recs.filter((r, i) => i !== f.index).length : 0;
+  const failHTML = bad ? `<div class="decided bad"><span>Nothing was recorded: “${esc(itemTitle(bad))}” can't be accepted. ${esc(f.error)}</span><button type="button" data-act="goto-row" data-id="${esc(bad.id)}">Show row</button>${others ? `<button type="button" data-act="accept-others">Accept the other ${num(others)}</button>` : ""}</div>` : "";
+  let body;
+  if (e.kind === "untagged_sections"){
+    const adds = rows.filter(r => r.op.type === "add"), tags = rows.filter(r => r.op.type === "tag"), rest = rows.filter(r => r.op.type !== "add" && r.op.type !== "tag");
+    body = [["New categories", adds], ["Assign to existing", tags], ["Other", rest]].filter(([, r]) => r.length)
+      .map(([t, r]) => `<div class="gpart">${esc(t)} · ${num(r.length)}</div>${groupTable(r)}`).join("");
+  } else body = groupTable(rows);
+  return `<span class="where">Health check · ${esc(KIND_WORDS[e.kind] || KIND_WORDS[rows[0].kind] || e.kind)}</span><h3>${esc(groupTitle(e))}</h3>
+    <p class="note">${esc(fixSummary(rows))}</p>
+    <div class="gtools"><span class="gprog">${num(decided)} of ${num(rows.length)} decided<span class="track"><i style="width:${rows.length ? (100 * decided / rows.length) : 0}%"></i></span></span>
+      <button type="button" class="btn ok" data-act="accept-all" data-kind="${esc(e.kind)}" ${open ? "" : "disabled"}>Accept all remaining (${num(open)})</button>
+      ${fb ? `<span class="note">${esc(plural(fb, "row") + " with no fix proposed " + (fb === 1 ? "needs" : "need") + " a decision of " + (fb === 1 ? "its" : "their") + " own")}</span>` : ""}
+      ${blocked ? `<span class="note">${esc(plural(blocked, "row") + " skipped: " + (blocked === 1 ? "its" : "their") + " category is being merged away, renamed or removed")}</span>` : ""}
+      <span class="note"><span class="kbd">J</span>/<span class="kbd">K</span> rows · <span class="kbd">A</span> accept · <span class="kbd">R</span> skip</span></div>
+    ${failHTML}
+    ${body}`;
+}
+// A revision is waiting when Claude answered the item's latest request and it isn't the current fix.
+function revisionWaiting(it){ const rev = (S.revisions || {})[it.id]; return !!(rev && rev.op) && !(isDecided(it) && sameOp(itemOp(it), rev.op)); }
+function lastRequest(id){ let q = null; for (const r of Object.values(S.requests || {})) if (r.item_id === id) q = r; return q; }
+function redoHTML(it){
+  if ((it.support || {}).pattern) return "";   // a naming pattern never goes to an agent: no redo channel
+  const q = lastRequest(it.id), rev = (S.revisions || {})[it.id], id = esc(it.id);
+  let status = "";
+  if (rev && rev.op){
+    const taken = isDecided(it) && sameOp(itemOp(it), rev.op);
+    status = `<div class="revised"><b>Revised by Claude</b>${q ? `<span class="note">Your note: “${esc(q.note)}”</span>` : ""}${diffHTML(rev.op)}${rev.reason ? `<p>${esc(rev.reason)}</p>` : ""}
+      ${taken ? `<span><span class="pill ok">approved</span></span>` : suppressedLocked(it) ? `<p class="note">This fix was rejected before. Reopen the item first, then approve the revision.</p>` : `<div class="dock flat"><button type="button" class="btn ok sm" data-act="rev-approve" data-id="${id}">Approve</button></div>`}</div>`;
+  } else if (q && q.status === "open"){
+    status = `<div class="decided info"><span>${S.live_channel ? "Claude is revising…" : "Queued for the next run. Claude reads the note when you next run the health check."} Your note: “${esc(q.note)}”</span></div>`;
+  }
+  const form = U.redo === it.id
+    ? `<div class="opform"><label>What should Claude do differently? <textarea id="redoNote" rows="3">${esc(U.redoText)}</textarea></label><div class="err" id="rerr" role="alert"></div>
+        <div class="frow"><button type="button" class="btn primary" data-act="redo-send" data-id="${id}">Send</button><button type="button" class="btn" data-act="redo-cancel">Cancel</button></div></div>`
+    : `<div><button type="button" class="linkbtn" data-act="redo-open" data-id="${id}">Redo with a note…</button></div>`;
+  return `<div class="section">${status}${form}</div>`;
+}
+// A naming-pattern item lists a sample of its labels (evidence: {label, tags}) and the total.
+function patternHTML(it){
+  const s = it.support || {}, ev = (it.evidence || []).filter(e => e && e.label != null);
+  if (!s.pattern || !ev.length) return "";
+  const more = num(s.count) - ev.length;
+  return `<div class="section"><b>Labels in this pattern</b>${ev.map(e => `<div>${esc(e.label)} <span class="note">· ${esc(plural(e.tags, "tagged section"))}</span></div>`).join("")}${more > 0 ? `<p class="note">…and ${esc(plural(more, "more label"))}</p>` : ""}</div>`;
+}
+function healthDetail(it){
+  const op = itemOp(it), s = it.support || {}, facts = [], id = esc(it.id);
+  if (it.kind === "near_duplicate"){
+    const [a, b] = it.title.split(" looks like ");
+    if (s.tags_a != null) facts.push(`<span class="pill mute wrap">${esc(a || "A")}: ${esc(plural(s.tags_a, "tagged section"))}</span>`);
+    if (s.tags_b != null) facts.push(`<span class="pill mute wrap">${esc(b || "B")}: ${esc(plural(s.tags_b, "tagged section"))}</span>`);
+    if (s.overlap != null) facts.push(`<span class="pill warn">${esc(num(s.overlap) + " shared")}</span>`);
+    if (s.pattern) facts.push(`<span class="pill mute">${esc(plural(s.count, "label"))}</span>`);
+  }
+  if (it.kind === "off_axis" && s.tags != null) facts.push(`<span class="pill mute">${esc(plural(s.tags, "tagged section"))}</span>`);
+  if (it.kind === "similar_metrics" && s.score != null) facts.push(`<span class="pill warn">${esc(Math.round(num(s.score) * 100) + "% alike")}</span>`);
+  let acts;
+  if (isDecided(it)){
+    const d = latest(it.id), text = d.action === "reject" ? (d.reason === SKIP_REASON ? "Skipped. Nothing changes for it." : `Rejected: ${d.reason}.`)
+      : d.action === "amend" ? `${opText(op)}. Applied on submit.` : `Accepted: ${opText(op)}. Applied on submit.`;
+    acts = `<div class="decided ${d.action === "reject" ? "bad" : d.action === "amend" ? "info" : "ok"}"><span>${esc(text)}</span><button type="button" data-act="undo-item" data-id="${id}">Undo</button></div>`;
+  } else if (suppressedLocked(it)){
+    const prior = it.prior || {};
+    acts = `<div class="decided warn"><span>Rejected before: ${esc(prior.reason || "no reason recorded")}${prior.reviewer ? " (" + esc(prior.reviewer) + ")" : ""}.</span></div>
+      <div class="dock"><button type="button" class="btn" data-act="reopen" data-id="${id}">Reopen</button><span class="note">Reopen to accept or change it.</span></div>`;
+  } else {
+    const alts = (it.alternatives || []).map((c, i) => `<button type="button" class="btn" data-act="h-alt" data-id="${id}" data-i="${num(i + 1)}">${esc(altWords(c))}</button>`).join("");
+    acts = `<div class="dock"><button type="button" class="btn ok" data-act="approve" data-id="${id}" ${canAccept(it) ? "" : "disabled"}>Accept: ${esc(altWords(it.op))}</button>${alts}
+      <button type="button" class="btn" data-act="skip" data-id="${id}">Skip</button><span class="note"><span class="kbd">A</span> <span class="kbd">R</span> <span class="kbd">J</span>/<span class="kbd">K</span></span></div>`;
+  }
+  return `<span class="where">Health check · ${esc(KIND_WORDS[it.kind] || it.kind)}</span><h3>${esc(it.title || itemTitle(it))}</h3>
+    ${facts.length ? `<div class="facts">${facts.join("")}</div>` : ""}
+    <div class="section"><b>${isDecided(it) ? "Your decision" : "Claude recommends"}</b>${op.type === "keep" && it.reason === "no fix proposed" ? `<p class="note">No fix proposed. Pick one below, or leave it as is.</p>` : diffHTML(op)}</div>
+    <div class="impact">${esc(healthImpact(op))}</div>
+    ${it.reason && it.reason !== "no fix proposed" ? `<div class="section"><b>Why</b><p>${esc(it.reason)}</p></div>` : ""}
+    ${patternHTML(it)}
+    ${whyHTML(it)}
+    <div id="nodeSlot"></div>
+    ${acts}
+    <div id="formslot"></div>
+    ${redoHTML(it)}`;
+}
+// Pick candidate i of an item: the recommended fix approves, a real alternative amends, and a
+// template opens its editor (nothing is posted until the edit is saved).
+async function pickCandidate(it, i){
+  const c = candidatesOf(it)[i]; if (!c) return;
+  if (isTemplate(c)){
+    if (it.group) U.gRow = it.id;
+    if (c.type === "tag"){ U.tagDraft[it.id] = []; renderView(); const b = document.querySelector(`[data-tag="${CSS.escape(it.id)}"]`); if (b) b.focus(); return; }
+    renderView(); openForm(EDITABLE[c.type], rowCtx(it, c)); return;
+  }
+  delete U.tagDraft[it.id];
+  if (i === 0) await send({action:"approve", item_id:it.id}, `Accepted “${itemTitle(it)}”: ${altWords(c)}`);
+  else await send({action:"amend", item_id:it.id, op:c}, `“${itemTitle(it)}”: ${altWords(c)}`);
+}
+async function onTagToggle(box){
+  const it = S.review.items.find(i => i.id === box.dataset.tag); if (!it) return;
+  if (busy){ box.checked = !box.checked; return; }   // one decision at a time
+  const order = tagChoices(it), set = new Set(tagChosen(it)), cid = Number(box.value);
+  if (box.checked) set.add(cid); else set.delete(cid);
+  const ids = order.filter(x => set.has(x));
+  if (!ids.length){
+    U.tagDraft[it.id] = [];
+    // An empty selection is no fix: a decided row goes back to undecided rather than keep a stale subset.
+    if (isDecided(it) && itemOp(it).type === "tag"){
+      const ok = await send({action:"clear", item_id:it.id}, `No section selected: “${itemTitle(it)}” is undecided again`, restoreRec(it.id, latest(it.id)));
+      if (!ok){ delete U.tagDraft[it.id]; renderView(); }
+    } else renderView();
+    return;
+  }
+  delete U.tagDraft[it.id];
+  const op = Object.assign({}, tagCand(it), {chunk_ids:ids});
+  const rec = sameOp(op, it.op) ? {action:"approve", item_id:it.id} : {action:"amend", item_id:it.id, op};
+  const ok = await send(rec, `“${tagCand(it).node}”: ${plural(ids.length, "section")} selected`);
+  if (!ok) renderView();
+}
+// Accept a group's rows in one all-or-nothing batch; a refused row is named with a way round it.
+async function acceptBatch(g, recs){
+  await sendBatch(recs, `Accepted ${plural(recs.length, "fix", "fixes")} in “${groupTitle(g)}”`, null, null,
+    e => { U.batchFail = {kind:g.kind, recs, index:e.index, error:errText(e)}; });
+}
+// J/K and row clicks inside an open group only move the current row: no full re-render.
+function moveRow(id){
+  const det = $("detail"), it = S.review.items.find(i => i.id === id);
+  const row = det && det.querySelector(`tr[data-row="${CSS.escape(id)}"]`);
+  U.gRow = id;
+  if (!row || !it){ renderView(); return; }
+  const old = det.querySelector("tr.cur");
+  if (old){ old.classList.remove("cur"); const b = old.querySelector(".rowpick"); if (b) b.setAttribute("aria-expanded", "false"); }
+  const p = det.querySelector("tr.rpanel"); if (p) p.remove();
+  row.classList.add("cur"); row.querySelector(".rowpick").setAttribute("aria-expanded", "true");
+  row.insertAdjacentHTML("afterend", `<tr class="rpanel"><td colspan="4">${rowPanel(it)}</td></tr>`);
+  row.nextElementSibling.scrollIntoView({block:"nearest"}); row.scrollIntoView({block:"nearest"});
+  afterInbox();
+}
+async function loadCands(it){
+  const missing = tagChoices(it).filter(cid => !candBrief(it, cid));
+  if (!missing.length) return;
+  await Promise.all(missing.map(cid => api.chunk(cid).then(c => { chunkCache[cid] = c; }, () => { chunkCache[cid] = {errors:true}; })));
+  const box = document.querySelector(`[data-cands="${CSS.escape(it.id)}"]`);
+  if (box && U.view === "inbox" && (U.gRow === it.id || U.inboxSel === it.id)) box.outerHTML = candsHTML(it);
+}
+function itemImpact(it){
+  const s = it.support || {}, d = latest(it.id);
+  if (isDecided(it) && d.action === "amend") return "Applies your edit on submit. The total impact is in Review & submit.";
+  if (it.origin === "refine") return `Adds a new ${it.op.level}. About ${plural(s.chunks, "section")} get it when Claude re-tags${s.projected_coverage_gain_pts != null ? ` (+${num(s.projected_coverage_gain_pts)} pts coverage, estimate)` : ""}. Nothing already tagged changes.`;
+  if (it.origin === "describe") return "No tagged sections change. The description guides the classifier and is returned with the taxonomy.";
+  return (it.flags && it.flags.length) ? "Keeping it changes nothing. If the flag is right, merge, rename or remove it instead." : "Keeping it changes nothing.";
+}
+function quoteHTML(text, meta, chunkId){
+  return `<div class="quote">${esc(text)}<small>${esc(meta)}${chunkId != null ? ` · <button type="button" class="linkbtn" data-act="chunk" data-id="${esc(chunkId)}">full text</button>` : ""}</small></div>`;
+}
+function whyHTML(it){
+  const ev = (it.evidence || []).filter(e => e && e.quote).map(e => {
+    const ids = (e.chunk_ids || []).slice(0, 6);
+    const meta = [e.source, e.confidence != null ? "confidence " + e.confidence : "", ids.length ? "from section " + ids.map(x => "#" + x).join(", ") : ""].filter(Boolean).join(" · ");
+    return `<div class="quote">“${esc(e.quote)}”<small>${esc(meta)}${ids.length ? ids.map(x => ` <button type="button" class="linkbtn" data-act="chunk" data-id="${esc(x)}">#${esc(x)}</button>`).join("") : ""}</small></div>`;
+  }).join("");
+  const samples = ((it.support || {}).samples || []).map(s => quoteHTML(s.preview, "#" + s.chunk_id + " · " + (s.source || ""), s.chunk_id)).join("");
+  const banner = it.origin === "induction" && S.review.evidence_available === false
+    ? `<p class="note">Claude didn't keep induction evidence for this Brain, so tagged sections are shown instead.</p>` : "";
+  if (it.origin === "describe") return "";
+  if (!ev && !samples && !banner) return "";
+  return `<div class="section"><b>Why Claude proposed it</b>${banner}${ev}${samples}</div>`;
+}
+function itemDescHTML(it){
+  const op = itemOp(it);
+  if (it.origin === "refine") return `<div class="section"><b>Description</b>${op.description ? `<p>${esc(op.description)}</p>` : `<p class="note">No description proposed. Rename… lets you add one.</p>`}</div>`;
+  if (it.origin === "describe") return "";
+  const cur = descOf(it.op.node), pend = op.type === "describe" ? op.description : null;
+  return `<div class="section"><b>Description</b>${pend ? `<p>${esc(pend)}</p><p class="note">Edited in this review.</p>` : cur ? `<p>${esc(cur)}</p>` : `<p class="note">No description yet. Edit description adds one.</p>`}</div>`;
+}
+const REJECT_REASONS = {refine:["Out of scope for the goal", "Too narrow", "Duplicate"], describe:["Inaccurate", "Too vague", "Duplicate of a sibling"]};
+function itemActions(it){
+  const d = latest(it.id), id = esc(it.id);
+  if (isDecided(it)){
+    const op = itemOp(it);
+    const [cls, text] = d.action === "reject" ? ["bad", `Rejected: ${d.reason}. It won't be proposed again.`]
+      : d.action === "amend" ? ["info", `${opText(op)}. Applied on submit.`]
+      : it.origin === "induction" ? ["ok", "Kept as it is."]
+      : it.origin === "describe" ? ["ok", "The description is applied on submit."] : ["ok", "Will be added on submit."];
+    return `<div class="decided ${esc(cls)}"><span>${esc(text)}</span><button type="button" data-act="undo-item" data-id="${id}">Undo</button></div>`;
+  }
+  const prior = it.prior || {};
+  const before = it.status === "suppressed" ? `<div class="decided warn"><span>Rejected before: ${esc(prior.reason || "no reason recorded")}${prior.reviewer ? " (" + esc(prior.reviewer) + ")" : ""}.</span></div>` : "";
+  if (it.status === "suppressed" && !(d && d.action === "reopen"))
+    return before + `<div class="dock"><button type="button" class="btn" data-act="reopen" data-id="${id}">Reopen</button><button type="button" class="btn" data-act="reject" data-id="${id}" data-reason="${esc(prior.reason || "Rejected before")}">Keep rejected</button><span class="note">Reopen to approve or edit it.</span></div>`;
+  const chips = (REJECT_REASONS[it.origin] || []).map(r => `<button type="button" class="chip rej" data-act="reject" data-id="${id}" data-reason="${esc(r)}">${esc(r)}</button>`).join("")
+    + `<button type="button" class="chip rej" data-act="form" data-form="reject-other">Other…</button>`;
+  const keys = `<span class="note"><span class="kbd">A</span>${it.origin !== "induction" ? ` <span class="kbd">R</span>` : ""} <span class="kbd">J</span>/<span class="kbd">K</span></span>`;
+  if (it.origin === "refine") return before + `<div class="dock"><button type="button" class="btn ok" data-act="approve" data-id="${id}">Approve</button><button type="button" class="btn" data-act="form" data-form="rename-add">Rename…</button><span class="reason"><span class="note">Reject:</span>${chips}</span>${keys}</div>`;
+  if (it.origin === "describe") return before + `<div class="dock"><button type="button" class="btn ok" data-act="approve" data-id="${id}">Approve</button><button type="button" class="btn" data-act="form" data-form="describe">Edit…</button><span class="reason"><span class="note">Reject:</span>${chips}</span>${keys}</div>`;
+  const lvl = it.level;
+  return before + `<div class="dock"><button type="button" class="btn ok" data-act="approve" data-id="${id}">Keep</button>
+    ${lvl !== "entity" ? `<button type="button" class="btn" data-act="form" data-form="merge">Merge into…</button>` : ""}
+    <button type="button" class="btn" data-act="form" data-form="rename">Rename…</button>
+    ${lvl === "L2" ? `<button type="button" class="btn" data-act="form" data-form="move">Move…</button>` : ""}
+    <button type="button" class="btn bad" data-act="form" data-form="remove">Remove…</button>
+    <button type="button" class="btn" data-act="form" data-form="describe">Edit description</button>${keys}</div>`;
+}
+function itemDetail(it){
+  if (isHealth(it)) return healthDetail(it);
+  const s = it.support || {}, op = itemOp(it);
+  const facts = [];
+  if (it.origin === "refine"){
+    facts.push(`<span class="pill mute">${esc(plural(s.chunks, "chunk"))}</span>`);
+    if (s.sources != null) facts.push(`<span class="pill mute">${esc(plural(s.sources, "source"))}</span>`);
+    if (s.projected_coverage_gain_pts != null) facts.push(`<span class="pill ok">+${num(s.projected_coverage_gain_pts)} pts coverage (estimate)</span>`);
+  } else facts.push(`<span class="pill mute">${esc(plural(s.tags ?? cnt(it.op.node), "tagged section"))}</span>`);
+  if (s.n_sources != null) facts.push(`<span class="pill mute">${esc(plural(s.n_sources, "source"))}</span>`);
+  for (const f of it.flags || []) facts.push(`<span class="pill warn wrap">${esc(flagWords(f))}</span>`);
+  const wh = it.origin === "refine" ? (it.op.level === "L1" ? "New L1" : "New L2 under " + (it.op.parent || "—"))
+    : it.origin === "describe" ? "Description for " + where(it) : where(it) + " · first build";
+  return `<span class="where">${esc(wh)}</span><h3>${esc(itemTitle(it))}</h3>
+    <div class="facts">${facts.join("")}</div>
+    ${diffHTML(op)}
+    <div class="impact">${esc(itemImpact(it))}</div>
+    ${itemDescHTML(it)}
+    ${whyHTML(it)}
+    <div id="nodeSlot"></div>
+    ${itemActions(it)}
+    <div id="formslot"></div>`;
+}
+async function afterInbox(){
+  if (String(U.inboxSel || "").startsWith("g:")){
+    const row = actionable().find(i => i.id === U.gRow);
+    if (row && tagCand(row)) loadCands(row);
+    return;
+  }
+  const it = actionable().find(i => i.id === U.inboxSel);
+  if (it && tagCand(it)) loadCands(it);
+  if (!it || !it.op.node || it.op.node === "__untagged__" || ((it.support || {}).samples || []).length) return;
+  const n = await getNode(it.op.node);
+  const slot = $("nodeSlot");
+  if (!slot || U.view !== "inbox" || U.inboxSel !== it.id || !n || n.errors || !n.samples.length) return;
+  slot.innerHTML = `<div class="section"><b>${it.origin === "describe" || isHealth(it) ? "What's tagged with it" : "Why Claude proposed it"}</b>${n.samples.map(s => quoteHTML(s.preview, "#" + s.chunk_id + " · " + (s.source || ""), s.chunk_id)).join("")}</div>`;
+}
+async function getNode(label){
+  if (!nodeCache[label]){ try { nodeCache[label] = await api.node(label); } catch(e){ nodeCache[label] = {errors:[errText(e)]}; } }
+  return nodeCache[label];
+}
+
+// ---------------------------------------------------------------- taxonomy
+function treeFilter(l){
+  if (U.filter === "flagged" && !flagsOf(l).length) return false;
+  if (U.filter === "notags" && cnt(l)) return false;
+  if (U.filter === "nodesc" && descOf(l)) return false;
+  const q = U.q.trim().toLowerCase();
+  return !q || l.toLowerCase().includes(q) || aliasesOf(l).some(a => a.toLowerCase().includes(q));
+}
+// Health items (no tags / missing description) per node, rebuilt for each tree render.
+let HFIX = {};
+function healthFixes(){
+  const m = {};
+  for (const it of actionable()) if (isHealth(it) && (it.kind === "no_tags" || it.kind === "missing_description")) (m[subjectOf(it.op)] = m[subjectOf(it.op)] || []).push(it);
+  return m;
+}
+function nodeRow(l, cls){
+  const n = cnt(l), p = P.m[l], sel = U.treeSel && U.treeSel.kind === "node" && U.treeSel.label === l;
+  const btn = `<button type="button" class="node ${cls} ${n ? "" : "dead"} ${sel ? "sel" : ""}" data-act="pick-node" data-label="${esc(l)}" title="${esc(l)}">${p ? mark(p.op) : ""}${flagsOf(l).length ? `<span class="flagc" title="flagged">⚑</span>` : ""}<span class="lbl">${esc(l)}</span><span class="n">${n}</span></button>`;
+  const fx = HFIX[l] || [];
+  if (!fx.length) return btn;
+  // One link per row (the no-tags fix first when a node has both); the title names every problem.
+  const to = fx.find(i => i.kind === "no_tags") || fx[0];
+  return `<div class="nwrap">${btn}<button type="button" class="linkbtn fixlink" data-act="goto-row" data-id="${esc(to.id)}" title="${esc(fx.map(i => KIND_WORDS[i.kind]).join(" and ") + ": open the proposed fix in the Inbox")}">fix proposed</button></div>`;
+}
+function pendingRow(a, cls){
+  const key = a.src.proposal ? "p:" + a.src.proposal : "i:" + a.src.item;
+  const sel = U.treeSel && U.treeSel.kind === "pending" && U.treeSel.key === key;
+  return `<button type="button" class="node ${cls} newrow ${sel ? "sel" : ""}" data-act="pick-pending" data-key="${esc(key)}" title="${esc(a.op.name)}">${mark(a.op)}<span class="lbl">${esc(a.op.name)}</span><span class="n">new</span></button>`;
+}
+function treeRowsHTML(){
+  HFIX = healthFixes();
+  const t = tree(), bySize = (a, b) => cnt(b) - cnt(a), plain = U.filter === "all" && !U.q.trim();
+  let tops = l1s(); if (U.sort === "size") tops = tops.slice().sort(bySize);
+  const addsL2 = P.adds.filter(a => a.op.type === "add" && a.op.level === "L2"), addsL1 = P.adds.filter(a => a.op.type === "add" && a.op.level === "L1");
+  let out = "";
+  for (const l1 of tops){
+    let kids = t[l1].slice(); if (U.sort === "size") kids.sort(bySize);
+    const shown = kids.filter(treeFilter);
+    if (!treeFilter(l1) && !shown.length) continue;
+    out += nodeRow(l1, "l1") + shown.map(k => nodeRow(k, "l2")).join("");
+    if (plain){
+      out += addsL2.filter(a => a.op.parent === l1).map(a => pendingRow(a, "l2")).join("");
+      out += `<button type="button" class="node l2 addrow" data-act="new-cat" data-parent="${esc(l1)}">+ Add sub-category</button>`;
+    }
+  }
+  if (plain) out += addsL1.map(a => pendingRow(a, "l1")).join("");
+  const un = (S.base.intent_taxonomy.unassigned_l2 || []).filter(treeFilter);
+  if (un.length) out += `<div class="lgroup">Not under any L1</div>` + un.map(k => nodeRow(k, "")).join("");
+  const ents = U.filter === "nodesc" ? [] : (S.base.entities || []).filter(treeFilter);
+  if (ents.length) out += `<div class="lgroup">Entity kinds</div>` + ents.map(k => nodeRow(k, "")).join("");
+  return out || `<div class="empty"><p class="note">Nothing matches.</p></div>`;
+}
+function taxonomyView(){
+  const labels = allLabels().concat(S.base.entities || []);
+  // "Missing description" counts intent L1+L2 only, the same definition as the plan's subtitle.
+  const c = {flagged: labels.filter(l => flagsOf(l).length).length, notags: labels.filter(l => !cnt(l)).length, nodesc: allLabels().filter(l => !descOf(l)).length};
+  const filters = [["all", "All", null], ["flagged", "Flagged", c.flagged], ["notags", "No tags", c.notags], ["nodesc", "Missing description", c.nodesc]]
+    .map(([k, l, n]) => `<button type="button" class="chip" data-act="filter" data-f="${esc(k)}" aria-pressed="${U.filter === k}">${esc(l)}${n != null ? " · " + num(n) : ""}</button>`).join("");
+  const sorts = [["tree", "Tree order"], ["size", "Largest"]]
+    .map(([k, l]) => `<button type="button" class="chip" data-act="sort" data-s="${esc(k)}" aria-pressed="${U.sort === k}">${esc(l)}</button>`).join("");
+  return `<div class="view"><div class="list"><div class="ltools">
+      <div class="lrow"><button type="button" class="btn primary sm" data-act="new-cat">+ New category</button><input type="search" id="q" placeholder="Search names and aliases" aria-label="Search categories" value="${esc(U.q)}"></div>
+      <div class="filters" role="group" aria-label="Filter">${filters}</div>
+      <div class="filters" role="group" aria-label="Sort"><span class="note">Sort:</span>${sorts}</div></div>
+    <div class="rows" id="rows" data-v="taxonomy">${treeRowsHTML()}</div></div>
+    <div class="detail" id="detail">${treeDetailShell()}</div></div>`;
+}
+function treeDetailShell(){
+  const sel = U.treeSel;
+  if (!sel){
+    const t = S.totals || {};
+    return `<p class="note">Select a category to see what's tagged with it and to describe, rename, merge, move, split or remove it.</p>
+      ${t.chunks ? `<p class="note">${num(t.tagged)} of ${num(t.chunks)} sections tagged · ${num(t.untagged)} without a category.</p>` : S.has_db ? "" : `<p class="note">No store attached, so tag counts are zero.</p>`}`;
+  }
+  if (sel.kind === "new") return `<span class="where">${sel.parent ? "New L2 under " + esc(sel.parent) : "New category"}</span><h3>New category</h3><div id="formslot"></div>`;
+  if (sel.kind === "pending") return pendingDetail(sel.key);
+  return `<span class="where">Loading…</span><h3>${esc(sel.label)}</h3>`;
+}
+function findPending(key){
+  const id = key.slice(2);
+  if (key.startsWith("p:")){ const p = S.proposals.find(x => x.item_id === id); return p ? {op:p.op, impact:p.impact, proposal:p} : null; }
+  const it = S.review.items.find(x => x.id === id); return it ? {op:itemOp(it), item:it} : null;
+}
+function pendingDetail(key){
+  const f = findPending(key);
+  if (!f) return `<p class="note">That change is no longer pending.</p>`;
+  const op = f.op;
+  return `<span class="where">${f.proposal ? "Your change" : "Approved in the Inbox"}</span><h3>${esc(op.name || op.metric)}</h3>
+    ${diffHTML(op)}
+    ${f.impact ? `<div class="impact">${esc(impactWords(f.impact, op))}</div>` : ""}
+    <div class="section"><b>Description</b>${op.description || op.definition ? `<p>${esc(op.description || op.definition)}</p>` : `<p class="note">None.</p>`}</div>
+    <div class="dock flat">${f.proposal ? `<button type="button" class="btn" data-act="withdraw" data-id="${esc(f.proposal.item_id)}">Withdraw</button>`
+      : `<button type="button" class="btn" data-act="undo-item" data-id="${esc(f.item.id)}">Undo the approval</button>`}</div>`;
+}
+async function afterTaxonomy(){
+  const q = $("q");
+  if (q) q.oninput = () => { U.q = q.value; $("rows").innerHTML = treeRowsHTML(); };
+  const sel = U.treeSel;
+  if (sel && sel.kind === "new") openForm("add", {parent: sel.parent || ""});
+  if (!sel || sel.kind !== "node") return;
+  const n = await getNode(sel.label);
+  if (!(U.view === "taxonomy" && U.treeSel === sel)) return;
+  const box = $("detail"); if (!box) return;
+  box.innerHTML = n.errors ? `<div class="err">${esc(errText(n))}</div>` : nodeDetail(n);
+}
+function nodeDetail(n){
+  const p = P.m[n.label], ind = inductionItem(n.label), amended = ind && isDecided(ind) && latest(ind.id).action === "amend";
+  const lvl = n.level === "L1" ? "L1" : n.level === "entity" ? "Entity kind" : n.parent ? "L2 · under " + n.parent : "L2 · not under any L1";
+  const facts = [`<span class="pill mute">${esc(plural(n.tags, "tagged section"))}</span>`];
+  if (!n.tags) facts.push(`<span class="pill warn">nothing tagged: remove or merge it?</span>`);
+  if (n.aliases.length) facts.push(`<span class="pill mute wrap">aliases: ${esc(n.aliases.join(", "))}</span>`);
+  for (const f of flagsOf(n.label)) facts.push(`<span class="pill warn wrap">${esc(flagWords(f))}</span>`);
+  const pendDesc = p && p.op.type === "describe" ? p.op.description : null;
+  const desc = pendDesc ? `<div class="descbox"><p>${esc(pendDesc)}<br><span class="note">Proposed in this review.</span></p></div>`
+    : n.description ? `<div class="descbox"><p>${esc(n.description)}</p>${p ? "" : `<button type="button" class="btn sm" data-act="form" data-form="describe">Edit</button>`}</div>`
+    : `<div class="descbox empty"><p>No description yet. The classifier sees only the name.</p>${p ? "" : `<button type="button" class="btn primary sm" data-act="form" data-form="describe">Add a description</button>`}</div>`;
+  let acts;
+  if (p){
+    acts = `<div class="decided info"><span>Pending in this review: ${esc(opText(p.op))}. ${amended ? "Revert it in Your changes (Revert to keep) to edit again." : "Withdraw it in Your changes to edit again."}</span>
+      ${p.src.proposal ? `<button type="button" data-act="withdraw" data-id="${esc(p.src.proposal)}">Withdraw</button>`
+        : amended ? `<button type="button" data-act="approve" data-id="${esc(ind.id)}" data-revert="1">Revert to keep</button>`
+        : `<button type="button" data-act="undo-item" data-id="${esc(p.src.item)}">Undo</button>`}</div>`;
+  } else {
+    const b = (k, l, cls) => `<button type="button" class="btn ${esc(cls || "")}" data-act="form" data-form="${esc(k)}">${esc(l)}</button>`;
+    acts = `<div class="dock flat">${b("rename", "Rename")}${n.level !== "entity" ? b("merge", "Merge into…") : ""}${n.level === "L2" ? b("move", "Move to…") : ""}${n.level !== "entity" ? b("split", "Split…") : ""}${b("remove", "Remove", "bad")}</div>`;
+  }
+  const samples = n.samples.map(s => quoteHTML(s.preview, "#" + s.chunk_id + " · " + (s.source || "") + (s.title ? " · " + s.title : ""), s.chunk_id)).join("");
+  const sibs = n.siblings.map(s => `<button type="button" class="node" data-act="pick-node" data-label="${esc(s.label)}" title="${esc(s.label)}"><span class="lbl">${esc(s.label)}</span><span class="n">${num(s.tags)} tagged${s.overlap ? " · " + num(s.overlap) + " shared" : ""}</span></button>`).join("");
+  return `<span class="where">${esc(lvl)}</span><h3>${esc(n.label)}</h3>
+    <div class="facts">${facts.join("")}</div>
+    <div class="section"><b>Description</b>${desc}</div>
+    ${acts}
+    <div id="formslot"></div>
+    ${samples ? `<div class="section"><b>Tagged sections</b>${n.tags > n.samples.length ? `<span class="note">First ${num(n.samples.length)} of ${num(n.tags)}.</span>` : ""}${samples}</div>` : ""}
+    ${sibs ? `<div class="section"><b>Siblings</b><span class="note">Tagged sections, and how many it shares with this one.</span><div class="sibs">${sibs}</div></div>` : ""}`;
+}
+
+// ---------------------------------------------------------------- metrics
+// Tabs, each with a one-line meaning. "cand" (a probable governed match) sits under Governed.
+const MTAB = {
+  not:["Needs a definition", "Not modeled: no governed definition matches, so kb answers questions about these as “not modeled”."],
+  dup:["Possible duplicates", "Pairs whose names or variants are at least 85% alike. If a pair is one thing, merge one into the other."],
+  stated:["Quoted from documents", "Informational only: figures the documents state. kb quotes them; it doesn't compute them."],
+  yes:["Governed", "kb computes these from the governed metric layer. A “probable” match needs its name and grain checked."],
+  unknown:["Unknown", "No governed metrics file (schema/metrics.<corpus>.json) was found, so nobody knows yet whether kb can compute these."],
+};
+const mtabs = () => S.governed_file ? ["not", "dup", "stated", "yes"] : ["unknown", "dup", "stated"];
+const computableBucket = () => S.governed_file ? "not" : "unknown";
+function mBucket(m){
+  if (m.source_type === "stated") return "stated";
+  if (!S.governed_file) return "unknown";
+  const g = (m.governed || {}).status;
+  return g === "yes" || g === "candidate" ? "yes" : "not";
+}
+// difflib.SequenceMatcher(None, a, b).ratio() — the server's 0.85 similar-metrics rule.
+function seqRatio(a, b){
+  if (!a.length && !b.length) return 1;
+  let matches = 0;
+  const stack = [[0, a.length, 0, b.length]];
+  while (stack.length){
+    const [alo, ahi, blo, bhi] = stack.pop();
+    let bi = alo, bj = blo, bk = 0, prev = new Map();
+    for (let i = alo; i < ahi; i++){
+      const cur = new Map();
+      for (let j = blo; j < bhi; j++) if (a[i] === b[j]){ const k = (prev.get(j - 1) || 0) + 1; cur.set(j, k); if (k > bk){ bi = i - k + 1; bj = j - k + 1; bk = k; } }
+      prev = cur;
+    }
+    if (!bk) continue;
+    matches += bk;
+    if (alo < bi && blo < bj) stack.push([alo, bi, blo, bj]);
+    if (bi + bk < ahi && bj + bk < bhi) stack.push([bi + bk, ahi, bj + bk, bhi]);
+  }
+  return 2 * matches / (a.length + b.length);
+}
+const normName = s => String(s || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+// Pairs from the plan's similar_metrics items; without any, the same rule computed here.
+// Memoized on the metrics and items arrays: S is replaced on every fetch, so a new state recomputes,
+// but re-renders and search keystrokes reuse the pairs.
+let dupMemo = {metrics:null, items:null, pairs:[]};
+function dupPairs(){
+  if (dupMemo.metrics === S.metrics && dupMemo.items === S.review.items) return dupMemo.pairs;
+  dupMemo = {metrics:S.metrics, items:S.review.items, pairs:computeDupPairs()};
+  return dupMemo.pairs;
+}
+function computeDupPairs(){
+  // The plan's pairs whenever it has any similar_metrics items at all (even if all are invalid);
+  // only a plan with none falls back to the client-side rule.
+  const all = S.review.items.filter(i => i.kind === "similar_metrics");
+  const items = all.filter(i => i.status !== "invalid" && i.status !== "auto_skipped");
+  if (all.length) return items.map(it => {
+    const names = []; for (const c of candidatesOf(it)) for (const n of [c.metric, c.from, c.into]) if (n && !names.includes(n)) names.push(n);
+    return {a:names[0], b:names[1], score:num((it.support || {}).score), item:it};
+  }).filter(p => p.a && p.b);
+  const out = [], ms = S.metrics;
+  for (let i = 0; i < ms.length; i++) for (let j = i + 1; j < ms.length; j++){
+    const A = ms[i], B = ms[j];
+    if (normName(A.metric) === normName(B.metric)) continue;
+    let best = 0;
+    for (const na of [A.metric].concat(A.variants || [])) for (const nb of [B.metric].concat(B.variants || [])){
+      const x = normName(na), y = normName(nb); if (!x || !y) continue;
+      best = Math.max(best, x === y ? 1 : seqRatio(x, y));
+    }
+    if (best >= 0.85) out.push({a:A.metric, b:B.metric, score:Math.round(best * 100) / 100, item:null});
+  }
+  return out;
+}
+// Merge-picker ranking: bigram Dice on the lowercased name.
+function dice(x, y){
+  const bg = s => { const o = new Map(); s = String(s).toLowerCase(); for (let i = 0; i < s.length - 1; i++){ const g = s.slice(i, i + 2); o.set(g, (o.get(g) || 0) + 1); } return o; };
+  const A = bg(x), B = bg(y); let na = 0, nb = 0, both = 0;
+  for (const v of A.values()) na += v; for (const v of B.values()) nb += v;
+  for (const [g, v] of A) both += Math.min(v, B.get(g) || 0);
+  return na + nb ? 2 * both / (na + nb) : (String(x).toLowerCase() === String(y).toLowerCase() ? 1 : 0);
+}
+function metricsView(){
+  const counts = {}; for (const m of S.metrics){ const b = mBucket(m); counts[b] = (counts[b] || 0) + 1; }
+  const pairs = dupPairs(); counts.dup = pairs.length;
+  if (!U.mtab || !mtabs().includes(U.mtab)) U.mtab = mtabs().find(k => counts[k]) || mtabs()[0];
+  const q = U.mq.trim().toLowerCase();
+  const tabs = mtabs().map(k => `<button type="button" class="chip" data-act="mtab" data-t="${esc(k)}" aria-pressed="${U.mtab === k}">${esc(MTAB[k][0])} · ${num(counts[k])}</button>`).join("");
+  let list;
+  if (U.mtab === "dup"){
+    const shown = pairs.map((p, i) => [p, i]).filter(([p]) => !q || p.a.toLowerCase().includes(q) || p.b.toLowerCase().includes(q));
+    if (!String(U.mSel || "").startsWith("pair:") || !shown.some(([, i]) => "pair:" + i === U.mSel)) U.mSel = shown.length ? "pair:" + shown[0][1] : null;
+    list = shown.map(([p, i]) => `<button type="button" class="item ${U.mSel === "pair:" + i ? "sel" : ""}" data-act="pick-metric" data-name="pair:${esc(i)}"><span class="ic flag">≈</span><span class="t">${esc(p.a)} ≈ ${esc(p.b)}</span><span class="st">${p.item ? decisionPill(p.item) : ""}</span><span class="s">${esc(Math.round(p.score * 100) + "% alike" + (p.item ? " · Claude reviewed this pair" : ""))}</span></button>`).join("");
+  } else {
+    const rows = S.metrics.filter(m => mBucket(m) === U.mtab && (!q || m.metric.toLowerCase().includes(q)));
+    const adds = P.adds.filter(a => a.op.type === "metric_add" && (a.op.source_type === "stated" ? "stated" : computableBucket()) === U.mtab);
+    if (U.mSel !== "__new" && !String(U.mSel || "").startsWith("pending:") && !rows.find(m => m.metric === U.mSel)) U.mSel = rows.length ? rows[0].metric : null;
+    const icon = m => { const b = mBucket(m); return b === "unknown" ? `<span class="ic mute">?</span>` : b === "not" ? `<span class="ic del">×</span>` : b === "yes" ? ((m.governed || {}).status === "candidate" ? `<span class="ic flag" title="probable match">?</span>` : `<span class="ic add">✓</span>`) : `<span class="ic mute">“</span>`; };
+    list = rows.map(m => { const p = P.m[m.metric];
+      return `<button type="button" class="item ${U.mSel === m.metric ? "sel" : ""}" data-act="pick-metric" data-name="${esc(m.metric)}">${p ? mark(p.op) : icon(m)}<span class="t">${esc(m.metric)}</span><span class="st"><span class="pill mute">${esc((m.governed || {}).status === "candidate" && mBucket(m) === "yes" ? "probable" : m.source_type)}</span></span><span class="s">grain: ${esc(m.grain || "—")} · ${esc(plural(m.n_sources, "source"))}</span></button>`; }).join("")
+      + adds.map(a => `<button type="button" class="item ${U.mSel === "pending:" + a.src.proposal ? "sel" : ""}" data-act="pick-metric" data-name="pending:${esc(a.src.proposal)}">${mark(a.op)}<span class="t">${esc(a.op.metric)}</span><span class="st"><span class="pill ok">new</span></span><span class="s">grain: ${esc(a.op.grain || "—")}</span></button>`).join("");
+  }
+  return `<div class="view"><div class="list"><div class="ltools">
+      <div class="lrow"><button type="button" class="btn primary sm" data-act="new-metric">+ Add metric</button><input type="search" id="mq" placeholder="Search metrics" aria-label="Search metrics" value="${esc(U.mq)}"></div>
+      <div class="filters" role="group" aria-label="Status">${tabs}</div>
+      <p class="mhint">${esc(MTAB[U.mtab][1])}</p></div>
+    <div class="rows" data-v="metrics">${list || `<div class="empty"><p class="note">No metrics here.</p></div>`}</div></div>
+    <div class="detail" id="detail">${U.mtab === "dup" && String(U.mSel || "").startsWith("pair:") ? pairDetailHTML(pairs[Number(U.mSel.slice(5))]) : metricDetailHTML()}</div></div>`;
+}
+function pairDetailHTML(p){
+  if (!p) return `<p class="note">Select a pair.</p>`;
+  const card = n => { const m = S.metrics.find(x => x.metric === n) || {metric:n};
+    return `<div class="card"><div class="head"><b>${esc(n)}</b><span class="pill mute">${esc(m.source_type || "—")}</span></div><span class="note">grain ${esc(m.grain || "—")} · ${esc(plural(m.n_sources, "source"))}</span><p>${m.definition ? esc(m.definition) : `<span class="note">No definition recorded.</span>`}</p>${(m.variants || []).length ? `<span class="note">Also written as ${esc(m.variants.join(", "))}</span>` : ""}</div>`; };
+  let acts;
+  if (p.item) acts = `<div class="decided info"><span>Claude reviewed this pair${isDecided(p.item) ? "; you decided: " + esc(opText(itemOp(p.item))) : ": " + esc(opText(p.item.op))}. Decide it in the Inbox.</span><button type="button" data-act="goto-row" data-id="${esc(p.item.id)}">Open in Inbox</button></div>`;
+  else if (P.m[p.a] || P.m[p.b]) acts = `<div class="decided info"><span>One of these already has a change pending in this review. Withdraw it in Your changes to merge them.</span></div>`;
+  else acts = `<div class="dock flat"><button type="button" class="btn" data-act="pair-merge" data-from="${esc(p.b)}" data-into="${esc(p.a)}">Merge “${esc(p.b)}” into “${esc(p.a)}”</button><button type="button" class="btn" data-act="pair-merge" data-from="${esc(p.a)}" data-into="${esc(p.b)}">Merge “${esc(p.a)}” into “${esc(p.b)}”</button></div>`;
+  return `<span class="where">Possible duplicate · ${esc(Math.round(p.score * 100) + "% alike")}</span><h3>${esc(p.a)} ≈ ${esc(p.b)}</h3><div class="pair">${card(p.a)}${card(p.b)}</div>${acts}`;
+}
+function governedWords(m){
+  const g = m.governed || {};
+  if (!S.governed_file) return ["warn", "Governed status unknown: no governed metrics file was found for this Brain."];
+  if (m.source_type === "stated") return ["info", "Stated in the documents only. kb quotes the stated values; it doesn't compute them." + (g.key ? ` A governed metric looks similar: ${g.key} (match ${g.score}).` : "")];
+  if (g.status === "yes") return ["info", `Governed as ${g.key} (match ${g.score}). kb computes it from the governed metric layer.`];
+  if (g.status === "candidate") return ["warn", `Probably governed as ${g.key} (match ${g.score}). Check the name and grain before relying on it.`];
+  return ["warn", "No governed definition matches. kb answers questions about it as “not modeled”."];
+}
+function metricDetailHTML(){
+  if (U.mSel === "__new") return `<span class="where">New metric</span><h3>Add metric</h3><div id="formslot"></div>`;
+  if (String(U.mSel || "").startsWith("pending:")){
+    const p = S.proposals.find(x => x.item_id === U.mSel.slice(8));
+    if (!p) return `<p class="note">That change is no longer pending.</p>`;
+    return `<span class="where">Your change</span><h3>${esc(p.op.metric)}</h3>${diffHTML(p.op)}<div class="dock flat"><button type="button" class="btn" data-act="withdraw" data-id="${esc(p.item_id)}">Withdraw</button></div>`;
+  }
+  const m = S.metrics.find(x => x.metric === U.mSel);
+  if (!m) return `<p class="note">Select a metric. Those that need a definition come first: kb answers them as “not modeled”.</p>`;
+  const p = P.m[m.metric], [cls, words] = governedWords(m), sv = m.stated_values || [];
+  const acts = p ? `<div class="decided info"><span>Pending in this review: ${esc(opText(p.op))}. Withdraw it to edit again.</span>${p.src.proposal ? `<button type="button" data-act="withdraw" data-id="${esc(p.src.proposal)}">Withdraw</button>` : ""}</div>`
+    : `<div class="dock flat"><button type="button" class="btn" data-act="form" data-form="m-edit">Edit type / grain / definition</button><button type="button" class="btn" data-act="form" data-form="m-merge">Merge into…</button><button type="button" class="btn bad" data-act="form" data-form="m-remove">Remove</button></div>`;
+  return `<span class="where">${esc(m.source_type)} · grain ${esc(m.grain || "—")} · ${esc(plural(m.n_sources, "source"))}</span><h3>${esc(m.metric)}</h3>
+    <div class="impact ${cls === "warn" ? "warn" : ""}">${esc(words)}</div>
+    <div class="section"><b>Definition</b><p>${m.definition ? esc(m.definition) : `<span class="note">No definition recorded.</span>`}</p></div>
+    ${sv.length ? `<div class="section"><b>Stated values</b>${sv.slice(0, 12).map(v => `<div class="quote">${esc(v)}</div>`).join("")}${sv.length > 12 ? `<span class="note">${num(sv.length - 12)} more.</span>` : ""}</div>` : ""}
+    ${(m.variants || []).length ? `<div class="section"><b>Also written as</b><p class="note">${esc(m.variants.join(", "))}</p></div>` : ""}
+    ${acts}<div id="formslot"></div>`;
+}
+
+// ---------------------------------------------------------------- your changes
+function changesView(){
+  const props = S.proposals.map(p => {
+    const op = p.op, desc = op.description || op.definition || (op.descriptions ? Object.entries(op.descriptions).map(([k, v]) => k + ": " + v).join(" · ") : "");
+    return `<div class="card"><div class="head">${mark(op)}<b>${esc(opText(op))}</b><button type="button" class="btn sm" data-act="withdraw" data-id="${esc(p.item_id)}">Withdraw</button></div>
+      ${diffHTML(op)}${desc ? `<p>${esc(desc)}</p>` : ""}${op.type.startsWith("metric_") ? "" : `<div class="impact">${esc(impactWords(p.impact, op))}</div>`}</div>`;
+  }).join("");
+  const decided = actionable().filter(isDecided).map(it => {
+    const d = latest(it.id), amendedKeep = it.origin === "induction" && d.action === "amend";
+    const text = d.action === "reject" ? (d.reason === SKIP_REASON ? `Skipped “${itemTitle(it)}”` : `Rejected “${itemTitle(it)}”: ${d.reason}`) : d.action === "amend" ? opText(d.op) : it.origin === "induction" ? `Keep “${itemTitle(it)}”` : opText(it.op);
+    return `<div class="srow">${decisionPill(it)}<span style="flex:1">${esc(text)}</span>${amendedKeep
+      ? `<button type="button" class="btn sm" data-act="approve" data-id="${esc(it.id)}" data-revert="1">Revert to keep</button>`
+      : `<button type="button" class="btn sm" data-act="undo-item" data-id="${esc(it.id)}">Undo</button>`}</div>`;
+  }).join("");
+  return `<div class="view single"><div class="detail" style="overflow:visible">
+    <h3>Your changes</h3>
+    ${props || `<p class="note">Nothing yet. Edits from Taxonomy or Metrics collect here.</p>`}
+    ${decided ? `<div class="section"><b>Decisions on Claude's proposals</b>${decided}</div>` : ""}
+  </div></div>`;
+}
+
+// ---------------------------------------------------------------- forms
+function ctxFor(kind){
+  if (U.view === "inbox"){
+    const it = actionable().find(i => i.id === U.inboxSel); if (!it) return null;
+    const label = it.op.node || it.op.name;
+    return {label, level: it.level, parent: it.parent, itemId: it.id, baseOp: it.op, origin: it.origin,
+      desc: it.origin === "describe" ? it.op.description : descOf(label), suggest: ((it.flags || []).find(f => f.kind === "near_duplicate") || {with:[]}).with[0]};
+  }
+  if (U.view === "taxonomy" && U.treeSel && U.treeSel.kind === "node"){
+    const n = nodeCache[U.treeSel.label]; if (!n || n.errors) return null;
+    const ind = inductionItem(n.label);
+    let itemId = ind && isActionable(ind) ? ind.id : null;
+    // Amend an undecided or approved description proposal; a rejected one stays rejected and the
+    // edit becomes a fresh proposal (amending it would silently overturn the reject).
+    const di = n.item && n.item.origin === "describe" && n.item.status === "proposed" ? n.item : null;
+    if (!itemId && kind === "describe" && di && (latest(di.id) || {}).action !== "reject") itemId = di.id;
+    return {label: n.label, level: n.level, parent: n.parent, itemId, desc: n.description || ""};
+  }
+  if (U.view === "metrics") return {metric: S.metrics.find(m => m.metric === U.mSel)};
+  return null;
+}
+const fval = (f, k) => String((f.elements[k] && f.elements[k].value) || "").trim();
+const opt = (v, l, sel) => `<option value="${esc(v)}" ${sel ? "selected" : ""}>${esc(l)}</option>`;
+function formSpec(kind, c){
+  const TYPES = ["computable", "both", "stated"];
+  switch (kind){
+    case "rename": return {title:`Rename “${c.label}”`, fields:`<label>New name <input type="text" name="new_name" value="${esc(c.label)}" autocomplete="off"></label>`,
+      build: f => { const v = fval(f, "new_name"); return v && v !== c.label ? {type:"rename", node:c.label, new_name:v} : null; }};
+    case "merge": return {title:`Merge “${c.label}” into…`, fields:`<label>Into <select name="into">${sameLevel(c).map(([v, l]) => opt(v, l, v === c.suggest)).join("")}</select></label>`,
+      build: f => { const v = fval(f, "into"); return v ? {type:"merge", from:c.label, into:v} : null; }};
+    case "move": return {title:`Move “${c.label}” to…`, fields:`<label>New parent <select name="new_parent">${l1s().filter(l => l !== c.parent).map(l => opt(l, l)).join("")}</select></label>`,
+      build: f => { const v = fval(f, "new_parent"); return v ? {type:"move", node:c.label, new_parent:v} : null; }};
+    case "split": return {title:`Split “${c.label}”`, fields:`<label>New names, one per line <textarea name="into" rows="3"></textarea></label><div id="splitDescs" class="section"></div>${c.level === "L2" ? `<label class="inline"><input type="checkbox" name="retire"> Retire “${esc(c.label)}” after the split</label>` : ""}`,
+      build: f => { const names = fval(f, "into").split("\n").map(s => s.trim()).filter(Boolean); if (names.length < 2) return null;
+        const descriptions = {}; f.querySelectorAll("[data-split]").forEach(i => { if (i.value.trim() && names.includes(i.dataset.split)) descriptions[i.dataset.split] = i.value.trim(); });
+        const op = {type:"split", node:c.label, into:names, retire: !!(f.elements.retire && f.elements.retire.checked)};
+        if (Object.keys(descriptions).length) op.descriptions = descriptions; return op; }};
+    case "remove": return {title:`Remove “${c.label}”`, fields:`<label>Then <select name="disposition">${opt("demote", "demote the label (its sections are re-tagged)")}${(S.base.entities || []).filter(e => e !== c.label).map(e => opt("entity:" + e, "make it a " + e + " entity")).join("")}</select></label><label>Reason <span class="req">required</span><input type="text" name="reason" autocomplete="off"></label>`,
+      build: f => { const r = fval(f, "reason"); return r ? {type:"remove", node:c.label, disposition:fval(f, "disposition") || "demote", reason:r} : null; }};
+    case "describe": return {title:`Description of “${c.label}”`, fields:`<label>One or two sentences that set it apart from its siblings <span class="req">required</span><textarea name="description" rows="3">${esc(c.desc || "")}</textarea></label>`,
+      build: f => { const v = fval(f, "description"); return v && v !== (c.desc || "") ? {type:"describe", node:c.label, description:v} : null; }};
+    case "rename-add": return {title:`Rename “${c.label}”`, fields:`<label>Name <input type="text" name="name" value="${esc(c.baseOp.name)}" autocomplete="off"></label><label>Description <span class="req">required</span><textarea name="description" rows="3">${esc(c.baseOp.description || "")}</textarea></label>`,
+      build: f => { const n = fval(f, "name"), d = fval(f, "description"); if (!n || !d || (n === c.baseOp.name && d === (c.baseOp.description || ""))) return null; return {...c.baseOp, name:n, description:d}; }};
+    case "reject-other": return {title:`Reject “${c.label}”`, noPreview:true, ok:"Reject", fields:`<label>Why? <input type="text" name="reason" autocomplete="off"></label>`,
+      build: f => { const r = fval(f, "reason"); return r ? {reason:r} : null; }};
+    case "add": return {title:"New category", ok:"Add to changes", fields:`<label>Name <span class="req">required</span><input type="text" name="name" autocomplete="off"></label>
+        <label>Parent <select name="parent">${opt("", "— none (L1) —", !c.parent)}${l1s().map(l => opt(l, l, l === c.parent)).join("")}</select></label>
+        <label>Description <span class="req">required</span><textarea name="description" rows="3" placeholder="What belongs here, and how it differs from its neighbours"></textarea></label>`,
+      build: f => { const n = fval(f, "name"), d = fval(f, "description"), p = fval(f, "parent"); if (!n || !d) return null;
+        return {type:"add", level: p ? "L2" : "L1", name:n, parent: p || null, description:d}; }};
+    case "m-edit": { const m = c.metric, known = TYPES.includes(m.source_type);
+      // Compare against what the form started with, so only fields the user changed are sent.
+      const init = {source_type: known ? m.source_type : "", grain: String(m.grain || "").trim(), definition: String(m.definition || "").trim()};
+      return {title:`Edit “${m.metric}”`, fields:`<label>Type <select name="source_type">${known ? "" : opt("", `— unchanged (${m.source_type || "not set"}) —`, true)}${TYPES.map(t => opt(t, t, m.source_type === t)).join("")}</select></label><label>Grain <input type="text" name="grain" value="${esc(m.grain || "")}"></label><label>Definition <textarea name="definition" rows="3">${esc(m.definition || "")}</textarea></label>`,
+      build: f => { const fields = {}; for (const k of ["source_type", "grain", "definition"]){ const v = fval(f, k); if (v !== init[k] && !(k === "source_type" && !v)) fields[k] = v || null; }
+        return Object.keys(fields).length ? {type:"metric_edit", metric:m.metric, fields} : null; }}; }
+    case "m-merge": { const m = c.metric;
+      // No default: the reviewer must pick. Most similar names first; the top five say how similar.
+      const ranked = S.metrics.filter(x => x.metric !== m.metric).map(x => [x.metric, dice(m.metric, x.metric)])
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+      return {title:`Merge “${m.metric}” into…`, fields:`<label>Into <select name="into">${opt("", "— choose a metric —", true)}${ranked.map(([n, sc], i) =>
+        opt(n, i < 5 ? `${n} · ${Math.round(sc * 100)}% similar name` : n)).join("")}</select></label><span class="note">Most similar names first.</span>`,
+      build: f => { const v = fval(f, "into"); return v ? {type:"metric_merge", from:m.metric, into:v} : null; }}; }
+    case "h-govern": { const d = c.draft || {}, keys = ["key", "family", "unit", "grain", "desc"];
+      const lab = {key:"Key (a-z, 0-9, _)", family:"Family", unit:"Unit", grain:"Grain", desc:"Definition"};
+      return {title:`Governed definition for “${c.metric}”`, noImpact:true,
+        fields: keys.map(k => k === "desc" ? `<label>${esc(lab[k])}<textarea name="desc" rows="3">${esc(d.desc || "")}</textarea></label>`
+          : `<label>${esc(lab[k])}${k === "key" ? ` <span class="req">required</span>` : ""}<input type="text" name="${esc(k)}" value="${esc(d[k] || "")}" autocomplete="off"></label>`).join(""),
+        build: f => { const draft = {}; for (const k of keys) draft[k] = fval(f, k);
+          if (!/^[a-z0-9_]+$/.test(draft.key)) return null;
+          const op = {type:"metric_govern", metric:c.metric, draft}; return sameOp(op, c.baseOp) ? null : op; }}; }
+    case "m-remove": { const m = c.metric; return {title:`Remove “${m.metric}”`, fields:`<label>Reason <span class="req">required</span><input type="text" name="reason" autocomplete="off"></label>`,
+      build: f => { const r = fval(f, "reason"); return r ? {type:"metric_remove", metric:m.metric, reason:r} : null; }}; }
+    case "m-add": return {title:"Add metric", ok:"Add to changes", fields:`<label>Name <span class="req">required</span><input type="text" name="metric" autocomplete="off"></label><label>Type <select name="source_type">${TYPES.map(t => opt(t, t)).join("")}</select></label><label>Grain <input type="text" name="grain" placeholder="e.g. branch, month"></label><label>Definition <textarea name="definition" rows="3"></textarea></label>`,
+      build: f => { const n = fval(f, "metric"); return n ? {type:"metric_add", metric:n, source_type:fval(f, "source_type"), grain:fval(f, "grain") || null, definition:fval(f, "definition") || null} : null; }};
+  }
+  return null;
+}
+let formSeq = 0, formTimer = null;
+function openForm(kind, c){
+  const slot = $("formslot"); if (!slot || !c) return;
+  const spec = formSpec(kind, c); if (!spec) return;
+  const amend = !!c.itemId && kind !== "add" && !kind.startsWith("m-");
+  const ok = spec.ok || (amend ? "Save decision" : "Add to changes");
+  slot.innerHTML = `<form class="opform" id="opform" novalidate><b class="ftitle">${esc(spec.title)}</b>${spec.fields}
+    <div id="fdiff"></div><div class="impact" id="fimp" hidden></div><div class="err" id="ferr" role="alert"></div>
+    <div class="frow"><button class="btn primary" type="submit" id="fok" disabled>${esc(ok)}</button><button class="btn" type="button" data-act="form-cancel">Cancel</button></div></form>`;
+  const form = $("opform");
+  let splitNames = "";
+  const refresh = () => {
+    if (kind === "split"){
+      const names = fval(form, "into").split("\n").map(s => s.trim()).filter(Boolean), key = names.join("\n");
+      if (key !== splitNames){
+        splitNames = key; const box = $("splitDescs"), old = {};
+        box.querySelectorAll("[data-split]").forEach(i => { old[i.dataset.split] = i.value; });
+        box.innerHTML = names.length ? `<span class="note">Optional description for each new name</span>` + names.map(n => `<label>${esc(n)}<input type="text" data-split="${esc(n)}" value="${esc(old[n] || "")}"></label>`).join("") : "";
+      }
+    }
+    const op = spec.build(form);
+    $("fok").disabled = !op; $("ferr").textContent = "";
+    if (spec.noPreview) return;
+    const imp = $("fimp");
+    if (!op){ clearTimeout(formTimer); formSeq++; $("fdiff").innerHTML = ""; imp.hidden = true; return; }
+    $("fdiff").innerHTML = diffHTML(op);
+    if (spec.noImpact) return;
+    clearTimeout(formTimer);
+    formTimer = setTimeout(async () => {
+      const mine = ++formSeq;
+      try { const r = await api.impact(op); if (mine !== formSeq || !$("fimp")) return; imp.hidden = false; imp.textContent = impactWords(r.impact, op); }
+      catch(e){ if (mine !== formSeq || !$("fimp")) return; imp.hidden = true; if (e.status === 409) return onClosed(); $("ferr").textContent = errText(e); }
+    }, 250);
+  };
+  form.addEventListener("input", refresh);
+  form.addEventListener("change", refresh);
+  form.onsubmit = async ev => {
+    ev.preventDefault();
+    const op = spec.build(form); if (!op) return;
+    $("fok").disabled = true;
+    let rec, msg;
+    if (kind === "reject-other"){ rec = {action:"reject", item_id:c.itemId, reason:op.reason}; msg = `Rejected “${c.label}”: ${op.reason}`; }
+    else if (amend){ rec = {action:"amend", item_id:c.itemId, op}; msg = opText(op); }
+    else { rec = {action:"propose", op}; msg = "Added to your changes: " + opText(op); }
+    const after = kind === "add" ? out => { U.treeSel = {kind:"pending", key:"p:" + out.record.item_id}; }
+      : kind === "m-add" ? out => { U.mtab = op.source_type === "stated" ? "stated" : computableBucket(); U.mSel = "pending:" + out.record.item_id; } : null;
+    const ok = await send(rec, msg, null, after);
+    if (!ok && $("fok")) $("fok").disabled = false;
+  };
+  refresh();
+  const first = form.querySelector("input,textarea,select"); if (first) first.focus();
+}
+
+// ---------------------------------------------------------------- decisions, undo, toast
+// The record each item had before its latest decision in this tab, so an Undo restores the
+// full previous state (e.g. a reopen), not just "undecided".
+const hist = {};
+function undoRecFor(it){
+  if (Object.prototype.hasOwnProperty.call(hist, it.id)) return restoreRec(it.id, hist[it.id]);
+  const d = latest(it.id);
+  // A suppressed item can only have been approved or amended after a reopen.
+  if (it.status === "suppressed" && d && (d.action === "approve" || d.action === "amend")) return {action:"reopen", item_id:it.id};
+  return {action:"clear", item_id:it.id};
+}
+function restoreRec(itemId, prev){
+  if (prev && prev.action !== "clear"){
+    const r = {action:prev.action, item_id:itemId};
+    if (prev.op) r.op = prev.op; if (prev.reason) r.reason = prev.reason;
+    return r;
+  }
+  return {action:"clear", item_id:itemId};
+}
+let busy = false;
+// Bumped before every decision and every non-poll state fetch; a poll that started earlier is dropped.
+let stateEpoch = 0;
+async function send(rec, msg, undoOverride, beforeRender){
+  if (busy) return false;   // a double click or key repeat must not append a second record
+  busy = true;
+  try { return await sendNow(rec, msg, undoOverride, beforeRender); } finally { busy = false; }
+}
+async function sendNow(rec, msg, undoOverride, beforeRender){
+  stateEpoch++;
+  const prev = rec.item_id ? (S.decisions[rec.item_id] || null) : null;
+  const before = U.view === "inbox" ? inboxOrder().todo.map(i => i.id) : [];
+  let out;
+  try { out = await api.decide(rec); }
+  catch(e){
+    if (e.status === 409){ onClosed(); return false; }
+    const el = $("ferr"); if (el) el.textContent = errText(e); else toast(errText(e), null, true);
+    return false;
+  }
+  if (rec.item_id && rec.action !== "propose" && rec.action !== "withdraw") hist[rec.item_id] = prev;
+  if (rec.item_id && rec.action !== "clear") delete U.tagDraft[rec.item_id];   // a recorded fix replaces an empty draft
+  let undo = undoOverride || null;
+  if (!undo){
+    if (rec.action === "propose") undo = {action:"withdraw", item_id:out.record.item_id};
+    else if (rec.action !== "withdraw" && rec.action !== "clear") undo = restoreRec(rec.item_id, prev);
+  }
+  try { S = await api.state(); nodeCache = {}; } catch(e){ toast(errText(e), null, true); return true; }
+  if (U.view === "inbox" && rec.item_id === U.inboxSel && ["approve", "reject", "amend"].includes(rec.action)){
+    const todo = inboxOrder().todo.map(i => i.id), i = before.indexOf(rec.item_id);
+    U.inboxSel = before.slice(i + 1).find(id => todo.includes(id)) || todo[0] || rec.item_id;
+  }
+  if (beforeRender) beforeRender(out);
+  render();
+  toast(msg, undo);
+  return true;
+}
+// POST /api/decisions: all records or none. Undo is one batch restoring each previous record.
+async function sendBatch(recs, msg, undoOverride, beforeRender, onFail){
+  if (busy || !recs.length) return false;
+  busy = true;
+  stateEpoch++;
+  try {
+    const prevs = recs.map(r => S.decisions[r.item_id] || null);
+    let out;
+    try { out = await api.decideMany(recs); }
+    catch(e){
+      if (e.status === 409){ onClosed(); return false; }
+      const bad = e.index != null && recs[e.index] ? S.review.items.find(i => i.id === recs[e.index].item_id) : null;
+      if (onFail && bad){ onFail(e); renderView(); return false; }
+      toast(`Nothing was recorded. ${bad ? "“" + itemTitle(bad) + "”: " : ""}${errText(e)}`, null, true);
+      return false;
+    }
+    recs.forEach((r, i) => { hist[r.item_id] = prevs[i]; if (r.action !== "clear") delete U.tagDraft[r.item_id]; });
+    U.batchFail = null;
+    const undo = undoOverride || recs.map((r, i) => restoreRec(r.item_id, prevs[i]));
+    try { S = await api.state(); nodeCache = {}; } catch(e){ toast(errText(e), null, true); return true; }
+    if (beforeRender) beforeRender(out);
+    render();
+    toast(msg, undo);
+    return true;
+  } finally { busy = false; }
+}
+let toastTimer = null, undoRec = null;
+function toast(msg, undo, bad){
+  undoRec = undo || null;
+  $("toastHost").innerHTML = `<div class="toast ${bad ? "bad" : ""}" role="status"><span>${esc(msg)}</span>${undo ? `<button type="button" data-act="toast-undo">Undo</button>` : ""}</div>`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { $("toastHost").innerHTML = ""; undoRec = null; }, bad ? 8000 : 5000);
+}
+async function doUndo(){
+  if (!undoRec || busy) return;   // keep the Undo offer if a decision is still in flight
+  const r = undoRec; undoRec = null; $("toastHost").innerHTML = "";
+  if (Array.isArray(r)){ await sendBatch(r, `Undone (${plural(r.length, "decision")})`); return; }
+  // send() offers a redo in its own toast; after undoing a decision, keep that item selected.
+  await send(r, "Undone", null, () => {
+    if (!r.item_id || r.action === "withdraw" || U.view !== "inbox") return;
+    const it = S.review.items.find(i => i.id === r.item_id);
+    if (it && isHealth(it) && it.group){ U.inboxSel = "g:" + it.group; U.gRow = it.id; } else U.inboxSel = r.item_id;
+  });
+}
+function onClosed(){
+  closed = {title:"This review session is closed.", body:"It was submitted, cancelled or timed out, so nothing more is recorded. Ask Claude to reopen the review to continue."};
+  render();
+}
+
+// ---------------------------------------------------------------- submit sheet
+const GROUPS = ["Add", "Describe", "Rename", "Merge", "Move", "Split", "Remove", "Tag", "Metrics", "Rejected"];
+const GROUP_OF = {add:"Add", describe:"Describe", rename:"Rename", merge:"Merge", move:"Move", split:"Split", remove:"Remove", tag:"Tag"};
+function renderSheet(){
+  const host = $("sheetHost");
+  if (!U.sheet){ host.innerHTML = ""; return; }
+  const g = {}; GROUPS.forEach(k => g[k] = []);
+  let kept = 0;
+  for (const it of actionable()){
+    if (!isDecided(it)) continue;
+    const d = latest(it.id);
+    if (d.action === "reject"){ g.Rejected.push(`<div class="srow"><span class="ic del">×</span><span>${esc(itemTitle(it))} <span class="note">${esc(d.reason)}</span></span></div>`); continue; }
+    const op = d.action === "amend" ? d.op : it.op;
+    if (op.type === "keep"){ kept++; continue; }
+    g[GROUP_OF[op.type] || "Metrics"].push(`<div class="srow">${mark(op)}<span>${esc(opText(op))}</span></div>`);
+  }
+  for (const p of S.proposals){
+    const note = p.op.type.startsWith("metric_") ? "" : impactWords(p.impact, p.op);
+    g[GROUP_OF[p.op.type] || "Metrics"].push(`<div class="srow">${mark(p.op)}<span>${esc(opText(p.op))}${note ? ` <span class="note">${esc(note)}</span>` : ""}</span></div>`);
+  }
+  const und = actionable().filter(i => !isDecided(i)).length, mode = S.review.mode;
+  const warn = !und ? "" : mode === "drift" ? `${plural(und, "proposal")} not reviewed. They aren't added or rejected, and come back next refresh.`
+    : mode === "draft" ? `${plural(und, "category", "categories")} not reviewed. They're kept as they are.`
+    : mode === "describe" ? `${plural(und, "description")} not reviewed. They aren't applied; Claude can draft them again later.`
+    : mode === "health" ? `${plural(und, "problem")} not decided. Nothing is applied for them; the next health check finds them again.`
+    : `${plural(und, "item")} not reviewed.`;
+  const imp = S.impact || {}, re = num(imp.chunks_reclassified), n = changeCount(), next = num(S.base.version) + 1;
+  const steps = [`Claude applies your decisions as taxonomy v${next} and points current.json at it.`,
+    mode === "draft" ? "Claude builds the graph and tags every section with the categories you kept." : "Tags move with renames and merges; nothing tagged is lost.",
+    re ? `About ${plural(re, "section")} are re-tagged by agents (a few minutes).` : "Only sections your changes touch are re-tagged.",
+    "Claude reports the result, including coverage, in the chat."];
+  const finalOps = actionable().filter(isDecided).map(it => { const d = latest(it.id); return d.action === "amend" ? d.op : d.action === "approve" ? it.op : null; }).filter(Boolean);
+  if (finalOps.some(o => o.type === "tag")) steps.splice(2, 0, "Approved tags are added to their sections. No tag is removed.");
+  if (finalOps.some(o => o.type === "metric_govern")) steps.splice(steps.length - 1, 0, "Governed-metric drafts go to a work file; Claude asks before editing the governed metrics file.");
+  const body = GROUPS.filter(k => g[k].length).map(k => `<div class="sgroup"><h4>${esc(k === "Rejected" ? "Rejected (won't be proposed again)" : k)} · ${num(g[k].length)}</h4>${g[k].join("")}</div>`).join("");
+  host.innerHTML = `<div class="sheet" data-act="sheet-bg"><div class="panel" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" tabindex="-1" id="sheetPanel">
+    <h3 id="sheetTitle">Submit this review</h3>
+    ${body || `<p class="note">No changes. Submitting records that you reviewed the taxonomy and changed nothing.</p>`}
+    ${kept ? `<p class="note">${mode === "health" ? plural(kept, "problem") + " marked as reviewed with no change." : plural(kept, "category", "categories") + " kept as they are."}</p>` : ""}
+    ${imp.errors ? `<div class="impact warn">${esc(impactWords(imp))}</div>` : S.has_db && (S.proposals.length || n) ? `<div class="impact">Altogether: ${esc(impactWords(imp))}</div>` : ""}
+    ${warn ? `<div class="impact warn">${esc(warn)}</div>` : ""}
+    <div class="next"><b>What happens next, in Claude Code</b><ol>${steps.map(s => `<li>${esc(s)}</li>`).join("")}</ol></div>
+    <div class="err" id="suberr" role="alert"></div>
+    <div class="sfoot"><button type="button" class="btn" data-act="sheet-close">Keep reviewing</button><button type="button" class="btn primary" data-act="sheet-submit">${n ? `Submit ${plural(n, "decision")}` : "Submit with no changes"}</button></div>
+    <div id="cancelBox"><button type="button" class="linkbtn" data-act="cancel-ask">Close the review without submitting</button></div>
+  </div></div>`;
+  $("sheetPanel").focus();
+}
+
+// ---------------------------------------------------------------- events
+document.addEventListener("click", async ev => {
+  const el = ev.target.closest("[data-act]"); if (!el || !S) return;
+  const a = el.dataset.act, id = el.dataset.id;
+  const item = id ? S.review.items.find(i => i.id === id) : null;
+  switch (a){
+    case "view": U.redo = null; U.view = el.dataset.v; render(); break;
+    case "pick-item": U.batchFail = null; U.redo = null; U.inboxSel = id; if (String(id).startsWith("g:")) U.gRow = null; renderView(); break;
+    case "pick-node": U.treeSel = {kind:"node", label:el.dataset.label}; if (U.view !== "taxonomy"){ U.view = "taxonomy"; render(); } else renderView(); break;
+    case "pick-pending": U.treeSel = {kind:"pending", key:el.dataset.key}; renderView(); break;
+    case "new-cat": U.treeSel = {kind:"new", parent: el.dataset.parent || ""}; renderView(); break;
+    case "filter": U.filter = el.dataset.f; renderView(); break;
+    case "sort": U.sort = el.dataset.s; renderView(); break;
+    case "mtab": U.mtab = el.dataset.t; U.mSel = null; renderView(); break;
+    case "pick-metric": U.mSel = el.dataset.name; renderView(); break;
+    case "new-metric": if (U.mtab === "dup") U.mtab = computableBucket();   // the pairs tab has no form slot
+      U.mSel = "__new"; renderView(); openForm("m-add", {}); break;
+    case "approve": if (item){ delete U.tagDraft[item.id]; await send({action:"approve", item_id:item.id},
+      el.dataset.revert ? `Reverted “${itemTitle(item)}” to keep` : item.origin === "induction" ? `Kept “${itemTitle(item)}”` : isHealth(item) ? `Accepted “${itemTitle(item)}”` : `Approved “${itemTitle(item)}”`,
+      null, () => advanceRow(item.id)); } break;
+    case "skip": if (item) skipFrom(item); break;
+    case "pick-row": if (item) moveRow(item.id); break;
+    case "row-edit": if (item){
+      if (item.group) U.gRow = item.id;
+      const base = editBase(item);
+      renderView();
+      if (base) openForm(EDITABLE[base.type], rowCtx(item, base));
+      else { const b = document.querySelector(`[data-tag="${CSS.escape(item.id)}"]`); if (b) b.focus(); }
+    } break;
+    case "h-alt": if (item) await pickCandidate(item, num(el.dataset.i)); break;
+    case "accept-all": { const g = groupOf(el.dataset.kind); if (!g) break;
+      U.batchFail = null;
+      const cons = consumedLabels();
+      await acceptBatch(g, g.rows.filter(r => batchable(r, cons)).map(r => ({action:"approve", item_id:r.id}))); break; }
+    case "accept-others": { const f = U.batchFail, g = f && groupOf(f.kind); if (!g) break;
+      const byId = id => S.review.items.find(i => i.id === id);
+      const recs = f.recs.filter((r, i) => i !== f.index && byId(r.item_id) && batchable(byId(r.item_id)));
+      U.batchFail = null;
+      if (!recs.length){ renderView(); break; }
+      await acceptBatch(g, recs); break; }
+    case "rev-approve": { const rev = item && (S.revisions || {})[item.id]; if (!rev || suppressedLocked(item)) break;
+      delete U.tagDraft[item.id];
+      await send(sameOp(rev.op, item.op) ? {action:"approve", item_id:item.id} : {action:"amend", item_id:item.id, op:rev.op}, `Approved Claude's revision for “${itemTitle(item)}”`); break; }
+    case "redo-open": if (item){ U.redo = item.id; U.redoText = ""; if (item.group) U.gRow = item.id; renderView(); const t = $("redoNote"); if (t) t.focus(); } break;
+    case "redo-cancel": U.redo = null; U.redoText = ""; renderView(); flushPoll(); break;
+    case "redo-send": { const note = U.redoText.trim(); if (!item) break;
+      if (!note){ const e = $("rerr"); if (e) e.textContent = "Write what Claude should change first."; break; }
+      if (busy) break;
+      busy = true; stateEpoch++;
+      try {
+        await api.request(item.id, note);
+        U.redo = null; U.redoText = "";
+        S = await api.state(); render();
+        toast(S.live_channel ? `Sent. Claude is revising “${itemTitle(item)}”.` : `Queued for the next run: “${itemTitle(item)}”.`);
+      } catch(e){ if (e.status === 409) onClosed(); else { const r = $("rerr"); if (r) r.textContent = errText(e); else toast(errText(e), null, true); } }
+      finally { busy = false; }
+      break; }
+    case "goto-row": if (item){
+      U.view = "inbox";
+      if (isHealth(item) && item.group){ U.inboxSel = "g:" + item.group; U.gRow = item.id; } else U.inboxSel = item.id;
+      render();
+      const r = document.querySelector(`[data-row="${CSS.escape(item.id)}"]`); if (r) r.scrollIntoView({block:"center"});
+    } break;
+    case "pair-merge": await send({action:"propose", op:{type:"metric_merge", from:el.dataset.from, into:el.dataset.into}},
+      `Added to your changes: merge metric “${el.dataset.from}” into “${el.dataset.into}”`); break;
+    case "reject": if (item) await send({action:"reject", item_id:item.id, reason:el.dataset.reason}, `Rejected “${itemTitle(item)}”: ${el.dataset.reason}`); break;
+    case "reopen": if (item) await send({action:"reopen", item_id:item.id}, `Reopened “${itemTitle(item)}”`); break;
+    case "undo-item": if (item && isDecided(item)) await send(undoRecFor(item), `Undid the decision on “${itemTitle(item)}”`, restoreRec(item.id, latest(item.id))); break;
+    case "withdraw": { const p = !busy && S.proposals.find(x => x.item_id === id);   // a repeat click is ignored
+      if (p) await send({action:"withdraw", item_id:p.item_id}, "Withdrawn: " + opText(p.op), {action:"propose", op:p.op}); break; }
+    case "form": openForm(el.dataset.form, ctxFor(el.dataset.form)); break;
+    case "form-cancel": { const s = $("formslot"); if (s) s.innerHTML = "";
+      if (U.view === "taxonomy" && U.treeSel && U.treeSel.kind === "new"){ U.treeSel = null; renderView(); }
+      if (U.view === "metrics" && U.mSel === "__new"){ U.mSel = null; renderView(); }
+      flushPoll(); break; }
+    case "chunk": {
+      const q = el.closest(".quote"); if (!q) break;
+      const box = q.querySelector(`.full[data-for="${CSS.escape(id)}"]`);
+      if (box){ box.remove(); break; }
+      try { const c = await api.chunk(id); q.insertAdjacentHTML("beforeend", `<div class="full" data-for="${esc(id)}"><small>#${esc(c.chunk_id)} · ${esc(c.source || "")}${c.title ? " · " + esc(c.title) : ""}</small>${esc(c.text)}</div>`); }
+      catch(e){ toast(errText(e), null, true); }
+      break; }
+    case "toast-undo": await doUndo(); break;
+    case "open-sheet": U.sheet = true; renderSheet(); break;
+    case "sheet-bg": if (ev.target === el){ U.sheet = false; renderSheet(); } break;
+    case "sheet-close": U.sheet = false; renderSheet(); break;
+    case "sheet-submit": {
+      el.disabled = true;
+      try { await api.submit(); U.sheet = false; S.submitted = true; render(); }
+      catch(e){ if (e.status === 409){ U.sheet = false; onClosed(); } else { $("suberr").textContent = errText(e); el.disabled = false; } }
+      break; }
+    case "cancel-ask": $("cancelBox").innerHTML = `<div class="decided warn"><span>Close without submitting? Your decisions so far are saved, and Claude applies nothing.</span><button type="button" data-act="cancel-yes">Close the review</button></div>`; break;
+    case "cancel-yes":
+      try { await api.cancel(); U.sheet = false; closed = {title:"Closed without submitting.", body:"Your decisions so far are saved. Ask Claude to reopen the review to continue."}; render(); }
+      catch(e){ if (e.status === 409){ U.sheet = false; onClosed(); } else toast(errText(e), null, true); }
+      break;
+  }
+});
+document.addEventListener("change", ev => {
+  const t = ev.target; if (!S) return;
+  if (t.dataset && t.dataset.tag){ onTagToggle(t); return; }
+  if (t.dataset && t.dataset.alt){
+    const it = S.review.items.find(i => i.id === t.dataset.alt); if (!it) return;
+    if (busy || t.value === ""){ renderView(); return; }
+    pickCandidate(it, num(t.value));
+  }
+});
+document.addEventListener("input", ev => {
+  if (ev.target.id === "redoNote"){ U.redoText = ev.target.value; return; }
+  if (ev.target.id === "mq"){ U.mq = ev.target.value; const pos = ev.target.selectionStart; renderView(); const m = $("mq"); m.focus(); m.setSelectionRange(pos, pos); }
+});
+document.addEventListener("keydown", ev => {
+  if (!S || closed || S.submitted) return;
+  if (ev.key === "Escape" && U.sheet){ U.sheet = false; renderSheet(); $("openSubmit").focus(); return; }
+  if (U.view !== "inbox" || U.sheet || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  const t = ev.target;
+  if (t && (t.isContentEditable || /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName))) return;
+  // Positions cover every group row and every individual item, so J/K cross between them.
+  const pos = navPositions();
+  let i = pos.findIndex(p => p.sel === U.inboxSel && (p.row === null || p.row === U.gRow));
+  if (i < 0) i = pos.findIndex(p => p.sel === U.inboxSel);
+  const it = i >= 0 ? pos[i].it : null, go = p => { if (p.row && p.sel === U.inboxSel){ moveRow(p.row); return; } U.inboxSel = p.sel; if (p.row) U.gRow = p.row; renderView(); };
+  const k = ev.key.toLowerCase();
+  if (k === "j" && i < pos.length - 1) go(pos[i + 1]);
+  else if (k === "k" && i > 0) go(pos[i - 1]);
+  else if (k === "a" && it && isHealth(it)){ if (canAccept(it)) send({action:"approve", item_id:it.id}, `Accepted “${itemTitle(it)}”`, null, () => advanceRow(it.id)); }
+  else if (k === "r" && it && isHealth(it)) skipFrom(it);
+  else if (k === "a" && it && !isDecided(it) && !(it.status === "suppressed" && !((latest(it.id) || {}).action === "reopen")))
+    send({action:"approve", item_id:it.id}, it.origin === "induction" ? `Kept “${itemTitle(it)}”` : `Approved “${itemTitle(it)}”`);
+  else if (k === "r" && it && !isDecided(it) && REJECT_REASONS[it.origin]){
+    const r = it.status === "suppressed" && !((latest(it.id) || {}).action === "reopen") ? ((it.prior || {}).reason || "Rejected before") : REJECT_REASONS[it.origin][0];
+    send({action:"reject", item_id:it.id, reason:r}, `Rejected “${itemTitle(it)}”: ${r}`);
+  }
+  else if (k === "u" && undoRec) doUndo();
+  else return;
+  ev.preventDefault();
+});
+
+// While a redo request is open with no revision yet, poll every 5 s. A change re-renders,
+// unless the reviewer is typing, in which case it waits for the next tick.
+let pollRender = false;
+const needsPoll = () => !!S && !closed && !S.submitted && Object.values(S.requests || {}).some(q => q.status === "open" && !(S.revisions || {})[q.item_id]);
+const holdRender = () => typing() || U.sheet || !!$("opform") || !!$("redoNote");
+function flushPoll(){ if (pollRender && !holdRender()) render(); }
+const typing = () => { const a = document.activeElement; return !!a && (a.tagName === "TEXTAREA" || a.tagName === "SELECT" || (a.tagName === "INPUT" && a.type !== "checkbox")); };
+setInterval(async () => {
+  if (busy || closed || !S) return;
+  flushPoll();
+  if (!needsPoll()) return;
+  let st;
+  const mine = stateEpoch;
+  try { st = await api.state(); } catch(e){ if (e.status === 409) onClosed(); return; }
+  if (busy || closed || mine !== stateEpoch) return;   // a decision or fresher fetch started meanwhile
+  const sig = x => JSON.stringify([x.requests, x.revisions, x.submitted]);
+  if (sig(st) === sig(S)) return;
+  S = st; nodeCache = {};
+  if (holdRender()) pollRender = true; else render();
+}, 5000);
+
+api.state().then(st => {
+  S = st;
+  U.view = actionable().length ? "inbox" : "taxonomy";
+  render();
+}).catch(e => {
+  $("ctxSub").textContent = "";
+  $("nav").hidden = true; $("app").classList.add("solo");
+  $("view").innerHTML = `<div class="done"><h3>Couldn't load the review.</h3><p class="err">${esc(errText(e))}</p><p class="note">Open the exact link Claude printed; it carries the access token.</p></div>`;
+});
+</script>
+</body>
+</html>

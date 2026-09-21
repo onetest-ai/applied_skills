@@ -82,6 +82,28 @@ class OnboardSourceConfigTests(unittest.TestCase):
             self.assertLess(plan.index("classify_write.py"), plan.index("fact_prep.py"))
             self.assertLess(plan.index("fact_write.py"), plan.index("verify --db"))
 
+    def test_run_script_reviews_taxonomy_and_builds_from_current(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            docs = root / "docs"; docs.mkdir()
+            project = root / "brain"
+            result = subprocess.run([sys.executable, str(SCRIPT), "scaffold", "--project", str(project),
+                                     "--goal", "g", "--docs", str(docs)], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            plan = (project / "BRAIN.md").read_text()
+            self.assertIn("work/consolidated.json", plan)
+            self.assertIn("taxonomy_review.py\" plan --mode draft", plan)
+            self.assertIn("skip if taxonomy/current.json already exists", plan)
+            self.assertIn("taxonomy_merge.py\" --review", plan)
+            self.assertLess(plan.index("taxonomy_merge.py\" --review"), plan.index("build_graph.py"))
+            # later reviews: the maintainer learns how to start one, and every command reads current.json
+            self.assertIn("## Taxonomy review (after the first build)", plan)
+            self.assertIn("taxonomy_review.py\" plan --mode browse", plan)
+            for line in plan.splitlines():
+                if "build_graph.py" in line or "classify_prep.py" in line:
+                    self.assertIn("current.json", line)
+                    self.assertNotIn("taxonomy_v0.json", line)
+
     def test_scaffold_does_not_overwrite_existing_brain_toml(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td); project = root / "brain"; project.mkdir()

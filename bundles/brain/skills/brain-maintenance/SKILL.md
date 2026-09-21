@@ -32,11 +32,11 @@ Never collapse the process into a script that silently makes semantic, deletion,
 
 ## Required project contract
 
-An update-ready project has the following. Start by copying `profile.example.toml` to project-local `brain-maintenance.toml`, then edit only project-relative paths and policy values; validate it before status:
+An update-ready project has the following. Start by copying `profile.example.toml` to project-local `brain-maintenance.toml`, then edit only project-relative paths and policy values; validate it before status. Run commands from the project root with these variables: `$PY` is the skills' venv interpreter from `install.sh --bundle brain --deps` (BRAIN.md's `$PY`, recorded as `[runtime].python` in the profile), `$SKILLS` is the installed skills directory (`[runtime].skills`), and `$DB` is `[paths].db`. With no venv, use `uv run --with-requirements <bundle>/requirements.txt python` in place of `"$PY"`.
 
 ```bash
-cp <skills>/brain-maintenance/profile.example.toml "$PROJECT/brain-maintenance.toml"
-python <skills>/brain-maintenance/maintenance.py validate-profile \
+cp "$SKILLS/brain-maintenance/profile.example.toml" "$PROJECT/brain-maintenance.toml"
+"$PY" "$SKILLS/brain-maintenance/maintenance.py" validate-profile \
   --profile "$PROJECT/brain-maintenance.toml"
 ```
 
@@ -46,7 +46,7 @@ brain-maintenance.toml             # required maintenance planner profile
 brain.deploy.toml                  # optional external-adapter profile; no secrets
 parsed/manifest.json               # {source, md} mapping for final parsed documents
 schema/knowledge.sqlite OR configured DB path
-schema/taxonomy*.json              # approved taxonomy
+taxonomy/current.json              # approved taxonomy (copy of the latest ratified version)
 ./brain                            # launcher
 ```
 
@@ -63,7 +63,7 @@ Source modes:
 ### 1. Produce a read-only status report
 
 ```bash
-python <skills>/brain-maintenance/maintenance.py status \
+"$PY" "$SKILLS/brain-maintenance/maintenance.py" status \
   --profile "$PROJECT/brain-maintenance.toml" \
   --out "$PROJECT/.brain-maintenance/runs/status.json"
 ```
@@ -129,9 +129,9 @@ a permanent state.
 
 ```bash
 # Pass 1 — transcripts only
-python <skills>/corpus-taxonomy-extraction/parse_corpus.py --corpus <root> --out parsed/ --formats vtt,srt --merge-cues 10
+"$PY" "$SKILLS/corpus-taxonomy-extraction/parse_corpus.py" --corpus <root> --out parsed/ --formats vtt,srt --merge-cues 10
 # Pass 2 — narrative docs
-python <skills>/corpus-taxonomy-extraction/parse_corpus.py --corpus <root> --out parsed/ --formats pptx,docx,pdf,md,markdown,txt,html,htm
+"$PY" "$SKILLS/corpus-taxonomy-extraction/parse_corpus.py" --corpus <root> --out parsed/ --formats pptx,docx,pdf,md,markdown,txt,html,htm
 ```
 
 ### 4. Review and apply parsed-store delta
@@ -149,16 +149,40 @@ The apply step must create a SQLite snapshot, update changed documents atomicall
 
 ### 5. Complete semantic work
 
+Commands use `$PY`, `$SKILLS` and `$DB` as set under **Required project contract**; the taxonomy scripts are stdlib only.
+
+**Preflight — Brains built before `current.json`.** If `taxonomy/current.json` is missing, or `build_graph` below stops because the store has tags and no `meta.taxonomy_version`, tell the user and follow `corpus-taxonomy-extraction` → "F. Upgrading an older Brain" (`taxonomy_review.py adopt`, with `--meta-only` when `current.json` already exists) with their confirmation. Then set `[paths].taxonomy = "taxonomy/current.json"` in `brain-maintenance.toml`. Pass `--force` only if the user explicitly says so.
+
 If `sync_plan.json.reclassify_chunk_ids` is non-empty:
 
-1. create a fresh classification run directory;
-2. run `classify_prep --chunks <ids> --batches <classification.batches from brain-maintenance.toml>` with the approved taxonomy (default 5 overflows context on VTT corpora — always read the profile value);
-3. dispatch low-cost text subagents;
+1. rebuild the taxonomy graph first, so categories added since the last build are in the graph (`classify_write` drops labels that are not graph nodes);
+2. prepare batches in a fresh run directory, with `--batches` from `[classification].batches` in `brain-maintenance.toml` (the default 5 overflows agent context on VTT corpora — always read the profile value);
+3. dispatch low-cost text subagents, one per `batch_k.json`: each reads that dir's `instructions.md`, `vocab.md` and its batch and writes `result_k.json`;
 4. verify exact chunk-id coverage and valid labels;
-5. run incremental `classify_write` without `--reset`;
-6. rebuild the taxonomy graph.
+5. run incremental `classify_write` without `--reset`.
 
-Do not silently change taxonomy. Vocabulary changes are additive, human-approved work.
+```bash
+"$PY" "$SKILLS/corpus-taxonomy-extraction/build_graph.py" --taxonomy taxonomy/current.json --db "$DB"
+IDS=$("$PY" -c 'import json;print(",".join(map(str,json.load(open("sync_plan.json"))["reclassify_chunk_ids"])))')
+RUN="classify/update-$(date +%Y%m%d-%H%M%S)"
+"$PY" "$SKILLS/corpus-taxonomy-extraction/classify_prep.py" --db "$DB" --taxonomy taxonomy/current.json \
+  --chunks "$IDS" --out "$RUN" --batches <classification.batches>
+# dispatch and validate the subagents over $RUN, then:
+"$PY" "$SKILLS/corpus-taxonomy-extraction/classify_write.py" --db "$DB" --results "$RUN"
+```
+
+If `taxonomy/work/reclassify.json` exists after `build_graph`, reclassify those chunk ids before verifying, with the sequence in `corpus-taxonomy-extraction` → "Reclassifying after a taxonomy change" (a fresh `classify/reclassify-v<N>` directory, then `classify_write --reclassify-done taxonomy/work/reclassify.json`). Never reuse the first-build `classify/` directory: its stale result files would overwrite the new tags and empty the queue.
+
+Do not silently change taxonomy. Agents only add; renames, merges, moves, splits and removals are the user's decisions, made in the taxonomy review app, which migrates the affected tags.
+
+**Offer the health review when the taxonomy needs it.** After the reclassification above, check coverage:
+
+```bash
+"$PY" -c 'import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);t=c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0];u=c.execute("SELECT COUNT(*) FROM chunks WHERE id NOT IN (SELECT chunk_id FROM chunk_topics)").fetchone()[0];print(u,"of",t,"chunks untagged")' "$DB"
+"$PY" -c 'import json;print(len(json.load(open("taxonomy/current.json")).get("descriptions") or {}),"categories described")'
+```
+
+If a noticeable share of chunks is untagged, if the taxonomy has no descriptions, or if the user asked to refresh, clean up or check the taxonomy, tell the user what you found and offer the health review. Descriptions matter: they go into the classifier's vocabulary, the graph, `get_taxonomy` and the vault. Run the review only if the user agrees, following `corpus-taxonomy-extraction` → "B. Health review" end to end. It covers untagged sections, categories with no tags or no description, near-duplicate and off-axis labels, and similar or ungoverned metrics in one review, and it ends with the graph rebuild, the reclassification and the tag write. Offer its governed-metric drafts to the user; never add them to `schema/metrics.<corpus>.json` without their agreement. If the user wants to change the taxonomy themselves, use "D. Browse and edit" instead.
 
 ### 6. Rebuild numbers only when needed
 

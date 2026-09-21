@@ -1,0 +1,335 @@
+#!/usr/bin/env python3
+"""The append-only decisions log (taxonomy/decisions.jsonl) and everything derived from it.
+
+A review is a changeset. Its items are frozen in review_<id>.json; what people decided —
+approve / reject / amend plan items, propose / withdraw their own ops, submit — is appended
+here. Nothing ever rewrites this file.
+"""
+import difflib
+import json
+import os
+import sys
+import uuid
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from taxo_io import SUBSTANCE_TYPES, fingerprint, utc_now  # noqa: E402
+from taxo_ops import subject_of, validate as validate_ops  # noqa: E402
+
+SCHEMA = 1
+ITEM_ACTIONS = {"approve", "reject", "amend", "propose", "withdraw", "reopen", "clear"}
+REVIEW_ACTIONS = {"submit", "applied"}
+HUMAN_SURFACES = {"browser", "markdown"}
+AGENT_ALLOWED = {"add", "keep", "describe", "tag", "metric_govern"}
+
+
+class DecisionLogError(ValueError):
+    pass
+
+
+def default_path(tax_dir):
+    return os.path.join(tax_dir, "decisions.jsonl")
+
+
+def new_human_id():
+    return "h-" + uuid.uuid4().hex[:12]
+
+
+def _stamp_and_check(record):
+    """schema+ts stamping plus append's own shape checks, shared by `append` and
+    `append_many`. Raises DecisionLogError instead of returning errors, so a bad record
+    aborts the whole batch before anything is written."""
+    rec = {"schema": SCHEMA, "ts": utc_now(), **record}
+    action = rec.get("action")
+    if action not in ITEM_ACTIONS | REVIEW_ACTIONS:
+        raise DecisionLogError(f"unknown action {action!r}")
+    if action in ITEM_ACTIONS and not rec.get("item_id"):
+        raise DecisionLogError(f"{action} needs an item_id")
+    if action == "reject" and not (rec.get("reason") or "").strip():
+        raise DecisionLogError("reject needs a reason")
+    if action in ("propose", "amend") and not isinstance(rec.get("op"), dict):
+        raise DecisionLogError(f"{action} needs an op")
+    return rec
+
+
+def append(path, record):
+    rec = _stamp_and_check(record)
+    line = (json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    try:
+        os.write(fd, line)
+    finally:
+        os.close(fd)
+    return rec
+
+
+def append_many(path, records):
+    """Append every record in `records` (schema/ts stamped and checked exactly as `append`
+    does) in a single `os.write` on one O_APPEND fd, so a crash mid-write can never leave a
+    partial batch on disk. If any record fails `append`'s own checks, DecisionLogError is
+    raised before the file is opened, and nothing is written."""
+    built = [_stamp_and_check(r) for r in records]
+    if not built:
+        return built
+    data = b"".join((json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+                    for rec in built)
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    try:
+        os.write(fd, data)
+    finally:
+        os.close(fd)
+    return built
+
+
+def read(path):
+    if not os.path.exists(path):
+        return []
+    out = []
+    with open(path, encoding="utf-8") as f:
+        for n, line in enumerate(f, 1):
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise DecisionLogError(f"{path}:{n}: malformed line ({e.msg})") from None
+            if not isinstance(rec, dict) or "action" not in rec:
+                raise DecisionLogError(f"{path}:{n}: not a decision record")
+            out.append(rec)
+    return out
+
+
+def review_state(records, review_id):
+    latest, proposals, submit, applied = {}, {}, None, None
+    for r in records:
+        if r.get("review_id") != review_id:
+            continue
+        a = r["action"]
+        if a == "submit":
+            submit = r
+        elif a == "applied":
+            applied = r
+        else:
+            latest[r["item_id"]] = r
+            if a == "propose":
+                proposals[r["item_id"]] = r
+            elif a == "withdraw":
+                proposals.pop(r["item_id"], None)
+    return {"latest": latest, "proposals": proposals, "submit": submit, "applied": applied}
+
+
+def effective_ops(review, records):
+    """The ops a submitted review applies, in item order, then human proposals."""
+    st = review_state(records, review["review_id"])
+    out = []
+    for item in review["items"]:
+        if item.get("status") not in ("proposed", "suppressed"):
+            continue
+        d = st["latest"].get(item["id"])
+        if d is None or d["action"] not in ("approve", "amend"):
+            continue
+        op = item["op"] if d["action"] == "approve" else d["op"]
+        if op.get("type") == "keep":
+            continue
+        out.append({"item_id": item["id"], "op": op, "origin": item["origin"], "surface": d.get("surface")})
+    for iid, p in st["proposals"].items():
+        out.append({"item_id": iid, "op": p["op"], "origin": "human", "surface": p.get("surface")})
+    return out
+
+
+def authorship_errors(entries):
+    return [f"{e['item_id']}: {e['op'].get('type')} must be entered in the review app or an imported "
+            f"Markdown file (came from {e.get('surface') or 'unknown'})"
+            for e in entries
+            if e["op"].get("type") not in AGENT_ALLOWED and e.get("surface") not in HUMAN_SURFACES]
+
+
+def standing_rejections(records):
+    """Rejections in force, keyed by fingerprint.
+
+    A reject stands until a reopen of the same fingerprint (in any review) lifts it. A `clear`
+    (the app's Undo) reverts its item's own reject or reopen when that was the item's last
+    action: a cleared reject no longer stands, and a cleared reopen restores what it lifted.
+    `clear` records carry no fingerprint, so they are matched by (review_id, item_id).
+    """
+    out, lifted, last, undo = {}, {}, {}, {}
+    for r in records:
+        a, key = r.get("action"), (r.get("review_id"), r.get("item_id"))
+        fp = r.get("fingerprint")
+        if a == "clear":
+            u = undo.pop(key, None)
+            if u and last.get(key) in ("reject", "reopen"):
+                kind, ufp, rec, before = u
+                if kind == "reject" and out.get(ufp) is rec:
+                    if before is None:
+                        out.pop(ufp, None)
+                    else:
+                        out[ufp] = before
+                elif kind == "reopen" and before is not None and ufp not in out:
+                    out[ufp] = before
+        elif a == "reject" and fp:
+            undo[key] = ("reject", fp, r, out.get(fp))
+            out[fp] = r
+        elif a == "reopen" and fp:
+            rec = out.pop(fp, None) or lifted.get(fp)
+            lifted[fp] = rec
+            undo[key] = ("reopen", fp, r, rec)
+        elif a in ITEM_ACTIONS:
+            undo.pop(key, None)
+        if a in ITEM_ACTIONS:
+            last[key] = a
+    return out
+
+
+def _legacy_rejection_matches(fp, rfp, rec):
+    """An old-format rejection (type + subject only, see taxo_io.SUBSTANCE_TYPES) matches `fp`
+    only when its substance can be recovered and is the same: the rejection record carries its
+    op and that op fingerprints to `fp`. Otherwise it no longer suppresses anything — showing an
+    item once more beats hiding a genuinely new proposal (a different chunk set, new text). A
+    legacy `keep` never matches: the problem kind it was rejected for is not recoverable."""
+    t, subject, target = (rfp.split("|") + ["", "", ""])[:3]
+    if t not in SUBSTANCE_TYPES or target or rfp.count("|") != 2:
+        return False
+    if not fp.startswith(f"{t}|{subject}|") or fp == rfp:
+        return False
+    op = rec.get("op")
+    return t != "keep" and isinstance(op, dict) and op.get("type") == t and fingerprint(op) == fp
+
+
+def match_rejection(fp, rejections, fuzzy=0.88):
+    if fp in rejections:
+        return rejections[fp]
+    for rfp, rec in rejections.items():
+        if _legacy_rejection_matches(fp, rfp, rec):
+            return rec
+    t, lvl, name, parent = (fp.split("|") + ["", "", "", ""])[:4]
+    for rfp, rec in rejections.items():
+        rt, rl, rn, rp = (rfp.split("|") + ["", "", "", ""])[:4]
+        if name.startswith("#") or rn.startswith("#"):
+            continue   # substance digests match exactly or not at all
+        if (rt, rl, rp) == (t, lvl, parent) and difflib.SequenceMatcher(None, name, rn).ratio() >= fuzzy:
+            return rec
+    return None
+
+
+def _item(review, item_id):
+    return next((i for i in review["items"] if i["id"] == item_id), None)
+
+
+HEALTH_SUBJECT_FIELD = {"merge": "from", "metric_merge": "from", "metric_govern": "metric",
+                        "metric_edit": "metric", "metric_remove": "metric"}
+
+
+def health_amend_ok(item, op):
+    """The B4 amend rule for a health item, tightened against retargeting/spoofing.
+
+    `op` is accepted only when, for some candidate `c` in `[item["op"]] + item["alternatives"]`,
+    ALL of:
+      (a) `op["type"] == c["type"]`;
+      (b) `set(op.keys()) == set(c.keys())` — an attacker can't smuggle in an extra field (e.g.
+          grafting a `"node"` onto a bare `{from, into}` merge op to make an unrelated-subject
+          check pass while the real taxonomy op still runs on `from`);
+      (c) the type's subject field is equal between `op` and `c` — `"from"` for
+          merge/metric_merge, `"metric"` for metric_govern/metric_edit/metric_remove, `"node"`
+          for everything else (checking `subject_of()`, which falls through node|from|metric|
+          name, is NOT enough on its own: it can't tell a spoofed field from the real one);
+      (d) for merge/metric_merge, `op["into"]` is one of the *same-type* candidates' `"into"`
+          values — same subject, but retargeted to an arbitrary node, must still fail;
+      (e) for tag, `set(op["chunk_ids"]) <= item["support"]["candidate_ids"]` when that key is
+          present — a human can narrow the selection or edit a `chunk_ids: []` template, but
+          never tag chunks nothing about this item ever proposed.
+    For `add` (new categories for untagged sections), (b) also accepts the candidate's keys plus
+    `"description"` — a proposal drafted without one can't be saved otherwise, since the browser
+    requires a description on every new category — and the amend must keep the candidate's
+    `level` and `parent`: a rename or a description is an edit, a different place is not.
+    Shared by decisions.validate_record and respond's live-channel revisions."""
+    cands = [item["op"]] + (item.get("alternatives") or [])
+    t = op.get("type")
+    if not isinstance(t, str) or any(v is not None and not isinstance(v, str)
+                                     for v in (op.get("node"), op.get("from"), op.get("into"), op.get("metric"))):
+        return False
+    ids = op.get("chunk_ids")
+    if ids is not None and not (isinstance(ids, list) and all(isinstance(i, int) and not isinstance(i, bool) for i in ids)):
+        return False
+    field = HEALTH_SUBJECT_FIELD.get(t, "node")
+    same_type = [c for c in cands if c.get("type") == t]
+    def keys_ok(c):
+        if t == "add":
+            return set(op.keys()) in (set(c.keys()), set(c.keys()) | {"description"})
+        return set(op.keys()) == set(c.keys())
+
+    def place_ok(c):
+        return t != "add" or (op.get("level") == c.get("level") and op.get("parent") == c.get("parent"))
+
+    if not any(keys_ok(c) and op.get(field) == c.get(field) and place_ok(c) for c in same_type):
+        return False
+    if t in ("merge", "metric_merge") and op.get("into") not in {c.get("into") for c in same_type}:
+        return False
+    if t == "tag":
+        cand_ids = (item.get("support") or {}).get("candidate_ids")
+        if cand_ids is not None and not set(op.get("chunk_ids") or []) <= set(cand_ids):
+            return False
+    return True
+
+
+def validate_record(review, base_tax, records, rec):
+    """Errors that make `rec` unacceptable given the review so far ([] = ok)."""
+    st = review_state(records, review["review_id"])
+    if st["submit"]:
+        return ["this review is already submitted"]
+    a, iid = rec.get("action"), rec.get("item_id")
+    if a in ("propose", "amend") and not (isinstance(rec.get("op"), dict) and isinstance(rec["op"].get("type"), str)):
+        return [f"{iid}: {a} needs an op: a JSON object with a string \"type\""]
+    if "op" in rec and not isinstance(rec["op"], dict):
+        return [f"{iid}: op must be a JSON object"]
+    if rec.get("reason") is not None and not isinstance(rec["reason"], str):
+        return [f"{iid}: reason must be text"]
+    if a == "reject" and not (rec.get("reason") or "").strip():
+        return [f"{iid}: reject needs a reason"]
+    op0 = rec.get("op") or {}
+    if (a in ("propose", "amend") and rec.get("surface") == "browser" and op0.get("type") == "add"
+            and not (op0.get("description") if isinstance(op0.get("description"), str) else "").strip()):
+        return [f"{iid}: a new category needs a description"]
+    if a == "propose":
+        if not (iid or "").startswith("h-") or iid in st["latest"]:
+            return [f"{iid}: a proposal needs a fresh h- id"]
+    elif a == "withdraw":
+        if iid not in st["proposals"]:
+            return [f"{iid}: no open proposal to withdraw"]
+    elif a != "submit":
+        item = _item(review, iid)
+        if item is None:
+            return [f"{iid}: not an item of this review"]
+        if item["status"] in ("auto_skipped", "invalid"):
+            return [f"{iid}: {item['status']} items take no decision"]
+        if item["origin"] == "induction" and a not in ("approve", "amend", "clear"):
+            return [f"{iid}: first-build items take approve (keep) or amend, not {a}"]
+        if a == "clear":
+            last = st["latest"].get(iid)
+            if not last or last["action"] == "clear":
+                return [f"{iid}: nothing to undo"]
+        if a == "reopen" and item["status"] != "suppressed":
+            return [f"{iid}: only suppressed items can be reopened"]
+        if item["status"] == "suppressed" and a in ("approve", "amend"):
+            last = st["latest"].get(iid)
+            if not last or last["action"] not in ("reopen", "approve", "amend"):
+                return [f"{iid}: reopen this suppressed item before approving it"]
+        if a == "amend":
+            op = rec.get("op") or {}
+            if item["origin"] == "refine" and op.get("type") != "add":
+                return [f"{iid}: a refresh proposal can only be amended into another add"]
+            if item["origin"] == "induction" and op.get("type") != "add" and subject_of(op) != item["op"]["node"]:
+                return [f"{iid}: the amended op must act on {item['op']['node']!r}"]
+            if item["origin"] == "describe" and (op.get("type") != "describe" or op.get("node") != item["op"]["node"]):
+                return [f"{iid}: a description proposal can only be amended into another description of {item['op']['node']!r}"]
+            if item["origin"] == "health" and not health_amend_ok(item, op):
+                return [f"{iid}: a health fix can only be amended into one of its alternatives or an edit of the same fix"]
+    entries = effective_ops(review, records + ([] if a == "submit" else [rec]))
+    return authorship_errors(entries) + validate_ops(base_tax, [e["op"] for e in entries])
+
+
+def submit_counts(review, records):
+    st = review_state(records, review["review_id"])
+    actionable = [i for i in review["items"] if i.get("status") in ("proposed", "suppressed")]
+    acts = [st["latest"].get(i["id"], {}).get("action") for i in actionable]
+    return {"approved": acts.count("approve"), "rejected": acts.count("reject"), "amended": acts.count("amend"),
+            "undecided": sum(1 for x in acts if x in (None, "clear")), "proposals": len(st["proposals"])}

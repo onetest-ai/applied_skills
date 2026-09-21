@@ -72,7 +72,7 @@ flowchart TD
 
     subgraph orch ["orchestrated by knowledge-pipeline"]
         direction TB
-        cte --> md["Markdown + taxonomy_v0 + graph"]:::mean
+        cte --> md["Markdown + reviewed taxonomy + graph"]:::mean
         md --> vault[("Obsidian vault · human canon")]:::mean
         md --> ki["knowledge-index"]:::mean
         ki --> chunks["chunks + FTS5 + vector"]:::mean
@@ -111,7 +111,7 @@ Guided onboarding captures three drivers up front — the **goal** (scopes taxon
 
 | Skill | Role | Key idea |
 |---|---|---|
-| **corpus-taxonomy-extraction** | build | Goal-directed taxonomy induction (intent classes + entities + metric inventory) from a mixed corpus (PDF/PPTX/DOCX/XLSX via pymupdf + LibreOffice; MD/TXT pass through). Also emits the taxonomy **graph** (`build_graph.py`) and an **Obsidian vault** (`to_obsidian.py`), and flags near-duplicate / off-axis categories for human review. |
+| **corpus-taxonomy-extraction** | build | Goal-directed taxonomy induction (intent classes + entities + metric inventory) from a mixed corpus (PDF/PPTX/DOCX/XLSX via pymupdf + LibreOffice; MD/TXT pass through). Also emits the taxonomy **graph** (`build_graph.py`) and an **Obsidian vault** (`to_obsidian.py`), and flags near-duplicate / off-axis categories for human review. Every taxonomy change — the first-build draft, later health reviews, your own edits — is decided in a local review app ([guide](docs/taxonomy-review-guide.md)). |
 | **visual-parse** | build | Page routing + visual understanding: renders slide/diagram pages, flags the visual ones, and VLM-transcribes them (with deterministic table-grid extraction) so meaning on slides isn't lost. |
 | **knowledge-index** | build | Local hybrid RAG over Markdown → SQLite **FTS5 + sqlite-vec, RRF-fused**. Torch-free embeddings (fastembed/onnx). The narrative lane. |
 | **tabular-semantic-layer** | build | Config-driven ETL of large/heterogeneous Excel → normalized `facts` in the same SQLite + a governed metric catalog. Four layouts, weighted rollups, build audit (`--strict`). |

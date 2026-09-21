@@ -310,15 +310,26 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
 
     # 2 · 🤖 induce taxonomy (map→reduce→judge→emit) → taxonomy/taxonomy_v0.json
     #     see corpus-taxonomy-extraction/SKILL.md; goal = above. Dispatch Haiku subagents.
+    #     Keep the reduce output for review: consolidate.py --out "{proj/'taxonomy'/'work'/'consolidated.json'}"
+
+    # 2b · 👤 human review of the draft — the local review app runs until the reviewer submits.
+    #      Agent: run `serve` in the BACKGROUND and end the turn; its exit wakes you.
+    #      serve binds 127.0.0.1 on a free port, prints "review app: <url>" on stderr and opens
+    #      the browser; it exits on submit, on cancel, or after --timeout seconds (default 3600).
+    #      Apply only when its JSON line says "submitted"; otherwise run serve again to continue.
+    #      First build only — skip if taxonomy/current.json already exists.
+    REVIEW=$("$PY" "{CTE/'taxonomy_review.py'}" plan --mode draft --taxonomy "{proj/'taxonomy'/'taxonomy_v0.json'}" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["review"])')
+    "$PY" "{CTE/'taxonomy_review.py'}" serve --review "$REVIEW"
+    "$PY" "{CTE/'taxonomy_merge.py'}" --review "$REVIEW" --apply      # → taxonomy_v1.json + taxonomy/current.json
 
     # 3 · narrative index — heading-aware sections → chunks + FTS5 + vector
     "$PY" "{KI/'knowledge_index.py'}" index --db "$DB" --corpus "{proj/'parsed'}" --reset
 
-    # 4 · taxonomy graph (L1/L2 vertices) into the SAME db
-    "$PY" "{CTE/'build_graph.py'}" --taxonomy "{proj/'taxonomy'/'taxonomy_v0.json'}" --db "$DB"
+    # 4 · taxonomy graph (L1/L2 vertices) into the SAME db — always from current.json
+    "$PY" "{CTE/'build_graph.py'}" --taxonomy "{proj/'taxonomy'/'current.json'}" --db "$DB"
 
     # 5 · 🤖 per-section tags — prep, dispatch Haiku subagents, write
-    "$PY" "{CTE/'classify_prep.py'}" --db "$DB" --taxonomy "{proj/'taxonomy'/'taxonomy_v0.json'}" --out "{proj/'classify'}" --batches 25
+    "$PY" "{CTE/'classify_prep.py'}" --db "$DB" --taxonomy "{proj/'taxonomy'/'current.json'}" --out "{proj/'classify'}" --batches 25
     #     → N Haiku subagents read classify/{{instructions,vocab,batch_k}} → write classify/result_k.json
     "$PY" "{CTE/'classify_write.py'}" --db "$DB" --results "{proj/'classify'}"
 
@@ -335,6 +346,22 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
 {step9}
     # verify the built store
     "$PY" "{Path(__file__).resolve()}" verify --db "$DB"
+    ```
+
+    ## Taxonomy review (after the first build)
+    Every later taxonomy change goes through the same local review app. Ask Claude to
+    "review the taxonomy" (the health review: every problem with a proposed fix) or to
+    "open the taxonomy editor" (browse: change categories and metrics yourself). Claude
+    follows corpus-taxonomy-extraction/SKILL.md → "Reviewing and editing the taxonomy":
+    it plans the review, runs `serve` in the background, applies what you submit, then
+    rebuilds the graph and reclassifies the affected sections. To open the editor by hand:
+
+    ```bash
+    "$PY" "{CTE/'taxonomy_review.py'}" plan --mode browse --taxonomy "{proj/'taxonomy'/'current.json'}" --db "$DB"
+    "$PY" "{CTE/'taxonomy_review.py'}" serve --review <the "review" path it printed> --db "$DB"
+    "$PY" "{CTE/'taxonomy_merge.py'}" --review <that path> --apply        # after you submit
+    "$PY" "{CTE/'build_graph.py'}" --taxonomy "{proj/'taxonomy'/'current.json'}" --db "$DB"
+    # then, if taxonomy/work/reclassify.json exists, reclassify those chunks (see the skill)
     ```
 
     ## Answer
