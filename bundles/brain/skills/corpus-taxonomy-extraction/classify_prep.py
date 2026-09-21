@@ -13,7 +13,10 @@ Reads `chunks` from the knowledge SQLite, writes:
 
 Usage: classify_prep.py --db knowledge.sqlite --taxonomy taxonomy_v0.json --out <dir> [--batches 5] [--preview 400]
 """
-import argparse, json, os, sqlite3
+import argparse, json, os, sqlite3, sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from taxo_io import one_line
 
 def main():
     ap = argparse.ArgumentParser()
@@ -33,9 +36,9 @@ def main():
         f.write("# Taxonomy — allowed categories (use EXACT names). Assign the MOST SPECIFIC that fits:\n"
                 "# an **L2** (indented) when the chunk is specifically about it, else its **L1**.\n\n")
         for l1 in l1s:
-            f.write(f"- {l1}" + (f" — {desc[l1]}" if desc.get(l1) else "") + "\n")
+            f.write(f"- {l1}" + (f" — {one_line(desc[l1])}" if desc.get(l1) else "") + "\n")
             for l2 in (tree.get(l1) or []):
-                f.write(f"    - {l2}" + (f" — {desc[l2]}" if desc.get(l2) else "") + "\n")
+                f.write(f"    - {l2}" + (f" — {one_line(desc[l2])}" if desc.get(l2) else "") + "\n")
     with open(os.path.join(a.out, "instructions.md"), "w") as f:
         f.write(
             "# Classify each chunk against the taxonomy (L1 + L2)\n\n"

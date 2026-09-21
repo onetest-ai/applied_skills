@@ -15,6 +15,7 @@ from collections import Counter
 # (the same directory) resolves regardless of the caller's cwd.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from flags import near_duplicate_labels, off_axis_l1
+from taxo_io import one_line
 
 def norm(s):
     s = (s or "").lower().strip()
@@ -26,7 +27,7 @@ def majority(members, field):
     return Counter(vals).most_common(1)[0][0] if vals else None
 
 def best_description(members):
-    vals = [(m.get("description") or "").strip() for m in members]
+    vals = [one_line(m.get("description")) for m in members]
     vals = [v for v in vals if v]
     if not vals:
         return None
@@ -157,7 +158,8 @@ def main():
     if unassigned:
         L.append("\n### (L2 without a matched L1 parent)")
         for k in unassigned:
-            L.append(f"  - {k['canonical_guess']}")
+            ud = descriptions.get(k["canonical_guess"])
+            L.append(f"  - {k['canonical_guess']}" + (f" — {ud}" if ud else ""))
 
     L.append("\n## 2. Metric inventory (by how it must be answered)\n")
     L.append("| Metric | source_type | grain | stated values | # src | conf |")

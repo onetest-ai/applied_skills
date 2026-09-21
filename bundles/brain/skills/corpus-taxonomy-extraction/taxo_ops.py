@@ -11,7 +11,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from taxo_io import intent, label_taken, locate, nid, norm  # noqa: E402
+from taxo_io import intent, label_taken, locate, nid, norm, one_line  # noqa: E402
 
 INTENT_TYPES = ["add", "describe", "rename", "merge", "move", "split", "remove"]
 METRIC_TYPES = ["metric_add", "metric_edit", "metric_merge", "metric_remove"]
@@ -111,7 +111,7 @@ def _descs(t):
 
 
 def _clean_desc(text):
-    text = (text or "").strip()
+    text = one_line(text)
     if not text:
         raise ValueError("a description can't be empty")
     return text
@@ -132,7 +132,7 @@ def _op_add(t, op, mig, applied):
     else:
         raise ValueError("level must be L1 or L2")
     if (op.get("description") or "").strip():
-        _descs(t)[name] = op["description"].strip()
+        _descs(t)[name] = one_line(op["description"])
 
 
 def _op_describe(t, op, mig, applied):
@@ -218,7 +218,7 @@ def _op_split(t, op, mig, applied):
         target.append(_new_name(t, n))
     for n, txt in (op.get("descriptions") or {}).items():
         if n in names and (txt or "").strip():
-            _descs(t)[n] = txt.strip()
+            _descs(t)[n] = one_line(txt)
     mig.append({"kind": "reclassify_node", "node_id": nid(node), "reason": f"split into {', '.join(names)}"})
     if op.get("retire"):
         _remove_from_tree(it, node, "L2", parent)

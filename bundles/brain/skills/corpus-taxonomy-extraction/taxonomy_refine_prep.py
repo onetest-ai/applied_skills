@@ -16,7 +16,10 @@ Usage:
   taxonomy_refine_prep.py --db K.sqlite --taxonomy taxonomy_v0.json --out <dir>
                           [--batches 5] [--preview 500] [--docs a,b]  [--limit 400]
 """
-import argparse, json, os, sqlite3
+import argparse, json, os, sqlite3, sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from taxo_io import one_line
 
 def main():
     ap = argparse.ArgumentParser()
@@ -33,9 +36,9 @@ def main():
     with open(os.path.join(a.out, "vocab.md"), "w") as f:
         f.write("# CURRENT taxonomy (already exists — do NOT re-propose these; only propose what's missing)\n\n")
         for l1 in l1s:
-            f.write(f"- {l1}" + (f" — {desc[l1]}" if desc.get(l1) else "") + "\n")
+            f.write(f"- {l1}" + (f" — {one_line(desc[l1])}" if desc.get(l1) else "") + "\n")
             for l2 in (tree.get(l1) or []):
-                f.write(f"    - {l2}" + (f" — {desc[l2]}" if desc.get(l2) else "") + "\n")
+                f.write(f"    - {l2}" + (f" — {one_line(desc[l2])}" if desc.get(l2) else "") + "\n")
     with open(os.path.join(a.out, "instructions.md"), "w") as f:
         f.write(
             "# Propose ADDITIVE taxonomy terms for the untagged chunks\n\n"

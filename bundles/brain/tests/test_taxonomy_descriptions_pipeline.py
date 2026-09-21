@@ -47,6 +47,16 @@ class VocabTests(unittest.TestCase):
             self.assertIn("Refunds — Money returned after a charge.", open(os.path.join(td, "r", "vocab.md")).read())
             self.assertIn('"description"', open(os.path.join(td, "r", "instructions.md")).read())
 
+    def test_classify_vocab_collapses_embedded_newlines(self):
+        with tempfile.TemporaryDirectory() as td:
+            tax = taxonomy(); tax["descriptions"] = {"Refunds": "Line one.\nLine two."}
+            write_json(os.path.join(td, "t.json"), tax)
+            db = os.path.join(td, "k.sqlite"); tagged_store(db, tax)
+            run("classify_prep.py", "--db", db, "--taxonomy", os.path.join(td, "t.json"), "--out", os.path.join(td, "c"))
+            vocab = open(os.path.join(td, "c", "vocab.md")).read()
+            self.assertIn("    - Refunds — Line one. Line two.", vocab)
+            self.assertEqual(sum(1 for l in vocab.splitlines() if "Refunds" in l), 1)
+
 
 class PlanAdditionsTests(unittest.TestCase):
     def test_description_carried(self):

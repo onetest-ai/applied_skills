@@ -174,6 +174,10 @@ class DescriptionOpTests(unittest.TestCase):
                                              "Refunds": "Money returned after a charge."})
         self.assertEqual(migs, [])
 
+    def test_describe_collapses_embedded_whitespace(self):
+        t, _, _ = O.apply_ops(taxonomy(), [{"type": "describe", "node": "Refunds", "description": "a\n b"}])
+        self.assertEqual(t["descriptions"]["Refunds"], "a b")
+
     def test_describe_empty_or_unknown_is_an_error(self):
         self.assertTrue(O.validate(taxonomy(), [{"type": "describe", "node": "Refunds", "description": "  "}]))
         self.assertTrue(O.validate(taxonomy(), [{"type": "describe", "node": "Nope", "description": "x"}]))

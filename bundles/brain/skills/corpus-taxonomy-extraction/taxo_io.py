@@ -26,6 +26,12 @@ def norm(s):
     return re.sub(r"\s+", " ", s).strip()
 
 
+def one_line(s):
+    """Collapse all whitespace (incl. newlines/tabs) to single spaces — free-text descriptions
+    from agents or the browser must never break vocab.md's line/indent structure."""
+    return " ".join((s or "").split())
+
+
 def fingerprint(op):
     """Identity of an idea across refreshes (used for suppression and item ids)."""
     t = op["type"]
