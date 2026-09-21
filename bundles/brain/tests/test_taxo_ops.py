@@ -216,3 +216,31 @@ class DescriptionOpTests(unittest.TestCase):
         errs = O.validate(taxonomy(), [{"type": "rename", "node": "Refunds", "new_name": "R2"},
                                        {"type": "describe", "node": "Refunds", "description": "d"}])
         self.assertTrue(any("changed twice" in e for e in errs), errs)
+
+
+class TagAndGovernOpTests(unittest.TestCase):
+    def test_tag_validates_node_and_ids_without_changing_taxonomy(self):
+        t, migs, applied = O.apply_ops(taxonomy(), [{"type": "tag", "node": "Refunds", "chunk_ids": [5, 7]}])
+        self.assertEqual(t, O.apply_ops(taxonomy(), [])[0])
+        self.assertEqual((migs, applied[0]["chunk_ids"]), ([], [5, 7]))
+        self.assertTrue(O.validate(taxonomy(), [{"type": "tag", "node": "Nope", "chunk_ids": [1]}]))
+        self.assertTrue(O.validate(taxonomy(), [{"type": "tag", "node": "Refunds", "chunk_ids": []}]))
+        self.assertTrue(O.validate(taxonomy(), [{"type": "tag", "node": "Refunds", "chunk_ids": ["x"]}]))
+
+    def test_tag_on_node_added_in_same_review(self):
+        ops = [{"type": "add", "level": "L2", "name": "Payment Plans", "parent": "Billing & Payments",
+                "description": "Split bills."},
+               {"type": "tag", "node": "Payment Plans", "chunk_ids": [8]}]
+        self.assertEqual(O.validate(taxonomy(), ops), [])
+
+    def test_tag_conflicts_with_rename_or_remove_of_same_node(self):
+        errs = O.validate(taxonomy(), [{"type": "rename", "node": "Refunds", "new_name": "R2"},
+                                       {"type": "tag", "node": "Refunds", "chunk_ids": [1]}])
+        self.assertTrue(errs)
+
+    def test_metric_govern_needs_known_metric_and_key(self):
+        ok = {"type": "metric_govern", "metric": "Porch Rate",
+              "draft": {"key": "porch_rate", "family": "delivery", "unit": "ratio", "desc": "d", "grain": "branch"}}
+        self.assertEqual(O.validate(taxonomy(), [ok]), [])
+        self.assertTrue(O.validate(taxonomy(), [dict(ok, metric="Nope")]))
+        self.assertTrue(O.validate(taxonomy(), [dict(ok, draft={"family": "x"})]))

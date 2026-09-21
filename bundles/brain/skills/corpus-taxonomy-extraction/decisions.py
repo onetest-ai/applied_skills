@@ -19,7 +19,7 @@ SCHEMA = 1
 ITEM_ACTIONS = {"approve", "reject", "amend", "propose", "withdraw", "reopen", "clear"}
 REVIEW_ACTIONS = {"submit", "applied"}
 HUMAN_SURFACES = {"browser", "markdown"}
-AGENT_ALLOWED = {"add", "keep", "describe"}
+AGENT_ALLOWED = {"add", "keep", "describe", "tag", "metric_govern"}
 
 
 class DecisionLogError(ValueError):
@@ -213,6 +213,11 @@ def validate_record(review, base_tax, records, rec):
                 return [f"{iid}: the amended op must act on {item['op']['node']!r}"]
             if item["origin"] == "describe" and (op.get("type") != "describe" or op.get("node") != item["op"]["node"]):
                 return [f"{iid}: a description proposal can only be amended into another description of {item['op']['node']!r}"]
+            if item["origin"] == "health":
+                alts = item.get("alternatives") or []
+                same_fix = op.get("type") == item["op"].get("type") and subject_of(op) == subject_of(item["op"])
+                if op not in alts and not same_fix:
+                    return [f"{iid}: a health fix can only be amended into one of its alternatives or an edit of the same fix"]
     entries = effective_ops(review, records + ([] if a == "submit" else [rec]))
     return authorship_errors(entries) + validate_ops(base_tax, [e["op"] for e in entries])
 

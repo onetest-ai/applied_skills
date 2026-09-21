@@ -221,3 +221,26 @@ class DescribeAndClearTests(unittest.TestCase):
         self.assertEqual(self.v([], [], rec), [])
         term = dict(rec, surface="terminal", op={"type": "add", "level": "L1", "name": "Other New"})
         self.assertEqual(self.v([], [], term), [])
+
+
+HEALTH = {"id": "i-9", "origin": "health", "kind": "no_tags", "group": "no_tags", "status": "proposed",
+          "fingerprint": "tag|transform|", "op": {"type": "tag", "node": "Transform", "chunk_ids": [7, 8]},
+          "alternatives": [{"type": "remove", "node": "Transform", "disposition": "demote", "reason": "no tags"}]}
+
+
+class HealthAmendTests(unittest.TestCase):
+    def v(self, recs, rec):
+        return D.validate_record(review([HEALTH]), taxonomy(), recs, rec)
+
+    def test_tag_and_govern_are_agent_allowed(self):
+        self.assertTrue({"tag", "metric_govern"} <= D.AGENT_ALLOWED)
+
+    def test_amend_to_alternative_or_same_type_same_subject(self):
+        alt = {"review_id": RID, "item_id": "i-9", "action": "amend", "surface": "browser", "op": HEALTH["alternatives"][0]}
+        self.assertEqual(self.v([], alt), [])
+        subset = dict(alt, op={"type": "tag", "node": "Transform", "chunk_ids": [7]})
+        self.assertEqual(self.v([], subset), [])
+        other = dict(alt, op={"type": "tag", "node": "Refunds", "chunk_ids": [7]})
+        self.assertTrue(self.v([], other))
+        foreign = dict(alt, op={"type": "move", "node": "Refunds", "new_parent": "Transform"})
+        self.assertTrue(self.v([], foreign))

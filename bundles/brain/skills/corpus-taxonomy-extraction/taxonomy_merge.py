@@ -133,6 +133,35 @@ def _added(applied):
             [[o["name"], o["parent"]] for o in applied if o["type"] == "add" and o["level"] == "L2"])
 
 
+def _write_side_outputs(tax_dir, rid, applied):
+    """Tags file (work/tags_<rid>/result_0.json, usable directly as classify_write --results) and
+    the governed-metric-drafts append log (work/governed_metric_drafts.json). Neither ever touches
+    the taxonomy itself — `tag` and `metric_govern` make no change to `t` (see taxo_ops.py)."""
+    tags_file = None
+    tag_ops = [o for o in applied if o.get("type") == "tag"]
+    if tag_ops:
+        tags = {}
+        for o in tag_ops:
+            node = o.get("node")
+            for cid in o.get("chunk_ids") or []:
+                labels = tags.setdefault(str(cid), [])
+                if node not in labels:
+                    labels.append(node)
+        tags_file = os.path.join(tax_dir, "work", f"tags_{rid}", "result_0.json")
+        atomic_write_bytes(tags_file, dump_bytes(tags))
+
+    governed_drafts_file = None
+    govern_ops = [o for o in applied if o.get("type") == "metric_govern"]
+    if govern_ops:
+        governed_drafts_file = os.path.join(tax_dir, "work", "governed_metric_drafts.json")
+        drafts = load_json(governed_drafts_file) if os.path.exists(governed_drafts_file) else []
+        for o in govern_ops:
+            drafts.append({"review_id": rid, "metric": o.get("metric"), "draft": o.get("draft"), "ts": utc_now()})
+        atomic_write_bytes(governed_drafts_file, dump_bytes(drafts))
+
+    return tags_file, governed_drafts_file
+
+
 def apply_review(review_path, decisions_path=None):
     review = load_json(review_path)
     rid = review["review_id"]
@@ -165,16 +194,32 @@ def apply_review(review_path, decisions_path=None):
         new, migs, applied = apply_ops(tax, [e["op"] for e in entries])
     except ChangesetError as e:
         raise Refused("the changeset is invalid: " + "; ".join(e.errors)) from None
-    version = (tax.get("version") or 0) + (1 if (applied or is_draft) else 0)
+
+    tags_file, governed_drafts_file = _write_side_outputs(tax_dir, rid, applied)
+    taxo_ops = [o for o in applied if o.get("type") not in ("tag", "metric_govern", "keep")]
+
     if not applied and not is_draft:
+        version = tax.get("version") or 0
         D.append(decisions_path, {"review_id": rid, "action": "applied", "out": None, "version": version,
                                   "sha256": base["sha256"], "reviewer": "taxonomy_merge.py", "surface": "script"})
-        return {"status": "no_changes", "review_id": rid, "version": version}
+        return {"status": "no_changes", "review_id": rid, "version": version, "tags_file": None,
+                "governed_drafts_file": None, "taxonomy_changed": False}
+
+    if not taxo_ops and not is_draft:
+        # side-only review (tag / metric_govern only): no new taxonomy version.
+        version = tax.get("version") or 0
+        D.append(decisions_path, {"review_id": rid, "action": "applied", "out": None, "version": version,
+                                  "sha256": base["sha256"], "reviewer": "taxonomy_merge.py", "surface": "script",
+                                  "tags_file": tags_file, "governed_drafts_file": governed_drafts_file})
+        return {"status": "applied", "review_id": rid, "version": version, "tags_file": tags_file,
+                "governed_drafts_file": governed_drafts_file, "taxonomy_changed": False}
+
+    version = (tax.get("version") or 0) + 1
     new["version"] = version
-    add_l1, add_l2 = _added(applied)
+    add_l1, add_l2 = _added(taxo_ops)
     new.setdefault("history", []).append({
         "version": version, "review_id": rid, "reviewer": st["submit"].get("reviewer"), "ts": utc_now(),
-        "ops": applied, "migrations": migs, "added_l1": add_l1, "added_l2": add_l2,
+        "ops": taxo_ops, "migrations": migs, "added_l1": add_l1, "added_l2": add_l2,
         "rejected": [r["fingerprint"] for r in st["latest"].values()
                      if r["action"] == "reject" and r.get("fingerprint")]})
     try:
@@ -184,9 +229,11 @@ def apply_review(review_path, decisions_path=None):
         raise Refused(f"{existing} already exists but {cur} was not updated to match it; "
                       "the taxonomy directory is in an inconsistent state — investigate before retrying") from None
     D.append(decisions_path, {"review_id": rid, "action": "applied", "out": out, "version": version, "sha256": sha,
-                              "reviewer": "taxonomy_merge.py", "surface": "script"})
-    return {"status": "applied", "review_id": rid, "out": out, "version": version, "ops": len(applied),
-            "migrations": len(migs)}
+                              "reviewer": "taxonomy_merge.py", "surface": "script",
+                              "tags_file": tags_file, "governed_drafts_file": governed_drafts_file})
+    return {"status": "applied", "review_id": rid, "out": out, "version": version, "ops": len(taxo_ops),
+            "migrations": len(migs), "tags_file": tags_file, "governed_drafts_file": governed_drafts_file,
+            "taxonomy_changed": True}
 
 
 def legacy_apply(a, tax, items):
@@ -274,10 +321,16 @@ def main():
             return 2
         print(json.dumps(res))
         if res["status"] == "applied":
-            tax_dir = os.path.dirname(res["out"])
-            print(f"NEXT: build_graph.py --taxonomy {os.path.join(tax_dir, CURRENT)} --db <db>; then reclassify "
-                  f"the chunk ids in {os.path.join(tax_dir, 'work', 'reclassify.json')} (classify_prep --chunks … "
-                  f"→ agents → classify_write --reclassify-done …)", file=sys.stderr)
+            nexts = []
+            if res.get("out"):
+                tax_dir = os.path.dirname(res["out"])
+                nexts.append(f"build_graph.py --taxonomy {os.path.join(tax_dir, CURRENT)} --db <db>; then "
+                             f"reclassify the chunk ids in {os.path.join(tax_dir, 'work', 'reclassify.json')} "
+                             f"(classify_prep --chunks … → agents → classify_write --reclassify-done …)")
+            if res.get("tags_file"):
+                nexts.append(f"classify_write.py --db <db> --results {os.path.dirname(res['tags_file'])} --merge")
+            if nexts:
+                print("NEXT: " + "; ".join(nexts), file=sys.stderr)
         return 0
 
     if not (a.taxonomy and a.proposals):

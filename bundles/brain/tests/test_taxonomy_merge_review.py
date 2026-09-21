@@ -269,3 +269,46 @@ class ApplyReviewTests(unittest.TestCase):
         D.append(self.dec, {"review_id": rid2, "action": "submit", "reviewer": "Pat", "surface": "browser"})
         with self.assertRaises(M.Refused):
             M.apply_review(path2)
+
+
+class SideOutputTests(unittest.TestCase):
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.dir = os.path.join(self.td.name, "taxonomy")
+        self.cur = os.path.join(self.dir, "current.json")
+        write_json(self.cur, taxonomy(version=1))
+        self.rid = "r-h"
+        self.path = os.path.join(self.dir, "reviews", f"review_{self.rid}.json")
+        write_json(self.path, {"schema": 1, "review_id": self.rid, "mode": "health",
+                               "base": {"path": self.cur, "version": 1, "sha256": IO.sha256_file(self.cur)}, "items": []})
+        self.dec = os.path.join(self.dir, "decisions.jsonl")
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def prop(self, op):
+        D.append(self.dec, {"review_id": self.rid, "item_id": D.new_human_id(), "action": "propose", "op": op,
+                            "surface": "browser", "reviewer": "Pat"})
+
+    def test_tags_only_writes_tags_file_and_no_new_version(self):
+        self.prop({"type": "tag", "node": "Refunds", "chunk_ids": [5, 7]})
+        D.append(self.dec, {"review_id": self.rid, "action": "submit", "reviewer": "Pat", "surface": "browser"})
+        res = M.apply_review(self.path)
+        self.assertFalse(res["taxonomy_changed"])
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "taxonomy_v2.json")))
+        self.assertEqual(json.load(open(res["tags_file"])), {"5": ["Refunds"], "7": ["Refunds"]})
+
+    def test_mixed_review_writes_version_tags_and_governed_drafts(self):
+        self.prop({"type": "add", "level": "L2", "name": "Payment Plans", "parent": "Billing & Payments",
+                   "description": "Split bills."})
+        self.prop({"type": "tag", "node": "Payment Plans", "chunk_ids": [8]})
+        self.prop({"type": "metric_govern", "metric": "Porch Rate",
+                   "draft": {"key": "porch_rate", "family": "delivery", "unit": "ratio", "desc": "d", "grain": "branch"}})
+        D.append(self.dec, {"review_id": self.rid, "action": "submit", "reviewer": "Pat", "surface": "browser"})
+        res = M.apply_review(self.path)
+        self.assertTrue(res["taxonomy_changed"])
+        self.assertTrue(os.path.exists(os.path.join(self.dir, "taxonomy_v2.json")))
+        self.assertEqual(json.load(open(res["tags_file"])), {"8": ["Payment Plans"]})
+        drafts = json.load(open(res["governed_drafts_file"]))
+        self.assertEqual(drafts[-1]["draft"]["key"], "porch_rate")
+        self.assertEqual(drafts[-1]["review_id"], self.rid)

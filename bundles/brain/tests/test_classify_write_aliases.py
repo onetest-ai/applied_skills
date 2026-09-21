@@ -39,3 +39,18 @@ class AliasTests(unittest.TestCase):
             subprocess.run([sys.executable, str(CW), "--db", db, "--results", res, "--reclassify-done", rc_path],
                            check=True, capture_output=True)
             self.assertFalse(os.path.exists(rc_path))
+
+
+class MergeModeTests(unittest.TestCase):
+    def test_merge_adds_without_deleting(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = os.path.join(td, "k.sqlite")
+            tagged_store(db, taxonomy())            # chunk 2 has Refunds + Billing & Payments
+            res = os.path.join(td, "cls"); os.makedirs(res)
+            json.dump({"2": ["Track Delivery"]}, open(os.path.join(res, "result_0.json"), "w"))
+            r = subprocess.run([sys.executable, str(CW), "--db", db, "--results", res, "--merge"],
+                               text=True, capture_output=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            got = sorted(x[0] for x in sqlite3.connect(db).execute(
+                "SELECT category_id FROM chunk_topics WHERE chunk_id=2"))
+            self.assertEqual(got, ["billing_payments", "delivery_pickup", "refunds", "track_delivery"])

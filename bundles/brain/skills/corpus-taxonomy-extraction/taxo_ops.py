@@ -8,13 +8,14 @@ failing op never leaves a half-applied state behind.
 """
 import copy
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from taxo_io import intent, label_taken, locate, nid, norm, one_line  # noqa: E402
 
-INTENT_TYPES = ["add", "describe", "rename", "merge", "move", "split", "remove"]
-METRIC_TYPES = ["metric_add", "metric_edit", "metric_merge", "metric_remove"]
+INTENT_TYPES = ["add", "describe", "rename", "merge", "move", "split", "remove", "tag"]
+METRIC_TYPES = ["metric_add", "metric_edit", "metric_merge", "metric_remove", "metric_govern"]
 ORDER = {t: i for i, t in enumerate(INTENT_TYPES + METRIC_TYPES)}
 KIND = {"L1": "intent_l1", "L2": "intent_l2", "entity": "entity_kind"}
 SOURCE_TYPES = {"computable", "stated", "both"}
@@ -46,7 +47,7 @@ def _target_of(op):
 def _conflicts(ops):
     errs, seen = [], {}
     for op in ops:
-        if op.get("type") in ("add", "metric_add", "keep"):
+        if op.get("type") in ("add", "metric_add", "keep", "tag", "metric_govern"):
             continue
         s = subject_of(op)
         if s in seen:
@@ -57,6 +58,13 @@ def _conflicts(ops):
         tgt = _target_of(op)
         if tgt and tgt in consumed:
             errs.append(f"{op['type']} targets {tgt!r}, which this review also changes ({consumed[tgt]})")
+    retired = {subject_of(op) for op in ops if op.get("type") == "split" and op.get("retire")}
+    changed = set(consumed) | retired
+    for op in ops:
+        if op.get("type") == "tag":
+            s = subject_of(op)
+            if s in changed:
+                errs.append(f"{s!r} is tagged and also changed")
     return errs
 
 
@@ -318,9 +326,36 @@ def _op_metric_remove(t, op, mig, applied):
     _demote(t, op["metric"])
 
 
+def _op_tag(t, op, mig, applied):
+    node = op.get("node")
+    level, parent = _need(t, node)
+    if level == "entity":
+        raise ValueError(f"{node!r} is an entity, not an intent node — only L1/L2 nodes can be tagged")
+    ids = op.get("chunk_ids")
+    if not isinstance(ids, list) or not ids:
+        raise ValueError("chunk_ids must be a non-empty list")
+    seen, out = set(), []
+    for i in ids:
+        if not isinstance(i, int) or isinstance(i, bool):
+            raise ValueError("chunk_ids must be ints")
+        if i not in seen:
+            seen.add(i)
+            out.append(i)
+    applied["chunk_ids"] = out
+
+
+def _op_metric_govern(t, op, mig, applied):
+    _find_metric(t, op.get("metric"))
+    draft = op.get("draft") or {}
+    key = draft.get("key") or ""
+    if not re.fullmatch(r"[a-z0-9_]+", key):
+        raise ValueError("draft.key is required and must match [a-z0-9_]+")
+
+
 _OPS = {"add": _op_add, "describe": _op_describe, "rename": _op_rename, "merge": _op_merge, "move": _op_move,
-        "split": _op_split, "remove": _op_remove, "metric_add": _op_metric_add, "metric_edit": _op_metric_edit,
-        "metric_merge": _op_metric_merge, "metric_remove": _op_metric_remove}
+        "split": _op_split, "remove": _op_remove, "tag": _op_tag, "metric_add": _op_metric_add,
+        "metric_edit": _op_metric_edit, "metric_merge": _op_metric_merge, "metric_remove": _op_metric_remove,
+        "metric_govern": _op_metric_govern}
 
 
 def _run(tax, ops):
