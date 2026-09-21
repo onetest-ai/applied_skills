@@ -781,6 +781,7 @@ function groupDetail(e){
 function revisionWaiting(it){ const rev = (S.revisions || {})[it.id]; return !!(rev && rev.op) && !(isDecided(it) && sameOp(itemOp(it), rev.op)); }
 function lastRequest(id){ let q = null; for (const r of Object.values(S.requests || {})) if (r.item_id === id) q = r; return q; }
 function redoHTML(it){
+  if ((it.support || {}).pattern) return "";   // a naming pattern never goes to an agent: no redo channel
   const q = lastRequest(it.id), rev = (S.revisions || {})[it.id], id = esc(it.id);
   let status = "";
   if (rev && rev.op){

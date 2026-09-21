@@ -342,7 +342,7 @@ def build_plan(mode, taxonomy_path, proposals_dir=None, consolidated=None, db=No
         raise ValueError(f"unknown mode {mode!r}")
     for n, item in enumerate(items):
         item["fingerprint"] = fingerprint(item["op"])
-        item["id"] = "i-" + hashlib.sha1(f"{rid}|{n}|{item['fingerprint']}".encode()).hexdigest()[:6]
+        item["id"] = "i-" + hashlib.sha1(f"{rid}|{n}|{item['fingerprint']}".encode()).hexdigest()[:12]
     context = _context(mode, tax, items, stats, version, problems if mode == "health" else None)
     if mode == "health":
         for item in items:

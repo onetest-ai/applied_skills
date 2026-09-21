@@ -598,5 +598,204 @@ class NearDuplicateClusterTests(unittest.TestCase):
         self.assertEqual(ids, [i["id"] for i in rv2["items"]])
 
 
+class PatternRuleEdgeTests(unittest.TestCase):
+    """Fix round: case-only / plural-only differences are duplicates, not variants; short
+    labels never chain unrelated labels through the substring rule."""
+
+    def test_case_and_plural_only_differences_are_not_patterns(self):
+        import flags
+        for group in (["API Errors", "API errors"], ["IT support", "IT Support"],
+                      ["Covid-19", "COVID-19"], ["FAQ", "FAQS"]):
+            self.assertFalse(flags.naming_pattern(group)[0], group)
+
+    def test_real_variants_stay_patterns(self):
+        import flags
+        for group in (["Q3 results", "Q4 results"], ["Win 10 issues", "Win 11 issues"],
+                      ["US sales", "UK sales"], ["Tier 1 support", "Tier 2 support"],
+                      ["EMEA sales", "APAC sales"]):
+            self.assertTrue(flags.naming_pattern(group)[0], group)
+
+    def test_short_label_does_not_chain_by_substring(self):
+        import flags
+        self.assertEqual(flags.near_duplicate_labels(["IT", "Credit", "Security", "Quality"]), [])
+        self.assertEqual(flags.near_duplicate_labels(["Billing", "Billing Admin"]), [["Billing", "Billing Admin"]])
+
+
+class ClusterEdgeTests(unittest.TestCase):
+    """Fix round: large unstemmed groups, agent keeps, several clusters, L1 clusters, combined
+    or conflicting fixes, unusable merges, respond on a group row, and an end-to-end apply."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.dir = os.path.join(self.td.name, "taxonomy")
+        self.cur = os.path.join(self.dir, "current.json")
+        self.db = os.path.join(self.td.name, "k.sqlite")
+        self.work = os.path.join(self.dir, "work", "health")
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def _build(self, tree_extra, l1_extra=(), tags=None):
+        tax = taxonomy(version=1)
+        tax["intent_taxonomy"]["tree"].update(tree_extra)
+        tax["intent_taxonomy"]["l1"] += [k for k in tree_extra if k not in tax["intent_taxonomy"]["l1"]]
+        for l1 in l1_extra:
+            tax["intent_taxonomy"]["tree"][l1] = []
+            tax["intent_taxonomy"]["l1"].append(l1)
+        write_json(self.cur, tax)
+        tagged_store(self.db, tax, {**TAGS, **(tags or {})})
+        H.diagnose(self.cur, self.db, self.work)
+        self.problems = json.load(open(os.path.join(self.work, "problems.json")))
+        return tax
+
+    def _structure(self, fixes):
+        write_json(os.path.join(self.work, "structure", "result_0.json"), {"fixes": fixes})
+
+    def _plan(self):
+        from datetime import datetime, timezone
+        return R.build_plan("health", self.cur, work_dir=self.work, db=self.db,
+                            now=datetime(2026, 9, 21, tzinfo=timezone.utc))
+
+    def _rows(self, rv, first):
+        return [i for i in rv["items"] if i["kind"] == "near_duplicate" and i["group"]
+                and i["title"].startswith("Similar labels: " + first)]
+
+    TYPOS = {"Accounts": ["Account Access", "Acount Access", "Account Acess"]}
+    TYPO_TAGS = {20: ["Account Access"], 21: ["Account Access", "Acount Access"], 22: ["Account Access"],
+                 23: ["Account Acess"]}
+
+    def test_large_group_without_a_stem_is_a_fallback_not_a_recommendation(self):
+        self._build({"Orders": ["Order Issues"] + [f"Order Issues {w}" for w in
+                     ("Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel")]})
+        p = next(p for p in self.problems["near_duplicate"] if p["members"][0] == "Order Issues")
+        self.assertTrue(p["pattern"]); self.assertNotIn("stem", p)
+        _, rv = self._plan()
+        it = next(i for i in rv["items"] if i["kind"] == "near_duplicate" and i["op"]["node"] == "Order Issues")
+        self.assertTrue(it.get("fallback"))
+        self.assertEqual(it["reason"], "9 labels grouped as similar — too many to review one by one; not checked")
+
+    def test_agent_keep_on_a_cluster(self):
+        self._build(self.TYPOS, tags=self.TYPO_TAGS)
+        self._structure([{"kind": "near_duplicate", "subject": "Account Access", "fix": "keep",
+                          "reason": "three distinct flows"}])
+        rows = self._rows(self._plan()[1], "Account Access")
+        self.assertEqual(sorted(r["op"]["node"] for r in rows), ["Account Acess", "Acount Access"])
+        for r in rows:
+            self.assertEqual(r["op"]["type"], "keep")
+            self.assertEqual(r["reason"], "three distinct flows")
+            self.assertNotIn("fallback", r)
+
+    def test_two_clusters_under_one_parent_are_two_groups(self):
+        self._build({"Accounts": self.TYPOS["Accounts"] + ["Password Reset", "Pasword Reset", "Password Rest"]},
+                    tags=self.TYPO_TAGS)
+        firsts = sorted(p["members"][0] for p in self.problems["near_duplicate"] if p["parent"] == "Accounts")
+        self.assertEqual(firsts, ["Account Access", "Password Reset"])
+        _, rv = self._plan()
+        a, b = self._rows(rv, "Account Access"), self._rows(rv, "Password Reset")
+        self.assertEqual((len(a), len(b)), (2, 2))
+        self.assertEqual(len({r["group"] for r in a}), 1)
+        self.assertEqual(a[0]["group"], "near_duplicate:" + json.dumps(["L2", "Accounts", "Account Access"]))
+        self.assertNotEqual(a[0]["group"], b[0]["group"])
+
+    def test_l1_level_cluster(self):
+        self._build({}, l1_extra=["Returns Policy", "Return Policy", "Returns Polcy"])
+        p = next(p for p in self.problems["near_duplicate"] if p["members"][0] == "Returns Policy")
+        self.assertEqual((p["level"], p["parent"]), ("L1", None))
+        self._structure([{"kind": "near_duplicate", "subject": "Returns Policy", "fix": "merge",
+                          "into": "Returns Policy", "from": ["Return Policy", "Returns Polcy"], "reason": "typos"}])
+        rows = self._rows(self._plan()[1], "Returns Policy")
+        self.assertEqual(sorted((r["op"]["from"], r["op"]["into"]) for r in rows),
+                         [("Return Policy", "Returns Policy"), ("Returns Polcy", "Returns Policy")])
+        self.assertTrue(all(r["status"] == "proposed" for r in rows))
+
+    def test_without_from_only_the_subject_is_merged(self):
+        self._build(self.TYPOS, tags=self.TYPO_TAGS)
+        self._structure([{"kind": "near_duplicate", "subject": "Acount Access", "fix": "merge",
+                          "into": "Account Access", "reason": "typo"}])
+        rows = {r["op"].get("from") or r["op"]["node"]: r for r in self._rows(self._plan()[1], "Account Access")}
+        self.assertEqual(rows["Acount Access"]["op"]["type"], "merge")
+        self.assertEqual(rows["Account Acess"]["op"]["type"], "keep")
+
+    def test_fixes_sharing_into_combine_and_a_conflicting_one_is_noted(self):
+        self._build(self.TYPOS, tags=self.TYPO_TAGS)
+        self._structure([
+            {"kind": "near_duplicate", "subject": "Acount Access", "fix": "merge", "into": "Account Access",
+             "reason": "typo one"},
+            {"kind": "near_duplicate", "subject": "Account Acess", "fix": "merge", "into": "Account Access",
+             "reason": "typo two"},
+            {"kind": "near_duplicate", "subject": "Account Access", "fix": "merge", "into": "Acount Access",
+             "reason": "backwards"}])
+        rows = self._rows(self._plan()[1], "Account Access")
+        self.assertEqual(sorted(r["op"]["from"] for r in rows), ["Account Acess", "Acount Access"])
+        self.assertTrue(all(r["op"]["into"] == "Account Access" for r in rows))
+        self.assertEqual(rows[0]["reason"], "typo one; typo two (1 other fix(es) for this group ignored)")
+
+    def test_unusable_merges_fall_back_but_keep_the_agent_reason(self):
+        self._build({**self.TYPOS, "Onboarding": ["Customer Onboarding", "Customer Onboardng"]},
+                    tags=self.TYPO_TAGS)
+        self._structure([
+            {"kind": "near_duplicate", "subject": "Account Access", "fix": "merge", "into": "Password Reset",
+             "from": ["Acount Access"], "reason": "belongs elsewhere"},
+            {"kind": "near_duplicate", "subject": "Customer Onboardng", "fix": "merge", "into": "Refunds",
+             "reason": "wrong target"}])
+        _, rv = self._plan()
+        for r in self._rows(rv, "Account Access"):
+            self.assertTrue(r.get("fallback")); self.assertEqual(r["op"]["type"], "keep")
+            self.assertIn("belongs elsewhere", r["reason"]); self.assertIn("'Password Reset'", r["reason"])
+        pair = next(i for i in rv["items"] if i["title"] == "Customer Onboarding looks like Customer Onboardng")
+        self.assertTrue(pair.get("fallback")); self.assertEqual(pair["op"]["type"], "keep")
+        self.assertIn("wrong target", pair["reason"])
+
+    def test_respond_on_a_group_row(self):
+        self._build(self.TYPOS, tags=self.TYPO_TAGS)
+        path, rv = self._plan()
+        row = next(r for r in self._rows(rv, "Account Access") if r["op"]["node"] == "Acount Access")
+        with open(os.path.join(self.dir, "work", "requests.jsonl"), "a") as f:
+            f.write(json.dumps({"id": "q-1", "item_id": row["id"], "note": "merge it", "status": "open"}) + "\n")
+        import io
+        from contextlib import redirect_stdout
+        ok = {"type": "merge", "from": "Acount Access", "into": "Account Access"}
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(R.main(["respond", "--review", path, "--request", "q-1", "--op", json.dumps(ok)]), 0)
+            bad = {"type": "merge", "from": "Acount Access", "into": "Refunds"}
+            self.assertEqual(R.main(["respond", "--review", path, "--request", "q-1", "--op", json.dumps(bad)]), 2)
+
+    def test_pattern_items_have_no_redo_channel(self):
+        import review_server as S
+        self._build({"Exceptions": [f"Exception type {i:02d}" for i in range(1, 6)]})
+        path, rv = self._plan()
+        it = next(i for i in rv["items"] if (i["support"] or {}).get("pattern"))
+        code, out = S.ReviewApp(path, db_path=self.db, reviewer="Pat").request({"item_id": it["id"], "note": "x"})
+        self.assertEqual(code, 400)
+        self.assertIn("naming pattern", out["errors"][0])
+
+    def test_cluster_merges_apply_end_to_end(self):
+        import subprocess, sys
+        import review_server as S
+        from taxo_fixtures import tag_rows
+        cte = os.path.dirname(os.path.abspath(H.__file__))
+        run = lambda *a: subprocess.run([sys.executable, os.path.join(cte, a[0]), *a[1:]],
+                                        capture_output=True, text=True, check=True)
+        self._build(self.TYPOS, tags=self.TYPO_TAGS)
+        run("build_graph.py", "--taxonomy", self.cur, "--db", self.db)
+        self._structure([{"kind": "near_duplicate", "subject": "Account Access", "fix": "merge",
+                          "into": "Account Access", "from": ["Acount Access", "Account Acess"], "reason": "typos"}])
+        path, rv = self._plan()
+        rows = self._rows(rv, "Account Access")
+        app = S.ReviewApp(path, db_path=self.db, reviewer="Pat")
+        code, out = app.decisions({"records": [{"action": "approve", "item_id": r["id"]} for r in rows]})
+        self.assertEqual(code, 200, out)
+        self.assertEqual(app.submit({})[0], 200)
+        res = json.loads(run("taxonomy_merge.py", "--review", path, "--apply").stdout.strip().splitlines()[0])
+        self.assertEqual(res["status"], "applied")
+        run("build_graph.py", "--taxonomy", self.cur, "--db", self.db)
+        new = json.load(open(self.cur))
+        self.assertEqual(new["intent_taxonomy"]["tree"]["Accounts"], ["Account Access"])
+        after = set(tag_rows(self.db))
+        self.assertFalse({"acount_access", "account_acess"} & {cat for _, cat in after})
+        for cid in (20, 21, 22, 23):
+            self.assertIn((cid, "account_access"), after)
+
+
 if __name__ == "__main__":
     unittest.main()

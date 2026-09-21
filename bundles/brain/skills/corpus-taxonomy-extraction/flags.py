@@ -24,6 +24,9 @@ def _norm(s):
     return re.sub(r"\s+", " ", s).strip()
 
 
+MIN_CONTAINED_LEN = 4
+
+
 def _similar(a, b, threshold):
     """True if normalized a/b look like the same label.
 
@@ -36,7 +39,10 @@ def _similar(a, b, threshold):
         return False
     if a == b:
         return True
-    if a.startswith(b) or b.startswith(a) or a in b or b in a:
+    # containment is only a signal when the shorter label is a real word or phrase: a 2-3
+    # character label ("it", "hr") is a substring of countless unrelated labels ("credit",
+    # "security", "quality") and would chain them all into one group
+    if min(len(a), len(b)) >= MIN_CONTAINED_LEN and (a.startswith(b) or b.startswith(a) or a in b or b in a):
         return True
     return SequenceMatcher(None, a, b).ratio() >= threshold
 
@@ -87,9 +93,13 @@ def near_duplicate_labels(labels, threshold=0.86):
 #   - any token containing a digit (numbers, years, "Q3", "v2", "A1B2");
 #   - an all-caps token of at most 4 letters (codes: "EMEA", "APAC", "US", "SKU");
 #   - a known region acronym written in caps that is longer than that ("LATAM", "NORAM").
-# A group is a pattern when every member has at least one variable token and all members
-# normalise to the same stem. Groups larger than PATTERN_MAX_MEMBERS are treated as a pattern
-# regardless — too large to review as merges one by one.
+# A group is a pattern when every member has at least one variable token, all members
+# normalise to the same stem, AND the members' variable tokens actually differ: compared
+# case-insensitively, with a trailing plural "s" ignored, the variable-token sequences must be
+# pairwise distinct. Otherwise the members differ only by case or a plural ("API Errors" /
+# "API errors", "COVID-19" / "Covid-19", "FAQ" / "FAQS") — real duplicates, not variants.
+# Groups larger than PATTERN_MAX_MEMBERS with no such stem are flagged too (see
+# `naming_pattern`), but only as "too many to review", never as intentional variants.
 
 PATTERN_MAX_MEMBERS = 8
 _TOKEN = re.compile(r"[A-Za-z0-9]+")
@@ -118,6 +128,16 @@ def pattern_stem(label):
     return stem if found else None
 
 
+def _token_key(tok):
+    t = tok.lower()
+    return t[:-1] if len(t) > 2 and t.endswith("s") else t
+
+
+def variable_tokens(label):
+    """The label's variable tokens, case-folded and with a trailing plural 's' dropped."""
+    return tuple(_token_key(m.group(0)) for m in _TOKEN.finditer(label or "") if _variable(m.group(0)))
+
+
 def pattern_display(label):
     """Human-readable stem of one label: digit runs become N…, other variable tokens XX."""
     def sub(m):
@@ -132,10 +152,15 @@ def pattern_display(label):
 def naming_pattern(labels):
     """(is_pattern, display_stem_or_None) for a near-duplicate group.
 
-    A group whose members all share one stem (see `pattern_stem`) is a pattern with a display
-    stem; a group larger than PATTERN_MAX_MEMBERS is a pattern even without a common stem."""
+    A group whose members all share one stem (see `pattern_stem`) and whose variable tokens
+    are pairwise distinct (see `variable_tokens`) is a pattern with a display stem. A group
+    larger than PATTERN_MAX_MEMBERS is reported as (True, None) even without one: too large to
+    review as merges — the caller must NOT present that as intentional variants."""
     stems = [pattern_stem(l) for l in labels]
     uniform = bool(stems) and stems[0] is not None and all(s == stems[0] for s in stems)
+    if uniform:
+        keys = [variable_tokens(l) for l in labels]
+        uniform = len(set(keys)) == len(keys)
     display = pattern_display(labels[0]) if uniform else None
     return (uniform or len(labels) > PATTERN_MAX_MEMBERS), display
 

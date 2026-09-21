@@ -282,10 +282,13 @@ class ReviewApp:
             item = next((i for i in self.review["items"] if i["id"] == item_id), None)
             if item is None:
                 return 400, {"errors": [f"{item_id!r} is not an item of this review"]}
+            if (item.get("support") or {}).get("pattern"):
+                return 400, {"errors": [f"{item_id!r} is a naming pattern; it has no redo channel — "
+                                        "change it in the taxonomy editor instead"]}
             note = (body.get("note") or "").strip()
             if not note:
                 return 400, {"errors": ["a redo request needs a note"]}
-            rec = {"id": "q-" + secrets.token_hex(3), "ts": utc_now(), "review_id": self.review["review_id"],
+            rec = {"id": "q-" + secrets.token_hex(8), "ts": utc_now(), "review_id": self.review["review_id"],
                    "item_id": item_id, "note": note, "status": "open"}
             os.makedirs(os.path.dirname(self.requests_path), exist_ok=True)
             line = (json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8")

@@ -31,7 +31,7 @@ def default_path(tax_dir):
 
 
 def new_human_id():
-    return "h-" + uuid.uuid4().hex[:6]
+    return "h-" + uuid.uuid4().hex[:12]
 
 
 def _stamp_and_check(record):

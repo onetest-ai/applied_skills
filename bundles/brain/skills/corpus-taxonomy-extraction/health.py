@@ -373,10 +373,12 @@ For each entry, decide ONE fix:
   with more tags or the clearer name; `subject` is the label merged away) or `"keep"`
   (they are genuinely distinct; explain why in `reason`).
 - `near_duplicate` cluster → `"merge"`: name ONE surviving member in `into` (it must be
-  one of `members`) and, optionally, list the members to merge into it in `from`. Leave
-  `from` out to merge every other member; list only some of them when the rest are
-  genuinely distinct and should stay. Or `"keep"`: the members are all distinct. For a
-  cluster, `subject` is any one member (use the first of `members`).
+  one of `members`) and list the members to merge into it in `from` — to merge every
+  other member, list them all explicitly; list only some when the rest are genuinely
+  distinct and should stay. Without `from`, only `subject` is merged into `into`. Or
+  `"keep"`: the members are all distinct. Write ONE fix per cluster, with `subject` set to
+  any one member (use the first of `members`); extra fixes for the same cluster are
+  combined only when they name the same `into`, otherwise only the first is used.
 - `off_axis` → `"remove"` (set `disposition` to `"demote"` if it should become an entity
   or metadata dimension rather than an intent, or `"delete"` if it has no place at all) or
   `"keep"` (it is a legitimate intent despite the heuristic; explain why).
@@ -805,7 +807,11 @@ def _pattern_item(tax, p, rejections):
     only by a number/code are probably intentional variants. Its default — keep, on the first
     member — is a deliberate recommendation, not a fallback, so "Accept all" may include it. The
     only alternative is a single merge of the least-tagged member into the most-tagged one; a
-    reviewer who wants more merges uses the taxonomy editor, not N generated alternatives."""
+    reviewer who wants more merges uses the taxonomy editor, not N generated alternatives.
+
+    A group flagged only for its size (more than `flags.PATTERN_MAX_MEMBERS`, no shared stem) is
+    NOT checked as variants: it gets the same one-item shape, but as a fallback with an honest
+    reason, so nothing presents it as a recommendation."""
     members, tags = p["members"], p.get("tags") or {}
     n, stem = len(members), p.get("stem")
     op = {"type": "keep", "node": members[0]}
@@ -814,43 +820,91 @@ def _pattern_item(tax, p, rejections):
     alts = [{"type": "merge", "from": small, "into": big}] if small != big else []
     if stem:
         title = f"Naming pattern: {n} labels like '{stem}'"
-        reason = "Labels differ only by a number/code — probably intentional variants"
+        reason, fallback = "Labels differ only by a number/code — probably intentional variants", False
     else:
-        title = f"Naming pattern: {n} similar labels like '{members[0]}'"
-        reason = "Too many similar labels to review as merges — probably a naming family"
+        title = f"{n} similar labels like '{members[0]}'"
+        reason = f"{n} labels grouped as similar — too many to review one by one; not checked"
+        fallback = True
     evidence = [{"label": m, "tags": tags.get(m, 0)} for m in members[:PATTERN_EVIDENCE_SAMPLE]]
     support = {"pattern": True, "count": n, "level": p.get("level"), "parent": p.get("parent")}
     if stem:
         support["stem"] = stem
-    return _make_item(tax, "near_duplicate", None, op, alts, evidence, support, reason, title, rejections)
+    return _make_item(tax, "near_duplicate", None, op, alts, evidence, support, reason, title, rejections,
+                      fallback=fallback)
 
 
-def _cluster_items(tax, p, fix, rejections):
+def _resolve_cluster_fix(fixes, members):
+    """Combine the agent's fixes for one 3+ cluster (file order; the first one decides).
+
+    A merge fix names its survivor in `into` and the members to merge in `from`; with no
+    `from`, only its `subject` is merged — unless `subject == into`, which (like an explicit
+    full `from` list) merges every other member. Merge fixes sharing the first fix's `into` are
+    combined; any other fix is ignored and counted. Returns a dict {type: "merge"|"keep"|None,
+    into, merged, reason, unusable, ignored}; `unusable` explains why an agent answer could not
+    be used (its own reason is kept alongside)."""
+    out = {"type": None, "into": None, "merged": [], "reason": None, "unusable": None, "ignored": 0}
+    if not fixes:
+        return out
+    first = fixes[0]
+    reasons = []
+    if first.get("fix") == "merge":
+        into = (first.get("into") or "").strip()
+        same = [f for f in fixes if f.get("fix") == "merge" and (f.get("into") or "").strip() == into]
+        out["ignored"] = len(fixes) - len(same)
+        names = set()
+        for f in same:
+            frm = f.get("from")
+            if frm is None:
+                subj = (f.get("subject") or "").strip()
+                frm = [m for m in members if m != into] if subj == into else [subj]
+            names.update(frm)
+            if f.get("reason") and f["reason"] not in reasons:
+                reasons.append(f["reason"])
+        out["reason"] = "; ".join(reasons) or None
+        merged = [m for m in members if m in names and m != into]
+        if into not in members:
+            out["unusable"] = f"the merge target {into!r} is not in this group"
+        elif not merged:
+            out["unusable"] = "the merge names no other member of this group"
+        else:
+            out.update(type="merge", into=into, merged=merged)
+    elif first.get("fix") == "keep":
+        out.update(type="keep", reason=first.get("reason"), ignored=len(fixes) - 1)
+    else:
+        out.update(reason=first.get("reason"), unusable=f"unknown fix {first.get('fix')!r}",
+                   ignored=len(fixes) - 1)
+    return out
+
+
+def _unusable_reason(why, agent_reason):
+    """The reason shown for an agent answer that could not be used: why, plus its own words."""
+    return f"Claude's fix could not be used ({why})" + (f": {agent_reason}" if agent_reason else "")
+
+
+def _cluster_items(tax, p, fixes, rejections):
     """A 3+ member near-duplicate cluster is ONE group of items (shared `group` key, like the
     describe/no_tags groups): a row per member other than the survivor. With a usable agent
-    merge (`into` a member, optional `from` list), a member in `from` (default: all others)
-    gets `merge{from: member, into: survivor}`; a member left out gets `keep` (the agent kept it
-    distinct). With an agent `keep`, or no usable fix, every row is a `keep` on its member with
-    a merge into the most-tagged member as its alternative — the latter marked as a fallback.
-    Alternatives stay bounded: keep, plus a merge into each other member (clusters of 3..8)."""
+    merge (see `_resolve_cluster_fix`), a merged member gets `merge{from: member, into:
+    survivor}` and any other member gets `keep` (the agent kept it distinct). With an agent
+    `keep`, or no usable fix, every row is a `keep` on its member with a merge into the
+    most-tagged member as its first alternative — the latter marked as a fallback, keeping the
+    agent's own reason when it DID answer. Alternatives stay bounded: keep, plus a merge into
+    each other member (clusters of 3..8)."""
     members, tags = p["members"], p.get("tags") or {}
     anchor = p.get("anchor") if p.get("anchor") in members else _most_tagged(members, tags)
     overlap = p.get("overlap_with_anchor") or {}
-    fx = fix.get("fix") if fix else None
-    into = (fix.get("into") or "").strip() if fix else ""
+    fx = _resolve_cluster_fix(fixes, members)
     fallback = False
-    if fx == "merge" and into in members:
-        survivor = into
-        frm = fix.get("from")
-        merged = [m for m in members if m != survivor and (frm is None or m in frm)]
-        reason = fix.get("reason")
-        if not merged:   # a `from` naming no other member is no usable merge
-            survivor, reason, fallback = anchor, "no fix proposed", True
-    elif fx == "keep":
-        survivor, merged, reason = anchor, [], fix.get("reason")
+    if fx["type"] == "merge":
+        survivor, merged, reason = fx["into"], fx["merged"], fx["reason"]
+    elif fx["type"] == "keep":
+        survivor, merged, reason = anchor, [], fx["reason"]
     else:
-        survivor, merged, reason, fallback = anchor, [], "no fix proposed", True
-    group = f"near_duplicate:{p.get('level')}:{p.get('parent') or ''}:{members[0]}"
+        survivor, merged, fallback = anchor, [], True
+        reason = _unusable_reason(fx["unusable"], fx["reason"]) if fx["unusable"] else "no fix proposed"
+    if fx["ignored"]:
+        reason = f"{reason or ''} ({fx['ignored']} other fix(es) for this group ignored)".strip()
+    group = "near_duplicate:" + json.dumps([p.get("level"), p.get("parent"), members[0]], ensure_ascii=False)
     title = "Similar labels: " + ", ".join(members)
     items = []
     for m in members:
@@ -863,7 +917,7 @@ def _cluster_items(tax, p, fix, rejections):
             op, alts, row_reason = merge_op, [keep_op] + others, reason
         else:
             op, alts = keep_op, [merge_op] + others
-            row_reason = reason if (fallback or fx == "keep") else \
+            row_reason = reason if fx["type"] != "merge" else \
                 f"kept distinct: Claude merges only {', '.join(merged)} into {survivor}"
         support = {"tags": tags.get(m, 0), "into": survivor, "into_tags": tags.get(survivor, 0),
                    "members": len(members)}
@@ -876,13 +930,14 @@ def _cluster_items(tax, p, fix, rejections):
 
 def _structure_items(tax, work_dir, problems, skipped_files, rejections):
     entries = _load_entries(os.path.join(work_dir, "structure"), "fixes", skipped_files)
-    nd_fix, oa_fix = {}, {}
+    nd_fix, nd_all, oa_fix = {}, [], {}
     for e in entries:
         subj = (e.get("subject") or "").strip()
         if not subj:
             continue
         if e.get("kind") == "near_duplicate":
             nd_fix.setdefault(subj, e)
+            nd_all.append(e)
         elif e.get("kind") == "off_axis":
             oa_fix.setdefault(subj, e)
     items = []
@@ -892,8 +947,8 @@ def _structure_items(tax, work_dir, problems, skipped_files, rejections):
             items.append(_pattern_item(tax, p, rejections))
             continue
         if len(members) > 2:
-            fix = next((nd_fix[m] for m in members if m in nd_fix), None)
-            items += _cluster_items(tax, p, fix, rejections)
+            fixes = [e for e in nd_all if (e.get("subject") or "").strip() in members]
+            items += _cluster_items(tax, p, fixes, rejections)
             continue
         a, b = p.get("a", members[0]), p.get("b", members[1])
         fix = nd_fix.get(a) or nd_fix.get(b)
@@ -901,15 +956,20 @@ def _structure_items(tax, work_dir, problems, skipped_files, rejections):
         merge_ab = {"type": "merge", "from": b, "into": a}   # b merged away into a
         merge_ba = {"type": "merge", "from": a, "into": b}   # a merged away into b
         fallback = False
-        if fix and fix.get("fix") == "merge" and (fix.get("into") or "").strip():
-            subj = fix.get("subject") if fix.get("subject") in (a, b) else a
-            into = fix["into"]
+        into = (fix.get("into") or "").strip() if fix else ""
+        if fix and fix.get("fix") == "merge" and into in (a, b):
+            subj = b if into == a else a
             op = {"type": "merge", "from": subj, "into": into}
             reverse = {"type": "merge", "from": into, "into": subj}
             alts, reason = [keep_op, reverse], fix.get("reason")
         elif fix and fix.get("fix") == "keep":
             op = keep_op
             alts, reason = [merge_ab, merge_ba], fix.get("reason")
+        elif fix and fix.get("fix") == "merge":
+            # the agent answered, but its target is not one of the pair: fallback, its reason kept
+            why = f"the merge target {into!r} is not one of the pair" if into else "the merge names no target"
+            op, alts, fallback = keep_op, [merge_ab, merge_ba], True
+            reason = _unusable_reason(why, fix.get("reason"))
         else:
             op = keep_op
             alts, reason, fallback = [merge_ab, merge_ba], "no fix proposed", True
