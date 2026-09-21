@@ -1,0 +1,145 @@
+import unittest
+
+import taxo_ops as O
+from taxo_fixtures import taxonomy
+
+
+def tree(t):
+    return t["intent_taxonomy"]["tree"]
+
+
+class AddRenameTests(unittest.TestCase):
+    def test_add_l1_and_l2_under_new_l1(self):
+        t, migs, _ = O.apply_ops(taxonomy(), [
+            {"type": "add", "level": "L2", "name": "Handoffs", "parent": "AI & Automation"},
+            {"type": "add", "level": "L1", "name": "AI & Automation"}])
+        self.assertEqual(tree(t)["AI & Automation"], ["Handoffs"])
+        self.assertIn("AI & Automation", t["intent_taxonomy"]["l1"])
+        self.assertEqual(migs, [])
+
+    def test_add_collision_is_an_error(self):
+        errs = O.validate(taxonomy(), [{"type": "add", "level": "L2", "name": "refunds!", "parent": "Transform"}])
+        self.assertTrue(any("collides" in e for e in errs), errs)
+
+    def test_rename_l2_repoints_and_aliases(self):
+        t, migs, _ = O.apply_ops(taxonomy(), [{"type": "rename", "node": "Refunds", "new_name": "Refund Requests"}])
+        self.assertEqual(tree(t)["Billing & Payments"], ["Duplicate Charge", "Refund Requests"])
+        self.assertEqual(t["aliases"], {"Refunds": "Refund Requests"})
+        self.assertEqual(migs, [{"kind": "repoint", "from_id": "refunds", "to_id": "refund_requests",
+                                 "label": "Refund Requests", "to_kind": "intent_l2"}])
+
+    def test_rename_l1_keeps_order_and_children(self):
+        t, _, _ = O.apply_ops(taxonomy(), [{"type": "rename", "node": "Transform", "new_name": "Programs"}])
+        self.assertEqual(list(tree(t)), ["Billing & Payments", "Billing & Payments Admin", "Delivery & Pickup", "Programs"])
+
+    def test_rename_case_only_is_allowed(self):
+        t, migs, _ = O.apply_ops(taxonomy(), [{"type": "rename", "node": "Refunds", "new_name": "REFUNDS"}])
+        self.assertEqual(migs[0]["from_id"], migs[0]["to_id"])
+
+
+class MergeMoveSplitRemoveTests(unittest.TestCase):
+    def test_merge_l1_moves_children_no_reclassify(self):
+        t, migs, _ = O.apply_ops(taxonomy(), [{"type": "merge", "from": "Billing & Payments Admin",
+                                               "into": "Billing & Payments"}])
+        self.assertNotIn("Billing & Payments Admin", tree(t))
+        self.assertEqual([m["kind"] for m in migs], ["repoint"])
+        self.assertEqual(t["aliases"]["Billing & Payments Admin"], "Billing & Payments")
+
+    def test_merge_l2_across_parents_reclassifies_first(self):
+        _, migs, _ = O.apply_ops(taxonomy(), [{"type": "merge", "from": "Proof of Delivery", "into": "Refunds"}])
+        self.assertEqual([m["kind"] for m in migs], ["reclassify_node", "repoint"])
+
+    def test_merge_across_levels_is_an_error(self):
+        errs = O.validate(taxonomy(), [{"type": "merge", "from": "Refunds", "into": "Transform"}])
+        self.assertTrue(errs)
+
+    def test_move_reclassifies(self):
+        t, migs, _ = O.apply_ops(taxonomy(), [{"type": "move", "node": "Proof of Delivery",
+                                               "new_parent": "Billing & Payments"}])
+        self.assertIn("Proof of Delivery", tree(t)["Billing & Payments"])
+        self.assertEqual(migs, [{"kind": "reclassify_node", "node_id": "proof_of_delivery",
+                                 "reason": "moved to Billing & Payments"}])
+
+    def test_split_l2_with_retire(self):
+        t, migs, _ = O.apply_ops(taxonomy(), [{"type": "split", "node": "Refunds", "into": ["Full Refund", "Partial Refund"],
+                                               "retire": True}])
+        self.assertEqual(tree(t)["Billing & Payments"], ["Duplicate Charge", "Full Refund", "Partial Refund"])
+        self.assertEqual([m["kind"] for m in migs], ["reclassify_node", "delete_node"])
+        self.assertIn(["Refunds", 0], t["demoted"])
+
+    def test_split_l1_cannot_retire(self):
+        self.assertTrue(O.validate(taxonomy(), [{"type": "split", "node": "Transform", "into": ["A", "B"], "retire": True}]))
+
+    def test_remove_l1_takes_children_and_demotes(self):
+        t, migs, _ = O.apply_ops(taxonomy(), [{"type": "remove", "node": "Delivery & Pickup", "disposition": "demote",
+                                               "reason": "out of scope"}])
+        self.assertNotIn("Delivery & Pickup", tree(t))
+        self.assertEqual(sorted(m["node_id"] for m in migs if m["kind"] == "delete_node"),
+                         ["delivery_pickup", "proof_of_delivery", "track_delivery"])
+        kinds = [m["kind"] for m in migs]
+        self.assertLess(max(i for i, k in enumerate(kinds) if k == "reclassify_node"),
+                        min(i for i, k in enumerate(kinds) if k == "delete_node"))
+
+    def test_remove_to_entity(self):
+        t, _, _ = O.apply_ops(taxonomy(), [{"type": "remove", "node": "Transform", "disposition": "entity:initiative"}])
+        self.assertEqual(t["entities"]["initiative"], ["Transform"])
+
+
+class ConflictTests(unittest.TestCase):
+    def test_two_ops_on_one_node(self):
+        errs = O.validate(taxonomy(), [{"type": "rename", "node": "Refunds", "new_name": "X"},
+                                       {"type": "remove", "node": "Refunds", "disposition": "demote"}])
+        self.assertTrue(any("changed twice" in e for e in errs), errs)
+
+    def test_target_consumed_by_other_op(self):
+        errs = O.validate(taxonomy(), [{"type": "move", "node": "Refunds", "new_parent": "Transform"},
+                                       {"type": "remove", "node": "Transform", "disposition": "demote"}])
+        self.assertTrue(any("targets 'Transform'" in e for e in errs), errs)
+
+    def test_apply_raises_with_all_errors(self):
+        with self.assertRaises(O.ChangesetError) as cm:
+            O.apply_ops(taxonomy(), [{"type": "move", "node": "Nope", "new_parent": "Transform"},
+                                     {"type": "bogus"}])
+        self.assertEqual(len(cm.exception.errors), 2)
+
+    def test_input_taxonomy_is_not_mutated(self):
+        t = taxonomy()
+        O.apply_ops(t, [{"type": "remove", "node": "Transform", "disposition": "demote"}])
+        self.assertEqual(t, taxonomy())
+
+
+class MetricOpTests(unittest.TestCase):
+    def metrics(self, t):
+        return {m["metric"]: m for m in t["metrics"]}
+
+    def test_metric_merge_unions_and_keeps_variant(self):
+        t, migs, _ = O.apply_ops(taxonomy(), [{"type": "metric_merge", "from": "Avg Handle Time",
+                                               "into": "Average Handle Time"}])
+        m = self.metrics(t)
+        self.assertNotIn("Avg Handle Time", m)
+        self.assertIn("Avg Handle Time", m["Average Handle Time"]["variants"])
+        self.assertEqual(m["Average Handle Time"]["n_sources"], 3)
+        self.assertEqual(migs, [])
+
+    def test_metric_edit_records_previous(self):
+        t, _, applied = O.apply_ops(taxonomy(), [{"type": "metric_edit", "metric": "Porch Rate",
+                                                  "fields": {"grain": "division"}}])
+        self.assertEqual(self.metrics(t)["Porch Rate"]["grain"], "division")
+        self.assertEqual(applied[0]["previous"], {"grain": "branch"})
+
+    def test_metric_edit_rejects_unknown_fields_and_types(self):
+        self.assertTrue(O.validate(taxonomy(), [{"type": "metric_edit", "metric": "Porch Rate", "fields": {"n_sources": 9}}]))
+        self.assertTrue(O.validate(taxonomy(), [{"type": "metric_edit", "metric": "Porch Rate",
+                                                 "fields": {"source_type": "guess"}}]))
+
+    def test_metric_add_and_remove(self):
+        t, _, _ = O.apply_ops(taxonomy(), [
+            {"type": "metric_add", "metric": "First Contact Resolution", "source_type": "computable", "grain": "branch"},
+            {"type": "metric_remove", "metric": "Porch Rate", "reason": "not a KPI here"}])
+        m = self.metrics(t)
+        self.assertEqual(m["First Contact Resolution"]["origin"], "human")
+        self.assertNotIn("Porch Rate", m)
+        self.assertIn(["Porch Rate", 0], t["demoted"])
+
+    def test_metric_add_duplicate_of_variant(self):
+        self.assertTrue(O.validate(taxonomy(), [{"type": "metric_add", "metric": "aht", "source_type": "stated"}]))
