@@ -42,7 +42,7 @@ class MdTests(unittest.TestCase):
             out.append(line)
         out += ['propose: add L2 "Payment Plans" under "Billing & Payments"',
                 'propose: metric_merge "Avg Handle Time" -> "Average Handle Time"',
-                'propose: metric_edit "Porch Rate" grain=division']
+                'propose: metric_edit "Refund Rate" grain=division']
         recs = MD.import_md("\n".join(out), self.rv, self.tax, [], "Pat")
         self.assertEqual([r["action"] for r in recs], ["amend", "amend", "propose", "propose", "propose"])
         self.assertTrue(all(r["surface"] == "markdown" for r in recs))

@@ -234,7 +234,7 @@ class HealthEveryProblemInboxTests(unittest.TestCase):
     def test_metric_not_governed_without_a_fix_still_gets_an_item(self):
         _, rv = self._plan()
         items = [i for i in rv["items"] if i["kind"] == "metric_not_governed"]
-        self.assertTrue(items)   # Average Handle Time and Porch Rate are both computable/ungoverned
+        self.assertTrue(items)   # Average Handle Time and Refund Rate are both computable/ungoverned
         for i in items:
             self.assertEqual(i["op"]["type"], "keep")
             self.assertEqual(i["reason"], "no fix proposed")
@@ -242,14 +242,14 @@ class HealthEveryProblemInboxTests(unittest.TestCase):
 
     def test_metric_not_governed_explicit_agent_keep_keeps_its_reason_and_template(self):
         write_json(os.path.join(self.work, "metrics", "result_0.json"),
-                   {"fixes": [{"kind": "metric_not_governed", "subject": "Porch Rate", "fix": "keep",
+                   {"fixes": [{"kind": "metric_not_governed", "subject": "Refund Rate", "fix": "keep",
                                "reason": "not worth governing yet"}]})
         _, rv = self._plan()
         item = next(i for i in rv["items"]
-                    if i["kind"] == "metric_not_governed" and i["op"].get("metric") == "Porch Rate")
-        self.assertEqual(item["op"], {"type": "keep", "metric": "Porch Rate"})
+                    if i["kind"] == "metric_not_governed" and i["op"].get("metric") == "Refund Rate")
+        self.assertEqual(item["op"], {"type": "keep", "metric": "Refund Rate"})
         self.assertEqual(item["reason"], "not worth governing yet")
-        self.assertEqual(item["alternatives"], [{"type": "metric_govern", "metric": "Porch Rate", "draft": {}}])
+        self.assertEqual(item["alternatives"], [{"type": "metric_govern", "metric": "Refund Rate", "draft": {}}])
 
     def test_untagged_sections_without_usable_results_gets_one_informational_item(self):
         _, rv = self._plan()   # untagged/ task dir exists (chunk 8) but no result files

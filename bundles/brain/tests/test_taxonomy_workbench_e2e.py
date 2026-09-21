@@ -93,4 +93,4 @@ class WorkbenchE2E(unittest.TestCase):
             self.assertEqual(sum(r["action"] == "applied" for r in recs), 2)
             v2 = json.load(open(os.path.join(tdir, "taxonomy_v2.json")))
             self.assertEqual(v2["history"][-1]["reviewer"], "Pat")
-            self.assertEqual([m["metric"] for m in v2["metrics"]], ["Average Handle Time", "Porch Rate"])
+            self.assertEqual([m["metric"] for m in v2["metrics"]], ["Average Handle Time", "Refund Rate"])

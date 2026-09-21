@@ -21,10 +21,10 @@ class GapTests(unittest.TestCase):
             self.assertEqual({g["key"] for g in gov}, {"average_handle_time", "total_calls"})
             by = {m["metric"]: m["governed"] for m in MG.annotate(taxonomy()["metrics"], gov)}
             self.assertEqual(by["Average Handle Time"]["status"], "yes")
-            self.assertEqual(by["Porch Rate"]["status"], "no")
+            self.assertEqual(by["Refund Rate"]["status"], "no")
 
     def test_gap_lists_only_ungoverned_computable(self):
         md = MG.gap_markdown(taxonomy()["metrics"], MG.load_governed(None) or [])
-        self.assertIn("| Porch Rate |", md)
+        self.assertIn("| Refund Rate |", md)
         self.assertIn("| Average Handle Time |", md)
         self.assertNotIn("| Avg Handle Time |", md)   # stated, not computable

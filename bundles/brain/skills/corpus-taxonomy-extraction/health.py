@@ -430,9 +430,9 @@ file) lists the governed metric families available for a new draft. For each
 {"fixes": [
   {"kind": "similar_metrics", "subject": "Avg Handle Time", "fix": "metric_merge",
    "into": "Average Handle Time", "reason": "same metric, one is stated-only and a variant"},
-  {"kind": "metric_not_governed", "subject": "Porch Rate", "fix": "metric_govern",
-   "draft": {"key": "porch_rate", "family": "delivery", "unit": "pct",
-             "desc": "share of deliveries left at the porch", "grain": "branch"},
+  {"kind": "metric_not_governed", "subject": "Refund Rate", "fix": "metric_govern",
+   "draft": {"key": "refund_rate", "family": "delivery", "unit": "pct",
+             "desc": "share of orders refunded", "grain": "branch"},
    "reason": "computable, seen in one source, no governed equivalent"}
 ]}
 ```

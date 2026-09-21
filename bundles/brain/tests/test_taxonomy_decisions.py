@@ -291,15 +291,15 @@ class HealthAmendOkTests(unittest.TestCase):
     primary op — this is what lets an edited template alternative through."""
 
     def test_same_type_same_subject_against_an_alternative_not_the_primary_op(self):
-        item = {"op": {"type": "keep", "metric": "Porch Rate"},
-                "alternatives": [{"type": "metric_govern", "metric": "Porch Rate", "draft": {}}]}
+        item = {"op": {"type": "keep", "metric": "Refund Rate"},
+                "alternatives": [{"type": "metric_govern", "metric": "Refund Rate", "draft": {}}]}
         self.assertTrue(D.health_amend_ok(
-            item, {"type": "metric_govern", "metric": "Porch Rate", "draft": {"key": "porch_rate"}}))
+            item, {"type": "metric_govern", "metric": "Refund Rate", "draft": {"key": "refund_rate"}}))
 
     def test_refuses_unrelated_type_and_subject(self):
-        item = {"op": {"type": "keep", "metric": "Porch Rate"},
-                "alternatives": [{"type": "metric_govern", "metric": "Porch Rate", "draft": {}}]}
-        self.assertFalse(D.health_amend_ok(item, {"type": "metric_merge", "from": "Porch Rate", "into": "X"}))
+        item = {"op": {"type": "keep", "metric": "Refund Rate"},
+                "alternatives": [{"type": "metric_govern", "metric": "Refund Rate", "draft": {}}]}
+        self.assertFalse(D.health_amend_ok(item, {"type": "metric_merge", "from": "Refund Rate", "into": "X"}))
         self.assertFalse(D.health_amend_ok(item, {"type": "metric_govern", "metric": "Other Metric", "draft": {}}))
 
 
@@ -310,8 +310,8 @@ NEAR_DUP_ITEM = {
 
 METRIC_GOVERN_ITEM = {
     "id": "i-12", "origin": "health", "kind": "metric_not_governed", "group": "metric_not_governed",
-    "status": "proposed", "fingerprint": "keep|porch rate|", "op": {"type": "keep", "metric": "Porch Rate"},
-    "alternatives": [{"type": "metric_govern", "metric": "Porch Rate", "draft": {}}]}
+    "status": "proposed", "fingerprint": "keep|refund rate|", "op": {"type": "keep", "metric": "Refund Rate"},
+    "alternatives": [{"type": "metric_govern", "metric": "Refund Rate", "draft": {}}]}
 
 NO_TAGS_TAG_ITEM = {
     "id": "i-13", "origin": "health", "kind": "no_tags", "group": "no_tags", "status": "proposed",
@@ -377,7 +377,7 @@ class HealthAmendAntiSpoofTests(unittest.TestCase):
         self.assertTrue(self.v(NEAR_DUP_ITEM, spoof))
 
     def test_extra_node_key_on_a_metric_govern_op_is_refused(self):
-        spoof = {"type": "metric_govern", "node": "Porch Rate", "metric": "Other", "draft": {}}
+        spoof = {"type": "metric_govern", "node": "Refund Rate", "metric": "Other", "draft": {}}
         self.assertFalse(D.health_amend_ok(METRIC_GOVERN_ITEM, spoof))
         self.assertTrue(self.v(METRIC_GOVERN_ITEM, spoof))
 

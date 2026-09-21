@@ -47,8 +47,8 @@ class FingerprintSubstanceTests(unittest.TestCase):
     def test_remove_and_govern_carry_their_target(self):
         a = {"type": "remove", "node": "Transform", "disposition": "demote"}
         self.assertNotEqual(fingerprint(a), fingerprint(dict(a, disposition="entity:program")))
-        g = {"type": "metric_govern", "metric": "Porch Rate", "draft": {"key": "porch_rate"}}
-        self.assertNotEqual(fingerprint(g), fingerprint(dict(g, draft={"key": "porch_pct"})))
+        g = {"type": "metric_govern", "metric": "Refund Rate", "draft": {"key": "refund_rate"}}
+        self.assertNotEqual(fingerprint(g), fingerprint(dict(g, draft={"key": "refund_pct"})))
         m = {"type": "merge", "from": "A", "into": "B"}
         self.assertNotEqual(fingerprint(m), fingerprint(dict(m, into="C")))
 

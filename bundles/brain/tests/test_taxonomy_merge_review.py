@@ -305,13 +305,13 @@ class SideOutputTests(unittest.TestCase):
         self.prop({"type": "add", "level": "L2", "name": "Payment Plans", "parent": "Billing & Payments",
                    "description": "Split bills."})
         self.prop({"type": "tag", "node": "Payment Plans", "chunk_ids": [8]})
-        self.prop({"type": "metric_govern", "metric": "Porch Rate",
-                   "draft": {"key": "porch_rate", "family": "delivery", "unit": "ratio", "desc": "d", "grain": "branch"}})
+        self.prop({"type": "metric_govern", "metric": "Refund Rate",
+                   "draft": {"key": "refund_rate", "family": "delivery", "unit": "ratio", "desc": "d", "grain": "branch"}})
         D.append(self.dec, {"review_id": self.rid, "action": "submit", "reviewer": "Pat", "surface": "browser"})
         res = M.apply_review(self.path)
         self.assertTrue(res["taxonomy_changed"])
         self.assertTrue(os.path.exists(os.path.join(self.dir, "taxonomy_v2.json")))
         self.assertEqual(json.load(open(res["tags_file"])), {"8": ["Payment Plans"]})
         drafts = json.load(open(res["governed_drafts_file"]))
-        self.assertEqual(drafts[-1]["draft"]["key"], "porch_rate")
+        self.assertEqual(drafts[-1]["draft"]["key"], "refund_rate")
         self.assertEqual(drafts[-1]["review_id"], self.rid)

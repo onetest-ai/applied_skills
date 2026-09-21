@@ -21,9 +21,9 @@ _TAX = {
         {"metric": "Avg Handle Time", "source_type": "stated", "grain": None, "n_sources": 1,
          "sources": ["c.md"], "stated_values": ["6 min"], "definition": None,
          "variants": ["Avg Handle Time"], "avg_confidence": 0.6},
-        {"metric": "Porch Rate", "source_type": "computable", "grain": "branch", "n_sources": 1,
+        {"metric": "Refund Rate", "source_type": "computable", "grain": "branch", "n_sources": 1,
          "sources": ["d.md"], "stated_values": [], "definition": None,
-         "variants": ["Porch Rate"], "avg_confidence": 0.7}],
+         "variants": ["Refund Rate"], "avg_confidence": 0.7}],
     "demoted": [["Office relocation", 3]],
     "review_flags": {
         "near_duplicate_l1_groups": [["Billing & Payments", "Billing & Payments Admin"]],

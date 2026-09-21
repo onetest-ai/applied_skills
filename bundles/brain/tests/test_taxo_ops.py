@@ -141,24 +141,24 @@ class MetricOpTests(unittest.TestCase):
         self.assertEqual(migs, [])
 
     def test_metric_edit_records_previous(self):
-        t, _, applied = O.apply_ops(taxonomy(), [{"type": "metric_edit", "metric": "Porch Rate",
+        t, _, applied = O.apply_ops(taxonomy(), [{"type": "metric_edit", "metric": "Refund Rate",
                                                   "fields": {"grain": "division"}}])
-        self.assertEqual(self.metrics(t)["Porch Rate"]["grain"], "division")
+        self.assertEqual(self.metrics(t)["Refund Rate"]["grain"], "division")
         self.assertEqual(applied[0]["previous"], {"grain": "branch"})
 
     def test_metric_edit_rejects_unknown_fields_and_types(self):
-        self.assertTrue(O.validate(taxonomy(), [{"type": "metric_edit", "metric": "Porch Rate", "fields": {"n_sources": 9}}]))
-        self.assertTrue(O.validate(taxonomy(), [{"type": "metric_edit", "metric": "Porch Rate",
+        self.assertTrue(O.validate(taxonomy(), [{"type": "metric_edit", "metric": "Refund Rate", "fields": {"n_sources": 9}}]))
+        self.assertTrue(O.validate(taxonomy(), [{"type": "metric_edit", "metric": "Refund Rate",
                                                  "fields": {"source_type": "guess"}}]))
 
     def test_metric_add_and_remove(self):
         t, _, _ = O.apply_ops(taxonomy(), [
             {"type": "metric_add", "metric": "First Contact Resolution", "source_type": "computable", "grain": "branch"},
-            {"type": "metric_remove", "metric": "Porch Rate", "reason": "not a KPI here"}])
+            {"type": "metric_remove", "metric": "Refund Rate", "reason": "not a KPI here"}])
         m = self.metrics(t)
         self.assertEqual(m["First Contact Resolution"]["origin"], "human")
-        self.assertNotIn("Porch Rate", m)
-        self.assertIn(["Porch Rate", 0], t["demoted"])
+        self.assertNotIn("Refund Rate", m)
+        self.assertIn(["Refund Rate", 0], t["demoted"])
 
     def test_metric_add_duplicate_of_variant(self):
         self.assertTrue(O.validate(taxonomy(), [{"type": "metric_add", "metric": "aht", "source_type": "stated"}]))
@@ -239,8 +239,8 @@ class TagAndGovernOpTests(unittest.TestCase):
         self.assertTrue(errs)
 
     def test_metric_govern_needs_known_metric_and_key(self):
-        ok = {"type": "metric_govern", "metric": "Porch Rate",
-              "draft": {"key": "porch_rate", "family": "delivery", "unit": "ratio", "desc": "d", "grain": "branch"}}
+        ok = {"type": "metric_govern", "metric": "Refund Rate",
+              "draft": {"key": "refund_rate", "family": "delivery", "unit": "ratio", "desc": "d", "grain": "branch"}}
         self.assertEqual(O.validate(taxonomy(), [ok]), [])
         self.assertTrue(O.validate(taxonomy(), [dict(ok, metric="Nope")]))
         self.assertTrue(O.validate(taxonomy(), [dict(ok, draft={"family": "x"})]))

@@ -27,7 +27,7 @@ CTE = Path(__file__).resolve().parent.parent / "skills" / "corpus-taxonomy-extra
 NOW = datetime(2026, 9, 21, tzinfo=timezone.utc)
 
 MALFORMED = [
-    {"type": "metric_govern", "metric": "Porch Rate", "draft": "x"},
+    {"type": "metric_govern", "metric": "Refund Rate", "draft": "x"},
     {"type": "describe", "node": "Refunds", "description": 5},
     {"type": "add", "level": "L1", "name": "New Thing", "description": 5},
     {"type": "merge", "from": ["A"], "into": "Refunds"},
@@ -131,7 +131,7 @@ class HealthRespondTests(Base):
 
 class GovernedDraftsTests(Base):
     def test_retry_is_idempotent_and_corrupt_file_is_refused(self):
-        ops = [{"type": "metric_govern", "metric": "Porch Rate", "draft": {"key": "porch_rate"}}]
+        ops = [{"type": "metric_govern", "metric": "Refund Rate", "draft": {"key": "refund_rate"}}]
         _, f = M._write_side_outputs(self.dir, "r-1", ops)
         M._write_side_outputs(self.dir, "r-1", ops)
         M._write_side_outputs(self.dir, "r-2", ops)

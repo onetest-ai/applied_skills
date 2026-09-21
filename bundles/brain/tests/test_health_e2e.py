@@ -232,7 +232,7 @@ class HealthReviewE2E(unittest.TestCase):
                     self.assertIn((cid, cat), after)
 
             # the revised metric merge applied; no metric fix → no governed drafts
-            self.assertEqual([m["metric"] for m in new["metrics"]], ["Average Handle Time", "Porch Rate"])
+            self.assertEqual([m["metric"] for m in new["metrics"]], ["Average Handle Time", "Refund Rate"])
             self.assertFalse(os.path.exists(os.path.join(tdir, "work", "governed_metric_drafts.json")))
 
 

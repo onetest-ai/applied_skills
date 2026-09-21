@@ -213,7 +213,7 @@ class GapCliTests(unittest.TestCase):
             write_json(cur, taxonomy(version=1))
             code, out = cli("gap", "--taxonomy", cur)
             self.assertEqual(code, 0)
-            self.assertIn("| Porch Rate |", open(out["out"]).read())
+            self.assertIn("| Refund Rate |", open(out["out"]).read())
 
 
 class AdoptMetaOnlyTests(unittest.TestCase):
@@ -340,7 +340,7 @@ class HealthFallbackFlagCliTests(unittest.TestCase):
                    {"fixes": [{"node": "Payment Plans", "fix": "tag", "chunk_ids": [999], "reason": "none fit"}]})
         # a genuine agent keep for one ungoverned metric; the other has no result → fallback
         write_json(os.path.join(self.work, "metrics", "result_0.json"),
-                   {"fixes": [{"kind": "metric_not_governed", "subject": "Porch Rate", "fix": "keep",
+                   {"fixes": [{"kind": "metric_not_governed", "subject": "Refund Rate", "fix": "keep",
                                "reason": "not worth governing yet"}]})
 
     def tearDown(self):
@@ -359,5 +359,5 @@ class HealthFallbackFlagCliTests(unittest.TestCase):
         notags = by("no_tags", "node", "Payment Plans")
         self.assertEqual(notags["op"]["type"], "remove")
         self.assertTrue(notags["fallback"])                    # engaged, nothing usable
-        self.assertNotIn("fallback", by("metric_not_governed", "metric", "Porch Rate"))       # agent keep
+        self.assertNotIn("fallback", by("metric_not_governed", "metric", "Refund Rate"))       # agent keep
         self.assertTrue(by("metric_not_governed", "metric", "Average Handle Time")["fallback"])
