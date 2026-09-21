@@ -9,7 +9,7 @@ db = "schema/knowledge.sqlite"
 parsed = "parsed"
 manifest = "parsed/manifest.json"
 assets = "assets"
-taxonomy = "taxonomy/taxonomy_v0.json"
+taxonomy = "taxonomy/current.json"
 runs = ".brain-maintenance/runs"
 
 [runtime]

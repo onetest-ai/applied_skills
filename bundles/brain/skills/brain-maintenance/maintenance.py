@@ -176,6 +176,39 @@ def _manifest(path: Path, parsed: Path, sync) -> tuple[list[dict[str, Any]], lis
     return data, errors
 
 
+def taxonomy_review_status(taxonomy_path: Path) -> dict[str, Any]:
+    """Read-only summary of taxonomy review state beside the configured taxonomy file."""
+    tax_dir = taxonomy_path.parent
+    reviews = sorted((tax_dir / "reviews").glob("review_*.json"), key=lambda p: p.stat().st_mtime)
+    latest = None
+    if reviews:
+        try:
+            latest = json.loads(reviews[-1].read_text(encoding="utf-8")).get("review_id")
+        except (OSError, json.JSONDecodeError):
+            latest = None
+    submitted, applied = [], set()
+    dec = tax_dir / "decisions.jsonl"
+    if dec.is_file():
+        for line in dec.read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("action") == "submit":
+                submitted.append(rec.get("review_id"))
+            elif rec.get("action") == "applied":
+                applied.add(rec.get("review_id"))
+    pending = 0
+    rc = tax_dir / "work" / "reclassify.json"
+    if rc.is_file():
+        try:
+            pending = len(json.loads(rc.read_text(encoding="utf-8")).get("chunk_ids", []))
+        except json.JSONDecodeError:
+            pending = 0
+    return {"current_json": (tax_dir / "current.json").is_file(), "latest_review": latest,
+            "submitted_unapplied": [r for r in submitted if r not in applied], "pending_reclassify": pending}
+
+
 def build_status(profile: dict[str, Any]) -> dict[str, Any]:
     paths = profile["paths"]
     for key in ("brain_config", "db", "manifest", "taxonomy"):
@@ -269,6 +302,7 @@ def build_status(profile: dict[str, Any]) -> dict[str, Any]:
         "database_sha256": sha_file(paths["db"]),
         "manifest_sha256": sha_file(paths["manifest"]),
         "taxonomy_sha256": sha_file(paths["taxonomy"]),
+        "taxonomy_review": taxonomy_review_status(paths["taxonomy"]),
         "source_plan": source_plan,
         "source_action_counts": dict(sorted(actions.items())),
         "narrative_work": narrative_work,
