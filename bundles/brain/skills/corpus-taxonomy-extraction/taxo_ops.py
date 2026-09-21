@@ -293,6 +293,7 @@ _OPS = {"add": _op_add, "rename": _op_rename, "merge": _op_merge, "move": _op_mo
 def _run(tax, ops):
     t = copy.deepcopy(tax)
     intent(t)
+    t["intent_taxonomy"].pop("l1", None)  # remove stale l1 list so intent() won't re-add removed L1s during ops
     errors, migrations, applied_ops = _conflicts(ops), [], []
     # fixed type order; within adds, L1 before L2 so an L2 can hang under an L1 added here
     key = lambda o: (ORDER.get(o.get("type"), 99), 0 if o.get("level") == "L1" else 1)

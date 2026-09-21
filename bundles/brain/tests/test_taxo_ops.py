@@ -108,6 +108,25 @@ class ConflictTests(unittest.TestCase):
         self.assertEqual(t, taxonomy())
 
 
+class L1ResurrectionTests(unittest.TestCase):
+    def test_merge_removes_l1_ghost_on_later_move(self):
+        """L1 removed by merge should not reappear as ghost when later op runs."""
+        t, _, _ = O.apply_ops(taxonomy(), [
+            {"type": "merge", "from": "Billing & Payments Admin", "into": "Billing & Payments"},
+            {"type": "move", "node": "Proof of Delivery", "new_parent": "Billing & Payments"}])
+        self.assertNotIn("Billing & Payments Admin", tree(t))
+        self.assertNotIn("Billing & Payments Admin", t["intent_taxonomy"].get("l1", []))
+
+    def test_rename_removes_l1_ghost_on_later_merge(self):
+        """L1 renamed by first op should not reappear when second op runs."""
+        t, _, _ = O.apply_ops(taxonomy(), [
+            {"type": "rename", "node": "Transform", "new_name": "Programs"},
+            {"type": "merge", "from": "Billing & Payments Admin", "into": "Billing & Payments"}])
+        self.assertNotIn("Transform", tree(t))
+        self.assertNotIn("Transform", t["intent_taxonomy"].get("l1", []))
+        self.assertIn("Programs", tree(t))
+
+
 class MetricOpTests(unittest.TestCase):
     def metrics(self, t):
         return {m["metric"]: m for m in t["metrics"]}
