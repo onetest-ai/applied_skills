@@ -183,10 +183,17 @@ def main():
                    if nid(al) not in nodes and nid(canon) in nodes])
     version = tax.get("version") or 0
     GM.write_version(c, version, hashlib.sha256(raw).hexdigest())
-    c.commit()
     if reclass:
         out = a.reclassify_out or os.path.join(os.path.dirname(os.path.abspath(a.taxonomy)), "work", "reclassify.json")
-        GM.write_reclassify(out, version, reclass)
+        try:
+            GM.write_reclassify(out, version, reclass)
+        except (OSError, ValueError) as e:
+            c.rollback()
+            c.close()
+            print(f"ERROR: could not queue {len(reclass)} chunk(s) for reclassification ({e}); "
+                  f"the tag migration was NOT committed — fix the problem and rebuild.", file=sys.stderr)
+            sys.exit(1)
+    c.commit()
     kinds = Counter(n[2] for n in nodes.values())
     print(f"graph -> {a.db}: {len(nodes)} nodes {dict(kinds)}, {len(edges)} subclass_of"
           + (f", {len(addressed)} addressed_by" if addressed else "") + " edges"

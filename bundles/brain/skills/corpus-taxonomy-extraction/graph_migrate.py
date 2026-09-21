@@ -7,6 +7,10 @@ taxonomy version it has in meta.taxonomy_version; each version's migrations run 
 """
 import json
 import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from taxo_io import atomic_write_bytes  # noqa: E402
 
 META_VERSION, META_SHA = "taxonomy_version", "taxonomy_sha256"
 
@@ -108,15 +112,24 @@ def run(c, migrations):
 
 
 def write_reclassify(path, version, reclass):
-    """Merge chunk ids into reclassify.json (never drops ids an earlier run left unprocessed)."""
+    """Merge chunk ids into reclassify.json (never drops ids an earlier run left unprocessed).
+
+    Written atomically (temp file + os.replace) in the same directory, so a crash or a full
+    disk mid-write never leaves a truncated file and never looks like a successful queue —
+    the caller must run this BEFORE committing the tag-deleting transaction, so a failure here
+    aborts the migration instead of silently losing chunks that need reclassification."""
     data = {"version": version, "chunk_ids": [], "reasons": {}}
     if os.path.exists(path):
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
+        try:
+            with open(path, encoding="utf-8") as f:
+                existing = json.load(f)
+        except (OSError, ValueError) as e:
+            raise ValueError(f"{path}: cannot read existing reclassify file ({e})") from e
+        if not isinstance(existing, dict) or "reasons" not in existing:
+            raise ValueError(f"{path}: existing reclassify file is malformed (missing 'reasons')")
+        data = existing
     for cid, why in reclass.items():
         data["reasons"].setdefault(str(cid), why)
     data["chunk_ids"] = sorted(int(k) for k in data["reasons"])
     data["version"] = version
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=1)
+    atomic_write_bytes(path, (json.dumps(data, indent=1) + "\n").encode("utf-8"))

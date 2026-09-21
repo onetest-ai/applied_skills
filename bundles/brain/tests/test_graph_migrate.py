@@ -108,6 +108,42 @@ class BuildGraphMigrationTests(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
         self.assertIn("adopt", r.stderr)
 
+    def test_malformed_reclassify_file_aborts_and_changes_nothing(self):
+        before = tag_rows(self.db)
+        rc_path = os.path.join(self.tax_dir, "work", "reclassify.json")
+        os.makedirs(os.path.dirname(rc_path), exist_ok=True)
+        with open(rc_path, "w", encoding="utf-8") as f:
+            f.write("{not valid json")
+        r = build(self.cur, self.db)
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(tag_rows(self.db), before)
+        c = sqlite3.connect(self.db)
+        self.assertEqual(GM.read_version(c), 0)
+
+
+class WriteReclassifyTests(unittest.TestCase):
+    def test_merges_into_existing_file_and_leaves_no_temp_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "work", "reclassify.json")
+            GM.write_reclassify(path, 1, {5: "moved"})
+            GM.write_reclassify(path, 2, {6: "removed", 5: "ignored, already queued"})
+            data = json.load(open(path))
+            self.assertEqual(data["chunk_ids"], [5, 6])
+            self.assertEqual(data["reasons"]["5"], "moved")
+            self.assertEqual(data["reasons"]["6"], "removed")
+            self.assertEqual(data["version"], 2)
+            leftovers = [f for f in os.listdir(os.path.dirname(path)) if f != "reclassify.json"]
+            self.assertEqual(leftovers, [])
+
+    def test_malformed_existing_file_raises_clear_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "reclassify.json")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("not json")
+            with self.assertRaises(ValueError) as ctx:
+                GM.write_reclassify(path, 1, {5: "moved"})
+            self.assertIn(path, str(ctx.exception))
+
 
 class DriftGuardTests(unittest.TestCase):
     """Primo shape: v1 = v0 + L2s (legacy add-only history, no migrations), store built from v1."""
