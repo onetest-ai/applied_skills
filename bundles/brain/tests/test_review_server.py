@@ -84,6 +84,36 @@ class ServerTests(unittest.TestCase):
         self.t.join(5)
         self.assertEqual(self.codes, [0])
 
+    def test_cancel_exits_four(self):
+        code, out = self.req("POST", "/api/cancel", {})
+        self.assertEqual((code, out["outcome"]["status"]), (200, "cancelled"))
+        self.t.join(5)
+        self.assertEqual(self.codes, [4])
+
+    def test_submit_then_cancel_keeps_submitted_and_exits_zero(self):
+        self.assertEqual(self.req("POST", "/api/submit", {})[0], 200)
+        code, out = self.req("POST", "/api/cancel", {})   # inside the flush window
+        self.assertEqual(code, 409, out)
+        self.assertEqual(self.app.outcome["status"], "submitted")
+        self.t.join(5)
+        self.assertEqual(self.codes, [0])
+        self.assertEqual([r["action"] for r in D.read(self.dec)], ["submit"])
+
+    def test_decide_after_submit_is_409_and_not_recorded(self):
+        self.assertEqual(self.req("POST", "/api/submit", {})[0], 200)
+        op = {"type": "add", "level": "L1", "name": "AI & Automation"}
+        code, out = self.req("POST", "/api/decision", {"action": "propose", "op": op})
+        self.assertEqual(code, 409, out)
+        self.assertEqual(self.req("POST", "/api/submit", {})[0], 409)
+        self.assertEqual([r["action"] for r in D.read(self.dec)], ["submit"])
+
+    def test_decision_endpoint_allow_lists_item_actions(self):
+        for action in ("submit", "applied", "bogus", None):
+            code, out = self.req("POST", "/api/decision", {"action": action})
+            self.assertEqual(code, 400, (action, out))
+        self.assertFalse(os.path.exists(self.dec))
+        self.assertTrue(self.t.is_alive())
+
     def test_db_is_read_only(self):
         with self.assertRaises(sqlite3.OperationalError):
             self.app.db.execute("DELETE FROM chunk_topics")
@@ -101,6 +131,31 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn("https://", html)
         self.assertNotIn("confirm(", html)
 
+    def test_ui_escapes_every_interpolated_id(self):
+        import re
+        html = open(S.UI, encoding="utf-8").read()
+        raw = re.findall(r"\$\{(?:it|i|p|s|c|item)\.(?:id|item_id|chunk_id)\}", html)
+        self.assertEqual(raw, [])
+
+    def test_ui_offers_revert_to_keep_and_closes_header_after_submit(self):
+        html = open(S.UI, encoding="utf-8").read()
+        self.assertIn("Revert to keep", html)
+        self.assertIn("Revert it in Changes", html)
+        self.assertIn("closeHeader()", html)
+
+    def test_revert_to_keep_undoes_a_draft_amend(self):
+        # What the "Revert to keep" button posts: approve on an amended first-build item.
+        with tempfile.TemporaryDirectory() as td:
+            v0 = os.path.join(td, "taxonomy", "taxonomy_v0.json")
+            write_json(v0, taxonomy())
+            path, rv = R.build_plan("draft", v0, now=NOW)
+            app = S.ReviewApp(path)
+            item = next(i for i in rv["items"] if i["op"]["node"] == "Refunds")
+            op = {"type": "rename", "node": "Refunds", "new_name": "Refund Requests"}
+            self.assertEqual(app.decide({"action": "amend", "item_id": item["id"], "op": op})[0], 200)
+            self.assertEqual(app.decide({"action": "approve", "item_id": item["id"]})[0], 200)
+            self.assertEqual(D.effective_ops(rv, D.read(app.decisions_path)), [])
+
 
 class TimeoutTests(unittest.TestCase):
     def test_timeout_exits_3(self):
@@ -111,3 +166,15 @@ class TimeoutTests(unittest.TestCase):
             app = S.ReviewApp(path)
             code = S.serve(app, open_browser=False, timeout=0.3, out=open(os.devnull, "w"), err=open(os.devnull, "w"))
             self.assertEqual(code, 3)
+
+    def test_submit_after_timeout_is_refused(self):
+        with tempfile.TemporaryDirectory() as td:
+            cur = os.path.join(td, "taxonomy", "current.json")
+            write_json(cur, taxonomy(version=1))
+            path, _ = R.build_plan("browse", cur, now=NOW)
+            app = S.ReviewApp(path)
+            self.assertEqual(app.expire()["status"], "timeout")
+            code, _ = app.submit({})
+            self.assertEqual(code, 409)
+            self.assertEqual(app.outcome["status"], "timeout")
+            self.assertEqual(D.read(D.default_path(os.path.dirname(cur))), [])

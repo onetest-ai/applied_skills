@@ -78,6 +78,7 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt
 const slug = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"") || "n";
 let S = null, tab = "tree", sel = null, filter = "all", q = "", metricSel = null;
 
+function closeHeader(){ for (const id of ["cancel","submit"]){ const b=document.getElementById(id); b.disabled=true; b.hidden=true; } }
 function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.style.display="block";setTimeout(()=>t.style.display="none",2500);}
 function errText(e){return (e && e.errors) ? e.errors.join("; ") : String(e);}
 
@@ -106,7 +107,7 @@ function render(){
   document.querySelectorAll("nav button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab===tab)));
   const main = document.getElementById("main");
   const banner = S.review.evidence_available===false ? `<div class="banner">Induction evidence not kept for this Brain; showing tagged chunks instead.</div>` : "";
-  if (S.submitted){ main.innerHTML = `<div class="panel detail"><h2>Submitted</h2><p>You can close this tab. Claude applies the review next.</p></div>`; return; }
+  if (S.submitted){ closeHeader(); main.innerHTML = `<div class="panel detail"><h2>Submitted</h2><p>You can close this tab. Claude applies the review next.</p></div>`; return; }
   main.innerHTML = banner + (tab==="tree" ? treeView() : tab==="metrics" ? metricsView() : changesView());
   bind();
   if (tab==="tree" && sel) showNode(sel);
@@ -144,7 +145,7 @@ async function showNode(label){
   const item = n.item, pend = pending()[label];
   const flags = (item && item.flags || []).map(f => `<div class="flag"><b>${esc(f.kind)}</b> ${esc(f.reason || ("similar to " + (f.with||[]).join(", ")))}</div>`).join("");
   const ev = (item && item.evidence || []).map(e => `<div class="quote">“${esc(e.quote)}”<small>${esc(e.source||"")}</small></div>`).join("");
-  const samples = n.samples.map(s => `<div class="quote">${esc(s.preview)}<small>#${s.chunk_id} · ${esc(s.source)} · <a href="#" data-chunk="${s.chunk_id}">full text</a></small></div>`).join("");
+  const samples = n.samples.map(s => `<div class="quote">${esc(s.preview)}<small>#${esc(s.chunk_id)} · ${esc(s.source)} · <a href="#" data-chunk="${esc(s.chunk_id)}">full text</a></small></div>`).join("");
   const sibs = n.siblings.map(s => `<span class="pill">${esc(s.label)} · ${s.tags}${s.overlap?` · ${s.overlap} shared`:""}</span>`).join(" ");
   const acts = n.level==="entity" ? ["rename","remove"] : n.level==="L1" ? ["rename","merge","split","remove","addchild"] : ["rename","merge","move","split","remove"];
   const label_ = {rename:"Rename",merge:"Merge into…",move:"Move to…",split:"Split…",remove:"Remove",addchild:"Add child"};
@@ -152,14 +153,14 @@ async function showNode(label){
     <h2>${esc(label)}</h2><div><span class="pill">${n.tags} tagged chunks</span> ${n.aliases.length?`<span class="pill">aliases: ${n.aliases.map(esc).join(", ")}</span>`:""}</div>
     ${flags}${ev ? "<div><b>Induction evidence</b>"+ev+"</div>" : ""}${samples ? "<div><b>Sample chunks</b>"+samples+"</div>" : ""}
     ${sibs ? `<div><b>Siblings</b><br>${sibs}</div>` : ""}
-    ${pend ? `<p class="muted">Pending in this review: ${esc(pend.type)}. Withdraw it in Changes to edit again.</p>` : `<div class="actions">
+    ${pend ? `<p class="muted">Pending in this review: ${esc(pend.type)}. ${item && S.decisions[item.id] && S.decisions[item.id].action==="amend" ? "Revert it in Changes (Revert to keep) to edit again." : "Withdraw it in Changes to edit again."}</p>` : `<div class="actions">
       ${item ? `<button class="btn" type="button" data-keep="${esc(item.id)}">Keep</button>` : ""}
       ${acts.map(a => `<button class="btn" type="button" data-form="${a}">${label_[a]}</button>`).join("")}</div>`}
     <div id="formslot"></div></div>`;
   box.querySelectorAll("[data-form]").forEach(b => b.onclick = () => openForm(b.dataset.form, n));
   box.querySelectorAll("[data-keep]").forEach(b => b.onclick = () => send({action:"approve", item_id:b.dataset.keep}));
   box.querySelectorAll("[data-chunk]").forEach(a => a.onclick = async ev => { ev.preventDefault();
-    try { const c = await api.chunk(a.dataset.chunk); a.closest(".quote").innerHTML = esc(c.text) + `<small>#${c.chunk_id} · ${esc(c.source)}</small>`; } catch(e){ toast(errText(e)); } });
+    try { const c = await api.chunk(a.dataset.chunk); a.closest(".quote").innerHTML = esc(c.text) + `<small>#${esc(c.chunk_id)} · ${esc(c.source)}</small>`; } catch(e){ toast(errText(e)); } });
   document.querySelectorAll(".row").forEach(r => r.classList.toggle("sel", r.dataset.node===label));
 }
 
@@ -267,19 +268,19 @@ function changesView(){
   const other = items.filter(i => i.status==="auto_skipped" || i.status==="invalid");
   const itemRow = it => { const d = S.decisions[it.id], dec = d ? (d.action==="amend" ? "amended: "+describe(d.op) : d.action + (d.reason?": "+d.reason:"")) : "undecided";
     const sup = it.support || {}, ev = (it.evidence||[]).filter(e=>e.quote).map(e=>`<div class="quote">“${esc(e.quote)}”</div>`).join("");
-    const samples = (sup.samples||[]).map(s=>`<div class="quote">${esc(s.preview)}<small>#${s.chunk_id} · ${esc(s.source)}</small></div>`).join("");
+    const samples = (sup.samples||[]).map(s=>`<div class="quote">${esc(s.preview)}<small>#${esc(s.chunk_id)} · ${esc(s.source)}</small></div>`).join("");
     const btns = it.status==="suppressed" && (!d || d.action!=="reopen") && !(d && (d.action==="approve"||d.action==="amend"))
-      ? `<button class="btn" type="button" data-dec="reopen" data-id="${it.id}">Reopen</button>`
-      : `<button class="btn" type="button" data-dec="approve" data-id="${it.id}">Approve</button><button class="btn" type="button" data-dec="reject" data-id="${it.id}">Reject…</button><button class="btn" type="button" data-dec="rename" data-id="${it.id}">Rename…</button>${it.op.level==="L2"?`<button class="btn" type="button" data-dec="reparent" data-id="${it.id}">Reparent…</button>`:""}`;
+      ? `<button class="btn" type="button" data-dec="reopen" data-id="${esc(it.id)}">Reopen</button>`
+      : `<button class="btn" type="button" data-dec="approve" data-id="${esc(it.id)}">Approve</button><button class="btn" type="button" data-dec="reject" data-id="${esc(it.id)}">Reject…</button><button class="btn" type="button" data-dec="rename" data-id="${esc(it.id)}">Rename…</button>${it.op.level==="L2"?`<button class="btn" type="button" data-dec="reparent" data-id="${esc(it.id)}">Reparent…</button>`:""}`;
     return `<div class="item ${it.status==="suppressed"?"dim":""}"><div><b>${esc(describe(it.op))}</b>
       <div class="muted">${[sup.chunks!=null?sup.chunks+" chunks":"", sup.sources!=null?sup.sources+" sources":"", sup.projected_coverage_gain_pts!=null?"+"+sup.projected_coverage_gain_pts+" pts coverage (estimate)":""].filter(Boolean).join(" · ")}</div>
       ${it.status==="suppressed" ? `<div class="muted">Rejected before: ${esc(it.prior.reason)} (${esc(it.prior.reviewer||"")})</div>` : ""}
       ${ev||samples ? `<details><summary>Evidence</summary>${ev}${samples}</details>` : ""}
-      <div class="muted">Decision: ${esc(dec)}</div><div id="f-${it.id}"></div></div><div class="actions" style="border:0">${btns}</div></div>`; };
+      <div class="muted">Decision: ${esc(dec)}</div><div id="f-${esc(it.id)}"></div></div><div class="actions" style="border:0">${btns}</div></div>`; };
   return `<section class="panel">
     <div class="item"><div><b>Your changes</b> <span class="muted">${S.proposals.length}</span></div><div></div></div>
-    ${S.proposals.map(p => `<div class="item"><div>${esc(describe(p.op))}<div class="impact">${esc(impactText(p.impact))}</div></div><div><button class="btn" type="button" data-withdraw="${p.item_id}">Withdraw</button></div></div>`).join("") || '<div class="item muted"><div>None yet. Edit nodes in the Tree or Metrics tab.</div></div>'}
-    ${induction.length ? `<div class="item"><div><b>First-build decisions</b></div><div></div></div>` + induction.map(i => `<div class="item"><div>${esc(describe(S.decisions[i.id].action==="amend"?S.decisions[i.id].op:i.op))}</div><div></div></div>`).join("") : ""}
+    ${S.proposals.map(p => `<div class="item"><div>${esc(describe(p.op))}<div class="impact">${esc(impactText(p.impact))}</div></div><div><button class="btn" type="button" data-withdraw="${esc(p.item_id)}">Withdraw</button></div></div>`).join("") || '<div class="item muted"><div>None yet. Edit nodes in the Tree or Metrics tab.</div></div>'}
+    ${induction.length ? `<div class="item"><div><b>First-build decisions</b></div><div></div></div>` + induction.map(i => `<div class="item"><div>${esc(describe(S.decisions[i.id].action==="amend"?S.decisions[i.id].op:i.op))}</div><div>${S.decisions[i.id].action==="amend"?`<button class="btn" type="button" data-dec="approve" data-id="${esc(i.id)}">Revert to keep</button>`:""}</div></div>`).join("") : ""}
     ${act.length ? `<div class="item"><div><b>Proposals from the refresh</b> <span class="muted">${act.length}</span></div><div></div></div>` + act.map(itemRow).join("") : ""}
     ${other.length ? `<details style="padding:12px 14px"><summary>${other.length} skipped automatically</summary>${other.map(i=>`<div class="muted">${esc(describe(i.op))}: ${esc(i.reason)}</div>`).join("")}</details>` : ""}
   </section>`;
@@ -329,7 +330,8 @@ function bind(){
 
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => { tab = b.dataset.tab; filter = "all"; q = ""; render(); });
 document.getElementById("submit").onclick = openSubmit;
-document.getElementById("cancel").onclick = async () => { await api.cancel(); document.getElementById("main").innerHTML = '<div class="panel detail"><h2>Closed</h2><p>Your decisions so far are saved. Ask Claude to reopen the review to continue.</p></div>'; };
+document.getElementById("cancel").onclick = async () => { try { await api.cancel(); } catch(e){ toast(errText(e)); await load().catch(()=>{}); return; }
+  closeHeader(); document.getElementById("main").innerHTML = '<div class="panel detail"><h2>Closed</h2><p>Your decisions so far are saved. Ask Claude to reopen the review to continue.</p></div>'; };
 load().catch(e => { document.getElementById("main").innerHTML = `<div class="panel detail err">${esc(errText(e))}</div>`; });
 </script>
 </body>

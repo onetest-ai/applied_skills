@@ -47,6 +47,9 @@ class ReviewApp:
         self.lock = threading.Lock()
         self.ready, self.done = threading.Event(), threading.Event()
         self.url, self.outcome = None, None
+        # Set under self.lock by the first terminal event (submit, cancel or timeout). Once set,
+        # every write is refused, so the exit code always agrees with decisions.jsonl.
+        self.closing = False
 
     # ---- reads ----
     def _records(self):
@@ -132,6 +135,17 @@ class ReviewApp:
         return 200, {"chunk_id": r[0], "source": r[1], "title": r[2], "text": r[3]}
 
     # ---- writes (decisions.jsonl only) ----
+    CLOSED = (409, {"errors": ["this review session is closed (submitted, cancelled or timed out); "
+                               "nothing more is recorded"]})
+
+    def _close(self, outcome):
+        """Record the terminal outcome. Caller holds self.lock; the first outcome wins."""
+        if self.closing:
+            return False
+        self.outcome, self.closing = outcome, True
+        self.done.set()
+        return True
+
     def impact_of(self, body):
         op = body.get("op") or {}
         with self.lock:
@@ -142,6 +156,8 @@ class ReviewApp:
             return 200, {"impact": TI.delta(self.db, self.base_tax, prior, op)}
 
     def decide(self, body):
+        if body.get("action") not in D.ITEM_ACTIONS:
+            return 400, {"errors": [f"action must be one of {sorted(D.ITEM_ACTIONS)}, not {body.get('action')!r}"]}
         rec = {k: body[k] for k in ("action", "item_id", "op", "reason") if body.get(k) is not None}
         rec.update({"review_id": self.review["review_id"], "reviewer": self.reviewer, "surface": "browser"})
         if rec.get("action") == "propose" and not rec.get("item_id"):
@@ -150,6 +166,8 @@ class ReviewApp:
         if item and rec.get("action") in ("reject", "reopen"):
             rec["fingerprint"] = item["fingerprint"]
         with self.lock:
+            if self.closing:
+                return self.CLOSED
             records = self._records()
             errs = D.validate_record(self.review, self.base_tax, records, rec)
             if errs:
@@ -160,6 +178,8 @@ class ReviewApp:
 
     def submit(self, body):
         with self.lock:
+            if self.closing:
+                return self.CLOSED
             records = self._records()
             rec = {"review_id": self.review["review_id"], "action": "submit", "reviewer": self.reviewer,
                    "surface": "browser"}
@@ -169,16 +189,26 @@ class ReviewApp:
             rec["counts"] = D.submit_counts(self.review, records)
             rec["impact"] = self._total_impact(records)
             D.append(self.decisions_path, rec)
-            self.outcome = {"status": "submitted", "review_id": self.review["review_id"], "counts": rec["counts"],
-                            "impact": rec["impact"], "decisions": self.decisions_path}
-        self.done.set()
-        return 200, {"outcome": self.outcome}
+            outcome = {"status": "submitted", "review_id": self.review["review_id"], "counts": rec["counts"],
+                       "impact": rec["impact"], "decisions": self.decisions_path}
+            self._close(outcome)
+        return 200, {"outcome": outcome}
 
     def cancel(self, body):
-        self.outcome = {"status": "cancelled", "review_id": self.review["review_id"],
-                        "decisions": self.decisions_path}
-        self.done.set()
-        return 200, {"outcome": self.outcome}
+        with self.lock:
+            if self.closing:
+                return self.CLOSED
+            outcome = {"status": "cancelled", "review_id": self.review["review_id"],
+                       "decisions": self.decisions_path}
+            self._close(outcome)
+        return 200, {"outcome": outcome}
+
+    def expire(self):
+        """Close on timeout unless submit/cancel already won; returns the final outcome."""
+        with self.lock:
+            self._close({"status": "timeout", "review_id": self.review["review_id"],
+                         "decisions": self.decisions_path})
+            return self.outcome
 
 
 def make_handler(app):
@@ -251,11 +281,10 @@ def serve(app, port=0, open_browser=True, timeout=3600, out=sys.stdout, err=sys.
     app.ready.set()
     if open_browser:
         webbrowser.open(app.url)
-    finished = app.done.wait(timeout)
+    app.done.wait(timeout)
+    outcome = app.expire()  # from here on every write is refused (409), so the outcome is final
     time.sleep(0.2)  # let the final response flush before shutting down
     httpd.shutdown()
     httpd.server_close()
-    outcome = app.outcome if finished and app.outcome else {
-        "status": "timeout", "review_id": app.review["review_id"], "decisions": app.decisions_path}
     print(json.dumps(outcome, ensure_ascii=False), file=out, flush=True)
     return EXIT[outcome["status"]]
