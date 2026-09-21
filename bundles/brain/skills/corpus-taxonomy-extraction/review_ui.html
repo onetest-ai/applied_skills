@@ -1,3 +1,336 @@
-<!doctype html><meta charset="utf-8"><title>Taxonomy review</title>
-<script>const HEADER = "X-Review-Token";</script>
-<p>Loading…</p>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Taxonomy review</title>
+<style>
+:root{--bg:#f4f6f2;--paper:#fff;--ink:#18201c;--ink2:#4a554f;--ink3:#7a857f;--line:#dce2dc;--acc:#4f6420;--accs:#e7edd6;
+--ok:#2f7a4b;--oks:#ddf0e3;--warn:#9a6400;--warns:#fbefd6;--bad:#b03a2e;--bads:#f8e0dc;--info:#2f5e8c;--infos:#e0eaf4;
+--mono:ui-monospace,SFMono-Regular,Menlo,monospace;--sans:system-ui,-apple-system,"Segoe UI",sans-serif}
+@media (prefers-color-scheme:dark){:root{--bg:#121614;--paper:#1a201d;--ink:#e6ebe7;--ink2:#b3bdb7;--ink3:#86918b;--line:#2b332f;
+--acc:#a9c46a;--accs:#2a3319;--ok:#6fcb8e;--oks:#18321f;--warn:#e5b35a;--warns:#352a12;--bad:#ee8a7e;--bads:#3a1d19;--info:#8db7e2;--infos:#18293a}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans)}
+header{position:sticky;top:0;z-index:2;background:var(--paper);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+header h1{font-size:16px;margin:0}.sub{font:12px var(--mono);color:var(--ink3)}.sp{flex:1}
+nav button{font:600 13px var(--sans);border:1px solid var(--line);background:var(--paper);color:var(--ink2);padding:6px 12px;cursor:pointer}
+nav button:first-child{border-radius:6px 0 0 6px}nav button:last-child{border-radius:0 6px 6px 0}nav button+button{border-left:0}
+nav button[aria-selected=true]{background:var(--accs);color:var(--ink)}
+.btn{font:600 13px var(--sans);padding:6px 11px;border-radius:6px;border:1px solid var(--line);background:var(--paper);color:var(--ink);cursor:pointer}
+.btn:hover{border-color:var(--ink3)}.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--paper)}
+.btn:focus-visible,nav button:focus-visible,.row:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+main{padding:16px;max-width:1280px;margin:0 auto}.panel{background:var(--paper);border:1px solid var(--line);border-radius:10px}
+.cols{display:grid;grid-template-columns:minmax(260px,1fr) minmax(0,1.6fr);gap:16px;align-items:start}
+@media(max-width:760px){.cols{grid-template-columns:1fr}}
+.list{max-height:calc(100vh - 170px);overflow:auto;padding:6px 0}.tools{display:flex;gap:8px;padding:10px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+input,select,textarea{font:13px var(--sans);padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);max-width:100%}
+.row{display:flex;gap:8px;align-items:center;padding:5px 12px;cursor:pointer;border-left:3px solid transparent}
+.row:hover{background:var(--bg)}.row.sel{background:var(--accs);border-left-color:var(--acc)}.row.l2{padding-left:30px;color:var(--ink2)}
+.row .lbl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.n{font:12px var(--mono);color:var(--ink3)}
+.badge{font:700 11px var(--mono);border-radius:4px;padding:0 5px}.b-add{background:var(--oks);color:var(--ok)}.b-chg{background:var(--infos);color:var(--info)}
+.b-del{background:var(--bads);color:var(--bad)}.b-flag{background:var(--warns);color:var(--warn)}
+.detail{padding:16px;display:flex;flex-direction:column;gap:12px}.detail h2{margin:0;font-size:18px}
+.pill{font:600 11px var(--mono);padding:2px 7px;border-radius:999px;background:var(--bg);color:var(--ink2)}
+.flag{background:var(--warns);border-radius:8px;padding:8px 10px}.quote{border-left:2px solid var(--line);padding:4px 10px;color:var(--ink2)}
+.quote small{display:block;font:11px var(--mono);color:var(--ink3)}.actions{display:flex;gap:6px;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:10px}
+form.op{display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:var(--bg);border-radius:8px;padding:10px}
+.impact{font:12px var(--mono);color:var(--ink2)}.err{color:var(--bad);font-size:13px}
+table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:600 11px var(--mono);text-transform:uppercase;color:var(--ink3)}tr.click{cursor:pointer}tr.click:hover{background:var(--bg)}
+.st-yes{color:var(--ok)}.st-candidate{color:var(--warn)}.st-no{color:var(--bad)}
+.item{padding:12px 14px;border-bottom:1px solid var(--line);display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px}
+.item.dim{opacity:.6}.muted{color:var(--ink3)}details summary{cursor:pointer;color:var(--info)}
+#submitbar{position:fixed;inset:auto 0 0 0;background:var(--paper);border-top:1px solid var(--line);padding:12px 16px;display:none;gap:12px;align-items:center;flex-wrap:wrap}
+#submitbar.open{display:flex}#toast{position:fixed;right:16px;bottom:16px;background:var(--ink);color:var(--paper);padding:8px 12px;border-radius:6px;display:none}
+.banner{background:var(--infos);border-radius:8px;padding:8px 12px;margin-bottom:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Taxonomy review</h1><span class="sub" id="rid"></span>
+  <nav role="tablist" aria-label="Views">
+    <button role="tab" data-tab="tree" aria-selected="true">Tree</button>
+    <button role="tab" data-tab="metrics" aria-selected="false">Metrics</button>
+    <button role="tab" data-tab="changes" aria-selected="false">Changes <span id="nchg"></span></button>
+  </nav>
+  <span class="sp"></span><span class="sub" id="stats"></span>
+  <button class="btn" id="cancel" type="button">Close without submitting</button>
+  <button class="btn primary" id="submit" type="button">Review &amp; submit</button>
+</header>
+<main id="main"></main>
+<div id="submitbar" role="region" aria-label="Submit"></div>
+<div id="toast" role="status"></div>
+<script>
+const HEADER = "X-Review-Token";
+const TOKEN = new URLSearchParams(location.search).get("t") || "";
+const api = {
+  async get(p){const r=await fetch(p,{headers:{[HEADER]:TOKEN}});const j=await r.json();if(!r.ok)throw j;return j;},
+  async post(p,b){const r=await fetch(p,{method:"POST",headers:{[HEADER]:TOKEN,"Content-Type":"application/json"},body:JSON.stringify(b||{})});const j=await r.json();if(!r.ok)throw j;return j;},
+  state(){return this.get("/api/state");},
+  node(label){return this.get("/api/node/"+encodeURIComponent(label));},
+  chunk(id){return this.get("/api/chunk/"+encodeURIComponent(id));},
+  impact(op){return this.post("/api/impact",{op});},
+  decide(rec){return this.post("/api/decision",rec);},
+  submit(){return this.post("/api/submit",{});},
+  cancel(){return this.post("/api/cancel",{});},
+};
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const slug = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"") || "n";
+let S = null, tab = "tree", sel = null, filter = "all", q = "", metricSel = null;
+
+function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.style.display="block";setTimeout(()=>t.style.display="none",2500);}
+function errText(e){return (e && e.errors) ? e.errors.join("; ") : String(e);}
+
+// pending op per label, from plan decisions and human proposals
+function pending(){
+  const m = {};
+  const mark = (op) => { const s = op.node || op.from || op.metric || op.name; if (s) m[s] = op; if (op.type==="add") m[op.name] = op; };
+  for (const it of S.review.items){ const d = S.decisions[it.id]; if(!d) continue;
+    if (d.action==="approve" && it.op.type!=="keep") mark(it.op); if (d.action==="amend") mark(d.op); }
+  for (const p of S.proposals) mark(p.op);
+  return m;
+}
+const BADGE = {add:["+","b-add"],rename:["~","b-chg"],merge:["⊕","b-chg"],move:["⇢","b-chg"],split:["⑂","b-chg"],remove:["×","b-del"],
+  metric_edit:["~","b-chg"],metric_merge:["⊕","b-chg"],metric_remove:["×","b-del"],metric_add:["+","b-add"]};
+function badge(op){ if(!op) return ""; const [c,k]=BADGE[op.type]||["?","b-chg"]; return `<span class="badge ${k}" title="${esc(op.type)}">${c}</span>`; }
+function inductionItem(label){ return S.review.items.find(i => i.origin==="induction" && i.op.node===label); }
+function flagged(label){ const it = inductionItem(label); return it && it.flags && it.flags.length; }
+
+async function load(){ S = await api.state(); render(); }
+
+function render(){
+  document.getElementById("rid").textContent = `${S.review.review_id} · ${S.review.mode} · base v${S.base.version}`;
+  const t = S.totals; document.getElementById("stats").textContent = t.chunks ? `${t.tagged}/${t.chunks} chunks tagged · ${t.untagged} untagged` : "no store attached";
+  const nch = S.proposals.length + Object.values(S.decisions).filter(d=>d.action!=="propose"&&d.action!=="withdraw").length;
+  document.getElementById("nchg").textContent = nch ? `(${nch})` : "";
+  document.querySelectorAll("nav button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab===tab)));
+  const main = document.getElementById("main");
+  const banner = S.review.evidence_available===false ? `<div class="banner">Induction evidence not kept for this Brain; showing tagged chunks instead.</div>` : "";
+  if (S.submitted){ main.innerHTML = `<div class="panel detail"><h2>Submitted</h2><p>You can close this tab. Claude applies the review next.</p></div>`; return; }
+  main.innerHTML = banner + (tab==="tree" ? treeView() : tab==="metrics" ? metricsView() : changesView());
+  bind();
+  if (tab==="tree" && sel) showNode(sel);
+  if (tab==="metrics" && metricSel) showMetric(metricSel);
+}
+
+// ---------- Tree ----------
+function treeView(){
+  const it = S.base.intent_taxonomy, pend = pending(), rows = [];
+  const count = l => S.counts[slug(l)] || 0;
+  const keep = l => (!q || l.toLowerCase().includes(q) || Object.keys(S.base.aliases).some(a => S.base.aliases[a]===l && a.toLowerCase().includes(q)))
+    && (filter==="all" || (filter==="flagged" && flagged(l)) || (filter==="zero" && !count(l)) || (filter==="pending" && pend[l]));
+  const row = (l, cls) => `<div class="row ${cls} ${sel===l?"sel":""}" tabindex="0" data-node="${esc(l)}">${badge(pend[l])}${flagged(l)?'<span class="badge b-flag" title="flagged">⚑</span>':""}<span class="lbl">${esc(l)}</span><span class="n">${count(l)}</span></div>`;
+  for (const [l1, kids] of Object.entries(it.tree)){
+    const kidRows = kids.filter(keep).map(k => row(k, "l2"));
+    if (keep(l1) || kidRows.length) rows.push(row(l1, ""), ...kidRows);
+  }
+  for (const u of it.unassigned_l2 || []) if (keep(u)) rows.push(row(u, "l2"));
+  const ents = S.base.entities.filter(keep).map(e => row(e, ""));
+  const added = Object.values(pend).filter(o => o.type==="add");
+  return `<div class="cols"><section class="panel"><div class="tools">
+    <input id="q" type="search" placeholder="Search labels and aliases" value="${esc(q)}" aria-label="Search">
+    <select id="filter" aria-label="Filter"><option value="all">All</option><option value="flagged">Flagged</option><option value="zero">No tags</option><option value="pending">Pending changes</option></select>
+    <button class="btn" type="button" data-act="addl1">Add L1</button></div>
+    <div class="list">${rows.join("") || '<p class="muted" style="padding:12px">Nothing matches.</p>'}
+    ${added.length ? `<div class="row muted" style="cursor:default">New in this review: ${added.map(a=>esc(a.name)).join(", ")}</div>` : ""}
+    ${ents.length ? `<div class="row muted" style="cursor:default">Entity kinds</div>${ents.join("")}` : ""}</div></section>
+    <section class="panel" id="detail"><div class="detail"><p class="muted">Select a node to see its tags, samples and edit actions.</p><div id="formslot"></div></div></section></div>`;
+}
+
+async function showNode(label){
+  sel = label; const box = document.getElementById("detail"); if (!box) return;
+  let n; try { n = await api.node(label); } catch(e){ box.innerHTML = `<div class="detail err">${esc(errText(e))}</div>`; return; }
+  if (n.errors) { box.innerHTML = `<div class="detail err">${esc(errText(n))}</div>`; return; }
+  const item = n.item, pend = pending()[label];
+  const flags = (item && item.flags || []).map(f => `<div class="flag"><b>${esc(f.kind)}</b> ${esc(f.reason || ("similar to " + (f.with||[]).join(", ")))}</div>`).join("");
+  const ev = (item && item.evidence || []).map(e => `<div class="quote">“${esc(e.quote)}”<small>${esc(e.source||"")}</small></div>`).join("");
+  const samples = n.samples.map(s => `<div class="quote">${esc(s.preview)}<small>#${s.chunk_id} · ${esc(s.source)} · <a href="#" data-chunk="${s.chunk_id}">full text</a></small></div>`).join("");
+  const sibs = n.siblings.map(s => `<span class="pill">${esc(s.label)} · ${s.tags}${s.overlap?` · ${s.overlap} shared`:""}</span>`).join(" ");
+  const acts = n.level==="entity" ? ["rename","remove"] : n.level==="L1" ? ["rename","merge","split","remove","addchild"] : ["rename","merge","move","split","remove"];
+  const label_ = {rename:"Rename",merge:"Merge into…",move:"Move to…",split:"Split…",remove:"Remove",addchild:"Add child"};
+  box.innerHTML = `<div class="detail"><div><span class="pill">${esc(n.level)}${n.parent?" · under "+esc(n.parent):""}</span> ${badge(pend)}</div>
+    <h2>${esc(label)}</h2><div><span class="pill">${n.tags} tagged chunks</span> ${n.aliases.length?`<span class="pill">aliases: ${n.aliases.map(esc).join(", ")}</span>`:""}</div>
+    ${flags}${ev ? "<div><b>Induction evidence</b>"+ev+"</div>" : ""}${samples ? "<div><b>Sample chunks</b>"+samples+"</div>" : ""}
+    ${sibs ? `<div><b>Siblings</b><br>${sibs}</div>` : ""}
+    ${pend ? `<p class="muted">Pending in this review: ${esc(pend.type)}. Withdraw it in Changes to edit again.</p>` : `<div class="actions">
+      ${item ? `<button class="btn" type="button" data-keep="${esc(item.id)}">Keep</button>` : ""}
+      ${acts.map(a => `<button class="btn" type="button" data-form="${a}">${label_[a]}</button>`).join("")}</div>`}
+    <div id="formslot"></div></div>`;
+  box.querySelectorAll("[data-form]").forEach(b => b.onclick = () => openForm(b.dataset.form, n));
+  box.querySelectorAll("[data-keep]").forEach(b => b.onclick = () => send({action:"approve", item_id:b.dataset.keep}));
+  box.querySelectorAll("[data-chunk]").forEach(a => a.onclick = async ev => { ev.preventDefault();
+    try { const c = await api.chunk(a.dataset.chunk); a.closest(".quote").innerHTML = esc(c.text) + `<small>#${c.chunk_id} · ${esc(c.source)}</small>`; } catch(e){ toast(errText(e)); } });
+  document.querySelectorAll(".row").forEach(r => r.classList.toggle("sel", r.dataset.node===label));
+}
+
+function l1Options(except){ return Object.keys(S.base.intent_taxonomy.tree).filter(l => l!==except).map(l => `<option>${esc(l)}</option>`).join(""); }
+function sameLevel(n){ const it=S.base.intent_taxonomy; return (n.level==="L1" ? Object.keys(it.tree) : Object.values(it.tree).flat().concat(it.unassigned_l2||[])).filter(l=>l!==n.label); }
+
+function openForm(kind, n){
+  const slot = document.getElementById("formslot"); let fields = "";
+  if (kind==="rename") fields = `<label>New label <input name="new_name" value="${esc(n.label)}" required></label>`;
+  if (kind==="merge") fields = `<label>Merge into <select name="into">${sameLevel(n).map(l=>`<option>${esc(l)}</option>`).join("")}</select></label>`;
+  if (kind==="move") fields = `<label>New parent <select name="new_parent">${l1Options(n.parent)}</select></label>`;
+  if (kind==="split") fields = `<label>New labels, one per line <textarea name="into" rows="3" required></textarea></label>${n.level==="L2"?'<label><input type="checkbox" name="retire"> retire the original</label>':""}`;
+  if (kind==="remove") fields = `<label>Then <select name="disposition"><option value="demote">demote the label</option>${S.base.entities.map(e=>`<option value="entity:${esc(e)}">make it a ${esc(e)} entity</option>`).join("")}</select></label><label>Reason <input name="reason" required></label>`;
+  if (kind==="addchild") fields = `<label>New L2 under ${esc(n.label)} <input name="name" required></label>`;
+  slot.innerHTML = `<form class="op" id="opform">${fields}<span class="impact" id="imp">impact: …</span><button class="btn primary" type="submit">Confirm</button><button class="btn" type="button" id="opcancel">Cancel</button><span class="err" id="operr"></span></form>`;
+  const form = document.getElementById("opform");
+  const build = () => { const f = new FormData(form);
+    if (kind==="rename") return {type:"rename", node:n.label, new_name:f.get("new_name").trim()};
+    if (kind==="merge") return {type:"merge", from:n.label, into:f.get("into")};
+    if (kind==="move") return {type:"move", node:n.label, new_parent:f.get("new_parent")};
+    if (kind==="split") return {type:"split", node:n.label, into:f.get("into").split("\n").map(s=>s.trim()).filter(Boolean), retire:f.get("retire")==="on"};
+    if (kind==="remove") return {type:"remove", node:n.label, disposition:f.get("disposition"), reason:f.get("reason")};
+    return {type:"add", level:"L2", name:f.get("name").trim(), parent:n.label}; };
+  const preview = async () => { const out = document.getElementById("imp"), err = document.getElementById("operr"); err.textContent = "";
+    try { const r = await api.impact(build()); out.textContent = impactText(r.impact); } catch(e){ out.textContent = "impact: —"; err.textContent = errText(e); } };
+  form.oninput = preview; preview();
+  document.getElementById("opcancel").onclick = () => slot.innerHTML = "";
+  form.onsubmit = async ev => { ev.preventDefault(); const op = build(), item = inductionItem(n.label);
+    const rec = (item && op.type!=="add") ? {action:"amend", item_id:item.id, op} : {action:"propose", op};
+    await send(rec); };
+}
+
+function impactText(i){ if(!i) return ""; if (i.errors) return "invalid: " + i.errors.join("; ");
+  const parts = [];
+  if (i.tags_repointed) parts.push(`${i.tags_repointed} tags move`);
+  if (i.tags_deduplicated) parts.push(`${i.tags_deduplicated} duplicate tags merged`);
+  if (i.tags_deleted) parts.push(`${i.tags_deleted} tags deleted`);
+  if (i.chunks_reclassified) parts.push(`${i.chunks_reclassified} chunks reclassified`);
+  if (i.chunks_left_untagged_until_reclassify) parts.push(`${i.chunks_left_untagged_until_reclassify} untagged until reclassified`);
+  return "impact: " + (parts.join(" · ") || "no tag changes"); }
+
+async function send(rec){ try { await api.decide(rec); toast("Saved"); await load(); } catch(e){ const el=document.getElementById("operr"); if(el) el.textContent = errText(e); else toast(errText(e)); } }
+
+// ---------- Metrics ----------
+function metricsView(){
+  const pend = pending(), f = filter;
+  const rows = S.metrics.filter(m => (!q || m.metric.toLowerCase().includes(q))
+    && (f==="all" || (f==="ungoverned" && m.source_type!=="stated" && m.governed.status!=="yes") || (f===m.source_type)));
+  rows.sort((a,b) => ((b.source_type!=="stated"&&b.governed.status!=="yes") - (a.source_type!=="stated"&&a.governed.status!=="yes")));
+  return `<div class="cols"><section class="panel"><div class="tools">
+    <input id="q" type="search" placeholder="Search metrics" value="${esc(q)}" aria-label="Search">
+    <select id="filter" aria-label="Filter"><option value="all">All</option><option value="ungoverned">Ungoverned computable</option><option value="computable">computable</option><option value="both">both</option><option value="stated">stated</option></select>
+    <button class="btn" type="button" data-act="addmetric">Add metric</button></div>
+    ${S.governed_file ? "" : '<p class="muted" style="padding:0 12px">No schema/metrics.&lt;corpus&gt;.json found; governed status is unknown.</p>'}
+    <div class="list"><table><thead><tr><th>metric</th><th>type</th><th>grain</th><th>src</th><th>governed</th></tr></thead><tbody>
+    ${rows.map(m => `<tr class="click ${metricSel===m.metric?"sel":""}" data-metric="${esc(m.metric)}"><td>${badge(pend[m.metric])} ${esc(m.metric)}</td><td>${esc(m.source_type)}</td><td>${esc(m.grain||"")}</td><td>${m.n_sources||0}</td><td class="st-${m.governed.status}">${m.governed.status}${m.governed.key?` · ${esc(m.governed.key)}`:""}</td></tr>`).join("")}
+    </tbody></table></div></section><section class="panel" id="detail"><div class="detail"><p class="muted">Select a metric. Ungoverned computable metrics come first: kb answers those as “not modeled”.</p><div id="formslot"></div></div></section></div>`;
+}
+
+function showMetric(name){
+  metricSel = name; const m = S.metrics.find(x => x.metric===name), box = document.getElementById("detail"); if (!m || !box) return;
+  const pend = pending()[name];
+  box.innerHTML = `<div class="detail"><h2>${esc(m.metric)}</h2>
+    <div><span class="pill">${esc(m.source_type)}</span> <span class="pill">grain: ${esc(m.grain||"—")}</span> <span class="pill">${m.n_sources||0} sources</span> <span class="pill st-${m.governed.status}">governed: ${m.governed.status}${m.governed.key?" ("+esc(m.governed.key)+")":""}</span></div>
+    <p>${esc(m.definition || "No definition recorded.")}</p>
+    ${(m.stated_values||[]).length ? `<div><b>Stated values</b><br>${m.stated_values.map(esc).join("<br>")}</div>` : ""}
+    <div class="muted">variants: ${(m.variants||[]).map(esc).join(", ")}</div>
+    ${pend ? `<p class="muted">Pending: ${esc(pend.type)}. Withdraw it in Changes to edit again.</p>` : `<div class="actions">
+      <button class="btn" type="button" data-mform="edit">Edit</button><button class="btn" type="button" data-mform="merge">Merge into…</button><button class="btn" type="button" data-mform="remove">Remove</button></div>`}
+    <div id="formslot"></div></div>`;
+  box.querySelectorAll("[data-mform]").forEach(b => b.onclick = () => metricForm(b.dataset.mform, m));
+}
+
+function metricForm(kind, m){
+  const slot = document.getElementById("formslot"), types = ["computable","both","stated"];
+  let fields = "";
+  if (kind==="edit") fields = `<label>type <select name="source_type">${types.map(t=>`<option ${m&&m.source_type===t?"selected":""}>${t}</option>`).join("")}</select></label><label>grain <input name="grain" value="${esc(m&&m.grain||"")}"></label><label>definition <input name="definition" value="${esc(m&&m.definition||"")}"></label>`;
+  if (kind==="merge") fields = `<label>Merge into <select name="into">${S.metrics.filter(x=>x.metric!==m.metric).map(x=>`<option>${esc(x.metric)}</option>`).join("")}</select></label>`;
+  if (kind==="remove") fields = `<label>Reason <input name="reason" required></label>`;
+  if (kind==="add") fields = `<label>Metric <input name="metric" required></label><label>type <select name="source_type">${types.map(t=>`<option>${t}</option>`).join("")}</select></label><label>grain <input name="grain"></label><label>definition <input name="definition"></label>`;
+  slot.innerHTML = `<form class="op" id="opform">${fields}<button class="btn primary" type="submit">Confirm</button><button class="btn" type="button" id="opcancel">Cancel</button><span class="err" id="operr"></span></form>`;
+  document.getElementById("opcancel").onclick = () => slot.innerHTML = "";
+  document.getElementById("opform").onsubmit = async ev => { ev.preventDefault(); const f = new FormData(ev.target); let op;
+    if (kind==="edit"){ const fields = {}; for (const k of ["source_type","grain","definition"]){ const v = f.get(k); if ((m[k]||"") !== v) fields[k] = v || null; }
+      if (!Object.keys(fields).length){ document.getElementById("operr").textContent = "Nothing changed."; return; } op = {type:"metric_edit", metric:m.metric, fields}; }
+    if (kind==="merge") op = {type:"metric_merge", from:m.metric, into:f.get("into")};
+    if (kind==="remove") op = {type:"metric_remove", metric:m.metric, reason:f.get("reason")};
+    if (kind==="add") op = {type:"metric_add", metric:f.get("metric").trim(), source_type:f.get("source_type"), grain:f.get("grain")||null, definition:f.get("definition")||null};
+    await send({action:"propose", op}); };
+}
+
+// ---------- Changes ----------
+function describe(op){ switch(op.type){
+  case "add": return `+ ${op.level} ${op.name}${op.parent?" under "+op.parent:""}`;
+  case "rename": return `rename ${op.node} → ${op.new_name}`; case "merge": return `merge ${op.from} → ${op.into}`;
+  case "move": return `move ${op.node} → ${op.new_parent}`; case "split": return `split ${op.node} → ${op.into.join(", ")}${op.retire?" (retire)":""}`;
+  case "remove": return `remove ${op.node} (${op.disposition})`; case "keep": return `keep ${op.node}`;
+  case "metric_edit": return `edit metric ${op.metric}: ${Object.entries(op.fields).map(([k,v])=>k+"="+v).join(", ")}`;
+  case "metric_merge": return `merge metric ${op.from} → ${op.into}`; case "metric_remove": return `remove metric ${op.metric}`;
+  case "metric_add": return `+ metric ${op.metric}`; default: return JSON.stringify(op); } }
+
+function changesView(){
+  const items = S.review.items.filter(i => i.origin!=="induction"), act = items.filter(i => i.status==="proposed" || i.status==="suppressed");
+  const induction = S.review.items.filter(i => i.origin==="induction" && S.decisions[i.id]);
+  const other = items.filter(i => i.status==="auto_skipped" || i.status==="invalid");
+  const itemRow = it => { const d = S.decisions[it.id], dec = d ? (d.action==="amend" ? "amended: "+describe(d.op) : d.action + (d.reason?": "+d.reason:"")) : "undecided";
+    const sup = it.support || {}, ev = (it.evidence||[]).filter(e=>e.quote).map(e=>`<div class="quote">“${esc(e.quote)}”</div>`).join("");
+    const samples = (sup.samples||[]).map(s=>`<div class="quote">${esc(s.preview)}<small>#${s.chunk_id} · ${esc(s.source)}</small></div>`).join("");
+    const btns = it.status==="suppressed" && (!d || d.action!=="reopen") && !(d && (d.action==="approve"||d.action==="amend"))
+      ? `<button class="btn" type="button" data-dec="reopen" data-id="${it.id}">Reopen</button>`
+      : `<button class="btn" type="button" data-dec="approve" data-id="${it.id}">Approve</button><button class="btn" type="button" data-dec="reject" data-id="${it.id}">Reject…</button><button class="btn" type="button" data-dec="rename" data-id="${it.id}">Rename…</button>${it.op.level==="L2"?`<button class="btn" type="button" data-dec="reparent" data-id="${it.id}">Reparent…</button>`:""}`;
+    return `<div class="item ${it.status==="suppressed"?"dim":""}"><div><b>${esc(describe(it.op))}</b>
+      <div class="muted">${[sup.chunks!=null?sup.chunks+" chunks":"", sup.sources!=null?sup.sources+" sources":"", sup.projected_coverage_gain_pts!=null?"+"+sup.projected_coverage_gain_pts+" pts coverage (estimate)":""].filter(Boolean).join(" · ")}</div>
+      ${it.status==="suppressed" ? `<div class="muted">Rejected before: ${esc(it.prior.reason)} (${esc(it.prior.reviewer||"")})</div>` : ""}
+      ${ev||samples ? `<details><summary>Evidence</summary>${ev}${samples}</details>` : ""}
+      <div class="muted">Decision: ${esc(dec)}</div><div id="f-${it.id}"></div></div><div class="actions" style="border:0">${btns}</div></div>`; };
+  return `<section class="panel">
+    <div class="item"><div><b>Your changes</b> <span class="muted">${S.proposals.length}</span></div><div></div></div>
+    ${S.proposals.map(p => `<div class="item"><div>${esc(describe(p.op))}<div class="impact">${esc(impactText(p.impact))}</div></div><div><button class="btn" type="button" data-withdraw="${p.item_id}">Withdraw</button></div></div>`).join("") || '<div class="item muted"><div>None yet. Edit nodes in the Tree or Metrics tab.</div></div>'}
+    ${induction.length ? `<div class="item"><div><b>First-build decisions</b></div><div></div></div>` + induction.map(i => `<div class="item"><div>${esc(describe(S.decisions[i.id].action==="amend"?S.decisions[i.id].op:i.op))}</div><div></div></div>`).join("") : ""}
+    ${act.length ? `<div class="item"><div><b>Proposals from the refresh</b> <span class="muted">${act.length}</span></div><div></div></div>` + act.map(itemRow).join("") : ""}
+    ${other.length ? `<details style="padding:12px 14px"><summary>${other.length} skipped automatically</summary>${other.map(i=>`<div class="muted">${esc(describe(i.op))}: ${esc(i.reason)}</div>`).join("")}</details>` : ""}
+  </section>`;
+}
+
+function decisionForm(kind, it){
+  const slot = document.getElementById("f-"+it.id); let field = "";
+  if (kind==="reject") field = `<input name="v" placeholder="Why? e.g. not a call reason" required>`;
+  if (kind==="rename") field = `<input name="v" value="${esc(it.op.name)}" required>`;
+  if (kind==="reparent") field = `<select name="v">${l1Options(it.op.parent)}</select>`;
+  slot.innerHTML = `<form class="op">${field}<button class="btn primary" type="submit">Save</button><span class="err" id="operr"></span></form>`;
+  slot.querySelector("form").onsubmit = async ev => { ev.preventDefault(); const v = new FormData(ev.target).get("v").trim();
+    if (kind==="reject") return send({action:"reject", item_id:it.id, reason:v});
+    return send({action:"amend", item_id:it.id, op: kind==="rename" ? {...it.op, name:v} : {...it.op, parent:v}}); };
+}
+
+// ---------- Submit ----------
+function openSubmit(){
+  const bar = document.getElementById("submitbar"), i = S.impact || {};
+  const acts = S.review.items.filter(x => x.status==="proposed" || x.status==="suppressed"), undecided = acts.filter(x => !S.decisions[x.id]).length;
+  const risky = S.proposals.filter(p => p.impact && (p.impact.tags_deleted || p.impact.chunks_reclassified > 50));
+  bar.innerHTML = `<div style="flex:1;min-width:240px"><b>Submit this review?</b> ${S.proposals.length} of your changes · ${acts.length - undecided} decided · ${undecided} undecided
+    <div class="impact">${esc(impactText(i))}</div>
+    ${risky.length ? `<div class="err">These delete tags or reclassify many chunks: ${risky.map(p=>esc(describe(p.op))).join("; ")}</div>` : ""}
+    ${S.review.mode==="drift" && undecided ? `<div class="muted">Undecided refresh proposals are neither added nor suppressed; they come back next time.</div>` : ""}
+    <span class="err" id="suberr"></span></div>
+    <button class="btn" type="button" id="subno">Keep reviewing</button><button class="btn primary" type="button" id="subyes">Submit</button>`;
+  bar.classList.add("open");
+  document.getElementById("subno").onclick = () => bar.classList.remove("open");
+  document.getElementById("subyes").onclick = async () => { try { await api.submit(); bar.classList.remove("open"); S.submitted = true; render(); }
+    catch(e){ document.getElementById("suberr").textContent = errText(e); } };
+}
+
+function bind(){
+  const qi = document.getElementById("q"); if (qi) qi.oninput = () => { q = qi.value.toLowerCase(); render(); qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); };
+  const fi = document.getElementById("filter"); if (fi){ fi.value = filter; fi.onchange = () => { filter = fi.value; render(); }; }
+  document.querySelectorAll(".row[data-node]").forEach(r => { r.onclick = () => showNode(r.dataset.node); r.onkeydown = e => { if (e.key==="Enter") showNode(r.dataset.node); }; });
+  document.querySelectorAll("tr[data-metric]").forEach(r => r.onclick = () => showMetric(r.dataset.metric));
+  document.querySelectorAll("[data-act=addl1]").forEach(b => b.onclick = () => { const slot = document.getElementById("formslot");
+    slot.innerHTML = `<form class="op" id="opform"><label>New L1 <input name="name" required></label><button class="btn primary" type="submit">Confirm</button><span class="err" id="operr"></span></form>`;
+    document.getElementById("opform").onsubmit = ev => { ev.preventDefault(); send({action:"propose", op:{type:"add", level:"L1", name:new FormData(ev.target).get("name").trim(), parent:null}}); }; });
+  document.querySelectorAll("[data-act=addmetric]").forEach(b => b.onclick = () => metricForm("add", null));
+  document.querySelectorAll("[data-withdraw]").forEach(b => b.onclick = () => send({action:"withdraw", item_id:b.dataset.withdraw}));
+  document.querySelectorAll("[data-dec]").forEach(b => b.onclick = () => { const it = S.review.items.find(x => x.id===b.dataset.id), k = b.dataset.dec;
+    if (k==="approve" || k==="reopen") return send({action:k, item_id:it.id}); decisionForm(k, it); });
+}
+
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => { tab = b.dataset.tab; filter = "all"; q = ""; render(); });
+document.getElementById("submit").onclick = openSubmit;
+document.getElementById("cancel").onclick = async () => { await api.cancel(); document.getElementById("main").innerHTML = '<div class="panel detail"><h2>Closed</h2><p>Your decisions so far are saved. Ask Claude to reopen the review to continue.</p></div>'; };
+load().catch(e => { document.getElementById("main").innerHTML = `<div class="panel detail err">${esc(errText(e))}</div>`; });
+</script>
+</body>
+</html>

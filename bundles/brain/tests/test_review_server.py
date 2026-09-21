@@ -92,6 +92,15 @@ class ServerTests(unittest.TestCase):
         with urllib.request.urlopen(self.base + "/", timeout=5) as resp:
             self.assertIn(b"X-Review-Token", resp.read())
 
+    def test_ui_uses_only_the_documented_api(self):
+        html = open(S.UI, encoding="utf-8").read()
+        for route in ("/api/state", "/api/node/", "/api/chunk/", "/api/impact", "/api/decision", "/api/submit",
+                      "/api/cancel"):
+            self.assertIn(route, html)
+        self.assertNotIn("http://", html.replace("http://127.0.0.1", ""))
+        self.assertNotIn("https://", html)
+        self.assertNotIn("confirm(", html)
+
 
 class TimeoutTests(unittest.TestCase):
     def test_timeout_exits_3(self):
