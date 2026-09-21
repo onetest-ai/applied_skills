@@ -304,7 +304,7 @@ The generic text-only `parse_corpus.py` remains useful for corpora known not to 
 7. Run `brain_sync.py plan`; show the added/changed/deleted/unchanged summary to the human. It now opens an existing initialized store read-only. Then run `apply`, which snapshots SQLite, deletes removed documents, re-embeds only added/changed parsed docs, and writes `sync_plan.json`. Preserve the snapshot as operational recovery even though the database changes are committed as one transaction.
 8. Run `classify_prep.py --chunks <sync_plan.reclassify_chunk_ids>`, dispatch text subagents, validate results, and run incremental `classify_write.py` **without `--reset`**.
 9. Rebuild graph and related; rebuild marts only if reporting workbooks changed; regenerate the vault with `--clean`; run verify.
-10. Keep the current taxonomy unless coverage indicates vocabulary drift. Taxonomy expansion is a separate additive, human-approved operation—never silently rename/remove existing nodes.
+10. Keep the current taxonomy unless coverage indicates vocabulary drift. Taxonomy changes are a separate, human-reviewed operation in the taxonomy review app: agents only propose additions; renames, merges and removals are human decisions whose tags are migrated, never silently pruned.
 
 ```text
 source change
@@ -423,17 +423,17 @@ The pipeline deliberately separates **two different deltas**:
 | What changes | Mechanism | Automatic? |
 |---|---|---|
 | **Content** (docs added/changed/deleted) | top-level agent runs source visual preparation, then `brain_sync` diffs final parsed Markdown → re-embed + reclassify only the delta | ⚙️ agent-orchestrated; `./brain update` covers parsed→store only |
-| **Vocabulary** (the taxonomy itself) | re-induce + **additive** merge | ❌ deliberate, human-gated |
+| **Vocabulary** (the taxonomy itself) | review app (agents add; humans decide) | ❌ deliberate, human-reviewed |
 
 During the complete agent-orchestrated update, `./brain update` is the parsed→store apply step: the taxonomy is **reused as-is**, after which the top-level agent reclassifies only chunk IDs listed in `sync_plan.json`. A genuinely new concept does **not** get a new L1 until someone proposes and approves an additive taxonomy extension.
 
-**Why vocabulary change is gated and additive:** chunk ids are deterministic from source path + section ordinal, while graph node ids are `slug(label)`. **Adding** L1/L2 is safe (`build_graph` rebuilds `subclass_of` and preserves valid `about` edges). But **renaming or removing** a category changes/removes its node id; `build_graph` then prunes that node and deletes its dependent `chunk_topics` and `about` edges. That is destructive classification loss, so taxonomy evolution during updates is **add-only, never rename/remove**, and passes a human gate.
+**Why vocabulary change is gated and additive:** chunk ids are deterministic from source path + section ordinal, while graph node ids are `slug(label)`. **Adding** L1/L2 is safe (`build_graph` rebuilds `subclass_of` and preserves valid `about` edges). But **renaming or removing** a category changes/removes its node id; `build_graph` then prunes that node and deletes its dependent `chunk_topics` and `about` edges. That is destructive classification loss, so taxonomy evolution during updates is **add-only, never rename/remove**, and passes a human gate. A reviewed rename or merge is recorded as a migration in the taxonomy history; `build_graph` runs it before pruning, so the tags move with the node. Building from a version older than `taxonomy/current.json` that would prune nodes is refused unless `--yes-prune`.
 
 ### Refreshing the taxonomy — **assisted** (agent proposes, human gates), additive only
 When the signal appears (a rising share of **untagged** chunks), grow the taxonomy without breaking anything:
 1. **`taxonomy_refine_prep.py`** — gather the UNTAGGED chunks + the current L1/L2 vocab, batch them.
 2. **(low-tier agents)** — propose additions: a new **L2 under a named parent L1** (preferred) or a new **L1**, with evidence → `result_k.json`. (Or map a chunk the classifier missed to an existing category.)
-3. **`taxonomy_merge.py`** — dedups (exact + fuzzy) against the existing vocab, attaches each L2 to its parent, and **prints a diff DRY-RUN by default — the human gate**; `--apply` writes the version-bumped taxonomy (**add-only**, with history; never rename/remove).
+3. **`taxonomy_review.py` → `taxonomy_merge.py --review … --apply`** — the proposals open in the local review app (dedup against vocabulary + aliases, earlier rejections suppressed); the human approves/rejects/amends and submits; merge applies exactly that and writes `taxonomy/current.json`.
 4. **Deterministic downstream** — `build_graph` (adds the new vertices, preserves `about` edges) → reclassify the affected chunks (`classify_prep --docs/--chunks` → agents → `classify_write`) → refresh `related` and (optionally) the vault.
 
 **Classification is L1 + L2:** the classifier assigns the *most specific* fit (an L2 when the chunk is specifically about it, else its L1), and an L2 **rolls up its parent L1** automatically — so both granularities are queryable and L1 filters still catch L2-tagged chunks.

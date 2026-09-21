@@ -12,6 +12,7 @@ Every subcommand prints one JSON line on stdout (serve prints it on exit).
   export-md --review R --out F
   import-md --review R --md F [--submit]
   adopt     --taxonomy taxonomy/taxonomy_vN.json --db K.sqlite [--force]
+  gap       [--taxonomy F] [--metrics F] [--out F]
 
 In a Claude Code session, run `serve` in the BACKGROUND and end the turn: it exits when the
 reviewer clicks Submit, and the exit output (one JSON line) re-invokes the agent.
@@ -329,6 +330,17 @@ def cmd_import_md(a):
     return 0
 
 
+def cmd_gap(a):
+    import metrics_gap as MG
+    tax = load_json(a.taxonomy)
+    tax_dir = os.path.dirname(os.path.abspath(a.taxonomy))
+    governed = MG.load_governed(a.metrics or MG.find_governed(tax_dir))
+    out = a.out or os.path.join(tax_dir, "work", "metrics_gap.md")
+    atomic_write_bytes(out, MG.gap_markdown(tax.get("metrics") or [], governed).encode("utf-8"))
+    _out({"status": "written", "out": out, "governed_file": bool(governed)})
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Plan, record and serve taxonomy reviews.")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -382,6 +394,11 @@ def main(argv=None):
     p.add_argument("--reviewer")
     p.add_argument("--decisions")
     p.set_defaults(fn=cmd_import_md)
+    p = sub.add_parser("gap", help="write taxonomy/work/metrics_gap.md (ungoverned computable metrics)")
+    p.add_argument("--taxonomy", default=os.path.join("taxonomy", CURRENT))
+    p.add_argument("--metrics")
+    p.add_argument("--out")
+    p.set_defaults(fn=cmd_gap)
     a = ap.parse_args(argv)
     try:
         return a.fn(a)

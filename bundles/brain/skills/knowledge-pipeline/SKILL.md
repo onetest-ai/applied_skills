@@ -110,13 +110,14 @@ python .../visual-parse/render_pages.py --doc <deck.pdf> --out <project>/assets 
 python .../visual-parse/vision_prep.py --render-dir <project>/assets/<slug> --out <project>/vision --db "$DB"
 #    → 🤖 dispatch VISION subagents (cheap) → vision/result_k.json {img_sha: faithful markdown}
 python .../visual-parse/vision_assemble.py --render-dir <project>/assets/<slug> --out <project>/parsed/<doc>.md --results <project>/vision --db "$DB"
-# 2. (optional) induce taxonomy → taxonomy_v0.json  [map→reduce→judge→emit; see that skill]
+# 2. (optional) induce taxonomy → taxonomy/taxonomy_v0.json  [map→reduce→judge→emit; see that skill]
+#    then review it: taxonomy_review.py plan --mode draft … → serve (background) → taxonomy_merge.py --review … --apply
 # 3. narrative index — heading-aware sections (shared chunker) → chunks+FTS+vector
 python .../knowledge-index/knowledge_index.py index --db "$DB" --corpus <project>/parsed --reset
 # 4. taxonomy graph (vertices = L1/L2) into the SAME db
-python .../corpus-taxonomy-extraction/build_graph.py --taxonomy <project>/taxonomy/taxonomy_v0.json --db "$DB"
+python .../corpus-taxonomy-extraction/build_graph.py --taxonomy <project>/taxonomy/current.json --db "$DB"
 # 5. per-section taxonomy tags — LOW-TIER AGENTS (meaning is agentic), not a script:
-python .../corpus-taxonomy-extraction/classify_prep.py --db "$DB" --taxonomy <project>/taxonomy/taxonomy_v0.json --out <project>/classify --batches 25
+python .../corpus-taxonomy-extraction/classify_prep.py --db "$DB" --taxonomy <project>/taxonomy/current.json --out <project>/classify --batches 25
 #    --batches controls chunks-per-agent: too few batches → agent hits context limit and writes nothing.
 #    Rule of thumb: ceil(total_chunks / 1000) batches. Default 25 handles corpora up to ~25k chunks safely.
 #    Agents write result_k.json into the SAME <project>/classify/ dir as the batch files (not a subdir).
@@ -171,7 +172,7 @@ python .../corpus-taxonomy-extraction/to_obsidian.py \
 # On failure: brain_sync.py rollback --db "$DB" (then reconcile parsed/assets/vault).
 ```
 
-What each lane does on change: **RAG** — per-doc delete+reindex with deterministic source+ordinal ids; **tags/graph** — only changed chunks are re-tagged; **marts** — full idempotent recompute when reporting changes; **vault** — `--clean` reconciles removed notes. Taxonomy is reused by default and changed only through a human-approved additive merge.
+What each lane does on change: **RAG** — per-doc delete+reindex with deterministic source+ordinal ids; **tags/graph** — only changed chunks are re-tagged; **marts** — full idempotent recompute when reporting changes; **vault** — `--clean` reconciles removed notes. Taxonomy is reused by default; agents only propose additions, and every change goes through the taxonomy review app.
 
 > Migrating an OLD store (built before deterministic source+ordinal ids): do one full rebuild (steps 3–8 above with `index --reset`) once; then incremental updates apply.
 

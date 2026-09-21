@@ -30,7 +30,7 @@ All commands run on the machine that contains the corpus and brain project. Agen
 - Never classify the provisional text-only parse unless the human explicitly accepts a lower-quality build.
 - Never consume partial agent output. Every requested item must have one result.
 - Never use `classify_write --reset` during an incremental update.
-- Never silently change taxonomy node labels. Update taxonomy additively and only after human approval.
+- Never silently change taxonomy node labels. Agents only add; renames, merges, moves, splits and removals are human decisions made in the taxonomy review app, which migrates the affected tags.
 - Show `brain_sync plan` before `apply`, especially when it reports deletions.
 - Preserve the automatic pre-apply SQLite snapshot as operational recovery. Database mutations are committed together; on any failed verification, stop and offer rollback before retrying.
 - Do not claim completion until verification passes and row counts are plausible.
@@ -63,7 +63,7 @@ REPORTING=/absolute/path/to/reporting       # optional
 DB="$PROJECT/schema/knowledge.sqlite"
 SKILLS=/absolute/path/to/installed/skills
 PY=/absolute/path/to/brain/venv/bin/python
-TAX="$PROJECT/taxonomy/taxonomy_v0.json"
+TAX="$PROJECT/taxonomy/current.json"
 ```
 
 Do not guess paths. Resolve them with the installed launcher/config or ask the human.
@@ -383,12 +383,12 @@ Reuse the existing taxonomy by default. Check the share and examples of newly un
 
 1. run `taxonomy_refine_prep.py` on untagged/affected chunks;
 2. dispatch proposal agents;
-3. run `taxonomy_merge.py` in dry-run mode;
-4. show the additive diff to the human;
-5. only after approval, apply the versioned add-only merge;
-6. rebuild graph and reclassify affected chunks.
+3. run `taxonomy_review.py plan --mode drift --taxonomy "$TAX" --proposals <dir> --db "$DB"`;
+4. run `taxonomy_review.py serve --review <path> --db "$DB"` in the background, tell the human the review tab is open, and end the turn — the process exits when they submit;
+5. run `taxonomy_merge.py --review <path> --apply` (it refuses unsubmitted reviews);
+6. run `build_graph.py --taxonomy "$TAX" --db "$DB"`, then reclassify the chunk ids in `taxonomy/work/reclassify.json` if present.
 
-Never silently rename or remove categories: IDs are derived from labels and existing tags/edges depend on them.
+Never apply taxonomy changes outside a submitted review. `taxonomy/decisions.jsonl` is the approval record and belongs in the project's git.
 
 ### Update phase 5 — verify or rollback
 

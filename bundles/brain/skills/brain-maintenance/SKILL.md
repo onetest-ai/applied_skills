@@ -46,7 +46,7 @@ brain-maintenance.toml             # required maintenance planner profile
 brain.deploy.toml                  # optional external-adapter profile; no secrets
 parsed/manifest.json               # {source, md} mapping for final parsed documents
 schema/knowledge.sqlite OR configured DB path
-taxonomy/taxonomy_vN.json          # approved taxonomy (latest ratified version)
+taxonomy/current.json              # approved taxonomy (copy of the latest ratified version)
 ./brain                            # launcher
 ```
 
@@ -158,7 +158,9 @@ If `sync_plan.json.reclassify_chunk_ids` is non-empty:
 5. run incremental `classify_write` without `--reset`;
 6. rebuild the taxonomy graph.
 
-Do not silently change taxonomy. Vocabulary changes are additive, human-approved work.
+Do not silently change taxonomy. Agents only add; renames, merges, moves, splits and removals are human decisions made in the taxonomy review app (see `corpus-taxonomy-extraction` → "Reviewing and editing the taxonomy"), which migrates the affected tags. If `taxonomy/work/reclassify.json` exists after `build_graph`, reclassify those chunk ids before verifying.
+
+**Preflight — Brains built before `current.json`:** if `taxonomy/current.json` is missing, tell the user and, with their confirmation, run `taxonomy_review.py adopt --taxonomy taxonomy/taxonomy_v<N>.json --db <db>` for the version the store was built from, and set `[paths].taxonomy = "taxonomy/current.json"` in `brain-maintenance.toml`.
 
 ### 6. Rebuild numbers only when needed
 

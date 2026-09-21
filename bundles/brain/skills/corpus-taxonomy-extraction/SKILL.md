@@ -88,13 +88,32 @@ Beyond taxonomy induction, this skill ships the scripts that wire the taxonomy i
 - **`build_graph.py`** — taxonomy → `graph_nodes`/`graph_edges` (L1/L2 vertices, `subclass_of`). **Optional second taxonomy + traceability:** run this skill a second time with a **capability/vision-pillar goal** to induce a `capabilities.json` (same `intent_taxonomy` shape, or under a `capability_taxonomy` key), then `build_graph.py --capabilities capabilities.json --links addressed_by.json` layers in `capability_l1/l2` nodes and **`intent --addressed_by--> capability`** edges. Now a *problem → capability* traceability question resolves as a graph JOIN (see `hybrid-retrieval`) instead of narrative synthesis. `--links` is `{"addressed_by": [{"intent","capability"}, …]}`; a pair whose endpoints aren't known nodes is skipped (never a dangling edge). The script OWNS `subclass_of` + `addressed_by` (rebuilt each run, idempotent) and still never touches `about` edges.
 - **`classify_prep.py` → (low-tier agents) → `classify_write.py`** — per-section taxonomy tags at **L1 AND L2**: prep presents the full L1/L2 vocab and asks for the *most specific* fit (an L2 when the chunk is specifically about it, else its L1); agents assign (empty when nothing fits — never forced); write resolves each label to its graph node, writes `chunk_topics` with the real `kind` and — for an L2 — **rolls up its parent L1** so L1 filters still catch it. `about` edges (chunk→vertex). *Meaning is agentic; this step is agents, not a script.*
 
-## Refreshing the taxonomy (assisted: agent proposes, human gates) — additive only
-The corpus or the parse shifts (e.g. `visual-parse` now transcribes diagrams, surfacing concepts that were invisible before), so the taxonomy under-covers — the signal is a rising share of **untagged** chunks. Grow it **additively** (never rename/remove — node ids are `slug(label)`; `build_graph` prunes vanished nodes and deletes their dependent tags/edges, causing destructive classification loss):
+## Refreshing the taxonomy (assisted: agent proposes, human decides)
+The corpus or the parse shifts (e.g. `visual-parse` now transcribes diagrams, surfacing concepts that were invisible before), so the taxonomy under-covers — the signal is a rising share of **untagged** chunks. **Agents only add.** Renames, merges, moves, splits and removals are human decisions made in the taxonomy review app, which migrates the affected tags (node ids are `slug(label)`, so an unreviewed rename would make `build_graph` prune the node and its tags).
 - **`taxonomy_refine_prep.py --db --taxonomy --out`** — gather the UNTAGGED chunks + the current L1/L2 vocab; batch them for agents.
 - **(low-tier agents)** — per batch, either map a chunk to an existing category the classifier missed, or **propose** a new **L2 under a named parent L1** (preferred) / a new **L1** — with evidence → `result_k.json`.
-- **`taxonomy_merge.py --taxonomy --proposals [--apply --out taxonomy_v1.json]`** — dedups proposals (exact + fuzzy) against the existing vocab, attaches L2s to their parent, **DRY-RUNs a diff by default (the human gate)**; `--apply` writes the version-bumped taxonomy (add-only, with history).
-- Then deterministic downstream: `build_graph.py` (adds vertices, keeps `about`) → reclassify affected chunks (`classify_prep --docs/--chunks` → agents → `classify_write`) → `related` → vault.
+- **Review in the app** — `taxonomy_review.py plan --mode drift --taxonomy taxonomy/current.json --proposals <dir> --db <db>` freezes a review (dedups against the vocabulary and aliases, suppresses proposals rejected before) and prints its path. Then run `taxonomy_review.py serve --review <path> --db <db>` **in the background** and tell the user a browser tab is open for them; end your turn. It exits when they click Submit, and that exit wakes you.
+- **Apply** — `taxonomy_merge.py --review <path> --apply` writes `taxonomy_v<N+1>.json` + `taxonomy/current.json` from exactly what was submitted. Never pass `--without-review` unless the user explicitly asked in this conversation to skip the review.
+- Then: `build_graph.py --taxonomy taxonomy/current.json --db <db>` (runs the tag migrations) → reclassify the ids in `taxonomy/work/reclassify.json` if it exists (`classify_prep --chunks <ids>` → agents → `classify_write --reclassify-done taxonomy/work/reclassify.json`) → `related` → vault.
 - **`to_obsidian.py`** — emit the Obsidian vault as a **view of the store**: notes = chunks, real per-section tags from `chunk_topics`, `[[topic · …]]` links = graph vertices.
+
+## Reviewing and editing the taxonomy (the review app)
+One local app for every taxonomy decision. `taxonomy_review.py` plans a review and serves it on `127.0.0.1` (token-guarded, stdlib only, the store opened read-only); decisions go to the append-only `taxonomy/decisions.jsonl` (commit it in the consuming project); `taxonomy_merge.py --review … --apply` is the only writer.
+
+| when | plan command |
+|---|---|
+| first build, after `emit_taxonomy.py` | `plan --mode draft --taxonomy taxonomy/taxonomy_v0.json` (evidence from `taxonomy/work/consolidated.json`) |
+| refresh with agent proposals | `plan --mode drift --taxonomy taxonomy/current.json --proposals <dir> --db <db>` |
+| the user wants to see or change the taxonomy or metric inventory | `plan --mode browse --taxonomy taxonomy/current.json --db <db>` |
+
+Then `serve --review <path> --db <db>` in the background → end your turn → on exit, `taxonomy_merge.py --review <path> --apply` → `build_graph.py --taxonomy taxonomy/current.json` → reclassify `work/reclassify.json`.
+
+- **Tree** tab: the whole taxonomy with tag counts, samples and sibling overlap; the reviewer renames, merges, moves, splits, removes or adds, each with an impact preview.
+- **Metrics** tab: the metric inventory, with whether each computable metric has a governed definition in `schema/metrics.<corpus>.json` (ungoverned first — kb answers those "not modeled").
+- **Changes** tab: approve / reject (with a reason; rejections stick) / amend proposals, then submit.
+- No browser (SSH, other hosts): `taxonomy_review.py export-md --review <path> --out review.md`, ask the user to fill in the `decision:` lines, then `import-md --review <path> --md review.md --submit`.
+- A Brain built before `current.json` existed: run `taxonomy_review.py adopt --taxonomy taxonomy/taxonomy_v<N>.json --db <db>` once (after telling the user), choosing the version the store was built from; it refuses if that version doesn't match the graph.
+- `record` exists for scripts and only enters additions; never use it to enter a decision the user did not make.
 
 ## Downstream wiring
 
@@ -108,4 +127,4 @@ The corpus or the parse shifts (e.g. `visual-parse` now transcribes diagrams, su
 - **Keep provenance + a demoted list** — the goal lens can over-filter; make demotion visible and reversible, never a silent delete.
 - **Don't parse giant numeric workbooks here.** Restrict `--formats` to narrative/summary types.
 - **Seed-guided beats schema-free** — anchor on any existing taxonomy (e.g. a "Taxonomy Compendium") and the existing knowledge graph; extend rather than invent.
-- Treat `taxonomy_v0` as a draft for human ratification, especially the ambiguous merges.
+- Treat `taxonomy_v0` as a draft: ratify it in the review app (`plan --mode draft`) before `build_graph`. Every later step reads `taxonomy/current.json`, never a versioned file.

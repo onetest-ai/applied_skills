@@ -177,3 +177,13 @@ class CliPlanConflictTests(unittest.TestCase):
             self.assertEqual(out["status"], "error")
             self.assertIn("immutable", out["errors"][0])
             self.assertEqual(open(path, "rb").read(), raw1)   # untouched
+
+
+class GapCliTests(unittest.TestCase):
+    def test_gap_writes_markdown(self):
+        with tempfile.TemporaryDirectory() as td:
+            cur = os.path.join(td, "taxonomy", "current.json")
+            write_json(cur, taxonomy(version=1))
+            code, out = cli("gap", "--taxonomy", cur)
+            self.assertEqual(code, 0)
+            self.assertIn("| Porch Rate |", open(out["out"]).read())
