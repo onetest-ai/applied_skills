@@ -182,7 +182,17 @@ def build_plan(mode, taxonomy_path, proposals_dir=None, consolidated=None, db=No
               "base": {"path": os.path.abspath(taxonomy_path), "version": version, "sha256": sha},
               "evidence_available": evidence, "stats": stats, "items": items}
     path = os.path.join(tax_dir, "reviews", f"review_{rid}.json")
-    atomic_write_bytes(path, (json.dumps(review, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
+    data = (json.dumps(review, indent=1, ensure_ascii=False) + "\n").encode("utf-8")
+    if os.path.exists(path):
+        if open(path, "rb").read() == data:
+            if c:
+                c.close()
+            return path, review
+        if c:
+            c.close()
+        raise FileExistsError(f"{path} already exists with different content; review files are immutable — "
+                              "plan again in a moment or use the existing review")
+    atomic_write_bytes(path, data)
     if c:
         c.close()
     return path, review
@@ -375,7 +385,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     try:
         return a.fn(a)
-    except (D.DecisionLogError, ValueError, FileNotFoundError) as e:
+    except (D.DecisionLogError, ValueError, FileNotFoundError, FileExistsError) as e:
         _out({"status": "error", "errors": [str(e)]})
         return 2
 

@@ -4,6 +4,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import redirect_stdout
 from datetime import datetime, timezone
 
@@ -11,7 +12,7 @@ import decisions as D
 import graph_migrate as GM
 import taxonomy_review as R
 import taxo_io as IO
-from taxo_fixtures import tagged_store, taxonomy, write_json
+from taxo_fixtures import TAGS, tagged_store, taxonomy, write_json
 
 NOW = datetime(2026, 9, 21, 14, 2, 55, tzinfo=timezone.utc)
 
@@ -80,6 +81,25 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(pp["support"]["projected_coverage_gain_pts"], 12.5)   # 1 untagged of 8 chunks
         self.assertEqual(rv["stats"], {"total_chunks": 8, "untagged_chunks": 1})
 
+    def test_plan_refuses_to_overwrite_a_differing_review(self):
+        path, rv1 = R.build_plan("draft", self.v0, db=self.db, now=NOW)
+        raw1 = open(path, "rb").read()
+        db2 = os.path.join(self.td.name, "k2.sqlite")
+        tags2 = dict(TAGS)
+        tags2[2] = ["Duplicate Charge"]   # differs from self.db's tags -> different support.tags counts
+        tagged_store(db2, taxonomy(), tags=tags2)
+        with self.assertRaises(FileExistsError) as ctx:
+            R.build_plan("draft", self.v0, db=db2, now=NOW)
+        self.assertIn(path, str(ctx.exception))
+        self.assertIn("immutable", str(ctx.exception))
+        self.assertEqual(open(path, "rb").read(), raw1)   # untouched
+
+    def test_plan_is_idempotent_when_content_is_identical(self):
+        path1, rv1 = R.build_plan("draft", self.v0, db=self.db, now=NOW)
+        path2, rv2 = R.build_plan("draft", self.v0, db=self.db, now=NOW)
+        self.assertEqual(path1, path2)
+        self.assertEqual(rv1, rv2)
+
 
 class RecordStatusTests(unittest.TestCase):
     def setUp(self):
@@ -126,3 +146,34 @@ class AdoptTests(unittest.TestCase):
             self.assertEqual((code, out["status"]), (0, "adopted"))
             self.assertEqual(open(os.path.join(d, "current.json"), "rb").read(), open(v1, "rb").read())
             self.assertEqual(GM.read_version(sqlite3.connect(db)), 1)
+
+
+class CliPlanConflictTests(unittest.TestCase):
+    def test_cli_plan_exits_2_on_conflicting_review(self):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        d = os.path.join(td.name, "taxonomy")
+        v0 = os.path.join(d, "taxonomy_v0.json")
+        write_json(v0, taxonomy())
+        db1 = os.path.join(td.name, "k1.sqlite")
+        tagged_store(db1, taxonomy())
+        db2 = os.path.join(td.name, "k2.sqlite")
+        tags2 = dict(TAGS)
+        tags2[2] = ["Duplicate Charge"]
+        tagged_store(db2, taxonomy(), tags=tags2)
+
+        class FixedDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return NOW
+
+        with unittest.mock.patch.object(R, "datetime", FixedDatetime):
+            code, out = cli("plan", "--mode", "draft", "--taxonomy", v0, "--db", db1)
+            self.assertEqual(code, 0)
+            path = out["review"]
+            raw1 = open(path, "rb").read()
+            code, out = cli("plan", "--mode", "draft", "--taxonomy", v0, "--db", db2)
+            self.assertEqual(code, 2)
+            self.assertEqual(out["status"], "error")
+            self.assertIn("immutable", out["errors"][0])
+            self.assertEqual(open(path, "rb").read(), raw1)   # untouched
