@@ -126,12 +126,11 @@ def _similar_metrics(metrics):
     return out
 
 
-def _read_open_requests(tax_dir):
-    """Latest {id: record} in taxonomy/work/requests.jsonl, kept when status == 'open'."""
-    path = os.path.join(tax_dir, "work", "requests.jsonl")
+def _jsonl(path):
+    """Every dict record of a JSON-lines file; unreadable lines are skipped."""
     if not os.path.exists(path):
         return []
-    latest = {}
+    out = []
     with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -141,9 +140,23 @@ def _read_open_requests(tax_dir):
                 rec = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(rec, dict) and rec.get("id"):
-                latest[rec["id"]] = rec
-    return [rec for rec in latest.values() if rec.get("status") == "open"]
+            if isinstance(rec, dict):
+                out.append(rec)
+    return out
+
+
+def _read_open_requests(tax_dir):
+    """Latest {id: record} in taxonomy/work/requests.jsonl, kept when status == 'open' and no
+    record in taxonomy/work/responses.jsonl answers it (`respond` writes one per request; the
+    request line itself is never rewritten, so without this every answered request would come
+    back as open, with its note, at the next diagnose)."""
+    work = os.path.join(tax_dir, "work")
+    answered = {r.get("request_id") for r in _jsonl(os.path.join(work, "responses.jsonl"))}
+    latest = {}
+    for rec in _jsonl(os.path.join(work, "requests.jsonl")):
+        if rec.get("id"):
+            latest[rec["id"]] = rec
+    return [rec for rec in latest.values() if rec.get("status") == "open" and rec["id"] not in answered]
 
 
 def _item_subjects(item):
@@ -170,6 +183,7 @@ def _open_requests(tax_dir):
     notes to freshly detected problems of the same subject.
     """
     records, note_map, review_cache = [], {}, {}
+    decisions = None
     for rec in _read_open_requests(tax_dir):
         review_id, item_id = rec.get("review_id"), rec.get("item_id")
         if review_id not in review_cache:
@@ -187,6 +201,19 @@ def _open_requests(tax_dir):
         if not item:
             print(f"diagnose: open request {rec.get('id')!r} skipped — item {item_id!r} not found in "
                   f"review {review_id!r}", file=sys.stderr)
+            continue
+        # An applied review whose reviewer then accepted or changed this item settled it: the
+        # note is stale. (A skipped or rejected item keeps its note for the next run — that is
+        # the "queued for the next run" channel on hosts without a live Monitor.)
+        if decisions is None:
+            try:
+                decisions = D.read(D.default_path(tax_dir))
+            except D.DecisionLogError as e:
+                print(f"diagnose: cannot read the decision log ({e}); keeping every open request", file=sys.stderr)
+                decisions = []
+        st = D.review_state(decisions, review_id)
+        d = st["latest"].get(item_id)
+        if st["applied"] and d and d.get("action") in ("approve", "amend"):
             continue
         op = item.get("op") or {}
         subject = taxo_ops.subject_of(op)
@@ -564,11 +591,32 @@ def _prepare_untagged(tax_dir, db, taxonomy_path, problems, out_dir, batches, wa
     return {"kind": "untagged", "dir": task_dir, "batches": n}
 
 
+TASK_DIRS = ("describe", "notags", "structure", "metrics", "untagged")
+
+
+def _clear_stale(out_dir):
+    """Remove an earlier run's `batch_*.json` / `result_*.json` from the task dirs diagnose owns
+    under `out_dir` — only those two patterns, only directly inside those dirs — so `plan`
+    never reads last run's fixes as this run's. Returns the removed paths (also on stderr)."""
+    removed = []
+    for kind in TASK_DIRS:
+        d = os.path.join(out_dir, kind)
+        for pattern in ("batch_*.json", "result_*.json"):
+            for path in sorted(glob.glob(os.path.join(d, pattern))):
+                os.remove(path)
+                removed.append(path)
+    if removed:
+        print(f"diagnose: removed {len(removed)} stale file(s) from an earlier run: " + ", ".join(removed),
+              file=sys.stderr)
+    return removed
+
+
 def diagnose(taxonomy_path, db, out_dir, metrics_path=None, batches=4):
     if os.path.basename(taxonomy_path) != CURRENT:
         raise ValueError(f"diagnose is planned on taxonomy/{CURRENT}, not {taxonomy_path}")
     problems, tax, tax_dir, c, notes = detect(taxonomy_path, db, metrics_path)
     os.makedirs(out_dir, exist_ok=True)
+    removed = _clear_stale(out_dir)
     atomic_write_bytes(os.path.join(out_dir, "problems.json"),
                        (json.dumps(problems, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
 
@@ -589,6 +637,8 @@ def diagnose(taxonomy_path, db, out_dir, metrics_path=None, batches=4):
         c.close()
 
     result = {"problems": {k: len(v) for k, v in problems.items()}, "tasks": tasks, "out": out_dir}
+    if removed:
+        result["removed_stale"] = removed
     if warnings:
         result["warnings"] = warnings
     return result
@@ -1184,6 +1234,73 @@ def _untagged_items(tax, work_dir, problems, skipped_files, rejections):
                  "reason": "no fix proposed", "op": {"type": "keep", "node": "__untagged__"}, "alternatives": [],
                  "evidence": [], "support": support, "status": "proposed", "_fallback": True}]
     return items
+
+
+# ---------------------------------------------------------------------------
+# redo_prep: the one task entry behind a health item, for a redo with a note
+# ---------------------------------------------------------------------------
+
+KIND_TASK = {"missing_description": "describe", "no_tags": "notags", "near_duplicate": "structure",
+             "off_axis": "structure", "similar_metrics": "metrics", "metric_not_governed": "metrics",
+             "untagged_sections": "untagged"}
+_TASK_SIDE_FILES = ("instructions.md", "vocab.md", "families.json")
+
+
+def _entry_labels(e):
+    labels = {e.get(k) for k in ("node", "a", "b", "metric")} | set(e.get("members") or [])
+    return {l for l in labels if isinstance(l, str)}
+
+
+def redo_prep(work_dir, item, note, out_dir=None):
+    """Write the task entry (or, for untagged sections, the chunk rows) an item came from, with
+    `note` added, as `<out>/batch_0.json` next to copies of the task's instructions.md (and
+    vocab.md / families.json when present), so one agent can redo it exactly like a diagnose
+    batch and write `<out>/result_0.json`. `out` defaults to `<task dir>/redo-<item id>/`,
+    which `plan` never reads. Raises ValueError when nothing matches."""
+    if (item.get("support") or {}).get("pattern"):
+        raise ValueError(f"{item.get('id')}: a naming pattern has no agent task; change it in the taxonomy editor")
+    task = KIND_TASK.get(item.get("kind"))
+    if not task:
+        raise ValueError(f"{item.get('id')}: kind {item.get('kind')!r} has no agent task")
+    task_dir = os.path.join(work_dir, task)
+    rows = []
+    for bf in sorted(glob.glob(os.path.join(task_dir, "batch_*.json"))):
+        try:
+            data = load_json(bf)
+        except (OSError, ValueError):
+            continue
+        rows += [r for r in data if isinstance(r, dict)] if isinstance(data, list) else []
+    op = item.get("op") or {}
+    if task == "untagged":
+        ids = set(op.get("chunk_ids") or []) | {x for e in (item.get("evidence") or [])
+                                                 for x in (e.get("chunk_ids") or [])}
+        entries = [dict(r) for r in rows if r.get("id") in ids]
+    else:
+        if task in ("structure", "metrics"):
+            rows = [r for r in rows if r.get("kind") == item.get("kind")]
+        subject, subjects = taxo_ops.subject_of(op), _item_subjects(item)
+        hit = (next((r for r in rows if subject in _entry_labels(r)), None)
+               or next((r for r in rows if _entry_labels(r) & subjects), None))
+        entries = [dict(hit)] if hit else []
+    if not entries:
+        raise ValueError(f"{item.get('id')}: no entry for it in {task_dir}/batch_*.json — was diagnose re-run "
+                         "since this review was planned?")
+    if note:
+        for e in entries:
+            e["note"] = note
+    out = out_dir or os.path.join(task_dir, f"redo-{item.get('id')}")
+    os.makedirs(out, exist_ok=True)
+    for stale in glob.glob(os.path.join(out, "result_*.json")):
+        os.remove(stale)
+    batch = os.path.join(out, "batch_0.json")
+    atomic_write_bytes(batch, (json.dumps(entries, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
+    for name in _TASK_SIDE_FILES:
+        src = os.path.join(task_dir, name)
+        if os.path.exists(src):
+            atomic_write_bytes(os.path.join(out, name), open(src, "rb").read())
+    return {"status": "ok", "kind": task, "dir": out, "entry": batch,
+            "instructions": os.path.join(out, "instructions.md"), "result": os.path.join(out, "result_0.json"),
+            "note": note}
 
 
 def health_items(tax, work_dir, counts, rejections, skipped_files):

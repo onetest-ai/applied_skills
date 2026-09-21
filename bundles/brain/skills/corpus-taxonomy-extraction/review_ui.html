@@ -614,7 +614,24 @@ function skipFrom(it){
   if (next.row && next.sel === U.inboxSel) moveRow(next.row);
   else { U.inboxSel = next.sel; if (next.row) U.gRow = next.row; renderView(); }
 }
-const batchable = it => canAccept(it) && !isFallback(it);
+// Labels an accepted fix consumes (mirrors taxo_ops._conflicts): a merge's `from`, a rename,
+// a remove, a retiring split. A row on such a label, or targeting it, would be refused as a
+// conflict, so bulk accept leaves it out instead of failing the whole batch.
+const CONSUMES = {rename:1, merge:1, remove:1, metric_merge:1, metric_remove:1};
+const opSubject = op => op.node || op.from || op.metric || op.name;
+const opTarget = op => op.type === "merge" || op.type === "metric_merge" ? op.into : op.type === "move" ? op.new_parent : op.type === "add" ? op.parent : null;
+function consumedLabels(){
+  const out = {}, put = op => { if (op && (CONSUMES[op.type] || (op.type === "split" && op.retire)) && opSubject(op)) out[opSubject(op)] = op.type; };
+  for (const it of S.review.items){
+    if (!isActionable(it) || !isDecided(it)) continue;
+    const d = latest(it.id);
+    if (d.action === "approve") put(it.op); else if (d.action === "amend") put(d.op);
+  }
+  for (const p of S.proposals || []) put(p.op);
+  return out;
+}
+const blockedByDecided = (it, c) => { const op = itemOp(it), s = opSubject(op), t = opTarget(op); return !!((s && c[s]) || (t && c[t])); };
+const batchable = (it, c) => canAccept(it) && !isFallback(it) && !blockedByDecided(it, c || consumedLabels());
 const canAccept = it => !isDecided(it) && !suppressedLocked(it) && !isTemplate(it.op) && !(U.tagDraft[it.id] && !U.tagDraft[it.id].length);
 function shortOp(op){
   if (isTemplate(op)) return op.type === "describe" ? "Write a description…" : op.type === "tag" ? "Pick sections to tag…" : "Draft a governed definition…";
@@ -756,7 +773,8 @@ function groupTable(rows){
 function groupDetail(e){
   const rows = e.rows;
   if (!rows.find(r => r.id === U.gRow)) U.gRow = (rows.find(r => !isDecided(r)) || rows[0]).id;
-  const decided = rows.filter(isDecided).length, open = rows.filter(batchable).length, fb = rows.filter(r => canAccept(r) && isFallback(r)).length;
+  const cons = consumedLabels(), decided = rows.filter(isDecided).length, open = rows.filter(r => batchable(r, cons)).length, fb = rows.filter(r => canAccept(r) && isFallback(r)).length;
+  const blocked = rows.filter(r => canAccept(r) && !isFallback(r) && blockedByDecided(r, cons)).length;
   let f = U.batchFail && U.batchFail.kind === e.kind ? U.batchFail : null, bad = f ? S.review.items.find(i => i.id === f.recs[f.index].item_id) : null;
   // Once the refused row is decided on its own, the banner no longer applies.
   if (f && (!bad || isDecided(bad))){ U.batchFail = null; f = null; bad = null; }
@@ -773,6 +791,7 @@ function groupDetail(e){
     <div class="gtools"><span class="gprog">${num(decided)} of ${num(rows.length)} decided<span class="track"><i style="width:${rows.length ? (100 * decided / rows.length) : 0}%"></i></span></span>
       <button type="button" class="btn ok" data-act="accept-all" data-kind="${esc(e.kind)}" ${open ? "" : "disabled"}>Accept all remaining (${num(open)})</button>
       ${fb ? `<span class="note">${esc(plural(fb, "row") + " with no fix proposed " + (fb === 1 ? "needs" : "need") + " a decision of " + (fb === 1 ? "its" : "their") + " own")}</span>` : ""}
+      ${blocked ? `<span class="note">${esc(plural(blocked, "row") + " skipped: " + (blocked === 1 ? "its" : "their") + " category is being merged away, renamed or removed")}</span>` : ""}
       <span class="note"><span class="kbd">J</span>/<span class="kbd">K</span> rows · <span class="kbd">A</span> accept · <span class="kbd">R</span> skip</span></div>
     ${failHTML}
     ${body}`;
@@ -1617,7 +1636,8 @@ document.addEventListener("click", async ev => {
     case "h-alt": if (item) await pickCandidate(item, num(el.dataset.i)); break;
     case "accept-all": { const g = groupOf(el.dataset.kind); if (!g) break;
       U.batchFail = null;
-      await acceptBatch(g, g.rows.filter(batchable).map(r => ({action:"approve", item_id:r.id}))); break; }
+      const cons = consumedLabels();
+      await acceptBatch(g, g.rows.filter(r => batchable(r, cons)).map(r => ({action:"approve", item_id:r.id}))); break; }
     case "accept-others": { const f = U.batchFail, g = f && groupOf(f.kind); if (!g) break;
       const byId = id => S.review.items.find(i => i.id === id);
       const recs = f.recs.filter((r, i) => i !== f.index && byId(r.item_id) && batchable(byId(r.item_id)));

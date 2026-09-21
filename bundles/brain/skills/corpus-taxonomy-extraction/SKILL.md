@@ -102,14 +102,14 @@ The corpus or the parse shifts (e.g. `visual-parse` now transcribes diagrams, su
 ## Health review (the default way to review)
 One review for every taxonomy and metric problem. A deterministic `diagnose` finds the problems; low-cost agents precompute a specific fix for each one that needs judgment; the user decides in a grouped inbox; the approved fixes are applied. The first-build `draft` review and the `browse` editor stay separate (see the table below).
 
-Every command below runs from the project root, with `<skills>` the skills directory and `<db>` the store. `<run>` is a new directory name for this run, e.g. `health-20260921-1400`.
+Every command below runs from the project root, with `<skills>` the skills directory and `<db>` the store. `<run>` is the work directory for this run, e.g. `health` (reused every run) or `health-20260921-1400` (to keep each run's files).
 
 1. **You run diagnose.**
    ```bash
    python <skills>/corpus-taxonomy-extraction/taxonomy_review.py diagnose \
      --taxonomy taxonomy/current.json --db <db> --out taxonomy/work/<run>
    ```
-   It prints one JSON line: `problems` (a count per kind) and `tasks` (`[{kind, dir, batches}]`, one per kind that needs agents: `describe`, `notags`, `structure`, `metrics`, `untagged`). Use a new `--out` directory every run: `plan` reads every `result_*.json` in it, so an earlier run's results would come back as this run's fixes. `diagnose` also reads open redo requests from `taxonomy/work/requests.jsonl` and puts their notes on the matching entries.
+   It prints one JSON line: `problems` (a count per kind) and `tasks` (`[{kind, dir, batches}]`, one per kind that needs agents: `describe`, `notags`, `structure`, `metrics`, `untagged`). Reusing `--out` is safe: `diagnose` first removes an earlier run's `batch_*.json` and `result_*.json` from its task dirs (it names them on stderr and in `removed_stale`), so `plan` never reads old fixes. A fresh `--out` per run is optional, for keeping history. `diagnose` also reads open redo requests from `taxonomy/work/requests.jsonl` and puts their notes on the matching entries; a request already answered by `respond`, or on an item accepted in a review that was since applied, is not reopened.
 2. **You dispatch low-cost subagents (e.g. Haiku), one per `batch_k.json`** in each task `dir`. Each subagent reads that dir's `instructions.md` and its `batch_k.json` and writes `result_k.json` in the same dir. The `untagged` dir also has `vocab.md` for the agent to read, and the `metrics` dir may have `families.json`. The result formats are defined in each `instructions.md`; do not restate them to the agents, point them at the file. Check that each batch has its result file before going on. A missing or malformed result is not fatal: that problem still reaches the inbox with a safe default, marked `fallback`.
 3. **You plan the review.**
    ```bash
@@ -128,9 +128,18 @@ Every command below runs from the project root, with `<skills>` the skills direc
    Set `timeout_ms` to 1800000 (30 minutes). When the Monitor expires while `serve` is still running, arm it again. Tell the user a browser tab is open for them, then end your turn.
 
    Each Monitor event is one JSON line `{"id", "ts", "review_id", "item_id", "note", "status": "open"}`: the user pressed **Redo with a note…** on an item. For each one:
-   1. Find the item in `<review>` (`items[]` with that `id`). Its `kind`, `op` and `alternatives` say what it is.
-   2. Re-run the solve step for that one entry: take the entry the item came from out of the matching task dir's `batch_*.json` (`describe`, `notags`, `structure`, `metrics` or `untagged`, by the item's `kind`), add `"note": "<the note>"`, and have one subagent (or yourself, for a single entry) follow that dir's `instructions.md` for it.
-   3. Turn the new fix into the item's op shape. It must be one of the item's `op`/`alternatives`, or the same op type on the same subject with edited fields (a different description, a narrower `chunk_ids`). `respond` refuses anything else.
+   1. Prepare the entry:
+      ```bash
+      python <skills>/corpus-taxonomy-extraction/taxonomy_review.py redo-prep --review <review> --item <item_id>
+      ```
+      It prints `{kind, dir, entry, instructions, result, note}`: `entry` is a `batch_0.json` holding the one task entry the item came from, with the note added, next to a copy of that task's `instructions.md`. `plan` never reads this directory.
+   2. Have one subagent (or yourself, for a single entry) follow `instructions` for `entry` and write `result`.
+   3. Turn the new fix into the item's op shape: one of the item's `op`/`alternatives` in `<review>`, or the same op type on the same subject with edited fields (a different description, a narrower `chunk_ids`). Check it without recording anything:
+      ```bash
+      python <skills>/corpus-taxonomy-extraction/taxonomy_review.py respond --review <review> \
+        --request <id> --op '<op json>' --check
+      ```
+      `{"status": "ok"}` means `respond` will accept it; on `refused`, pick an op from the item's alternatives instead.
    4. Record it:
       ```bash
       python <skills>/corpus-taxonomy-extraction/taxonomy_review.py respond --review <review> \
@@ -152,7 +161,7 @@ Every command below runs from the project root, with `<skills>` the skills direc
    `--merge` only adds labels (an L2 also adds its parent L1); it never removes a tag.
 9. **You tell the user about governed-metric drafts, if any.** If `governed_drafts_file` is not null, it holds the approved `metric_govern` drafts (`{review_id, metric, draft:{key, family, unit, desc, grain}}`, appended across reviews; this review's entries carry its `review_id`). Show the user this review's drafts and ask whether to add them to `schema/metrics.<corpus>.json` with the `tabular-semantic-layer` skill. Edit that file only if they agree. Neither the app nor `taxonomy_merge` ever writes it.
 
-**What the user sees.** Problems are grouped: a group (e.g. "12 categories have no description") is one inbox entry with a row per item and **Accept all remaining**, which leaves `fallback` rows (a safe default, not an agent's recommendation) for the user to decide one by one. **Skip** records nothing; it only moves on, and a skipped problem comes back at the next `diagnose`. A group of labels that differ only by a number or code (a naming pattern) is one item whose default is keep, with no agent work. A near-duplicate cluster of three or more labels is one agent entry and comes back as a group of merge rows. A fix on a node that another approved fix already changes (e.g. describing a label that is merged away) is refused as a conflict; when that happens inside Accept all remaining, nothing is recorded and the app offers to accept the other rows.
+**What the user sees.** Problems are grouped: a group (e.g. "12 categories have no description") is one inbox entry with a row per item and **Accept all remaining**, which leaves `fallback` rows (a safe default, not an agent's recommendation) for the user to decide one by one. **Skip** records nothing; it only moves on, and a skipped problem comes back at the next `diagnose`. A group of labels that differ only by a number or code (a naming pattern) is one item whose default is keep, with no agent work. A near-duplicate cluster of three or more labels is one agent entry and comes back as a group of merge rows. A fix on a node that another approved fix already changes (e.g. describing a label that is merged away) is refused as a conflict. **Accept all remaining** leaves such rows out and says how many ("2 rows skipped: their category is being merged away, renamed or removed"); if a conflict still slips through, nothing is recorded and the app offers to accept the other rows. A naming-pattern item has no **Redo with a note…**; change it in the Taxonomy view.
 
 **Hosts without Monitor.** Skip the Monitor and run `serve` without `--watch-hint`; the app then says requests are "Queued for next run". Open requests stay in `taxonomy/work/requests.jsonl`, and the next `diagnose` puts their notes on the matching entries. No browser: `export-md` / `import-md` as below (health decisions are `approve`, `reject: <reason>` or `amend: <op json>`).
 

@@ -10,7 +10,8 @@ Every subcommand prints one JSON line on stdout (serve prints it on exit).
   diagnose  --taxonomy taxonomy/current.json --db K.sqlite --out DIR [--metrics F] [--batches 4]
   serve     --review R --db K.sqlite [--metrics F] [--port 0] [--no-browser] [--timeout 3600] [--reviewer NAME]
             [--watch-hint]
-  respond   --review R --request ID --op JSON [--reason TEXT]
+  respond   --review R --request ID --op JSON [--reason TEXT] [--check]
+  redo-prep --review R --item ID [--request ID] [--work DIR] [--out DIR]
   record    --review R (--action A [--item ID] [--op JSON] [--reason T] | --submit) [--reviewer NAME]
   status    --review R
   export-md --review R --out F
@@ -353,6 +354,8 @@ def build_plan(mode, taxonomy_path, proposals_dir=None, consolidated=None, db=No
     review = {"schema": 1, "review_id": rid, "mode": mode, "created": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
               "base": {"path": os.path.abspath(taxonomy_path), "version": version, "sha256": sha},
               "evidence_available": evidence, "stats": stats, "items": items, "context": context}
+    if mode == "health":
+        review["work_dir"] = os.path.abspath(work_dir)   # where redo-prep finds the task entries
     if mode in ("drift", "describe", "health"):
         review["skipped_files"] = skipped_files
     path = os.path.join(tax_dir, "reviews", f"review_{rid}.json")
@@ -582,6 +585,9 @@ def cmd_respond(a):
         _out({"status": "refused",
               "errors": [f"{item['id']}: the op must be one of its alternatives or an edit of the same fix"]})
         return 2
+    if a.check:   # dry run: every check above passed; nothing is written
+        _out({"status": "ok", "request_id": a.request, "item_id": item["id"], "op": op})
+        return 0
     rec = {"request_id": a.request, "item_id": item["id"], "op": op, "ts": utc_now()}
     if a.reason:
         rec["reason"] = a.reason
@@ -593,6 +599,24 @@ def cmd_respond(a):
     finally:
         os.close(fd)
     _out({"status": "recorded", "request_id": a.request, "item_id": item["id"]})
+    return 0
+
+
+def cmd_redo_prep(a):
+    import health as H
+    review = load_json(a.review)
+    if review.get("mode") != "health":
+        raise ValueError(f"{a.review} is not a health review")
+    item = next((i for i in review.get("items", []) if i["id"] == a.item), None)
+    if item is None:
+        raise ValueError(f"item {a.item!r} not found in review {review['review_id']!r}")
+    tax_dir = tax_dir_of(a.review)
+    work = a.work or review.get("work_dir") or os.path.join(tax_dir, "work", "health")
+    reqs = [r for r in _latest_requests(os.path.join(tax_dir, "work", "requests.jsonl")).values()
+            if r.get("item_id") == a.item and (not a.request or r.get("id") == a.request)]
+    open_reqs = [r for r in reqs if r.get("status") == "open"]
+    note = (open_reqs or reqs or [{}])[-1].get("note")
+    _out(H.redo_prep(work, item, note, a.out))
     return 0
 
 
@@ -686,7 +710,15 @@ def main(argv=None):
     p.add_argument("--op", required=True)
     p.add_argument("--reason")
     p.add_argument("--decisions")
+    p.add_argument("--check", action="store_true", help="dry run: validate the op as respond would, write nothing")
     p.set_defaults(fn=cmd_respond)
+    p = sub.add_parser("redo-prep", help="write the one task entry behind a health item, with its redo note")
+    p.add_argument("--review", required=True)
+    p.add_argument("--item", required=True)
+    p.add_argument("--request", help="the redo request whose note to use (default: the item's latest open one)")
+    p.add_argument("--work", help="the diagnose --out dir (default: recorded in the review)")
+    p.add_argument("--out", help="where to write it (default: <task dir>/redo-<item>/)")
+    p.set_defaults(fn=cmd_redo_prep)
     p = sub.add_parser("gap", help="write taxonomy/work/metrics_gap.md (ungoverned computable metrics)")
     p.add_argument("--taxonomy", default=os.path.join("taxonomy", CURRENT))
     p.add_argument("--metrics")

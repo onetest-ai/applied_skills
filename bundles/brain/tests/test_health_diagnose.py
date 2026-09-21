@@ -797,5 +797,130 @@ class ClusterEdgeTests(unittest.TestCase):
             self.assertIn((cid, "account_access"), after)
 
 
+class HealthRerunAndRedoTests(unittest.TestCase):
+    """G2 answered/settled requests stay closed; G3 a re-run clears stale task files; G6
+    redo-prep writes the item's single task entry and respond --check is a dry run."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.dir = os.path.join(self.td.name, "taxonomy")
+        tax = taxonomy(version=1)
+        tax["intent_taxonomy"]["tree"]["Billing & Payments"].append("Payment Plans")
+        self.cur = os.path.join(self.dir, "current.json"); write_json(self.cur, tax)
+        self.db = os.path.join(self.td.name, "k.sqlite"); tagged_store(self.db, tax); add_fts(self.db)
+        self.work = os.path.join(self.dir, "work", "health")
+        H.diagnose(self.cur, self.db, self.work)
+        self.requests = os.path.join(self.dir, "work", "requests.jsonl")
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def _plan(self):
+        from datetime import datetime, timezone
+        return R.build_plan("health", self.cur, work_dir=self.work, db=self.db,
+                            now=datetime(2026, 9, 21, tzinfo=timezone.utc))
+
+    def _cli(self, *argv):
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = R.main(list(argv))
+        return code, json.loads(buf.getvalue().strip().splitlines()[-1])
+
+    def _request(self, rid, item, note):
+        with open(self.requests, "a") as f:
+            f.write(json.dumps({"id": rid, "review_id": self._rv["review_id"], "item_id": item["id"],
+                                "note": note, "status": "open"}) + "\n")
+
+    def test_answered_request_is_not_reopened(self):
+        path, self._rv = self._plan()
+        item = next(i for i in self._rv["items"] if i["kind"] == "no_tags")
+        self._request("q-a", item, "answered already")
+        self._request("q-b", item, "still waiting")
+        code, _ = self._cli("respond", "--review", path, "--request", "q-a", "--op", json.dumps(item["op"]))
+        self.assertEqual(code, 0)
+        H.diagnose(self.cur, self.db, self.work)
+        p = json.load(open(os.path.join(self.work, "problems.json")))
+        self.assertEqual([r["request_id"] for r in p["open_requests"]], ["q-b"])
+
+    def test_request_on_an_item_accepted_in_an_applied_review_is_dropped(self):
+        import decisions as D
+        path, self._rv = self._plan()
+        item = next(i for i in self._rv["items"] if i["kind"] == "no_tags")
+        other = next(i for i in self._rv["items"] if i["kind"] == "missing_description")
+        self._request("q-1", item, "settled by approve")
+        self._request("q-2", other, "skipped, keep for the next run")
+        rid = self._rv["review_id"]
+        with open(D.default_path(self.dir), "a") as f:
+            for rec in ({"action": "approve", "item_id": item["id"]}, {"action": "submit"}, {"action": "applied"}):
+                f.write(json.dumps(dict(rec, review_id=rid, schema=1, ts="t")) + "\n")
+        H.diagnose(self.cur, self.db, self.work)
+        p = json.load(open(os.path.join(self.work, "problems.json")))
+        self.assertEqual([r["request_id"] for r in p["open_requests"]], ["q-2"])
+
+    def test_rerun_clears_stale_results_and_batches(self):
+        stale = os.path.join(self.work, "structure", "result_0.json")
+        write_json(stale, {"fixes": [{"kind": "off_axis", "subject": "Transform", "fix": "keep", "reason": "old"}]})
+        write_json(os.path.join(self.work, "structure", "batch_9.json"), [])
+        keep = os.path.join(self.work, "structure", "notes.txt"); open(keep, "w").write("mine")
+        import io
+        from contextlib import redirect_stderr
+        err = io.StringIO()
+        with redirect_stderr(err):
+            res = H.diagnose(self.cur, self.db, self.work)
+        self.assertFalse(os.path.exists(stale))
+        self.assertFalse(os.path.exists(os.path.join(self.work, "structure", "batch_9.json")))
+        self.assertTrue(os.path.exists(keep))
+        self.assertTrue(os.path.exists(os.path.join(self.work, "structure", "batch_0.json")))   # this run's
+        self.assertIn(stale, res["removed_stale"]); self.assertIn("stale", err.getvalue())
+        _, rv = self._plan()
+        oa = next(i for i in rv["items"] if i["kind"] == "off_axis")
+        self.assertEqual(oa["reason"], "no fix proposed")      # the old "keep" did not come back
+
+    def test_redo_prep_writes_the_single_entry_with_its_note(self):
+        path, self._rv = self._plan()
+        item = next(i for i in self._rv["items"] if i["kind"] == "no_tags" and i["op"]["node"] == "Payment Plans")
+        self._request("q-7", item, "look at chunk 9")
+        code, out = self._cli("redo-prep", "--review", path, "--item", item["id"])
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out["kind"], "notags")
+        self.assertEqual(out["dir"], os.path.join(self.work, "notags", f"redo-{item['id']}"))
+        batch = json.load(open(out["entry"]))
+        self.assertEqual(len(batch), 1)
+        self.assertEqual((batch[0]["node"], batch[0]["note"]), ("Payment Plans", "look at chunk 9"))
+        self.assertIn("candidates", batch[0])
+        self.assertTrue(os.path.exists(out["instructions"]))
+        # plan never reads the redo dir
+        write_json(out["result"], {"fixes": [{"node": "Payment Plans", "fix": "remove", "reason": "redo"}]})
+        _, rv = self._plan()
+        again = next(i for i in rv["items"] if i["kind"] == "no_tags" and i["op"]["node"] == "Payment Plans")
+        self.assertEqual(again["reason"], "no fix proposed")
+
+    def test_redo_prep_for_a_structure_item(self):
+        path, self._rv = self._plan()
+        item = next(i for i in self._rv["items"] if i["kind"] == "near_duplicate")
+        code, out = self._cli("redo-prep", "--review", path, "--item", item["id"], "--out",
+                              os.path.join(self.td.name, "redo"))
+        self.assertEqual(code, 0, out)
+        batch = json.load(open(out["entry"]))
+        self.assertEqual(batch[0]["members"], ["Billing & Payments", "Billing & Payments Admin"])
+        self.assertNotIn("note", batch[0])
+
+    def test_respond_check_validates_without_writing(self):
+        path, self._rv = self._plan()
+        item = next(i for i in self._rv["items"] if i["kind"] == "no_tags")
+        self._request("q-9", item, "n")
+        resp = os.path.join(self.dir, "work", "responses.jsonl")
+        code, out = self._cli("respond", "--review", path, "--request", "q-9", "--check",
+                              "--op", json.dumps(item["alternatives"][0]))
+        self.assertEqual((code, out["status"]), (0, "ok"))
+        self.assertFalse(os.path.exists(resp))
+        code, out = self._cli("respond", "--review", path, "--request", "q-9", "--check",
+                              "--op", json.dumps({"type": "remove", "node": "Refunds", "disposition": "demote"}))
+        self.assertEqual((code, out["status"]), (2, "refused"))
+        self.assertFalse(os.path.exists(resp))
+
+
 if __name__ == "__main__":
     unittest.main()

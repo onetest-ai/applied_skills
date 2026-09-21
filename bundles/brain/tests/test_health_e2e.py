@@ -134,27 +134,20 @@ class HealthReviewE2E(unittest.TestCase):
 
             merged_away = ["Billing & Payments Admin", "Track Delivery Status", "Track Delivery Updates"]
 
-            # 4c. "Accept all remaining" on the description group: every non-fallback row. Rows
-            #     describing a node merged away above conflict with that merge (taxo_ops refuses
-            #     a node changed twice), so the all-or-nothing batch is refused at that row and
-            #     the app's "Accept the other N" retries without it — as a reviewer would.
+            # 4c. "Accept all remaining" on the description group: every non-fallback row whose
+            #     category is not being merged away by a fix already accepted above — the app's
+            #     `batchable` leaves those rows out (a describe on a merged-away node would be
+            #     refused as "changed twice"), so the batch goes through in one call.
             desc_group = [i for i in items if i["group"] == "missing_description"]
             fallback = one(lambda i: i["group"] == "missing_description" and i["op"]["node"] == undescribed)
             self.assertTrue(fallback.get("fallback"))
             self.assertEqual(fallback["op"]["type"], "keep")
-            recs = [{"action": "approve", "item_id": i["id"]} for i in desc_group
-                    if i["status"] == "proposed" and not i.get("fallback")]
-            self.assertEqual(len(recs), len(to_describe) - 1)
-            by_id = {i["id"]: i for i in items}
-            refused = []
-            while True:
-                code, out = app.decisions({"records": recs})
-                if code == 200:
-                    break
-                self.assertEqual(code, 400, out)
-                self.assertIn("changed twice", out["errors"][0])
-                refused.append(by_id[recs.pop(out["index"])["item_id"]]["op"]["node"])
-            self.assertEqual(sorted(refused), sorted(merged_away))
+            eligible = [i for i in desc_group if i["status"] == "proposed" and not i.get("fallback")]
+            self.assertEqual(len(eligible), len(to_describe) - 1)
+            recs = [{"action": "approve", "item_id": i["id"]} for i in eligible if i["op"]["node"] not in merged_away]
+            self.assertEqual(len(recs), len(eligible) - len(merged_away))
+            code, out = app.decisions({"records": recs})
+            self.assertEqual(code, 200, out)
 
             # 4d. the no-tags tag fix, narrowed to a subset of its chunk ids
             tag_item = one(lambda i: i["kind"] == "no_tags" and i["op"]["node"] == "Payment Plans")
