@@ -200,6 +200,38 @@ def _open_requests(tax_dir):
     return records, note_map
 
 
+def _most_tagged(members, tags):
+    """The member with the most tags; the earliest member wins a tie (deterministic)."""
+    return max(members, key=lambda m: (tags.get(m, 0), -members.index(m)))
+
+
+def _cluster_problem(c, counts, group, level, parent):
+    """One near_duplicate problem per group from `flags.near_duplicate_labels` — never one per
+    pair, which is quadratic in the group size (150 patterned labels would be 11,175 pairs).
+
+    Shape: {members, level, parent, tags: {label: count}, pattern, stem?}. Overlap is computed
+    only where it is cheap and bounded: a 2-member group also carries the legacy pair fields
+    (a, b, tags_a, tags_b, overlap) so it behaves exactly like the old pair problem; a 3+ group
+    carries `anchor` (its most-tagged member) and `overlap_with_anchor` {member: shared chunks};
+    a naming pattern (see `flags.naming_pattern`) computes no overlap at all."""
+    members = list(group)
+    tags = {m: counts.get(nid(m), 0) for m in members}
+    pattern, stem = flags.naming_pattern(members)
+    p = {"members": members, "level": level, "parent": parent, "tags": tags, "pattern": pattern}
+    if stem:
+        p["stem"] = stem
+    if pattern:
+        return p
+    if len(members) == 2:
+        a, b = members
+        p.update(a=a, b=b, tags_a=tags[a], tags_b=tags[b], overlap=_overlap(c, nid(a), nid(b)))
+    else:
+        anchor = _most_tagged(members, tags)
+        p["anchor"] = anchor
+        p["overlap_with_anchor"] = {m: _overlap(c, nid(m), nid(anchor)) for m in members if m != anchor}
+    return p
+
+
 def _find_families(tax_dir):
     project = os.path.dirname(os.path.abspath(tax_dir))
     hits = [h for h in sorted(glob.glob(os.path.join(project, "schema", "families.*.json")))
@@ -239,18 +271,10 @@ def detect(taxonomy_path, db, metrics_path=None):
 
     l1s = list(it["tree"])
     for group in flags.near_duplicate_labels(l1s):
-        for a, b in itertools.combinations(group, 2):
-            problems["near_duplicate"].append({
-                "a": a, "b": b, "level": "L1", "parent": None,
-                "tags_a": counts.get(nid(a), 0), "tags_b": counts.get(nid(b), 0),
-                "overlap": _overlap(c, nid(a), nid(b))})
+        problems["near_duplicate"].append(_cluster_problem(c, counts, group, "L1", None))
     for l1, kids in it["tree"].items():
         for group in flags.near_duplicate_labels(kids):
-            for a, b in itertools.combinations(group, 2):
-                problems["near_duplicate"].append({
-                    "a": a, "b": b, "level": "L2", "parent": l1,
-                    "tags_a": counts.get(nid(a), 0), "tags_b": counts.get(nid(b), 0),
-                    "overlap": _overlap(c, nid(a), nid(b))})
+            problems["near_duplicate"].append(_cluster_problem(c, counts, group, "L2", l1))
 
     for l1 in l1s:
         reason = flags.off_axis_l1(l1)
@@ -318,26 +342,41 @@ Rules:
 STRUCTURE_INSTRUCTIONS = """# Fixing near-duplicate and off-axis categories
 
 Each `batch_k.json` next to this file is a list of entries: some are `near_duplicate`
-pairs, some are `off_axis` candidates. For each `batch_k.json` you process, write a
-`result_k.json` with the same `k`, shaped:
+groups of similar labels (a pair, or a cluster of 3 or more), some are `off_axis`
+candidates. For each `batch_k.json` you process, write a `result_k.json` with the same
+`k`, shaped:
 
 ```json
 {"fixes": [
   {"kind": "near_duplicate", "subject": "Billing & Payments Admin", "fix": "merge",
    "into": "Billing & Payments", "reason": "same topic; Admin has 2 tags, the other has 15"},
+  {"kind": "near_duplicate", "subject": "Account Access", "fix": "merge",
+   "into": "Account Access", "from": ["Acount Access", "Account Acess"],
+   "reason": "two typos of the same label; the survivor has 40 tags, the typos 1 and 2"},
   {"kind": "off_axis", "subject": "Transform", "fix": "remove",
    "disposition": "demote", "reason": "roadmap phase, not a customer intent"}
 ]}
 ```
 
-Each `near_duplicate` entry gives you `a`, `b`, `level`, `parent`, `tags_a`, `tags_b`,
-`overlap` (chunks tagged with both) and sample chunks for each side. Each `off_axis`
-entry gives you `node`, `reason`, `tags` and sample chunks.
+Each `near_duplicate` entry gives you `members` (every label in the group), `level`,
+`parent` and `tags` ({label: tagged-chunk count}).
+- A **pair** (2 members) also gives you `a`, `b`, `tags_a`, `tags_b`, `overlap` (chunks
+  tagged with both) and `samples_a` / `samples_b`.
+- A **cluster** (3+ members) also gives you `anchor` (its most-tagged member),
+  `overlap_with_anchor` ({member: chunks tagged with both it and the anchor}) and
+  `samples` ({member: sample chunks}).
+
+Each `off_axis` entry gives you `node`, `reason`, `tags` and sample chunks.
 
 For each entry, decide ONE fix:
-- `near_duplicate` → `"merge"` (name the surviving label in `into`, usually the one with
-  more tags or the clearer name) or `"keep"` (they are genuinely distinct; explain why in
-  `reason`).
+- `near_duplicate` pair → `"merge"` (name the surviving label in `into`, usually the one
+  with more tags or the clearer name; `subject` is the label merged away) or `"keep"`
+  (they are genuinely distinct; explain why in `reason`).
+- `near_duplicate` cluster → `"merge"`: name ONE surviving member in `into` (it must be
+  one of `members`) and, optionally, list the members to merge into it in `from`. Leave
+  `from` out to merge every other member; list only some of them when the rest are
+  genuinely distinct and should stay. Or `"keep"`: the members are all distinct. For a
+  cluster, `subject` is any one member (use the first of `members`).
 - `off_axis` → `"remove"` (set `disposition` to `"demote"` if it should become an entity
   or metadata dimension rather than an intent, or `"delete"` if it has no place at all) or
   `"keep"` (it is a legitimate intent despite the heuristic; explain why).
@@ -346,7 +385,7 @@ Rules:
 - Be specific: cite the sample chunks and the tag counts/overlap that justify your call.
 - Prefer `"keep"` when unsure.
 - One fix per entry (`subject` is `a` for a near_duplicate pair — the label proposed to
-  be merged away — or the `node` for an off_axis entry).
+  be merged away —, any member for a cluster, or the `node` for an off_axis entry).
 - If an entry has a `note`, the reviewer rejected the earlier proposal for this reason;
   propose something that addresses it.
 """
@@ -427,14 +466,19 @@ def _prepare_notags(tax, tax_dir, problems, out_dir, notes, batches):
 
 
 def _prepare_structure(tax, tax_dir, problems, out_dir, c, notes, batches):
-    entries = problems["near_duplicate"] + problems["off_axis"]
-    if not entries:
+    # a naming pattern needs no judgment call: it goes straight to the inbox as one item
+    near_dups = [p for p in problems["near_duplicate"] if not p.get("pattern")]
+    if not (near_dups or problems["off_axis"]):
         return None
     out = []
-    for p in problems["near_duplicate"]:
-        entry = dict(p, kind="near_duplicate", samples_a=R._samples(c, nid(p["a"])),
-                     samples_b=R._samples(c, nid(p["b"])))
-        note = notes.get(p["a"])
+    for p in near_dups:
+        members = p["members"]
+        if len(members) == 2:
+            entry = dict(p, kind="near_duplicate", samples_a=R._samples(c, nid(p["a"])),
+                         samples_b=R._samples(c, nid(p["b"])))
+        else:
+            entry = dict(p, kind="near_duplicate", samples={m: R._samples(c, nid(m)) for m in members})
+        note = next((notes[m] for m in members if notes.get(m)), None)
         if note:
             entry["note"] = note
         out.append(entry)
@@ -587,6 +631,11 @@ def _sanitize_entry(e):
         if not isinstance(v, list):
             return False
         e[k] = [i for i in v if isinstance(i, int) and not isinstance(i, bool)]
+    v = e.get("from")   # a near-duplicate cluster fix: the members merged into `into`
+    if v is not None:
+        if not isinstance(v, list):
+            return False
+        e["from"] = [s for s in v if isinstance(s, str) and s.strip()]
     return True
 
 
@@ -748,6 +797,83 @@ def _no_tags_items(tax, work_dir, problems, skipped_files, rejections):
     return items
 
 
+PATTERN_EVIDENCE_SAMPLE = 10
+
+
+def _pattern_item(tax, p, rejections):
+    """A naming pattern (`flags.naming_pattern`) is ONE item, never N merges: members that differ
+    only by a number/code are probably intentional variants. Its default — keep, on the first
+    member — is a deliberate recommendation, not a fallback, so "Accept all" may include it. The
+    only alternative is a single merge of the least-tagged member into the most-tagged one; a
+    reviewer who wants more merges uses the taxonomy editor, not N generated alternatives."""
+    members, tags = p["members"], p.get("tags") or {}
+    n, stem = len(members), p.get("stem")
+    op = {"type": "keep", "node": members[0]}
+    big = _most_tagged(members, tags)
+    small = min(members, key=lambda m: (tags.get(m, 0), members.index(m)))
+    alts = [{"type": "merge", "from": small, "into": big}] if small != big else []
+    if stem:
+        title = f"Naming pattern: {n} labels like '{stem}'"
+        reason = "Labels differ only by a number/code — probably intentional variants"
+    else:
+        title = f"Naming pattern: {n} similar labels like '{members[0]}'"
+        reason = "Too many similar labels to review as merges — probably a naming family"
+    evidence = [{"label": m, "tags": tags.get(m, 0)} for m in members[:PATTERN_EVIDENCE_SAMPLE]]
+    support = {"pattern": True, "count": n, "level": p.get("level"), "parent": p.get("parent")}
+    if stem:
+        support["stem"] = stem
+    return _make_item(tax, "near_duplicate", None, op, alts, evidence, support, reason, title, rejections)
+
+
+def _cluster_items(tax, p, fix, rejections):
+    """A 3+ member near-duplicate cluster is ONE group of items (shared `group` key, like the
+    describe/no_tags groups): a row per member other than the survivor. With a usable agent
+    merge (`into` a member, optional `from` list), a member in `from` (default: all others)
+    gets `merge{from: member, into: survivor}`; a member left out gets `keep` (the agent kept it
+    distinct). With an agent `keep`, or no usable fix, every row is a `keep` on its member with
+    a merge into the most-tagged member as its alternative — the latter marked as a fallback.
+    Alternatives stay bounded: keep, plus a merge into each other member (clusters of 3..8)."""
+    members, tags = p["members"], p.get("tags") or {}
+    anchor = p.get("anchor") if p.get("anchor") in members else _most_tagged(members, tags)
+    overlap = p.get("overlap_with_anchor") or {}
+    fx = fix.get("fix") if fix else None
+    into = (fix.get("into") or "").strip() if fix else ""
+    fallback = False
+    if fx == "merge" and into in members:
+        survivor = into
+        frm = fix.get("from")
+        merged = [m for m in members if m != survivor and (frm is None or m in frm)]
+        reason = fix.get("reason")
+        if not merged:   # a `from` naming no other member is no usable merge
+            survivor, reason, fallback = anchor, "no fix proposed", True
+    elif fx == "keep":
+        survivor, merged, reason = anchor, [], fix.get("reason")
+    else:
+        survivor, merged, reason, fallback = anchor, [], "no fix proposed", True
+    group = f"near_duplicate:{p.get('level')}:{p.get('parent') or ''}:{members[0]}"
+    title = "Similar labels: " + ", ".join(members)
+    items = []
+    for m in members:
+        if m == survivor:
+            continue
+        keep_op = {"type": "keep", "node": m}
+        merge_op = {"type": "merge", "from": m, "into": survivor}
+        others = [{"type": "merge", "from": m, "into": o} for o in members if o not in (m, survivor)]
+        if m in merged:
+            op, alts, row_reason = merge_op, [keep_op] + others, reason
+        else:
+            op, alts = keep_op, [merge_op] + others
+            row_reason = reason if (fallback or fx == "keep") else \
+                f"kept distinct: Claude merges only {', '.join(merged)} into {survivor}"
+        support = {"tags": tags.get(m, 0), "into": survivor, "into_tags": tags.get(survivor, 0),
+                   "members": len(members)}
+        if survivor == anchor and m in overlap:
+            support["overlap"] = overlap[m]
+        items.append(_make_item(tax, "near_duplicate", group, op, alts, [], support, row_reason, title,
+                                rejections, fallback=fallback))
+    return items
+
+
 def _structure_items(tax, work_dir, problems, skipped_files, rejections):
     entries = _load_entries(os.path.join(work_dir, "structure"), "fixes", skipped_files)
     nd_fix, oa_fix = {}, {}
@@ -761,7 +887,15 @@ def _structure_items(tax, work_dir, problems, skipped_files, rejections):
             oa_fix.setdefault(subj, e)
     items = []
     for p in problems.get("near_duplicate") or []:
-        a, b = p["a"], p["b"]
+        members = p.get("members") or [p["a"], p["b"]]   # a pre-cluster problems.json holds pairs
+        if p.get("pattern"):
+            items.append(_pattern_item(tax, p, rejections))
+            continue
+        if len(members) > 2:
+            fix = next((nd_fix[m] for m in members if m in nd_fix), None)
+            items += _cluster_items(tax, p, fix, rejections)
+            continue
+        a, b = p.get("a", members[0]), p.get("b", members[1])
         fix = nd_fix.get(a) or nd_fix.get(b)
         keep_op = {"type": "keep", "node": a}
         merge_ab = {"type": "merge", "from": b, "into": a}   # b merged away into a
@@ -995,7 +1129,8 @@ def _untagged_items(tax, work_dir, problems, skipped_files, rejections):
 def health_items(tax, work_dir, counts, rejections, skipped_files):
     """Grouped health review items from `work_dir/problems.json` and each task's result_k.json.
 
-    Every problem `diagnose` recorded gets exactly one item (the binding rule: nothing detected
+    Every problem `diagnose` recorded gets exactly one item — or, for a 3+ member near-duplicate
+    cluster, exactly one group of items sharing a `group` key (the binding rule: nothing detected
     is ever silently dropped from the inbox): the agent's fix when `result_k.json` proposed a
     usable one, else a safe default op (a `keep`/`remove`) carrying "no fix proposed" (or, when
     the agent DID answer but with nothing usable, its own reason) plus template alternatives —

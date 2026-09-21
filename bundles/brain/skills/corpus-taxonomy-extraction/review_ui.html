@@ -710,6 +710,7 @@ function rowNote(it){
   const s = it.support || {};
   if (it.kind === "missing_description") return plural(s.tags, "tagged section");
   if (it.kind === "no_tags") return plural((s.candidate_ids || []).length, "candidate section");
+  if (it.kind === "near_duplicate") return plural(s.tags, "tagged section");
   if (it.kind === "metric_not_governed") return s.sources != null ? plural(Array.isArray(s.sources) ? s.sources.length : s.sources, "source") : "";
   if (s.chunks != null) return plural(s.chunks, "section");
   return "";
@@ -767,7 +768,7 @@ function groupDetail(e){
     body = [["New categories", adds], ["Assign to existing", tags], ["Other", rest]].filter(([, r]) => r.length)
       .map(([t, r]) => `<div class="gpart">${esc(t)} · ${num(r.length)}</div>${groupTable(r)}`).join("");
   } else body = groupTable(rows);
-  return `<span class="where">Health check · ${esc(KIND_WORDS[e.kind] || e.kind)}</span><h3>${esc(groupTitle(e))}</h3>
+  return `<span class="where">Health check · ${esc(KIND_WORDS[e.kind] || KIND_WORDS[rows[0].kind] || e.kind)}</span><h3>${esc(groupTitle(e))}</h3>
     <p class="note">${esc(fixSummary(rows))}</p>
     <div class="gtools"><span class="gprog">${num(decided)} of ${num(rows.length)} decided<span class="track"><i style="width:${rows.length ? (100 * decided / rows.length) : 0}%"></i></span></span>
       <button type="button" class="btn ok" data-act="accept-all" data-kind="${esc(e.kind)}" ${open ? "" : "disabled"}>Accept all remaining (${num(open)})</button>
@@ -795,6 +796,13 @@ function redoHTML(it){
     : `<div><button type="button" class="linkbtn" data-act="redo-open" data-id="${id}">Redo with a note…</button></div>`;
   return `<div class="section">${status}${form}</div>`;
 }
+// A naming-pattern item lists a sample of its labels (evidence: {label, tags}) and the total.
+function patternHTML(it){
+  const s = it.support || {}, ev = (it.evidence || []).filter(e => e && e.label != null);
+  if (!s.pattern || !ev.length) return "";
+  const more = num(s.count) - ev.length;
+  return `<div class="section"><b>Labels in this pattern</b>${ev.map(e => `<div>${esc(e.label)} <span class="note">· ${esc(plural(e.tags, "tagged section"))}</span></div>`).join("")}${more > 0 ? `<p class="note">…and ${esc(plural(more, "more label"))}</p>` : ""}</div>`;
+}
 function healthDetail(it){
   const op = itemOp(it), s = it.support || {}, facts = [], id = esc(it.id);
   if (it.kind === "near_duplicate"){
@@ -802,6 +810,7 @@ function healthDetail(it){
     if (s.tags_a != null) facts.push(`<span class="pill mute wrap">${esc(a || "A")}: ${esc(plural(s.tags_a, "tagged section"))}</span>`);
     if (s.tags_b != null) facts.push(`<span class="pill mute wrap">${esc(b || "B")}: ${esc(plural(s.tags_b, "tagged section"))}</span>`);
     if (s.overlap != null) facts.push(`<span class="pill warn">${esc(num(s.overlap) + " shared")}</span>`);
+    if (s.pattern) facts.push(`<span class="pill mute">${esc(plural(s.count, "label"))}</span>`);
   }
   if (it.kind === "off_axis" && s.tags != null) facts.push(`<span class="pill mute">${esc(plural(s.tags, "tagged section"))}</span>`);
   if (it.kind === "similar_metrics" && s.score != null) facts.push(`<span class="pill warn">${esc(Math.round(num(s.score) * 100) + "% alike")}</span>`);
@@ -824,6 +833,7 @@ function healthDetail(it){
     <div class="section"><b>${isDecided(it) ? "Your decision" : "Claude recommends"}</b>${op.type === "keep" && it.reason === "no fix proposed" ? `<p class="note">No fix proposed. Pick one below, or leave it as is.</p>` : diffHTML(op)}</div>
     <div class="impact">${esc(healthImpact(op))}</div>
     ${it.reason && it.reason !== "no fix proposed" ? `<div class="section"><b>Why</b><p>${esc(it.reason)}</p></div>` : ""}
+    ${patternHTML(it)}
     ${whyHTML(it)}
     <div id="nodeSlot"></div>
     ${acts}

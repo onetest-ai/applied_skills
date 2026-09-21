@@ -78,6 +78,68 @@ def near_duplicate_labels(labels, threshold=0.86):
     return [g for g in groups.values() if len(g) > 1]
 
 
+# ---- naming_pattern ----
+#
+# A near-duplicate group is often not a duplicate at all but a deliberate family: numbered
+# types ("Delivery exception type 001" … "150"), regions ("EMEA sales" / "APAC sales"), product
+# codes, years. Those members differ only by a *variable token*; replacing every such token with
+# a placeholder collapses the whole family onto one stem. The rule is intentionally small:
+#   - any token containing a digit (numbers, years, "Q3", "v2", "A1B2");
+#   - an all-caps token of at most 4 letters (codes: "EMEA", "APAC", "US", "SKU");
+#   - a known region acronym written in caps that is longer than that ("LATAM", "NORAM").
+# A group is a pattern when every member has at least one variable token and all members
+# normalise to the same stem. Groups larger than PATTERN_MAX_MEMBERS are treated as a pattern
+# regardless — too large to review as merges one by one.
+
+PATTERN_MAX_MEMBERS = 8
+_TOKEN = re.compile(r"[A-Za-z0-9]+")
+_REGION_CODES = {"LATAM", "NORAM", "AMERICAS", "NORDICS", "BENELUX"}
+
+
+def _variable(tok):
+    if any(ch.isdigit() for ch in tok):
+        return True
+    return tok.isupper() and (len(tok) <= 4 or tok in _REGION_CODES)
+
+
+def pattern_stem(label):
+    """The label with each variable token replaced by '#', lowercased and whitespace-collapsed;
+    None when the label has no variable token at all."""
+    found = False
+
+    def sub(m):
+        nonlocal found
+        if _variable(m.group(0)):
+            found = True
+            return "#"
+        return m.group(0).lower()
+
+    stem = re.sub(r"\s+", " ", _TOKEN.sub(sub, label or "")).strip()
+    return stem if found else None
+
+
+def pattern_display(label):
+    """Human-readable stem of one label: digit runs become N…, other variable tokens XX."""
+    def sub(m):
+        tok = m.group(0)
+        if not _variable(tok):
+            return tok
+        return "N" * min(len(tok), 4) if tok.isdigit() else "XX"
+
+    return _TOKEN.sub(sub, label or "")
+
+
+def naming_pattern(labels):
+    """(is_pattern, display_stem_or_None) for a near-duplicate group.
+
+    A group whose members all share one stem (see `pattern_stem`) is a pattern with a display
+    stem; a group larger than PATTERN_MAX_MEMBERS is a pattern even without a common stem."""
+    stems = [pattern_stem(l) for l in labels]
+    uniform = bool(stems) and stems[0] is not None and all(s == stems[0] for s in stems)
+    display = pattern_display(labels[0]) if uniform else None
+    return (uniform or len(labels) > PATTERN_MAX_MEMBERS), display
+
+
 # ---- off_axis_l1 ----
 
 _PHASE_WORDS = (

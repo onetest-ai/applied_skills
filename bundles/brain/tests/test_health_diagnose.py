@@ -2,7 +2,7 @@ import json, os, sqlite3, tempfile, unittest
 
 import health as H
 import taxonomy_review as R
-from taxo_fixtures import tagged_store, taxonomy, write_json
+from taxo_fixtures import TAGS, tagged_store, taxonomy, write_json
 
 
 def add_fts(db):
@@ -403,6 +403,199 @@ class HealthUntaggedSectionsPathTests(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["op"], {"type": "keep", "node": "__untagged__"})
         self.assertIn("untagged", buf.getvalue())
+
+
+class NamingPatternRuleTests(unittest.TestCase):
+    """The deterministic rule that tells a patterned family from a real near-duplicate."""
+
+    def test_examples(self):
+        import flags
+        self.assertEqual(flags.naming_pattern(["Delivery exception type 001", "Delivery exception type 002"]),
+                         (True, "Delivery exception type NNN"))
+        self.assertTrue(flags.naming_pattern(["EMEA sales", "APAC sales"])[0])
+        self.assertTrue(flags.naming_pattern(["LATAM sales", "EMEA sales", "US sales"])[0])
+        self.assertTrue(flags.naming_pattern(["Returns 2024", "Returns 2025"])[0])
+        self.assertFalse(flags.naming_pattern(["Billing & Payments", "Billing and Payments"])[0])
+        self.assertFalse(flags.naming_pattern(["Customer Onboarding", "Customer Onboardng"])[0])
+        # every member must carry a variable token: an exact-stem pair with none is not a pattern
+        self.assertFalse(flags.naming_pattern(["Refunds", "refunds"])[0])
+        # a common stem is required, not just digits somewhere
+        self.assertFalse(flags.naming_pattern(["Plan 1 upgrades", "Plan 2 downgrades"])[0])
+
+    def test_large_groups_are_patterns_without_a_stem(self):
+        import flags
+        labels = [f"Topic {c}lpha" for c in "abcdefghi"]   # 9 members, no variable token
+        self.assertEqual(flags.naming_pattern(labels), (True, None))
+        self.assertFalse(flags.naming_pattern(labels[:8])[0])
+
+
+def cluster_taxonomy():
+    tax = taxonomy(version=1)
+    tree = tax["intent_taxonomy"]["tree"]
+    tree["Delivery Exceptions"] = [f"Delivery exception type {i:03d}" for i in range(1, 151)]
+    tree["Accounts"] = ["Account Access", "Acount Access", "Account Acess", "Password Reset"]
+    tree["Onboarding"] = ["Customer Onboarding", "Customer Onboardng"]
+    tax["intent_taxonomy"]["l1"] += ["Delivery Exceptions", "Accounts", "Onboarding"]
+    return tax
+
+
+CLUSTER_TAGS = {**TAGS,
+                20: ["Account Access"], 21: ["Account Access", "Acount Access"], 22: ["Account Access"],
+                23: ["Account Acess"], 24: ["Customer Onboarding"], 25: ["Customer Onboarding"],
+                26: ["Customer Onboardng"], 30: ["Delivery exception type 007"],
+                31: ["Delivery exception type 007"], 32: ["Delivery exception type 042"]}
+
+
+class NearDuplicateClusterTests(unittest.TestCase):
+    """One problem per near-duplicate group, never one per pair; naming patterns become one item."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.dir = os.path.join(self.td.name, "taxonomy")
+        self.tax = cluster_taxonomy()
+        self.cur = os.path.join(self.dir, "current.json"); write_json(self.cur, self.tax)
+        self.db = os.path.join(self.td.name, "k.sqlite"); tagged_store(self.db, self.tax, CLUSTER_TAGS)
+        self.work = os.path.join(self.dir, "work", "health")
+        H.diagnose(self.cur, self.db, self.work)
+        self.problems = json.load(open(os.path.join(self.work, "problems.json")))
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def _plan(self):
+        from datetime import datetime, timezone
+        return R.build_plan("health", self.cur, work_dir=self.work, db=self.db,
+                            now=datetime(2026, 9, 21, tzinfo=timezone.utc))
+
+    def _nd(self, first):
+        return next(p for p in self.problems["near_duplicate"] if p["members"][0] == first)
+
+    def _structure_entries(self):
+        import glob
+        out = []
+        for bf in sorted(glob.glob(os.path.join(self.work, "structure", "batch_*.json"))):
+            out += [e for e in json.load(open(bf)) if e["kind"] == "near_duplicate"]
+        return out
+
+    def test_one_problem_per_group(self):
+        firsts = sorted(p["members"][0] for p in self.problems["near_duplicate"])
+        self.assertEqual(firsts, ["Account Access", "Billing & Payments", "Customer Onboarding",
+                                  "Delivery exception type 001"])
+        pat = self._nd("Delivery exception type 001")
+        self.assertTrue(pat["pattern"]); self.assertEqual(len(pat["members"]), 150)
+        self.assertEqual(pat["tags"]["Delivery exception type 007"], 2)
+        self.assertNotIn("overlap", pat); self.assertNotIn("overlap_with_anchor", pat)
+        cluster = self._nd("Account Access")
+        self.assertFalse(cluster["pattern"]); self.assertEqual(cluster["anchor"], "Account Access")
+        self.assertEqual(cluster["overlap_with_anchor"], {"Acount Access": 1, "Account Acess": 0})
+        pair = self._nd("Customer Onboarding")
+        self.assertEqual((pair["a"], pair["b"], pair["tags_a"], pair["tags_b"], pair["overlap"]),
+                         ("Customer Onboarding", "Customer Onboardng", 2, 1, 0))
+
+    def test_pattern_group_is_not_sent_to_the_structure_agent(self):
+        entries = self._structure_entries()
+        self.assertFalse(any(e.get("pattern") for e in entries))
+        self.assertFalse(any("Delivery exception type 001" in e["members"] for e in entries))
+        cluster = next(e for e in entries if e["members"][0] == "Account Access")
+        self.assertEqual(set(cluster["samples"]), {"Account Access", "Acount Access", "Account Acess"})
+        instructions = open(os.path.join(self.work, "structure", "instructions.md")).read()
+        self.assertIn('"from"', instructions)
+
+    def test_150_patterned_labels_become_exactly_one_item(self):
+        _, rv = self._plan()
+        items = [i for i in rv["items"] if i["kind"] == "near_duplicate"
+                 and (i["support"] or {}).get("pattern")]
+        self.assertEqual(len(items), 1)
+        it = items[0]
+        self.assertEqual(it["title"], "Naming pattern: 150 labels like 'Delivery exception type NNN'")
+        self.assertEqual(it["reason"], "Labels differ only by a number/code — probably intentional variants")
+        self.assertEqual(it["op"], {"type": "keep", "node": "Delivery exception type 001"})
+        self.assertEqual(it["alternatives"], [{"type": "merge", "from": "Delivery exception type 001",
+                                               "into": "Delivery exception type 007"}])
+        self.assertEqual(len(it["evidence"]), 10)
+        self.assertEqual(it["evidence"][0], {"label": "Delivery exception type 001", "tags": 0})
+        self.assertEqual(it["support"]["count"], 150)
+        self.assertIsNone(it["group"]); self.assertEqual(it["status"], "proposed")
+        import decisions as D
+        self.assertTrue(D.health_amend_ok(it, it["alternatives"][0]))
+
+    def test_pair_with_an_agent_fix_behaves_as_before(self):
+        write_json(os.path.join(self.work, "structure", "result_0.json"), {"fixes": [
+            {"kind": "near_duplicate", "subject": "Customer Onboardng", "fix": "merge",
+             "into": "Customer Onboarding", "reason": "typo"}]})
+        _, rv = self._plan()
+        it = next(i for i in rv["items"] if i["kind"] == "near_duplicate"
+                  and i["title"] == "Customer Onboarding looks like Customer Onboardng")
+        self.assertIsNone(it["group"])
+        self.assertEqual(it["op"], {"type": "merge", "from": "Customer Onboardng", "into": "Customer Onboarding"})
+        self.assertEqual(it["alternatives"], [{"type": "keep", "node": "Customer Onboarding"},
+                                              {"type": "merge", "from": "Customer Onboarding",
+                                               "into": "Customer Onboardng"}])
+        self.assertEqual(it["support"], {"tags_a": 2, "tags_b": 1, "overlap": 0})
+        self.assertEqual(it["reason"], "typo")
+
+    def test_cluster_with_an_agent_fix_is_a_group_of_merges_into_the_survivor(self):
+        write_json(os.path.join(self.work, "structure", "result_0.json"), {"fixes": [
+            {"kind": "near_duplicate", "subject": "Account Access", "fix": "merge",
+             "into": "Account Access", "reason": "two typos"}]})
+        _, rv = self._plan()
+        rows = [i for i in rv["items"] if i["kind"] == "near_duplicate" and i["group"]
+                and "Account Access" in i["title"]]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(len({r["group"] for r in rows}), 1)
+        self.assertEqual(sorted((r["op"]["type"], r["op"]["from"], r["op"]["into"]) for r in rows),
+                         [("merge", "Account Acess", "Account Access"), ("merge", "Acount Access", "Account Access")])
+        self.assertTrue(all(r["reason"] == "two typos" and r["status"] == "proposed" for r in rows))
+        acount = next(r for r in rows if r["op"]["from"] == "Acount Access")
+        self.assertEqual(acount["support"]["overlap"], 1)
+        import decisions as D
+        # amend to another member of the cluster: fine; retarget outside it: refused
+        self.assertTrue(D.health_amend_ok(acount, {"type": "merge", "from": "Acount Access", "into": "Account Acess"}))
+        self.assertTrue(D.health_amend_ok(acount, {"type": "keep", "node": "Acount Access"}))
+        self.assertFalse(D.health_amend_ok(acount, {"type": "merge", "from": "Acount Access", "into": "Password Reset"}))
+        self.assertEqual(rv["context"]["subtitle"].split(" · ")[1], f"{self._n_problems()} problems")
+
+    def _n_problems(self):
+        p = self.problems
+        return sum(len(p[k]) for k in ("missing_description", "no_tags", "near_duplicate", "off_axis",
+                                         "similar_metrics", "metric_not_governed")) + 1
+
+    def test_cluster_fix_with_a_from_list_keeps_the_rest(self):
+        write_json(os.path.join(self.work, "structure", "result_0.json"), {"fixes": [
+            {"kind": "near_duplicate", "subject": "Acount Access", "fix": "merge", "into": "Account Access",
+             "from": ["Acount Access"], "reason": "only the typo"}]})
+        _, rv = self._plan()
+        rows = {i["op"].get("from") or i["op"].get("node"): i for i in rv["items"]
+                if i["kind"] == "near_duplicate" and i["group"]}
+        self.assertEqual(rows["Acount Access"]["op"]["type"], "merge")
+        self.assertEqual(rows["Account Acess"]["op"], {"type": "keep", "node": "Account Acess"})
+        self.assertIn({"type": "merge", "from": "Account Acess", "into": "Account Access"},
+                      rows["Account Acess"]["alternatives"])
+
+    def test_cluster_without_a_fix_falls_back(self):
+        _, rv = self._plan()
+        rows = [i for i in rv["items"] if i["kind"] == "near_duplicate" and i["group"]]
+        self.assertEqual(len(rows), 2)
+        for r in rows:
+            self.assertEqual(r["op"], {"type": "keep", "node": r["op"]["node"]})
+            self.assertEqual(r["reason"], "no fix proposed")
+            self.assertEqual(r["alternatives"][0],
+                             {"type": "merge", "from": r["op"]["node"], "into": "Account Access"})
+            self.assertLessEqual(len(r["alternatives"]), 2)
+        # the pattern item is a real recommendation and counts as a proposed fix; the cluster
+        # fallbacks (and every other kind, with no agent results here) do not
+        fixes = int(rv["context"]["subtitle"].split(" · ")[2].split()[0])
+        self.assertEqual(fixes, 1)
+
+    def test_every_near_duplicate_problem_reaches_the_inbox_once(self):
+        _, rv = self._plan()
+        nd = [i for i in rv["items"] if i["kind"] == "near_duplicate"]
+        entries = {i["group"] or i["id"] for i in nd}
+        self.assertEqual(len(entries), len(self.problems["near_duplicate"]))
+        ids = [i["id"] for i in rv["items"]]
+        self.assertEqual(len(ids), len(set(ids)))
+        _, rv2 = self._plan()   # deterministic: same inputs, same ids
+        self.assertEqual(ids, [i["id"] for i in rv2["items"]])
 
 
 if __name__ == "__main__":
