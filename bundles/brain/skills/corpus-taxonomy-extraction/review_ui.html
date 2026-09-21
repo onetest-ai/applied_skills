@@ -284,7 +284,7 @@ let closed = null;     // {title, body} once the session is over
 // inboxSel is an item id or "g:<kind>" for a health group; gRow is the current row inside it.
 // tagDraft holds a no-tags row's selection only while it is empty (a non-empty one is posted).
 const U = {view:null, inboxSel:null, gRow:null, treeSel:null, filter:"all", sort:"tree", q:"", mtab:null, mSel:null, mq:"",
-  sheet:false, redo:null, redoText:"", tagDraft:{}};
+  sheet:false, redo:null, redoText:"", tagDraft:{}, batchFail:null};
 let nodeCache = {}, chunkCache = {};
 let P = {m:{}, adds:[]};   // pending ops, recomputed on each render
 
@@ -313,12 +313,6 @@ function sameOp(a, b){
 const isTemplate = op => (op.type === "describe" && !String(op.description || "").trim())
   || (op.type === "tag" && !(op.chunk_ids || []).length) || (op.type === "metric_govern" && !Object.keys(op.draft || {}).length);
 const candidatesOf = it => [it.op].concat(it.alternatives || []);
-function candIndex(it, op){
-  const f = t => (t === "merge" || t === "metric_merge") ? "from" : t.startsWith("metric_") ? "metric" : "node";
-  const cs = candidatesOf(it);
-  const exact = cs.findIndex(c => sameOp(c, op)); if (exact >= 0) return exact;
-  return cs.findIndex(c => c.type === op.type && c[f(c.type)] === op[f(op.type)] && (c.into === undefined || c.into === op.into));
-}
 const suppressedLocked = it => it.status === "suppressed" && (latest(it.id) || {}).action !== "reopen";
 const descOf = l => ((S.base.descriptions || {})[l] || "").trim();
 const cnt = l => num(S.counts[slug(l)]);
@@ -430,13 +424,14 @@ function diffHTML(op){
 }
 
 // ---------------------------------------------------------------- render
-async function reload(){ S = await api.state(); nodeCache = {}; render(); }
+async function reload(){ stateEpoch++; S = await api.state(); nodeCache = {}; render(); }
 
 function closeHeader(){
   for (const id of ["openSubmit", "prog"]){ const el = $(id); el.hidden = true; if (el.tagName === "BUTTON") el.disabled = true; }
 }
 
 function render(){
+  pollRender = false;   // this render shows the latest state; nothing deferred is left
   renderHeader();
   if (closed || S.submitted){ renderDone(); return; }
   P = pending();
@@ -605,7 +600,20 @@ function inboxView(){
 }
 
 // ---------------------------------------------------------------- health: groups, rows, redo
+// Older logs may hold a reject with this reason; Skip itself no longer records anything.
 const SKIP_REASON = "Skipped";
+// A row or item whose op is only the generic fallback: no real proposal to accept in bulk.
+const isFallback = it => it.reason === "no fix proposed" || (it.op.type === "keep" && (it.alternatives || []).some(isTemplate));
+// Skip is navigation only: the item stays undecided, and the next undecided row or item opens.
+function skipFrom(it){
+  const pos = navPositions(), i = pos.findIndex(p => p.it.id === it.id);
+  const order = i < 0 ? pos : pos.slice(i + 1).concat(pos.slice(0, i));
+  const next = order.find(p => p.it.id !== it.id && !isDecided(p.it));
+  if (!next){ toast("Nothing else is waiting for a decision."); return; }
+  if (next.row && next.sel === U.inboxSel) moveRow(next.row);
+  else { U.inboxSel = next.sel; if (next.row) U.gRow = next.row; renderView(); }
+}
+const batchable = it => canAccept(it) && !isFallback(it);
 const canAccept = it => !isDecided(it) && !suppressedLocked(it) && !isTemplate(it.op) && !(U.tagDraft[it.id] && !U.tagDraft[it.id].length);
 function shortOp(op){
   if (isTemplate(op)) return op.type === "describe" ? "Write a description…" : op.type === "tag" ? "Pick sections to tag…" : "Draft a governed definition…";
@@ -684,9 +692,11 @@ function editedWords(op){
 }
 function altSelect(it){
   const cs = candidatesOf(it); if (cs.length < 2) return `<span class="note">—</span>`;
-  const ci = candIndex(it, itemOp(it));
-  return `<select data-alt="${esc(it.id)}" aria-label="Fix for ${esc(itemTitle(it))}" ${suppressedLocked(it) ? "disabled" : ""}>${cs.map((c, i) =>
-    opt(i, (i === 0 ? "Recommended: " : "") + (i === ci && !sameOp(c, itemOp(it)) ? editedWords(itemOp(it)) : shortOp(c)), i === ci)).join("")}</select>`;
+  // When the current fix is an edit (not exactly a candidate), it gets its own leading option, so
+  // every candidate — the recommended one included — stays pickable with a change event.
+  const cur = itemOp(it), ci = cs.findIndex(c => sameOp(c, cur));
+  return `<select data-alt="${esc(it.id)}" aria-label="Fix for ${esc(itemTitle(it))}" ${suppressedLocked(it) ? "disabled" : ""}>${ci < 0 ? opt("", "— edited: " + editedWords(cur) + " —", true) : ""}${cs.map((c, i) =>
+    opt(i, (i === 0 ? "Recommended: " : "") + shortOp(c), i === ci)).join("")}</select>`;
 }
 function rowActions(it){
   const id = esc(it.id);
@@ -705,7 +715,7 @@ function rowNote(it){
 }
 function rowHTML(it){
   const cur = U.gRow === it.id, id = esc(it.id), note = rowNote(it);
-  return `<tr class="${cur ? "cur" : ""} ${isDecided(it) ? "rdone" : ""}" data-row="${id}"><td><button type="button" class="rowpick" data-act="pick-row" data-id="${id}" aria-expanded="${cur}">${esc(itemTitle(it))}</button>${note ? `<span class="sub">${esc(note)}</span>` : ""}</td>
+  return `<tr class="${cur ? "cur" : ""} ${isDecided(it) ? "rdone" : ""}" data-row="${id}"><td><button type="button" class="rowpick" data-act="pick-row" data-id="${id}" aria-expanded="${cur}">${esc(itemTitle(it))}</button>${revisionWaiting(it) ? ` <span class="pill info" title="Claude revised this fix; open the row to approve it">revised</span>` : ""}${note ? `<span class="sub">${esc(note)}</span>` : ""}</td>
     <td class="fix">${lineDiff(itemOp(it), it)}</td><td>${altSelect(it)}</td><td>${rowActions(it)}</td></tr>`
     + (cur ? `<tr class="rpanel"><td colspan="4">${rowPanel(it)}</td></tr>` : "");
 }
@@ -744,7 +754,10 @@ function groupTable(rows){
 function groupDetail(e){
   const rows = e.rows;
   if (!rows.find(r => r.id === U.gRow)) U.gRow = (rows.find(r => !isDecided(r)) || rows[0]).id;
-  const decided = rows.filter(isDecided).length, open = rows.filter(canAccept).length;
+  const decided = rows.filter(isDecided).length, open = rows.filter(batchable).length, fb = rows.filter(r => canAccept(r) && isFallback(r)).length;
+  const f = U.batchFail && U.batchFail.kind === e.kind ? U.batchFail : null, bad = f ? S.review.items.find(i => i.id === f.recs[f.index].item_id) : null;
+  const others = f ? f.recs.filter((r, i) => i !== f.index).length : 0;
+  const failHTML = bad ? `<div class="decided bad"><span>Nothing was recorded: “${esc(itemTitle(bad))}” can't be accepted. ${esc(f.error)}</span><button type="button" data-act="goto-row" data-id="${esc(bad.id)}">Show row</button>${others ? `<button type="button" data-act="accept-others">Accept the other ${num(others)}</button>` : ""}</div>` : "";
   let body;
   if (e.kind === "untagged_sections"){
     const adds = rows.filter(r => r.op.type === "add"), tags = rows.filter(r => r.op.type === "tag"), rest = rows.filter(r => r.op.type !== "add" && r.op.type !== "tag");
@@ -755,9 +768,13 @@ function groupDetail(e){
     <p class="note">${esc(fixSummary(rows))}</p>
     <div class="gtools"><span class="gprog">${num(decided)} of ${num(rows.length)} decided<span class="track"><i style="width:${rows.length ? (100 * decided / rows.length) : 0}%"></i></span></span>
       <button type="button" class="btn ok" data-act="accept-all" data-kind="${esc(e.kind)}" ${open ? "" : "disabled"}>Accept all remaining (${num(open)})</button>
+      ${fb ? `<span class="note">${esc(plural(fb, "row") + " with no fix proposed " + (fb === 1 ? "needs" : "need") + " a decision of " + (fb === 1 ? "its" : "their") + " own")}</span>` : ""}
       <span class="note"><span class="kbd">J</span>/<span class="kbd">K</span> rows · <span class="kbd">A</span> accept · <span class="kbd">R</span> skip</span></div>
+    ${failHTML}
     ${body}`;
 }
+// A revision is waiting when Claude answered the item's latest request and it isn't the current fix.
+function revisionWaiting(it){ const rev = (S.revisions || {})[it.id]; return !!(rev && rev.op) && !(isDecided(it) && sameOp(itemOp(it), rev.op)); }
 function lastRequest(id){ let q = null; for (const r of Object.values(S.requests || {})) if (r.item_id === id) q = r; return q; }
 function redoHTML(it){
   const q = lastRequest(it.id), rev = (S.revisions || {})[it.id], id = esc(it.id);
@@ -765,7 +782,7 @@ function redoHTML(it){
   if (rev && rev.op){
     const taken = isDecided(it) && sameOp(itemOp(it), rev.op);
     status = `<div class="revised"><b>Revised by Claude</b>${q ? `<span class="note">Your note: “${esc(q.note)}”</span>` : ""}${diffHTML(rev.op)}${rev.reason ? `<p>${esc(rev.reason)}</p>` : ""}
-      ${taken ? `<span><span class="pill ok">approved</span></span>` : `<div class="dock flat"><button type="button" class="btn ok sm" data-act="rev-approve" data-id="${id}">Approve</button></div>`}</div>`;
+      ${taken ? `<span><span class="pill ok">approved</span></span>` : suppressedLocked(it) ? `<p class="note">This fix was rejected before. Reopen the item first, then approve the revision.</p>` : `<div class="dock flat"><button type="button" class="btn ok sm" data-act="rev-approve" data-id="${id}">Approve</button></div>`}</div>`;
   } else if (q && q.status === "open"){
     status = `<div class="decided info"><span>${S.live_channel ? "Claude is revising…" : "Queued for the next run. Claude reads the note when you next run the health check."} Your note: “${esc(q.note)}”</span></div>`;
   }
@@ -843,6 +860,11 @@ async function onTagToggle(box){
   const rec = sameOp(op, it.op) ? {action:"approve", item_id:it.id} : {action:"amend", item_id:it.id, op};
   const ok = await send(rec, `“${tagCand(it).node}”: ${plural(ids.length, "section")} selected`);
   if (!ok) renderView();
+}
+// Accept a group's rows in one all-or-nothing batch; a refused row is named with a way round it.
+async function acceptBatch(g, recs){
+  await sendBatch(recs, `Accepted ${plural(recs.length, "fix", "fixes")} in “${groupTitle(g)}”`, null, null,
+    e => { U.batchFail = {kind:g.kind, recs, index:e.index, error:errText(e)}; });
 }
 // J/K and row clicks inside an open group only move the current row: no full re-render.
 function moveRow(id){
@@ -1141,8 +1163,16 @@ function seqRatio(a, b){
 }
 const normName = s => String(s || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
 // Pairs from the plan's similar_metrics items; without any, the same rule computed here.
+// Memoized on the metrics and items arrays: S is replaced on every fetch, so a new state recomputes,
+// but re-renders and search keystrokes reuse the pairs.
+let dupMemo = {metrics:null, items:null, pairs:[]};
 function dupPairs(){
-  const items = S.review.items.filter(i => i.kind === "similar_metrics");
+  if (dupMemo.metrics === S.metrics && dupMemo.items === S.review.items) return dupMemo.pairs;
+  dupMemo = {metrics:S.metrics, items:S.review.items, pairs:computeDupPairs()};
+  return dupMemo.pairs;
+}
+function computeDupPairs(){
+  const items = S.review.items.filter(i => i.kind === "similar_metrics" && i.status !== "invalid" && i.status !== "auto_skipped");
   if (items.length) return items.map(it => {
     const names = []; for (const c of candidatesOf(it)) for (const n of [c.metric, c.from, c.into]) if (n && !names.includes(n)) names.push(n);
     return {a:names[0], b:names[1], score:num((it.support || {}).score), item:it};
@@ -1405,12 +1435,15 @@ function restoreRec(itemId, prev){
   return {action:"clear", item_id:itemId};
 }
 let busy = false;
+// Bumped before every decision and every non-poll state fetch; a poll that started earlier is dropped.
+let stateEpoch = 0;
 async function send(rec, msg, undoOverride, beforeRender){
   if (busy) return false;   // a double click or key repeat must not append a second record
   busy = true;
   try { return await sendNow(rec, msg, undoOverride, beforeRender); } finally { busy = false; }
 }
 async function sendNow(rec, msg, undoOverride, beforeRender){
+  stateEpoch++;
   const prev = rec.item_id ? (S.decisions[rec.item_id] || null) : null;
   const before = U.view === "inbox" ? inboxOrder().todo.map(i => i.id) : [];
   let out;
@@ -1438,9 +1471,10 @@ async function sendNow(rec, msg, undoOverride, beforeRender){
   return true;
 }
 // POST /api/decisions: all records or none. Undo is one batch restoring each previous record.
-async function sendBatch(recs, msg, undoOverride, beforeRender){
+async function sendBatch(recs, msg, undoOverride, beforeRender, onFail){
   if (busy || !recs.length) return false;
   busy = true;
+  stateEpoch++;
   try {
     const prevs = recs.map(r => S.decisions[r.item_id] || null);
     let out;
@@ -1448,10 +1482,12 @@ async function sendBatch(recs, msg, undoOverride, beforeRender){
     catch(e){
       if (e.status === 409){ onClosed(); return false; }
       const bad = e.index != null && recs[e.index] ? S.review.items.find(i => i.id === recs[e.index].item_id) : null;
+      if (onFail && bad){ onFail(e); renderView(); return false; }
       toast(`Nothing was recorded. ${bad ? "“" + itemTitle(bad) + "”: " : ""}${errText(e)}`, null, true);
       return false;
     }
     recs.forEach((r, i) => { hist[r.item_id] = prevs[i]; if (r.action !== "clear") delete U.tagDraft[r.item_id]; });
+    U.batchFail = null;
     const undo = undoOverride || recs.map((r, i) => restoreRec(r.item_id, prevs[i]));
     try { S = await api.state(); nodeCache = {}; } catch(e){ toast(errText(e), null, true); return true; }
     if (beforeRender) beforeRender(out);
@@ -1539,7 +1575,7 @@ document.addEventListener("click", async ev => {
   const item = id ? S.review.items.find(i => i.id === id) : null;
   switch (a){
     case "view": U.view = el.dataset.v; render(); break;
-    case "pick-item": U.inboxSel = id; if (String(id).startsWith("g:")) U.gRow = null; renderView(); break;
+    case "pick-item": U.batchFail = null; U.inboxSel = id; if (String(id).startsWith("g:")) U.gRow = null; renderView(); break;
     case "pick-node": U.treeSel = {kind:"node", label:el.dataset.label}; if (U.view !== "taxonomy"){ U.view = "taxonomy"; render(); } else renderView(); break;
     case "pick-pending": U.treeSel = {kind:"pending", key:el.dataset.key}; renderView(); break;
     case "new-cat": U.treeSel = {kind:"new", parent: el.dataset.parent || ""}; renderView(); break;
@@ -1547,11 +1583,12 @@ document.addEventListener("click", async ev => {
     case "sort": U.sort = el.dataset.s; renderView(); break;
     case "mtab": U.mtab = el.dataset.t; U.mSel = null; renderView(); break;
     case "pick-metric": U.mSel = el.dataset.name; renderView(); break;
-    case "new-metric": U.mSel = "__new"; renderView(); openForm("m-add", {}); break;
+    case "new-metric": if (U.mtab === "dup") U.mtab = computableBucket();   // the pairs tab has no form slot
+      U.mSel = "__new"; renderView(); openForm("m-add", {}); break;
     case "approve": if (item){ delete U.tagDraft[item.id]; await send({action:"approve", item_id:item.id},
       el.dataset.revert ? `Reverted “${itemTitle(item)}” to keep` : item.origin === "induction" ? `Kept “${itemTitle(item)}”` : isHealth(item) ? `Accepted “${itemTitle(item)}”` : `Approved “${itemTitle(item)}”`,
       null, () => advanceRow(item.id)); } break;
-    case "skip": if (item) await send({action:"reject", item_id:item.id, reason:SKIP_REASON}, `Skipped “${itemTitle(item)}”`, null, () => advanceRow(item.id)); break;
+    case "skip": if (item) skipFrom(item); break;
     case "pick-row": if (item) moveRow(item.id); break;
     case "row-edit": if (item){
       if (item.group) U.gRow = item.id;
@@ -1562,17 +1599,23 @@ document.addEventListener("click", async ev => {
     } break;
     case "h-alt": if (item) await pickCandidate(item, num(el.dataset.i)); break;
     case "accept-all": { const g = groupOf(el.dataset.kind); if (!g) break;
-      const recs = g.rows.filter(canAccept).map(r => ({action:"approve", item_id:r.id}));
-      await sendBatch(recs, `Accepted ${plural(recs.length, "fix", "fixes")} in “${groupTitle(g)}”`); break; }
-    case "rev-approve": { const rev = item && (S.revisions || {})[item.id]; if (!rev) break;
+      U.batchFail = null;
+      await acceptBatch(g, g.rows.filter(batchable).map(r => ({action:"approve", item_id:r.id}))); break; }
+    case "accept-others": { const f = U.batchFail, g = f && groupOf(f.kind); if (!g) break;
+      const byId = id => S.review.items.find(i => i.id === id);
+      const recs = f.recs.filter((r, i) => i !== f.index && byId(r.item_id) && batchable(byId(r.item_id)));
+      U.batchFail = null;
+      if (!recs.length){ renderView(); break; }
+      await acceptBatch(g, recs); break; }
+    case "rev-approve": { const rev = item && (S.revisions || {})[item.id]; if (!rev || suppressedLocked(item)) break;
       delete U.tagDraft[item.id];
       await send(sameOp(rev.op, item.op) ? {action:"approve", item_id:item.id} : {action:"amend", item_id:item.id, op:rev.op}, `Approved Claude's revision for “${itemTitle(item)}”`); break; }
     case "redo-open": if (item){ U.redo = item.id; U.redoText = ""; if (item.group) U.gRow = item.id; renderView(); const t = $("redoNote"); if (t) t.focus(); } break;
-    case "redo-cancel": U.redo = null; U.redoText = ""; renderView(); break;
+    case "redo-cancel": U.redo = null; U.redoText = ""; renderView(); flushPoll(); break;
     case "redo-send": { const note = U.redoText.trim(); if (!item) break;
       if (!note){ const e = $("rerr"); if (e) e.textContent = "Write what Claude should change first."; break; }
       if (busy) break;
-      busy = true;
+      busy = true; stateEpoch++;
       try {
         await api.request(item.id, note);
         U.redo = null; U.redoText = "";
@@ -1597,7 +1640,8 @@ document.addEventListener("click", async ev => {
     case "form": openForm(el.dataset.form, ctxFor(el.dataset.form)); break;
     case "form-cancel": { const s = $("formslot"); if (s) s.innerHTML = "";
       if (U.view === "taxonomy" && U.treeSel && U.treeSel.kind === "new"){ U.treeSel = null; renderView(); }
-      if (U.view === "metrics" && U.mSel === "__new"){ U.mSel = null; renderView(); } break; }
+      if (U.view === "metrics" && U.mSel === "__new"){ U.mSel = null; renderView(); }
+      flushPoll(); break; }
     case "chunk": {
       const q = el.closest(".quote"); if (!q) break;
       const box = q.querySelector(`.full[data-for="${CSS.escape(id)}"]`);
@@ -1626,7 +1670,7 @@ document.addEventListener("change", ev => {
   if (t.dataset && t.dataset.tag){ onTagToggle(t); return; }
   if (t.dataset && t.dataset.alt){
     const it = S.review.items.find(i => i.id === t.dataset.alt); if (!it) return;
-    if (busy){ renderView(); return; }
+    if (busy || t.value === ""){ renderView(); return; }
     pickCandidate(it, num(t.value));
   }
 });
@@ -1649,7 +1693,7 @@ document.addEventListener("keydown", ev => {
   if (k === "j" && i < pos.length - 1) go(pos[i + 1]);
   else if (k === "k" && i > 0) go(pos[i - 1]);
   else if (k === "a" && it && isHealth(it)){ if (canAccept(it)) send({action:"approve", item_id:it.id}, `Accepted “${itemTitle(it)}”`, null, () => advanceRow(it.id)); }
-  else if (k === "r" && it && isHealth(it)){ if (!isDecided(it) && !suppressedLocked(it)) send({action:"reject", item_id:it.id, reason:SKIP_REASON}, `Skipped “${itemTitle(it)}”`, null, () => advanceRow(it.id)); }
+  else if (k === "r" && it && isHealth(it)) skipFrom(it);
   else if (k === "a" && it && !isDecided(it) && !(it.status === "suppressed" && !((latest(it.id) || {}).action === "reopen")))
     send({action:"approve", item_id:it.id}, it.origin === "induction" ? `Kept “${itemTitle(it)}”` : `Approved “${itemTitle(it)}”`);
   else if (k === "r" && it && !isDecided(it) && REJECT_REASONS[it.origin]){
@@ -1665,18 +1709,21 @@ document.addEventListener("keydown", ev => {
 // unless the reviewer is typing, in which case it waits for the next tick.
 let pollRender = false;
 const needsPoll = () => !!S && !closed && !S.submitted && Object.values(S.requests || {}).some(q => q.status === "open" && !(S.revisions || {})[q.item_id]);
+const holdRender = () => typing() || U.sheet || !!$("opform") || U.redo !== null;
+function flushPoll(){ if (pollRender && !holdRender()) render(); }
 const typing = () => { const a = document.activeElement; return !!a && (a.tagName === "TEXTAREA" || a.tagName === "SELECT" || (a.tagName === "INPUT" && a.type !== "checkbox")); };
 setInterval(async () => {
   if (busy || closed || !S) return;
-  if (pollRender && !typing() && !U.sheet){ pollRender = false; render(); }
+  flushPoll();
   if (!needsPoll()) return;
   let st;
+  const mine = stateEpoch;
   try { st = await api.state(); } catch(e){ if (e.status === 409) onClosed(); return; }
-  if (busy || closed) return;
+  if (busy || closed || mine !== stateEpoch) return;   // a decision or fresher fetch started meanwhile
   const sig = x => JSON.stringify([x.requests, x.revisions, x.submitted]);
   if (sig(st) === sig(S)) return;
   S = st; nodeCache = {};
-  if (typing() || U.sheet) pollRender = true; else render();
+  if (holdRender()) pollRender = true; else render();
 }, 5000);
 
 api.state().then(st => {

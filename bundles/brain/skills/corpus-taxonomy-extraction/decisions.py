@@ -217,12 +217,24 @@ def health_amend_ok(item, op):
       (e) for tag, `set(op["chunk_ids"]) <= item["support"]["candidate_ids"]` when that key is
           present — a human can narrow the selection or edit a `chunk_ids: []` template, but
           never tag chunks nothing about this item ever proposed.
+    For `add` (new categories for untagged sections), (b) also accepts the candidate's keys plus
+    `"description"` — a proposal drafted without one can't be saved otherwise, since the browser
+    requires a description on every new category — and the amend must keep the candidate's
+    `level` and `parent`: a rename or a description is an edit, a different place is not.
     Shared by decisions.validate_record and respond's live-channel revisions."""
     cands = [item["op"]] + (item.get("alternatives") or [])
     t = op.get("type")
     field = HEALTH_SUBJECT_FIELD.get(t, "node")
     same_type = [c for c in cands if c.get("type") == t]
-    if not any(set(op.keys()) == set(c.keys()) and op.get(field) == c.get(field) for c in same_type):
+    def keys_ok(c):
+        if t == "add":
+            return set(op.keys()) in (set(c.keys()), set(c.keys()) | {"description"})
+        return set(op.keys()) == set(c.keys())
+
+    def place_ok(c):
+        return t != "add" or (op.get("level") == c.get("level") and op.get("parent") == c.get("parent"))
+
+    if not any(keys_ok(c) and op.get(field) == c.get(field) and place_ok(c) for c in same_type):
         return False
     if t in ("merge", "metric_merge") and op.get("into") not in {c.get("into") for c in same_type}:
         return False

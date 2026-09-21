@@ -320,6 +320,43 @@ NO_TAGS_TAG_ITEM = {
     "support": {"candidate_ids": [7, 8, 9, 10]}}
 
 
+UNTAGGED_ADD_ITEM = {
+    "id": "i-14", "origin": "health", "kind": "untagged_sections", "group": "untagged_sections",
+    "status": "proposed", "fingerprint": "add|installments|",
+    "op": {"type": "add", "level": "L2", "name": "Installments", "parent": "Billing & Payments"},
+    "alternatives": []}
+
+
+class HealthAmendAddDescriptionTests(unittest.TestCase):
+    """B5 fix round, m1: an untagged-sections `add` drafted without a description can be amended
+    to carry one (and renamed), but never moved to another level/parent or given other keys."""
+
+    def v(self, rec_op):
+        rec = {"review_id": RID, "item_id": UNTAGGED_ADD_ITEM["id"], "action": "amend", "surface": "browser", "op": rec_op}
+        return D.validate_record(review([UNTAGGED_ADD_ITEM]), taxonomy(), [], rec)
+
+    def test_add_amend_may_add_a_description(self):
+        op = dict(UNTAGGED_ADD_ITEM["op"], description="Paying a bill in parts.")
+        self.assertTrue(D.health_amend_ok(UNTAGGED_ADD_ITEM, op))
+        self.assertEqual(self.v(op), [])
+
+    def test_add_amend_may_rename_and_describe(self):
+        op = dict(UNTAGGED_ADD_ITEM["op"], name="Payment instalments", description="Paying a bill in parts.")
+        self.assertTrue(D.health_amend_ok(UNTAGGED_ADD_ITEM, op))
+
+    def test_add_amend_cannot_change_parent_or_level(self):
+        moved = dict(UNTAGGED_ADD_ITEM["op"], parent="Delivery & Pickup", description="x")
+        self.assertFalse(D.health_amend_ok(UNTAGGED_ADD_ITEM, moved))
+        self.assertTrue(self.v(moved))
+        promoted = dict(UNTAGGED_ADD_ITEM["op"], level="L1", parent=None, description="x")
+        self.assertFalse(D.health_amend_ok(UNTAGGED_ADD_ITEM, promoted))
+
+    def test_add_amend_cannot_add_other_keys(self):
+        extra = dict(UNTAGGED_ADD_ITEM["op"], description="x", node="Refunds")
+        self.assertFalse(D.health_amend_ok(UNTAGGED_ADD_ITEM, extra))
+        self.assertFalse(D.health_amend_ok(UNTAGGED_ADD_ITEM, dict(UNTAGGED_ADD_ITEM["op"], aliases=["x"])))
+
+
 class HealthAmendAntiSpoofTests(unittest.TestCase):
     """Fix round 2, ruling 1: health_amend_ok must refuse an op that carries an extra field
     (a different check than op.type/subject_of alone would catch), or that keeps the right
