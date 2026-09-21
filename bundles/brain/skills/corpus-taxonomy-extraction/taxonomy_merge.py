@@ -161,7 +161,12 @@ def apply_review(review_path, decisions_path=None):
         "ops": applied, "migrations": migs, "added_l1": add_l1, "added_l2": add_l2,
         "rejected": [r["fingerprint"] for r in st["latest"].values()
                      if r["action"] == "reject" and r.get("fingerprint")]})
-    out, sha = write_version_and_current(tax_dir, new)
+    try:
+        out, sha = write_version_and_current(tax_dir, new)
+    except FileExistsError:
+        existing = os.path.join(tax_dir, f"taxonomy_v{version}.json")
+        raise Refused(f"{existing} already exists but {cur} was not updated to match it; "
+                      "the taxonomy directory is in an inconsistent state — investigate before retrying") from None
     D.append(decisions_path, {"review_id": rid, "action": "applied", "out": out, "version": version, "sha256": sha,
                               "reviewer": "taxonomy_merge.py", "surface": "script"})
     return {"status": "applied", "review_id": rid, "out": out, "version": version, "ops": len(applied),
@@ -169,23 +174,58 @@ def apply_review(review_path, decisions_path=None):
 
 
 def legacy_apply(a, tax, items):
+    """Legacy add-only apply. Returns a process exit code (0 ok, 2 refused)."""
+    tax_dir = os.path.dirname(os.path.abspath(a.taxonomy))
+    cur = os.path.join(tax_dir, CURRENT)
+    if os.path.exists(cur) and os.path.abspath(a.taxonomy) != os.path.abspath(cur):
+        print(f"REFUSED: {cur} exists; run this against {cur}, not {a.taxonomy} — a stale taxonomy file "
+              f"would roll current.json back.", file=sys.stderr)
+        return 2
+    if not items:
+        print("\nnothing to apply (all proposals were duplicates, invalid, or suppressed).")
+        return 0
+
     version = (tax.get("version") or 0) + 1
     ops = [{"type": "add", "level": i["level"], "name": i["name"], "parent": i["parent"]} for i in items]
-    new, _, applied = apply_ops(tax, ops)
+    try:
+        new, _, applied = apply_ops(tax, ops)
+    except ChangesetError as e:
+        print("REFUSED: the changeset is invalid: " + "; ".join(e.errors), file=sys.stderr)
+        return 2
     new["version"] = version
     add_l1, add_l2 = _added(applied)
     new.setdefault("history", []).append({
         "version": version, "added_l1": add_l1, "added_l2": add_l2, "from": os.path.abspath(a.proposals),
         "review_id": None, "reviewer": reviewer_name(a.reviewer), "ts": utc_now(), "without_review": True,
         "ops": applied, "migrations": []})
-    tax_dir = os.path.dirname(os.path.abspath(a.taxonomy))
+
     out = a.out or os.path.join(tax_dir, f"taxonomy_v{version}.json")
-    data = dump_bytes(new)
-    atomic_write_bytes(out, data)
-    if os.path.dirname(os.path.abspath(out)) == tax_dir:
-        atomic_write_bytes(os.path.join(tax_dir, CURRENT), data)
+    out_dir = os.path.dirname(os.path.abspath(out)) or tax_dir
+    if out_dir == tax_dir:
+        expected = f"taxonomy_v{version}.json"
+        if os.path.basename(out) != expected:
+            print(f"REFUSED: writing into {tax_dir} must produce {expected} (ratified versions are named and "
+                  f"immutable); got {out}", file=sys.stderr)
+            return 2
+        try:
+            out, _sha = write_version_and_current(tax_dir, new)
+        except FileExistsError as e:
+            print(f"REFUSED: {e}", file=sys.stderr)
+            return 2
+        next_taxonomy = cur
+    else:
+        if os.path.exists(out):
+            print(f"REFUSED: {out} already exists", file=sys.stderr)
+            return 2
+        try:
+            atomic_write_bytes(out, dump_bytes(new))
+        except FileExistsError as e:
+            print(f"REFUSED: {e}", file=sys.stderr)
+            return 2
+        next_taxonomy = out
     print(f"\napplied WITHOUT REVIEW -> {out} (version {version}). NEXT: build_graph.py --taxonomy "
-          f"{os.path.join(tax_dir, CURRENT)} --db <db>; then reclassify affected chunks.")
+          f"{next_taxonomy} --db <db>; then reclassify affected chunks.")
+    return 0
 
 
 def main():
@@ -242,8 +282,7 @@ def main():
               "taxonomy_review.py (plan → serve → taxonomy_merge --review … --apply), or pass --without-review "
               "if the user explicitly asked to skip the review.", file=sys.stderr)
         return 2
-    legacy_apply(a, tax, kept)
-    return 0
+    return legacy_apply(a, tax, kept)
 
 
 if __name__ == "__main__":

@@ -88,6 +88,50 @@ class LegacyCliTests(unittest.TestCase):
         self.assertIn("· suppressed Handoffs  — rejected before: not a call reason (Pat)", r.stdout)
         self.assertIn("proposed: +1 L1, +0 L2", r.stdout)
 
+    def test_stale_taxonomy_file_refused_when_current_exists(self):
+        # self.tax IS current.json (a sibling of itself); point --taxonomy at a different, stale file instead.
+        stale = os.path.join(os.path.dirname(self.tax), "taxonomy_v1.json")
+        write_json(stale, taxonomy(version=1))
+        cur_bytes = open(self.tax, "rb").read()
+        r = run("--taxonomy", stale, "--proposals", self.props, "--apply", "--without-review")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("current.json", r.stderr)
+        self.assertEqual(open(self.tax, "rb").read(), cur_bytes)
+        self.assertFalse(os.path.exists(os.path.join(os.path.dirname(self.tax), "taxonomy_v2.json")))
+
+    def test_existing_ratified_version_file_refused_and_untouched(self):
+        v3 = os.path.join(os.path.dirname(self.tax), "taxonomy_v3.json")
+        write_json(v3, {"sentinel": True})
+        sentinel_bytes = open(v3, "rb").read()
+        cur_bytes = open(self.tax, "rb").read()
+        r = run("--taxonomy", self.tax, "--proposals", self.props, "--apply", "--without-review")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("taxonomy_v3.json", r.stderr)
+        self.assertEqual(open(v3, "rb").read(), sentinel_bytes)
+        self.assertEqual(open(self.tax, "rb").read(), cur_bytes)
+
+    def test_out_outside_taxonomy_dir_leaves_current_untouched(self):
+        out = os.path.join(self.td.name, "outside", "out.json")
+        cur_bytes = open(self.tax, "rb").read()
+        r = run("--taxonomy", self.tax, "--proposals", self.props, "--apply", "--without-review", "--out", out)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.exists(out))
+        self.assertEqual(open(self.tax, "rb").read(), cur_bytes)
+        self.assertFalse(os.path.exists(os.path.join(os.path.dirname(self.tax), "taxonomy_v3.json")))
+
+    def test_zero_additions_after_dedup_writes_nothing(self):
+        only_dups = {"proposals": [
+            {"name": "Refunds", "level": "L2", "parent": "Billing & Payments", "evidence": "dup existing"},
+            {"name": "Orphan", "level": "L2", "parent": "Nowhere", "evidence": "x"}]}
+        props2 = os.path.join(self.td.name, "props2")
+        write_json(os.path.join(props2, "result_0.json"), only_dups)
+        cur_bytes = open(self.tax, "rb").read()
+        r = run("--taxonomy", self.tax, "--proposals", props2, "--apply", "--without-review")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("nothing to apply", r.stdout)
+        self.assertFalse(os.path.exists(os.path.join(os.path.dirname(self.tax), "taxonomy_v3.json")))
+        self.assertEqual(open(self.tax, "rb").read(), cur_bytes)
+
 
 class ApplyReviewTests(unittest.TestCase):
     def setUp(self):
@@ -112,10 +156,17 @@ class ApplyReviewTests(unittest.TestCase):
     def submit(self):
         D.append(self.dec, {"review_id": self.rid, "action": "submit", "reviewer": "Pat", "surface": "browser"})
 
+    def assert_nothing_written(self, cur_bytes_before):
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "taxonomy_v2.json")))
+        self.assertEqual(open(self.cur, "rb").read(), cur_bytes_before)
+        self.assertIsNone(D.review_state(D.read(self.dec), self.rid)["applied"])
+
     def test_refuses_unsubmitted(self):
         self.propose({"type": "rename", "node": "Refunds", "new_name": "Refund Requests"})
+        cur_bytes = open(self.cur, "rb").read()
         with self.assertRaises(M.Refused):
             M.apply_review(self.review_path)
+        self.assert_nothing_written(cur_bytes)
 
     def test_applies_writes_current_history_and_applied_record(self):
         self.propose({"type": "rename", "node": "Refunds", "new_name": "Refund Requests"})
@@ -134,15 +185,44 @@ class ApplyReviewTests(unittest.TestCase):
     def test_refuses_when_base_changed(self):
         self.submit()
         write_json(self.cur, taxonomy(version=1) | {"goal": "edited"})
+        cur_bytes = open(self.cur, "rb").read()
         with self.assertRaises(M.Refused):
             M.apply_review(self.review_path)
+        self.assert_nothing_written(cur_bytes)
 
     def test_refuses_non_add_from_agent_surface(self):
         self.propose({"type": "remove", "node": "Transform", "disposition": "demote"}, surface="terminal")
         self.submit()
+        cur_bytes = open(self.cur, "rb").read()
         with self.assertRaises(M.Refused) as cm:
             M.apply_review(self.review_path)
         self.assertIn("review app", str(cm.exception))
+        self.assert_nothing_written(cur_bytes)
+
+    def test_refuses_when_changeset_is_invalid(self):
+        # Directly appended via D.append (bypasses the review app's own validate_record check).
+        self.propose({"type": "rename", "node": "Refunds", "new_name": "Duplicate Charge"})
+        self.submit()
+        cur_bytes = open(self.cur, "rb").read()
+        with self.assertRaises(M.Refused) as cm:
+            M.apply_review(self.review_path)
+        self.assertIn("changeset is invalid", str(cm.exception))
+        self.assert_nothing_written(cur_bytes)
+
+    def test_refuses_when_version_file_already_exists(self):
+        self.propose({"type": "rename", "node": "Refunds", "new_name": "Refund Requests"})
+        self.submit()
+        v2_path = os.path.join(self.dir, "taxonomy_v2.json")
+        write_json(v2_path, {"sentinel": True})
+        sentinel_bytes = open(v2_path, "rb").read()
+        cur_bytes = open(self.cur, "rb").read()
+        with self.assertRaises(M.Refused) as cm:
+            M.apply_review(self.review_path)
+        self.assertIn("taxonomy_v2.json", str(cm.exception))
+        self.assertIn(self.cur, str(cm.exception))
+        self.assertEqual(open(v2_path, "rb").read(), sentinel_bytes)
+        self.assertEqual(open(self.cur, "rb").read(), cur_bytes)
+        self.assertIsNone(D.review_state(D.read(self.dec), self.rid)["applied"])
 
     def test_no_ops_is_no_changes(self):
         self.submit()
