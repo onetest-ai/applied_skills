@@ -50,6 +50,34 @@ class DiagnoseTests(unittest.TestCase):
         tr = [x for x in p["no_tags"] if x["node"] == "Transform"]
         self.assertEqual(tr, [])                                          # Transform has 1 tag → not no_tags
 
+    def test_open_request_note_attaches_via_review_file(self):
+        review_id = "r-test"
+        item = {"id": "i-abc123", "kind": "no_tags",
+                "op": {"type": "tag", "node": "Payment Plans", "chunk_ids": []},
+                "fingerprint": "tag|payment plans|"}
+        write_json(os.path.join(self.dir, "reviews", f"review_{review_id}.json"),
+                   {"review_id": review_id, "items": [item]})
+        requests_path = os.path.join(self.dir, "work", "requests.jsonl")
+        os.makedirs(os.path.dirname(requests_path), exist_ok=True)
+        with open(requests_path, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"id": "req-1", "ts": "t", "review_id": review_id, "item_id": "i-abc123",
+                                "note": "please retry with more candidates", "status": "open"}) + "\n")
+            # a request whose review file is missing must be skipped, not crash
+            f.write(json.dumps({"id": "req-2", "ts": "t", "review_id": "r-missing", "item_id": "i-xxx",
+                                "note": "n/a", "status": "open"}) + "\n")
+
+        res = H.diagnose(self.cur, self.db, self.out)
+        p = json.load(open(os.path.join(self.out, "problems.json")))
+        self.assertIn({"request_id": "req-1", "review_id": review_id, "item_id": "i-abc123",
+                       "subject": "Payment Plans", "kind": "no_tags",
+                       "fingerprint": "tag|payment plans|", "note": "please retry with more candidates"},
+                      p["open_requests"])
+
+        notags_dir = next(t["dir"] for t in res["tasks"] if t["kind"] == "notags")
+        batch = json.load(open(os.path.join(notags_dir, "batch_0.json")))
+        entry = next(x for x in batch if x["node"] == "Payment Plans")
+        self.assertEqual(entry.get("note"), "please retry with more candidates")
+
     def test_cli_prints_one_json_line(self):
         import io
         from contextlib import redirect_stdout

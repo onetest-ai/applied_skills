@@ -491,8 +491,7 @@ def cmd_describe_prep(a):
 
 def cmd_diagnose(a):
     import health as H
-    _out(H.diagnose(a.taxonomy, a.db, a.out, metrics_path=a.metrics, proposals_dir=a.proposals,
-                    batches=a.batches))
+    _out(H.diagnose(a.taxonomy, a.db, a.out, metrics_path=a.metrics, batches=a.batches))
     return 0
 
 
@@ -574,7 +573,6 @@ def main(argv=None):
     p.add_argument("--db", required=True)
     p.add_argument("--out", default=os.path.join("taxonomy", "work", "health"))
     p.add_argument("--metrics")
-    p.add_argument("--proposals")
     p.add_argument("--batches", type=int, default=4)
     p.set_defaults(fn=cmd_diagnose)
     p = sub.add_parser("gap", help="write taxonomy/work/metrics_gap.md (ungoverned computable metrics)")

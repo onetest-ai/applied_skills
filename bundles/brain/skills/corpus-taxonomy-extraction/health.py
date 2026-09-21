@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import flags  # noqa: E402
 import graph_migrate as GM  # noqa: E402
 import metrics_gap as MG  # noqa: E402
+import taxo_ops  # noqa: E402
 import taxonomy_review as R  # noqa: E402
 from difflib import SequenceMatcher  # noqa: E402
 from taxo_io import CURRENT, atomic_write_bytes, intent, load_json, nid, norm  # noqa: E402
@@ -122,7 +123,8 @@ def _similar_metrics(metrics):
     return out
 
 
-def _open_requests(tax_dir):
+def _read_open_requests(tax_dir):
+    """Latest {id: record} in taxonomy/work/requests.jsonl, kept when status == 'open'."""
     path = os.path.join(tax_dir, "work", "requests.jsonl")
     if not os.path.exists(path):
         return []
@@ -138,8 +140,61 @@ def _open_requests(tax_dir):
                 continue
             if isinstance(rec, dict) and rec.get("id"):
                 latest[rec["id"]] = rec
-    return [{"request_id": rec["id"], "item_fingerprint": rec.get("item_id"), "note": rec.get("note")}
-            for rec in latest.values() if rec.get("status") == "open"]
+    return [rec for rec in latest.values() if rec.get("status") == "open"]
+
+
+def _item_subjects(item):
+    """Every label a health item's note could plausibly be "about" — the op's own subject
+    plus, for a merge/keep on a near-duplicate pair (or a metric merge), the other side."""
+    op = item.get("op") or {}
+    subjects = set()
+    s = taxo_ops.subject_of(op)
+    if s:
+        subjects.add(s)
+    if op.get("type") in ("merge", "metric_merge", "keep"):
+        into = op.get("into")
+        if into:
+            subjects.add(into)
+    return subjects
+
+
+def _open_requests(tax_dir):
+    """Resolve each open request's opaque `item_id` against its review file.
+
+    Returns (records, note_map): `records` is the public shape written to problems.json
+    ({request_id, review_id, item_id, subject, kind, fingerprint, note}); `note_map` maps
+    every subject label the resolved item could be "about" to its note, for attaching
+    notes to freshly detected problems of the same subject.
+    """
+    records, note_map, review_cache = [], {}, {}
+    for rec in _read_open_requests(tax_dir):
+        review_id, item_id = rec.get("review_id"), rec.get("item_id")
+        if review_id not in review_cache:
+            review_path = os.path.join(tax_dir, "reviews", f"review_{review_id}.json")
+            try:
+                review_cache[review_id] = load_json(review_path)
+            except (OSError, ValueError) as e:
+                print(f"diagnose: open request {rec.get('id')!r} skipped — cannot load {review_path}: {e}",
+                      file=sys.stderr)
+                review_cache[review_id] = None
+        review = review_cache[review_id]
+        if not review:
+            continue
+        item = next((i for i in (review.get("items") or []) if i.get("id") == item_id), None)
+        if not item:
+            print(f"diagnose: open request {rec.get('id')!r} skipped — item {item_id!r} not found in "
+                  f"review {review_id!r}", file=sys.stderr)
+            continue
+        op = item.get("op") or {}
+        subject = taxo_ops.subject_of(op)
+        records.append({"request_id": rec.get("id"), "review_id": review_id, "item_id": item_id,
+                        "subject": subject, "kind": item.get("kind"), "fingerprint": item.get("fingerprint"),
+                        "note": rec.get("note")})
+        note = rec.get("note")
+        if note:
+            for subj in _item_subjects(item):
+                note_map[subj] = note
+    return records, note_map
 
 
 def _find_families(tax_dir):
@@ -150,7 +205,7 @@ def _find_families(tax_dir):
 
 
 def detect(taxonomy_path, db, metrics_path=None):
-    """Return (problems dict, tax, tax_dir, ro connection-or-None). Caller closes the connection."""
+    """Return (problems dict, tax, tax_dir, ro connection-or-None, note_map). Caller closes the connection."""
     tax = load_json(taxonomy_path)
     tax_dir = os.path.dirname(os.path.abspath(taxonomy_path))
     c = R._ro(db)
@@ -211,9 +266,10 @@ def detect(taxonomy_path, db, metrics_path=None):
                     "metric": m.get("metric"), "grain": m.get("grain"),
                     "definition": m.get("definition"), "sources": m.get("sources") or []})
 
-    problems["open_requests"] = _open_requests(tax_dir)
+    open_requests, note_map = _open_requests(tax_dir)
+    problems["open_requests"] = open_requests
 
-    return problems, tax, tax_dir, c
+    return problems, tax, tax_dir, c, note_map
 
 
 # ---------------------------------------------------------------------------
@@ -346,18 +402,12 @@ def _write_batches(out_dir, entries, batches, instructions):
     return len(groups)
 
 
-def _note_map(problems):
-    return {p["item_fingerprint"]: p["note"] for p in problems["open_requests"]
-            if p.get("item_fingerprint") and p.get("note")}
-
-
-def _prepare_notags(tax, tax_dir, problems, out_dir, batches):
+def _prepare_notags(tax, tax_dir, problems, out_dir, notes, batches):
     entries = problems["no_tags"]
     if not entries:
         return None
     it = intent(tax)
     descs = tax.get("descriptions") or {}
-    notes = _note_map(problems)
     out = []
     for p in entries:
         sibs = _siblings_of(it, p["node"], p["level"], p["parent"])
@@ -373,11 +423,10 @@ def _prepare_notags(tax, tax_dir, problems, out_dir, batches):
     return {"kind": "notags", "dir": task_dir, "batches": n}
 
 
-def _prepare_structure(tax, tax_dir, problems, out_dir, c, batches):
+def _prepare_structure(tax, tax_dir, problems, out_dir, c, notes, batches):
     entries = problems["near_duplicate"] + problems["off_axis"]
     if not entries:
         return None
-    notes = _note_map(problems)
     out = []
     for p in problems["near_duplicate"]:
         entry = dict(p, kind="near_duplicate", samples_a=R._samples(c, nid(p["a"])),
@@ -397,11 +446,10 @@ def _prepare_structure(tax, tax_dir, problems, out_dir, c, batches):
     return {"kind": "structure", "dir": task_dir, "batches": n}
 
 
-def _prepare_metrics(tax, tax_dir, problems, out_dir, batches):
+def _prepare_metrics(tax, tax_dir, problems, out_dir, notes, batches):
     entries = problems["similar_metrics"] + problems["metric_not_governed"]
     if not entries:
         return None
-    notes = _note_map(problems)
     out = []
     for p in problems["similar_metrics"]:
         entry = dict(p, kind="similar_metrics")
@@ -424,46 +472,65 @@ def _prepare_metrics(tax, tax_dir, problems, out_dir, batches):
     return {"kind": "metrics", "dir": task_dir, "batches": n}
 
 
-def _prepare_describe(tax, taxonomy_path, db, problems, out_dir, batches):
+def _prepare_describe(tax, taxonomy_path, db, problems, out_dir, notes, batches):
     if not problems["missing_description"]:
         return None
     task_dir = os.path.join(out_dir, "describe")
     res = R.describe_prep(taxonomy_path, db, task_dir, batches=batches)
     if not res["batches"]:
         return None
+    if notes:
+        for k in range(res["batches"]):
+            batch_path = os.path.join(task_dir, f"batch_{k}.json")
+            group = load_json(batch_path)
+            changed = False
+            for entry in group:
+                note = notes.get(entry.get("node"))
+                if note:
+                    entry["note"] = note
+                    changed = True
+            if changed:
+                atomic_write_bytes(batch_path, (json.dumps(group, indent=1, ensure_ascii=False)
+                                                + "\n").encode("utf-8"))
     return {"kind": "describe", "dir": task_dir, "batches": res["batches"]}
 
 
-def _prepare_untagged(tax_dir, db, taxonomy_path, problems, out_dir, batches):
+def _prepare_untagged(tax_dir, db, taxonomy_path, problems, out_dir, batches, warnings):
     total_untagged = problems["untagged_sections"][0]["count"] if problems["untagged_sections"] else 0
     if not total_untagged:
         return None
     task_dir = os.path.join(out_dir, "untagged")
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "taxonomy_refine_prep.py")
-    subprocess.run([sys.executable, script, "--db", db, "--taxonomy", taxonomy_path,
-                    "--out", task_dir, "--batches", str(batches)],
-                   check=False, capture_output=True, text=True)
+    cmd = [sys.executable, script, "--db", db, "--taxonomy", taxonomy_path, "--out", task_dir,
+           "--batches", str(batches)]
+    result = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        msg = f"untagged: {' '.join(cmd)} exited {result.returncode}: {result.stderr.strip()}"
+        print(f"diagnose: {msg}", file=sys.stderr)
+        warnings.append(msg)
+        return None
     n = len(glob.glob(os.path.join(task_dir, "batch_*.json")))
     if not n:
         return None
     return {"kind": "untagged", "dir": task_dir, "batches": n}
 
 
-def diagnose(taxonomy_path, db, out_dir, metrics_path=None, proposals_dir=None, batches=4):
+def diagnose(taxonomy_path, db, out_dir, metrics_path=None, batches=4):
     if os.path.basename(taxonomy_path) != CURRENT:
         raise ValueError(f"diagnose is planned on taxonomy/{CURRENT}, not {taxonomy_path}")
-    problems, tax, tax_dir, c = detect(taxonomy_path, db, metrics_path)
+    problems, tax, tax_dir, c, notes = detect(taxonomy_path, db, metrics_path)
     os.makedirs(out_dir, exist_ok=True)
     atomic_write_bytes(os.path.join(out_dir, "problems.json"),
                        (json.dumps(problems, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
 
+    warnings = []
     tasks = []
     for builder in (
-        lambda: _prepare_describe(tax, taxonomy_path, db, problems, out_dir, batches),
-        lambda: _prepare_notags(tax, tax_dir, problems, out_dir, batches),
-        lambda: _prepare_structure(tax, tax_dir, problems, out_dir, c, batches),
-        lambda: _prepare_metrics(tax, tax_dir, problems, out_dir, batches),
-        lambda: _prepare_untagged(tax_dir, db, taxonomy_path, problems, out_dir, batches),
+        lambda: _prepare_describe(tax, taxonomy_path, db, problems, out_dir, notes, batches),
+        lambda: _prepare_notags(tax, tax_dir, problems, out_dir, notes, batches),
+        lambda: _prepare_structure(tax, tax_dir, problems, out_dir, c, notes, batches),
+        lambda: _prepare_metrics(tax, tax_dir, problems, out_dir, notes, batches),
+        lambda: _prepare_untagged(tax_dir, db, taxonomy_path, problems, out_dir, batches, warnings),
     ):
         t = builder()
         if t:
@@ -472,4 +539,7 @@ def diagnose(taxonomy_path, db, out_dir, metrics_path=None, proposals_dir=None, 
     if c:
         c.close()
 
-    return {"problems": {k: len(v) for k, v in problems.items()}, "tasks": tasks, "out": out_dir}
+    result = {"problems": {k: len(v) for k, v in problems.items()}, "tasks": tasks, "out": out_dir}
+    if warnings:
+        result["warnings"] = warnings
+    return result
