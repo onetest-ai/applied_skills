@@ -93,6 +93,7 @@ class OnboardSourceConfigTests(unittest.TestCase):
             plan = (project / "BRAIN.md").read_text()
             self.assertIn("work/consolidated.json", plan)
             self.assertIn("taxonomy_review.py\" plan --mode draft", plan)
+            self.assertIn("skip if taxonomy/current.json already exists", plan)
             self.assertIn("taxonomy_merge.py\" --review", plan)
             self.assertLess(plan.index("taxonomy_merge.py\" --review"), plan.index("build_graph.py"))
             for line in plan.splitlines():

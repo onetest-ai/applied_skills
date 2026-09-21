@@ -386,7 +386,20 @@ Reuse the existing taxonomy by default. Check the share and examples of newly un
 3. run `taxonomy_review.py plan --mode drift --taxonomy "$TAX" --proposals <dir> --db "$DB"`;
 4. run `taxonomy_review.py serve --review <path> --db "$DB"` in the background, tell the human the review tab is open, and end the turn — the process exits when they submit;
 5. run `taxonomy_merge.py --review <path> --apply` (it refuses unsubmitted reviews);
-6. run `build_graph.py --taxonomy "$TAX" --db "$DB"`, then reclassify the chunk ids in `taxonomy/work/reclassify.json` if present.
+6. run `build_graph.py --taxonomy "$TAX" --db "$DB"`, then, if `$PROJECT/taxonomy/work/reclassify.json` exists, reclassify its chunk ids into a fresh directory named after the file's `version` `<N>`:
+
+```bash
+IDS=$("$PY" -c 'import json,sys;print(",".join(map(str,json.load(open(sys.argv[1]))["chunk_ids"])))' \
+  "$PROJECT/taxonomy/work/reclassify.json")
+"$PY" "$SKILLS/corpus-taxonomy-extraction/classify_prep.py" \
+  --db "$DB" --taxonomy "$TAX" --chunks "$IDS" --out "$PROJECT/classify/reclassify-v<N>"
+# dispatch and validate classification subagents over that directory, then:
+"$PY" "$SKILLS/corpus-taxonomy-extraction/classify_write.py" \
+  --db "$DB" --results "$PROJECT/classify/reclassify-v<N>" \
+  --reclassify-done "$PROJECT/taxonomy/work/reclassify.json"
+```
+
+Never reuse the first-build `classify/` directory (or any directory that already holds `result_*.json`): `classify_write` reads every result file there, so stale results would overwrite the new tags and `--reclassify-done` would drop the queue as done.
 
 Never apply taxonomy changes outside a submitted review. `taxonomy/decisions.jsonl` is the approval record and belongs in the project's git.
 

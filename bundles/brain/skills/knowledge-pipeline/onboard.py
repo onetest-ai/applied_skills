@@ -314,6 +314,7 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
 
     # 2b · 👤 human review of the draft — the local review app runs until the reviewer submits.
     #      Agent: run `serve` in the BACKGROUND and end the turn; its exit wakes you.
+    #      First build only — skip if taxonomy/current.json already exists.
     REVIEW=$("$PY" "{CTE/'taxonomy_review.py'}" plan --mode draft --taxonomy "{proj/'taxonomy'/'taxonomy_v0.json'}" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["review"])')
     "$PY" "{CTE/'taxonomy_review.py'}" serve --review "$REVIEW"
     "$PY" "{CTE/'taxonomy_merge.py'}" --review "$REVIEW" --apply      # → taxonomy_v1.json + taxonomy/current.json

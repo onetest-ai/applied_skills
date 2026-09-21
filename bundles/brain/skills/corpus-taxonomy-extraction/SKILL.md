@@ -94,7 +94,7 @@ The corpus or the parse shifts (e.g. `visual-parse` now transcribes diagrams, su
 - **(low-tier agents)** — per batch, either map a chunk to an existing category the classifier missed, or **propose** a new **L2 under a named parent L1** (preferred) / a new **L1** — with evidence → `result_k.json`.
 - **Review in the app** — `taxonomy_review.py plan --mode drift --taxonomy taxonomy/current.json --proposals <dir> --db <db>` freezes a review (dedups against the vocabulary and aliases, suppresses proposals rejected before) and prints its path. Then run `taxonomy_review.py serve --review <path> --db <db>` **in the background** and tell the user a browser tab is open for them; end your turn. It exits when they click Submit, and that exit wakes you.
 - **Apply** — `taxonomy_merge.py --review <path> --apply` writes `taxonomy_v<N+1>.json` + `taxonomy/current.json` from exactly what was submitted. Never pass `--without-review` unless the user explicitly asked in this conversation to skip the review.
-- Then: `build_graph.py --taxonomy taxonomy/current.json --db <db>` (runs the tag migrations) → reclassify the ids in `taxonomy/work/reclassify.json` if it exists (`classify_prep --chunks <ids>` → agents → `classify_write --reclassify-done taxonomy/work/reclassify.json`) → `related` → vault.
+- Then: `build_graph.py --taxonomy taxonomy/current.json --db <db>` (runs the tag migrations) → reclassify the queued chunks (see **Reclassifying after a taxonomy change** below) → `related` → vault.
 - **`to_obsidian.py`** — emit the Obsidian vault as a **view of the store**: notes = chunks, real per-section tags from `chunk_topics`, `[[topic · …]]` links = graph vertices.
 
 ## Reviewing and editing the taxonomy (the review app)
@@ -106,13 +106,26 @@ One local app for every taxonomy decision. `taxonomy_review.py` plans a review a
 | refresh with agent proposals | `plan --mode drift --taxonomy taxonomy/current.json --proposals <dir> --db <db>` |
 | the user wants to see or change the taxonomy or metric inventory | `plan --mode browse --taxonomy taxonomy/current.json --db <db>` |
 
-Then `serve --review <path> --db <db>` in the background → end your turn → on exit, `taxonomy_merge.py --review <path> --apply` → `build_graph.py --taxonomy taxonomy/current.json` → reclassify `work/reclassify.json`.
+Then `serve --review <path> --db <db>` in the background → end your turn → on exit, `taxonomy_merge.py --review <path> --apply` → `build_graph.py --taxonomy taxonomy/current.json --db <db>` → reclassify the queued chunks as below.
+
+**Reclassifying after a taxonomy change.** If `taxonomy/work/reclassify.json` exists after `build_graph`, run this sequence yourself, where `<N>` is the `version` in that file:
+
+```bash
+IDS=$(python -c 'import json;print(",".join(map(str,json.load(open("taxonomy/work/reclassify.json"))["chunk_ids"])))')
+python classify_prep.py --db <db> --taxonomy taxonomy/current.json --chunks "$IDS" --out classify/reclassify-v<N>
+# dispatch low-tier classification agents over classify/reclassify-v<N>/batch_*.json → result_*.json in the same dir
+python classify_write.py --db <db> --results classify/reclassify-v<N> --reclassify-done taxonomy/work/reclassify.json
+```
+
+Always use a fresh `classify/reclassify-v<N>` directory with no `result_*.json` in it. Never reuse the first-build `classify/` directory: `classify_write` reads every `result_*.json` there, so stale first-build results would overwrite the new tags and `--reclassify-done` would drop the queued ids as done. `--reclassify-done` removes only the ids it just wrote and deletes the file once it is empty.
 
 - **Tree** tab: the whole taxonomy with tag counts, samples and sibling overlap; the reviewer renames, merges, moves, splits, removes or adds, each with an impact preview.
 - **Metrics** tab: the metric inventory, with whether each computable metric has a governed definition in `schema/metrics.<corpus>.json` (ungoverned first — kb answers those "not modeled").
 - **Changes** tab: approve / reject (with a reason; rejections stick) / amend proposals, then submit.
 - No browser (SSH, other hosts): `taxonomy_review.py export-md --review <path> --out review.md`, ask the user to fill in the `decision:` lines, then `import-md --review <path> --md review.md --submit`.
-- A Brain built before `current.json` existed: run `taxonomy_review.py adopt --taxonomy taxonomy/taxonomy_v<N>.json --db <db>` once (after telling the user), choosing the version the store was built from; it refuses if that version doesn't match the graph.
+- A Brain built before `current.json` existed: run `taxonomy_review.py adopt --taxonomy taxonomy/taxonomy_v<N>.json --db <db>` once (after telling the user), choosing the version the store was built from; it refuses if that version doesn't match the graph. `browse`/`drift` reviews are refused until this is done.
+  - If `taxonomy/current.json` already exists and is ahead of the store (e.g. `build_graph` reports a store with tags but no `meta.taxonomy_version`), add `--meta-only`: it checks the same node set, records only the store's version, and never touches `current.json`; then rebuild with `build_graph.py --taxonomy taxonomy/current.json --db <db>`.
+  - Pass `--force` only when the user explicitly says to replace a differing `current.json` or to adopt despite a node mismatch.
 - `record` exists for scripts and only enters additions; never use it to enter a decision the user did not make.
 
 ## Downstream wiring
