@@ -1,28 +1,40 @@
 #!/usr/bin/env python3
-"""Assisted taxonomy MERGE — additive, human-gated.
+"""Taxonomy MERGE — the only writer of taxonomy versions and current.json.
 
-Takes the agent proposals (from taxonomy_refine_prep.py) and merges the NEW L1/L2
-terms into the taxonomy — **additively only**: add under the right parent, never
-rename or remove (renaming an L1 changes its slug id and orphans every chunk_topic
-and 'about' edge pointing at it). Deduplicates against the existing vocabulary
-(exact + fuzzy) and drops near-duplicates.
+Two ways in:
 
-Default is a DRY RUN that prints the proposed diff for a human to review; pass
---apply to write the new taxonomy (version bumped). This is the human gate.
+1. A submitted review (the normal path). taxonomy_review.py plans a review and serves the
+   review app; people decide there; this script applies exactly what was submitted:
+     taxonomy_merge.py --review taxonomy/reviews/review_<id>.json --apply
+   It writes taxonomy_v<N+1>.json + current.json, records every op and its tag migrations in
+   history[], and appends an `applied` record to decisions.jsonl. build_graph.py then runs the
+   migrations (tags move, never vanish silently).
 
-Usage:
-  taxonomy_merge.py --taxonomy taxonomy_v0.json --proposals <dir>            # review the diff
-  taxonomy_merge.py --taxonomy taxonomy_v0.json --proposals <dir> --apply \
-                    --out taxonomy_v1.json                                    # commit additions
-Then (deterministic downstream): build_graph.py (adds vertices) → reclassify the
-affected chunks (classify_prep --docs/--chunks → agents → classify_write) → related → vault.
+2. Agent proposals directly (legacy). Default is a DRY RUN that prints the additive diff:
+     taxonomy_merge.py --taxonomy taxonomy/current.json --proposals <dir>
+   Applying proposals with no human review is refused unless --without-review is passed —
+   which agents do ONLY when the user explicitly asked to skip the review. It stays add-only
+   and marks history with "without_review": true.
+
+Agents only add. Renames, merges, moves, splits and removals are human decisions made in the
+review app (or an imported review Markdown file).
 """
-import argparse, difflib, glob, json, os, re
+import argparse, difflib, glob, json, os, sys
 
-def nid(s): return re.sub(r"[^a-z0-9]+", "_", str(s).lower()).strip("_") or "n"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import decisions as D  # noqa: E402
+from taxo_io import (CURRENT, atomic_write_bytes, dump_bytes, fingerprint, intent, load_json,  # noqa: E402
+                     reviewer_name, sha256_file, utc_now, write_version_and_current)
+from taxo_ops import ChangesetError, apply_ops  # noqa: E402
+
+
+class Refused(Exception):
+    pass
+
 
 def near(name, pool, thresh=0.88):
     """Return an existing label that's an exact/fuzzy duplicate of `name`, else None."""
+    from taxo_io import nid
     k = nid(name)
     for p in pool:
         if nid(p) == k:
@@ -30,68 +42,209 @@ def near(name, pool, thresh=0.88):
     m = difflib.get_close_matches(name, list(pool), n=1, cutoff=thresh)
     return m[0] if m else None
 
+
+def load_proposals(proposals_dir):
+    out = []
+    for rf in sorted(glob.glob(os.path.join(proposals_dir, "result_*.json"))):
+        try:
+            data = json.load(open(rf))
+        except Exception as e:
+            print("skip", rf, e)
+            continue
+        out += data.get("proposals", []) if isinstance(data, dict) else []
+    return out
+
+
+def plan_additions(tax, proposals, fuzzy=0.88):
+    """Dedup agent proposals against the vocabulary (labels + aliases); attach L2s to parents."""
+    it = intent(tax)
+    tree = it["tree"]
+    l1_set = set(tree)
+    l2_pool = {l2 for kids in tree.values() for l2 in kids} | set(it["unassigned_l2"])
+    aliases = tax.get("aliases") or {}
+    items, by_name, skipped = [], {}, []
+
+    def skip(p, name, reason, kind):
+        skipped.append({"name": name, "level": (p.get("level") or "").upper(), "parent": p.get("parent"),
+                        "reason": reason, "kind": kind})
+
+    for level in ("L1", "L2"):
+        for p in proposals:
+            if (p.get("level") or "").upper() != level:
+                continue
+            name = (p.get("name") or "").strip()
+            if not name:
+                continue
+            al = near(name, set(aliases), fuzzy)
+            if al:
+                skip(p, name, f"alias of existing '{aliases[al]}'", "alias")
+                continue
+            dup = near(name, l1_set if level == "L1" else l2_pool, fuzzy)
+            if dup:
+                skip(p, name, f"dup of {level} '{dup}'", "dup_existing")
+                continue
+            dup = near(name, {i["name"] for i in items if i["level"] == level}, fuzzy)
+            if dup:
+                by_name[dup]["sources"].append(p)
+                skip(p, name, f"dup of {level} '{dup}'", "dup_new")
+                continue
+            parent = None
+            if level == "L2":
+                raw_parent = (p.get("parent") or "").strip()
+                new_l1 = {i["name"] for i in items if i["level"] == "L1"}
+                parent = near(raw_parent, l1_set | new_l1, fuzzy) if raw_parent else None
+                if not parent:
+                    skip(p, name, f"L2 parent '{raw_parent or '—'}' not an existing/new L1", "invalid")
+                    continue
+            item = {"level": level, "name": name, "parent": parent, "sources": [p]}
+            items.append(item)
+            by_name[name] = item
+    return items, skipped
+
+
+def print_dry_run(label, items, skipped, apply=False, suppressed=()):
+    add_l1 = [i["name"] for i in items if i["level"] == "L1"]
+    add_l2 = [(i["name"], i["parent"]) for i in items if i["level"] == "L2"]
+    print(f"=== taxonomy merge (from {label}) — {'APPLY' if apply else 'DRY RUN'} ===")
+    print(f"proposed: +{len(add_l1)} L1, +{len(add_l2)} L2 ; dropped {len(skipped)} dup/invalid")
+    for n_ in add_l1:
+        print(f"  + L1  {n_}")
+    for n_, par in add_l2:
+        print(f"  + L2  {n_}   (under {par})")
+    for s in skipped[:20]:
+        print(f"  · skip {s['name']}  — {s['reason']}")
+    for s in suppressed:
+        print(f"  · suppressed {s['name']}  — rejected before: {s['reason']} ({s['reviewer']})")
+
+
+def _added(applied):
+    return ([o["name"] for o in applied if o["type"] == "add" and o["level"] == "L1"],
+            [[o["name"], o["parent"]] for o in applied if o["type"] == "add" and o["level"] == "L2"])
+
+
+def apply_review(review_path, decisions_path=None):
+    review = load_json(review_path)
+    rid = review["review_id"]
+    tax_dir = os.path.dirname(os.path.dirname(os.path.abspath(review_path)))
+    decisions_path = decisions_path or D.default_path(tax_dir)
+    records = D.read(decisions_path)
+    st = D.review_state(records, rid)
+    base, cur = review["base"], os.path.join(tax_dir, CURRENT)
+    if not st["submit"]:
+        raise Refused(f"review {rid} is not submitted — finish it in the review app first")
+    if st["applied"]:
+        raise Refused(f"review {rid} was already applied ({st['applied'].get('out')})")
+    if not os.path.exists(base["path"]) or sha256_file(base["path"]) != base["sha256"]:
+        raise Refused(f"{base['path']} changed since review {rid} was planned; plan a new review")
+    is_draft = os.path.abspath(base["path"]) != os.path.abspath(cur)
+    if is_draft and os.path.exists(cur):
+        raise Refused("a ratified taxonomy (current.json) already exists; review changes against it "
+                      "in browse or drift mode")
+    entries = D.effective_ops(review, records)
+    errs = D.authorship_errors(entries)
+    if errs:
+        raise Refused("; ".join(errs))
+    tax = load_json(base["path"])
+    try:
+        new, migs, applied = apply_ops(tax, [e["op"] for e in entries])
+    except ChangesetError as e:
+        raise Refused("the changeset is invalid: " + "; ".join(e.errors)) from None
+    version = (tax.get("version") or 0) + (1 if (applied or is_draft) else 0)
+    if not applied and not is_draft:
+        D.append(decisions_path, {"review_id": rid, "action": "applied", "out": None, "version": version,
+                                  "sha256": base["sha256"], "reviewer": "taxonomy_merge.py", "surface": "script"})
+        return {"status": "no_changes", "review_id": rid, "version": version}
+    new["version"] = version
+    add_l1, add_l2 = _added(applied)
+    new.setdefault("history", []).append({
+        "version": version, "review_id": rid, "reviewer": st["submit"].get("reviewer"), "ts": utc_now(),
+        "ops": applied, "migrations": migs, "added_l1": add_l1, "added_l2": add_l2,
+        "rejected": [r["fingerprint"] for r in st["latest"].values()
+                     if r["action"] == "reject" and r.get("fingerprint")]})
+    out, sha = write_version_and_current(tax_dir, new)
+    D.append(decisions_path, {"review_id": rid, "action": "applied", "out": out, "version": version, "sha256": sha,
+                              "reviewer": "taxonomy_merge.py", "surface": "script"})
+    return {"status": "applied", "review_id": rid, "out": out, "version": version, "ops": len(applied),
+            "migrations": len(migs)}
+
+
+def legacy_apply(a, tax, items):
+    version = (tax.get("version") or 0) + 1
+    ops = [{"type": "add", "level": i["level"], "name": i["name"], "parent": i["parent"]} for i in items]
+    new, _, applied = apply_ops(tax, ops)
+    new["version"] = version
+    add_l1, add_l2 = _added(applied)
+    new.setdefault("history", []).append({
+        "version": version, "added_l1": add_l1, "added_l2": add_l2, "from": os.path.abspath(a.proposals),
+        "review_id": None, "reviewer": reviewer_name(a.reviewer), "ts": utc_now(), "without_review": True,
+        "ops": applied, "migrations": []})
+    tax_dir = os.path.dirname(os.path.abspath(a.taxonomy))
+    out = a.out or os.path.join(tax_dir, f"taxonomy_v{version}.json")
+    data = dump_bytes(new)
+    atomic_write_bytes(out, data)
+    if os.path.dirname(os.path.abspath(out)) == tax_dir:
+        atomic_write_bytes(os.path.join(tax_dir, CURRENT), data)
+    print(f"\napplied WITHOUT REVIEW -> {out} (version {version}). NEXT: build_graph.py --taxonomy "
+          f"{os.path.join(tax_dir, CURRENT)} --db <db>; then reclassify affected chunks.")
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--taxonomy", required=True); ap.add_argument("--proposals", required=True)
-    ap.add_argument("--apply", action="store_true"); ap.add_argument("--out")
+    ap.add_argument("--taxonomy")
+    ap.add_argument("--proposals")
+    ap.add_argument("--review", help="apply a submitted review (taxonomy/reviews/review_<id>.json)")
+    ap.add_argument("--decisions", help="decisions.jsonl (default: beside the taxonomy)")
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--out")
     ap.add_argument("--fuzzy", type=float, default=0.88)
+    ap.add_argument("--without-review", action="store_true",
+                    help="legacy add-only apply with no human review — ONLY when the user explicitly asks")
+    ap.add_argument("--reviewer")
     a = ap.parse_args()
-    tax = json.load(open(a.taxonomy))
-    it = tax.setdefault("intent_taxonomy", {})
-    tree = it.setdefault("tree", {})
-    # normalize: ensure every L1 (from tree keys + l1 list) is a tree key
-    for l1 in list(it.get("l1", [])):
-        tree.setdefault(l1, tree.get(l1, []))
-    l1_set = set(tree.keys())
-    l2_index = {l2: l1 for l1, kids in tree.items() for l2 in kids}
 
-    proposals = []
-    for rf in sorted(glob.glob(os.path.join(a.proposals, "result_*.json"))):
-        try: data = json.load(open(rf))
-        except Exception as e: print("skip", rf, e); continue
-        proposals += data.get("proposals", []) if isinstance(data, dict) else []
+    if a.review:
+        if not a.apply:
+            print("--review needs --apply (inspect reviews with taxonomy_review.py status)", file=sys.stderr)
+            return 2
+        try:
+            res = apply_review(a.review, a.decisions)
+        except Refused as e:
+            print(f"REFUSED: {e}", file=sys.stderr)
+            return 2
+        print(json.dumps(res))
+        if res["status"] == "applied":
+            tax_dir = os.path.dirname(res["out"])
+            print(f"NEXT: build_graph.py --taxonomy {os.path.join(tax_dir, CURRENT)} --db <db>; then reclassify "
+                  f"the chunk ids in {os.path.join(tax_dir, 'work', 'reclassify.json')} (classify_prep --chunks … "
+                  f"→ agents → classify_write --reclassify-done …)", file=sys.stderr)
+        return 0
 
-    add_l1, add_l2, dropped = [], [], []          # (name) / (name,parent) / (name,reason)
-    # 1st pass: new L1s (so L2s can attach to a just-proposed L1)
-    proposed_l1 = set()
-    for p in proposals:
-        if (p.get("level") or "").upper() != "L1": continue
-        name = (p.get("name") or "").strip()
-        if not name: continue
-        dup = near(name, l1_set | proposed_l1, a.fuzzy)
-        if dup: dropped.append((name, f"dup of L1 '{dup}'")); continue
-        proposed_l1.add(name); add_l1.append(name)
-    # 2nd pass: new L2s under a valid parent
-    for p in proposals:
-        if (p.get("level") or "").upper() != "L2": continue
-        name = (p.get("name") or "").strip(); parent = (p.get("parent") or "").strip()
-        if not name: continue
-        dup = near(name, set(l2_index) | {x[0] for x in add_l2}, a.fuzzy)
-        if dup: dropped.append((name, f"dup of L2 '{dup}'")); continue
-        pmatch = near(parent, l1_set | proposed_l1, a.fuzzy) if parent else None
-        if not pmatch:
-            dropped.append((name, f"L2 parent '{parent or '—'}' not an existing/new L1")); continue
-        add_l2.append((name, pmatch))
-
-    print(f"=== taxonomy merge (from {a.proposals}) — {'APPLY' if a.apply else 'DRY RUN'} ===")
-    print(f"proposed: +{len(add_l1)} L1, +{len(add_l2)} L2 ; dropped {len(dropped)} dup/invalid")
-    for n_ in add_l1: print(f"  + L1  {n_}")
-    for n_, par in add_l2: print(f"  + L2  {n_}   (under {par})")
-    for n_, why in dropped[:20]: print(f"  · skip {n_}  — {why}")
+    if not (a.taxonomy and a.proposals):
+        ap.error("--taxonomy and --proposals are required without --review")
+    tax = load_json(a.taxonomy)
+    items, skipped = plan_additions(tax, load_proposals(a.proposals), a.fuzzy)
+    decisions_path = a.decisions or D.default_path(os.path.dirname(os.path.abspath(a.taxonomy)))
+    rejections = D.standing_rejections(D.read(decisions_path))
+    kept, suppressed = [], []
+    for i in items:
+        fp = fingerprint({"type": "add", "level": i["level"], "name": i["name"], "parent": i["parent"]})
+        rec = D.match_rejection(fp, rejections, a.fuzzy)
+        if rec:
+            suppressed.append({"name": i["name"], "reason": rec.get("reason"), "reviewer": rec.get("reviewer")})
+        else:
+            kept.append(i)
+    print_dry_run(a.proposals, kept, skipped, apply=a.apply and a.without_review, suppressed=suppressed)
     if not a.apply:
-        print("\nreview the above, then re-run with --apply --out taxonomy_v1.json"); return
+        print("\nreview these in the review app: taxonomy_review.py plan --mode drift … then serve")
+        return 0
+    if not a.without_review:
+        print("REFUSED: --apply without --review applies agent proposals with no human review. Use "
+              "taxonomy_review.py (plan → serve → taxonomy_merge --review … --apply), or pass --without-review "
+              "if the user explicitly asked to skip the review.", file=sys.stderr)
+        return 2
+    legacy_apply(a, tax, kept)
+    return 0
 
-    for n_ in add_l1: tree.setdefault(n_, [])
-    for n_, par in add_l2: tree.setdefault(par, []); (n_ not in tree[par]) and tree[par].append(n_)
-    it["l1"] = sorted(tree.keys())
-    v = tax.get("version", 0)
-    tax["version"] = (v + 1) if isinstance(v, int) else v
-    tax.setdefault("history", []).append(
-        {"added_l1": add_l1, "added_l2": add_l2, "from": os.path.abspath(a.proposals)})
-    out = a.out or a.taxonomy
-    json.dump(tax, open(out, "w"), indent=2)
-    print(f"\napplied -> {out} (version {tax['version']}). NEXT: build_graph.py --taxonomy {out} --db <db> ; "
-          f"then reclassify affected chunks (classify_prep --docs … / --chunks …) → classify_write.")
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
