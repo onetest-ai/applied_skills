@@ -361,9 +361,12 @@ def get_taxonomy(
         required = {"graph_nodes", "graph_edges"}
         if not required.issubset(present):
             return {"status": "not_modeled", "missing_tables": sorted(required - present)}
+        # Detect if description column exists in graph_nodes
+        has_description = "description" in {r[1] for r in con.execute("PRAGMA table_info(graph_nodes)")}
+        cols = "id, label, kind, parent" + (", description" if has_description else "")
         if label:
             node = con.execute(
-                "SELECT id, label, kind, parent FROM graph_nodes WHERE lower(label)=lower(?) OR id=? LIMIT 1",
+                f"SELECT {cols} FROM graph_nodes WHERE lower(label)=lower(?) OR id=? LIMIT 1",
                 (label, label),
             ).fetchone()
             if not node:
@@ -404,7 +407,7 @@ def get_taxonomy(
             clauses.append("kind=?")
             params.append(kind)
         params.append(limit + 1)
-        sql = "SELECT id, label, kind, parent FROM graph_nodes"
+        sql = f"SELECT {cols} FROM graph_nodes"
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY kind, label LIMIT ?"
