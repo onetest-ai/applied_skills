@@ -169,6 +169,16 @@ def _item(review, item_id):
     return next((i for i in review["items"] if i["id"] == item_id), None)
 
 
+def health_amend_ok(item, op):
+    """The B4 amend rule for a health item: the op must be one of its alternatives, or the
+    same type acting on the same subject (an edit — a changed description, a narrower
+    chunk_ids selection, …). Shared by decisions.validate_record and respond's live-channel
+    revisions so the rule lives in exactly one place."""
+    alts = item.get("alternatives") or []
+    same_fix = op.get("type") == item["op"].get("type") and subject_of(op) == subject_of(item["op"])
+    return op in alts or same_fix
+
+
 def validate_record(review, base_tax, records, rec):
     """Errors that make `rec` unacceptable given the review so far ([] = ok)."""
     st = review_state(records, review["review_id"])
@@ -213,11 +223,8 @@ def validate_record(review, base_tax, records, rec):
                 return [f"{iid}: the amended op must act on {item['op']['node']!r}"]
             if item["origin"] == "describe" and (op.get("type") != "describe" or op.get("node") != item["op"]["node"]):
                 return [f"{iid}: a description proposal can only be amended into another description of {item['op']['node']!r}"]
-            if item["origin"] == "health":
-                alts = item.get("alternatives") or []
-                same_fix = op.get("type") == item["op"].get("type") and subject_of(op) == subject_of(item["op"])
-                if op not in alts and not same_fix:
-                    return [f"{iid}: a health fix can only be amended into one of its alternatives or an edit of the same fix"]
+            if item["origin"] == "health" and not health_amend_ok(item, op):
+                return [f"{iid}: a health fix can only be amended into one of its alternatives or an edit of the same fix"]
     entries = effective_ops(review, records + ([] if a == "submit" else [rec]))
     return authorship_errors(entries) + validate_ops(base_tax, [e["op"] for e in entries])
 

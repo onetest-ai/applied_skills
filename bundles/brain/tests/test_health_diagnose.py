@@ -90,5 +90,67 @@ class DiagnoseTests(unittest.TestCase):
         self.assertIn("problems", json.loads(lines[0]))
 
 
+class HealthPlanTests(unittest.TestCase):
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.dir = os.path.join(self.td.name, "taxonomy")
+        tax = taxonomy(version=1)
+        tax["intent_taxonomy"]["tree"]["Billing & Payments"].append("Payment Plans")
+        self.cur = os.path.join(self.dir, "current.json"); write_json(self.cur, tax)
+        self.db = os.path.join(self.td.name, "k.sqlite"); tagged_store(self.db, tax); add_fts(self.db)
+        self.work = os.path.join(self.dir, "work", "health")
+        H.diagnose(self.cur, self.db, self.work)
+        write_json(os.path.join(self.work, "describe", "result_0.json"),
+                   {"descriptions": [{"node": "Duplicate Charge", "description": "Billed twice."}]})
+        write_json(os.path.join(self.work, "notags", "result_0.json"),
+                   {"fixes": [{"node": "Payment Plans", "fix": "tag", "chunk_ids": [9, 999], "reason": "fits"}]})
+        write_json(os.path.join(self.work, "structure", "result_0.json"), {"fixes": [
+            {"kind": "near_duplicate", "subject": "Billing & Payments Admin", "fix": "merge",
+             "into": "Billing & Payments", "reason": "same thing"}]})
+        write_json(os.path.join(self.work, "metrics", "result_0.json"), "not a dict")
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def test_health_items_grouping_and_fallbacks(self):
+        from datetime import datetime, timezone
+        _, rv = R.build_plan("health", self.cur, work_dir=self.work, db=self.db,
+                             now=datetime(2026, 9, 21, tzinfo=timezone.utc))
+        by = {}
+        for i in rv["items"]:
+            by.setdefault(i["kind"], []).append(i)
+        self.assertEqual(by["missing_description"][0]["group"], "missing_description")
+        tag = next(i for i in by["no_tags"] if i["op"]["node"] == "Payment Plans")
+        self.assertEqual(tag["op"], {"type": "tag", "node": "Payment Plans", "chunk_ids": [9]})   # 999 not a candidate
+        self.assertTrue(any(a["type"] == "remove" for a in tag["alternatives"]))
+        nd = by["near_duplicate"][0]
+        self.assertIsNone(nd["group"]); self.assertEqual(nd["op"]["type"], "merge")
+        self.assertEqual(by["off_axis"][0]["op"]["type"], "keep")                                # no result → keep
+        self.assertIn(os.path.join(self.work, "metrics", "result_0.json"), rv["skipped_files"])
+        self.assertEqual(rv["context"]["title"], "Health review")
+
+    def test_respond_records_revision(self):
+        from datetime import datetime, timezone
+        path, rv = R.build_plan("health", self.cur, work_dir=self.work, db=self.db,
+                                now=datetime(2026, 9, 21, tzinfo=timezone.utc))
+        item = next(i for i in rv["items"] if i["kind"] == "no_tags")
+        req = os.path.join(self.dir, "work", "requests.jsonl")
+        with open(req, "a") as f:
+            f.write(json.dumps({"id": "q-1", "item_id": item["id"], "note": "not these", "status": "open"}) + "\n")
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = R.main(["respond", "--review", path, "--request", "q-1", "--op",
+                           json.dumps(item["alternatives"][0]), "--reason", "merge instead"])
+        self.assertEqual(code, 0, buf.getvalue())
+        resp = [json.loads(l) for l in open(os.path.join(self.dir, "work", "responses.jsonl"))]
+        self.assertEqual(resp[-1]["item_id"], item["id"])
+        with redirect_stdout(io.StringIO()):
+            bad = R.main(["respond", "--review", path, "--request", "q-1", "--op",
+                          json.dumps({"type": "move", "node": "Refunds", "new_parent": "Transform"})])
+        self.assertEqual(bad, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

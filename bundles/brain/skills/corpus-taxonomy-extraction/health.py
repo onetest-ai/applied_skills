@@ -20,13 +20,15 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import decisions as D  # noqa: E402
 import flags  # noqa: E402
 import graph_migrate as GM  # noqa: E402
 import metrics_gap as MG  # noqa: E402
 import taxo_ops  # noqa: E402
 import taxonomy_review as R  # noqa: E402
 from difflib import SequenceMatcher  # noqa: E402
-from taxo_io import CURRENT, atomic_write_bytes, intent, load_json, nid, norm  # noqa: E402
+from taxo_io import CURRENT, atomic_write_bytes, fingerprint, intent, load_json, nid, norm, one_line  # noqa: E402
+from taxonomy_merge import plan_additions  # noqa: E402
 
 SIMILAR_METRIC_THRESHOLD = 0.85
 
@@ -543,3 +545,288 @@ def diagnose(taxonomy_path, db, out_dir, metrics_path=None, batches=4):
     if warnings:
         result["warnings"] = warnings
     return result
+
+
+# ---------------------------------------------------------------------------
+# health_items: problems.json + agents' result_k.json -> grouped review items (B3/B4)
+# ---------------------------------------------------------------------------
+
+def _load_entries(task_dir, list_key, skipped_files):
+    """Every dict entry of data[list_key] from each result_*.json in task_dir.
+
+    Defensive per the global constraint: a wrong-shaped file goes to skipped_files (named on
+    stderr) and is never allowed to crash planning; a non-dict entry inside the list is
+    skipped and counted, without failing the rest of the file.
+    """
+    out = []
+    if not task_dir or not os.path.isdir(task_dir):
+        return out
+    for rf in sorted(glob.glob(os.path.join(task_dir, "result_*.json"))):
+        try:
+            with open(rf, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            print(f"health: skip {rf}: {e}", file=sys.stderr)
+            skipped_files.append(rf)
+            continue
+        if not isinstance(data, dict) or not isinstance(data.get(list_key), list):
+            print(f"health: skip {rf}: expected {{{list_key!r}: [...]}}", file=sys.stderr)
+            skipped_files.append(rf)
+            continue
+        bad = 0
+        for entry in data[list_key]:
+            if not isinstance(entry, dict):
+                bad += 1
+                continue
+            out.append(entry)
+        if bad:
+            print(f"health: skip {bad} malformed entries in {rf}", file=sys.stderr)
+    return out
+
+
+def _make_item(kind, group, op, alternatives, evidence, support, reason, title, rejections):
+    fp = fingerprint(op)
+    prior = D.match_rejection(fp, rejections)
+    item = {"origin": "health", "kind": kind, "group": group, "title": title, "reason": reason,
+            "op": op, "alternatives": alternatives, "evidence": evidence, "support": support,
+            "status": "suppressed" if prior else "proposed"}
+    if prior:
+        item["prior"] = {k: prior.get(k) for k in ("review_id", "reason", "reviewer", "ts")}
+    return item
+
+
+def _best_sibling(it, label, level, parent):
+    sibs = _siblings_of(it, label, level, parent)
+    if not sibs:
+        return None
+    ln = norm(label)
+    return max(sibs, key=lambda s: SequenceMatcher(None, ln, norm(s)).ratio())
+
+
+def _missing_description_items(tax, work_dir, problems, counts, skipped_files, rejections):
+    entries = _load_entries(os.path.join(work_dir, "describe"), "descriptions", skipped_files)
+    by_node = {}
+    for e in entries:
+        node = (e.get("node") or "").strip()
+        if not node or node in by_node:
+            continue
+        text = one_line(e.get("description") or "").strip()
+        if text:
+            by_node[node] = text
+    probs = problems.get("missing_description") or []
+    title = f"{len(probs)} categories have no description"
+    items = []
+    for p in probs:
+        node = p["node"]
+        text = by_node.get(node)
+        if not text:
+            continue  # no matching fix: the manual Taxonomy-view path still works
+        op = {"type": "describe", "node": node, "description": text}
+        items.append(_make_item("missing_description", "missing_description", op, [], [],
+                                {"tags": counts.get(nid(node), 0)}, None, title, rejections))
+    return items
+
+
+def _no_tags_items(tax, work_dir, problems, skipped_files, rejections):
+    entries = _load_entries(os.path.join(work_dir, "notags"), "fixes", skipped_files)
+    by_node = {}
+    for e in entries:
+        node = (e.get("node") or "").strip()
+        if node and node not in by_node:
+            by_node[node] = e
+    it = intent(tax)
+    probs = problems.get("no_tags") or []
+    title = f"{len(probs)} categories have no tagged sections"
+    items = []
+    for p in probs:
+        node, level, parent = p["node"], p["level"], p["parent"]
+        candidates = p.get("candidates") or []
+        cand_ids = {c["chunk_id"] for c in candidates}
+        fix = by_node.get(node)
+        fix_type = fix.get("fix") if fix else None
+        sibling = _best_sibling(it, node, level, parent)
+        merge_op = {"type": "merge", "from": node, "into": sibling} if sibling else None
+        remove_op = {"type": "remove", "node": node, "disposition": "demote"}
+        if fix_type == "tag":
+            ids = [i for i in (fix.get("chunk_ids") or []) if i in cand_ids]
+            op = {"type": "tag", "node": node, "chunk_ids": ids}
+            alts = [a for a in (merge_op, remove_op) if a]
+            evidence = [c for c in candidates if c["chunk_id"] in ids]
+            reason = fix.get("reason")
+        elif fix_type == "merge":
+            op = {"type": "merge", "from": node, "into": fix.get("into")}
+            alts = [remove_op]
+            evidence = []
+            reason = fix.get("reason")
+        elif fix_type == "remove":
+            op = remove_op
+            alts = [merge_op] if merge_op else []
+            evidence = []
+            reason = fix.get("reason")
+        else:
+            op = remove_op
+            alts = [merge_op] if merge_op else []
+            evidence = []
+            reason = "no fix proposed; consider removing or merging"
+        items.append(_make_item("no_tags", "no_tags", op, alts, evidence,
+                                {"candidates": len(candidates)}, reason, title, rejections))
+    return items
+
+
+def _structure_items(work_dir, problems, skipped_files, rejections):
+    entries = _load_entries(os.path.join(work_dir, "structure"), "fixes", skipped_files)
+    nd_fix, oa_fix = {}, {}
+    for e in entries:
+        subj = (e.get("subject") or "").strip()
+        if not subj:
+            continue
+        if e.get("kind") == "near_duplicate":
+            nd_fix.setdefault(subj, e)
+        elif e.get("kind") == "off_axis":
+            oa_fix.setdefault(subj, e)
+    items = []
+    for p in problems.get("near_duplicate") or []:
+        a, b = p["a"], p["b"]
+        fix = nd_fix.get(a) or nd_fix.get(b)
+        keep_op = {"type": "keep", "node": a}
+        default_merge = {"type": "merge", "from": b, "into": a}
+        if fix and fix.get("fix") == "merge":
+            subj = fix.get("subject") or a
+            op = {"type": "merge", "from": subj, "into": fix.get("into")}
+            alts, reason = [keep_op], fix.get("reason")
+        elif fix and fix.get("fix") == "keep":
+            op = keep_op
+            alts, reason = [default_merge], fix.get("reason")
+        else:
+            op = keep_op
+            alts, reason = [default_merge], "no fix proposed; keeping until reviewed"
+        title = f"{a} looks like {b}"
+        support = {"tags_a": p.get("tags_a"), "tags_b": p.get("tags_b"), "overlap": p.get("overlap")}
+        items.append(_make_item("near_duplicate", None, op, alts, [], support, reason, title, rejections))
+    for p in problems.get("off_axis") or []:
+        node = p["node"]
+        fix = oa_fix.get(node)
+        keep_op = {"type": "keep", "node": node}
+        default_remove = {"type": "remove", "node": node, "disposition": "demote"}
+        if fix and fix.get("fix") == "remove":
+            op = {"type": "remove", "node": node, "disposition": fix.get("disposition") or "demote"}
+            alts, reason = [keep_op], fix.get("reason")
+        elif fix and fix.get("fix") == "keep":
+            op = keep_op
+            alts, reason = [default_remove], fix.get("reason")
+        else:
+            op = keep_op
+            alts, reason = [default_remove], "no fix proposed; keeping until reviewed"
+        title = f"{node} doesn't look like a call reason"
+        items.append(_make_item("off_axis", None, op, alts, [], {"tags": p.get("tags")}, reason, title, rejections))
+    return items
+
+
+def _metrics_items(work_dir, problems, skipped_files, rejections):
+    entries = _load_entries(os.path.join(work_dir, "metrics"), "fixes", skipped_files)
+    sm_fix, mg_fix = {}, {}
+    for e in entries:
+        subj = (e.get("subject") or "").strip()
+        if not subj:
+            continue
+        if e.get("kind") == "similar_metrics":
+            sm_fix.setdefault(subj, e)
+        elif e.get("kind") == "metric_not_governed":
+            mg_fix.setdefault(subj, e)
+    items = []
+    for p in problems.get("similar_metrics") or []:
+        a, b = p["a"], p["b"]
+        fix = sm_fix.get(a) or sm_fix.get(b)
+        keep_op = {"type": "keep", "node": a}
+        if fix and fix.get("fix") == "metric_merge":
+            subj = fix.get("subject") or a
+            op = {"type": "metric_merge", "from": subj, "into": fix.get("into")}
+            alts, reason = [keep_op], fix.get("reason")
+        elif fix and fix.get("fix") == "keep":
+            op = keep_op
+            alts, reason = [{"type": "metric_merge", "from": b, "into": a}], fix.get("reason")
+        else:
+            continue  # no fix proposed: manual only
+        title = f"{a} ≈ {b}"
+        items.append(_make_item("similar_metrics", None, op, alts, [], {"score": p.get("score")},
+                                reason, title, rejections))
+    probs = problems.get("metric_not_governed") or []
+    title = f"{len(probs)} metrics can't be computed yet"
+    for p in probs:
+        metric = p["metric"]
+        fix = mg_fix.get(metric)
+        if not fix or fix.get("fix") != "metric_govern" or not isinstance(fix.get("draft"), dict):
+            continue  # no fix proposed: manual only
+        op = {"type": "metric_govern", "metric": metric, "draft": fix["draft"]}
+        items.append(_make_item("metric_not_governed", "metric_not_governed", op, [], [],
+                                {"sources": p.get("sources")}, fix.get("reason"), title, rejections))
+    return items
+
+
+def _untagged_items(tax, work_dir, skipped_files, rejections):
+    task_dir = os.path.join(work_dir, "untagged")
+    if not os.path.isdir(task_dir):
+        return []
+    proposals, chunk_map = [], {}
+    for rf in sorted(glob.glob(os.path.join(task_dir, "result_*.json"))):
+        try:
+            with open(rf, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            print(f"health: skip {rf}: {e}", file=sys.stderr)
+            skipped_files.append(rf)
+            continue
+        if not isinstance(data, dict):
+            print(f"health: skip {rf}: expected an object", file=sys.stderr)
+            skipped_files.append(rf)
+            continue
+        props = data.get("proposals")
+        if props is not None and not isinstance(props, list):
+            print(f"health: skip {rf}: 'proposals' must be a list", file=sys.stderr)
+            skipped_files.append(rf)
+            continue
+        proposals += [p for p in (props or []) if isinstance(p, dict)]
+        m = data.get("map")
+        if m is not None and not isinstance(m, dict):
+            print(f"health: skip {rf}: 'map' must be an object", file=sys.stderr)
+            continue
+        for cid, labels in (m or {}).items():
+            if isinstance(labels, list):
+                chunk_map.setdefault(str(cid), []).extend(l for l in labels if isinstance(l, str))
+    add_items, _skipped = plan_additions(tax, proposals)
+    total = len(add_items) + sum(len(v) for v in chunk_map.values())
+    title = f"{total} sections have no category"
+    items = []
+    for add in add_items:
+        op = {"type": "add", "level": add["level"], "name": add["name"], "parent": add["parent"]}
+        if add.get("description"):
+            op["description"] = add["description"]
+        ids = sorted({int(x) for src in add["sources"] for x in (src.get("example_ids") or [])
+                     if str(x).lstrip("-").isdigit()})
+        evidence = [{"quote": s.get("evidence"), "chunk_ids": s.get("example_ids") or []} for s in add["sources"]]
+        items.append(_make_item("untagged_sections", "untagged_sections", op, [], evidence,
+                                {"chunks": len(ids)}, None, title, rejections))
+    for cid, labels in chunk_map.items():
+        if not cid.lstrip("-").isdigit():
+            continue
+        for label in labels:
+            op = {"type": "tag", "node": label, "chunk_ids": [int(cid)]}
+            items.append(_make_item("untagged_sections", "untagged_sections", op, [], [], {},
+                                    None, title, rejections))
+    return items
+
+
+def health_items(tax, work_dir, counts, rejections, skipped_files):
+    """Grouped health review items from `work_dir/problems.json` and each task's result_k.json.
+
+    Every problem record gets an item: the recommended fix from the matching agent result when
+    one exists, else the kind's documented fallback (or, for missing_description and the metric
+    kinds, no item at all — the manual Taxonomy-view path covers those)."""
+    problems = load_json(os.path.join(work_dir, "problems.json"))
+    items = []
+    items += _missing_description_items(tax, work_dir, problems, counts, skipped_files, rejections)
+    items += _no_tags_items(tax, work_dir, problems, skipped_files, rejections)
+    items += _untagged_items(tax, work_dir, skipped_files, rejections)
+    items += _structure_items(work_dir, problems, skipped_files, rejections)
+    items += _metrics_items(work_dir, problems, skipped_files, rejections)
+    return items

@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import decisions as D  # noqa: E402
 import graph_migrate as GM  # noqa: E402
 from taxo_io import (CURRENT, atomic_write_bytes, fingerprint, intent, load_json, locate, nid, node_ids,  # noqa: E402
-                     one_line, reviewer_name, sha256_bytes)
+                     one_line, reviewer_name, sha256_bytes, utc_now)
 from taxonomy_merge import load_proposals, plan_additions  # noqa: E402
 
 DESCRIBE_INSTRUCTIONS = """# Drafting category descriptions
@@ -221,7 +221,7 @@ def _describe_items(tax, proposals_dir, counts, rejections, skipped_files):
     return items
 
 
-def _context(mode, tax, items, stats, version):
+def _context(mode, tax, items, stats, version, problems=None):
     it = intent(tax)
     labels = list(it["tree"]) + [k for kids in it["tree"].values() for k in kids] + list(it["unassigned_l2"])
     descs = tax.get("descriptions") or {}
@@ -242,6 +242,15 @@ def _context(mode, tax, items, stats, version):
     if mode == "describe":
         drafted = sum(1 for i in items if i["status"] in ("proposed", "suppressed"))
         return {"title": "Description review", "subtitle": f"v{version} · {drafted} drafted descriptions"}
+    if mode == "health":
+        counted = ("missing_description", "no_tags", "near_duplicate", "off_axis",
+                   "similar_metrics", "metric_not_governed")
+        n_problems = sum(len((problems or {}).get(k) or []) for k in counted)
+        untagged = (problems or {}).get("untagged_sections") or []
+        if untagged and untagged[0].get("count"):
+            n_problems += 1
+        fixes = sum(1 for i in items if i["status"] in ("proposed", "suppressed"))
+        return {"title": "Health review", "subtitle": f"v{version} · {n_problems} problems · {fixes} fixes proposed"}
     raise ValueError(f"unknown mode {mode!r}")
 
 
@@ -282,8 +291,9 @@ def describe_prep(taxonomy_path, db, out_dir, batches=5, all_nodes=False):
     return {"nodes": n, "batches": len(groups), "out": out_dir}
 
 
-def build_plan(mode, taxonomy_path, proposals_dir=None, consolidated=None, db=None, decisions_path=None, now=None):
-    if mode in ("drift", "browse", "describe") and os.path.basename(taxonomy_path) != CURRENT:
+def build_plan(mode, taxonomy_path, proposals_dir=None, consolidated=None, db=None, decisions_path=None, now=None,
+               work_dir=None):
+    if mode in ("drift", "browse", "describe", "health") and os.path.basename(taxonomy_path) != CURRENT:
         raise ValueError(f"{mode} reviews are planned on taxonomy/{CURRENT}, not {taxonomy_path}. If this Brain "
                          f"predates {CURRENT}, run `taxonomy_review.py adopt --taxonomy <the version the store "
                          f"was built from> --db <db>` first")
@@ -313,6 +323,15 @@ def build_plan(mode, taxonomy_path, proposals_dir=None, consolidated=None, db=No
         if not proposals_dir:
             raise ValueError("describe mode needs --proposals")
         items, evidence = _describe_items(tax, proposals_dir, counts, rejections, skipped_files), True
+    elif mode == "health":
+        if not work_dir:
+            raise ValueError("health mode needs --work")
+        problems_path = os.path.join(work_dir, "problems.json")
+        if not os.path.exists(problems_path):
+            raise ValueError(f"{problems_path} not found; run `taxonomy_review.py diagnose` first")
+        import health as H
+        problems = load_json(problems_path)
+        items, evidence = H.health_items(tax, work_dir, counts, rejections, skipped_files), True
     else:
         raise ValueError(f"unknown mode {mode!r}")
     for n, item in enumerate(items):
@@ -321,8 +340,8 @@ def build_plan(mode, taxonomy_path, proposals_dir=None, consolidated=None, db=No
     review = {"schema": 1, "review_id": rid, "mode": mode, "created": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
               "base": {"path": os.path.abspath(taxonomy_path), "version": version, "sha256": sha},
               "evidence_available": evidence, "stats": stats, "items": items,
-              "context": _context(mode, tax, items, stats, version)}
-    if mode in ("drift", "describe"):
+              "context": _context(mode, tax, items, stats, version, problems if mode == "health" else None)}
+    if mode in ("drift", "describe", "health"):
         review["skipped_files"] = skipped_files
     path = os.path.join(tax_dir, "reviews", f"review_{rid}.json")
     data = (json.dumps(review, indent=1, ensure_ascii=False) + "\n").encode("utf-8")
@@ -355,7 +374,7 @@ def _out(obj):
 
 
 def cmd_plan(a):
-    path, rv = build_plan(a.mode, a.taxonomy, a.proposals, a.consolidated, a.db, a.decisions)
+    path, rv = build_plan(a.mode, a.taxonomy, a.proposals, a.consolidated, a.db, a.decisions, work_dir=a.work)
     actionable = sum(1 for i in rv["items"] if i["status"] in ("proposed", "suppressed"))
     out = {"review": path, "review_id": rv["review_id"], "mode": rv["mode"], "items": actionable,
            "evidence_available": rv["evidence_available"]}
@@ -495,6 +514,69 @@ def cmd_diagnose(a):
     return 0
 
 
+def _read_requests(path):
+    if not os.path.exists(path):
+        return []
+    out = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(rec, dict):
+                out.append(rec)
+    return out
+
+
+def cmd_respond(a):
+    review = load_json(a.review)
+    tax_dir = tax_dir_of(a.review)
+    work_dir = os.path.join(tax_dir, "work")
+    dpath = a.decisions or D.default_path(tax_dir)
+    records = D.read(dpath)
+    if D.review_state(records, review["review_id"])["submit"]:
+        _out({"status": "refused", "errors": ["this review is already submitted"]})
+        return 2
+    req = next((r for r in _read_requests(os.path.join(work_dir, "requests.jsonl"))
+               if r.get("id") == a.request), None)
+    if req is None:
+        _out({"status": "refused", "errors": [f"{a.request!r} is not a known request"]})
+        return 2
+    item = next((i for i in review.get("items", []) if i["id"] == req.get("item_id")), None)
+    if item is None:
+        _out({"status": "refused",
+              "errors": [f"item {req.get('item_id')!r} not found in review {review['review_id']!r}"]})
+        return 2
+    try:
+        op = json.loads(a.op)
+    except json.JSONDecodeError as e:
+        _out({"status": "refused", "errors": [f"--op is not valid JSON: {e}"]})
+        return 2
+    if not isinstance(op, dict):
+        _out({"status": "refused", "errors": ["--op must be a JSON object"]})
+        return 2
+    if item.get("origin") != "health" or not D.health_amend_ok(item, op):
+        _out({"status": "refused",
+              "errors": [f"{item['id']}: the op must be one of its alternatives or an edit of the same fix"]})
+        return 2
+    rec = {"request_id": a.request, "item_id": item["id"], "op": op, "ts": utc_now()}
+    if a.reason:
+        rec["reason"] = a.reason
+    resp_path = os.path.join(work_dir, "responses.jsonl")
+    line = (json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8")
+    fd = os.open(resp_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    try:
+        os.write(fd, line)
+    finally:
+        os.close(fd)
+    _out({"status": "recorded", "request_id": a.request, "item_id": item["id"]})
+    return 0
+
+
 def cmd_gap(a):
     import metrics_gap as MG
     tax = load_json(a.taxonomy)
@@ -510,12 +592,13 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Plan, record and serve taxonomy reviews.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("plan")
-    p.add_argument("--mode", required=True, choices=["draft", "drift", "browse", "describe"])
+    p.add_argument("--mode", required=True, choices=["draft", "drift", "browse", "describe", "health"])
     p.add_argument("--taxonomy", default=os.path.join("taxonomy", CURRENT))
     p.add_argument("--proposals")
     p.add_argument("--consolidated")
     p.add_argument("--db")
     p.add_argument("--decisions")
+    p.add_argument("--work", help="health mode: the diagnose --out directory (problems.json + task dirs)")
     p.set_defaults(fn=cmd_plan)
     p = sub.add_parser("record")
     p.add_argument("--review", required=True)
@@ -575,6 +658,13 @@ def main(argv=None):
     p.add_argument("--metrics")
     p.add_argument("--batches", type=int, default=4)
     p.set_defaults(fn=cmd_diagnose)
+    p = sub.add_parser("respond", help="record a revised proposal for a health item's redo request")
+    p.add_argument("--review", required=True)
+    p.add_argument("--request", required=True)
+    p.add_argument("--op", required=True)
+    p.add_argument("--reason")
+    p.add_argument("--decisions")
+    p.set_defaults(fn=cmd_respond)
     p = sub.add_parser("gap", help="write taxonomy/work/metrics_gap.md (ungoverned computable metrics)")
     p.add_argument("--taxonomy", default=os.path.join("taxonomy", CURRENT))
     p.add_argument("--metrics")
