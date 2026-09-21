@@ -489,6 +489,13 @@ def cmd_describe_prep(a):
     return 0
 
 
+def cmd_diagnose(a):
+    import health as H
+    _out(H.diagnose(a.taxonomy, a.db, a.out, metrics_path=a.metrics, proposals_dir=a.proposals,
+                    batches=a.batches))
+    return 0
+
+
 def cmd_gap(a):
     import metrics_gap as MG
     tax = load_json(a.taxonomy)
@@ -562,6 +569,14 @@ def main(argv=None):
     p.add_argument("--batches", type=int, default=5)
     p.add_argument("--all", action="store_true", help="include nodes that already have a description")
     p.set_defaults(fn=cmd_describe_prep)
+    p = sub.add_parser("diagnose", help="find taxonomy health problems and prepare agent fix tasks")
+    p.add_argument("--taxonomy", default=os.path.join("taxonomy", CURRENT))
+    p.add_argument("--db", required=True)
+    p.add_argument("--out", default=os.path.join("taxonomy", "work", "health"))
+    p.add_argument("--metrics")
+    p.add_argument("--proposals")
+    p.add_argument("--batches", type=int, default=4)
+    p.set_defaults(fn=cmd_diagnose)
     p = sub.add_parser("gap", help="write taxonomy/work/metrics_gap.md (ungoverned computable metrics)")
     p.add_argument("--taxonomy", default=os.path.join("taxonomy", CURRENT))
     p.add_argument("--metrics")
