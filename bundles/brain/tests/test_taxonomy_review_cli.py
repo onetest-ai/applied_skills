@@ -290,3 +290,23 @@ class DescribeFlowTests(unittest.TestCase):
         _, rv = R.build_plan("browse", self.cur, now=NOW)
         self.assertEqual(rv["context"]["title"], "Taxonomy editor")
         self.assertIn("without a description", rv["context"]["subtitle"])
+
+    def test_describe_plan_skips_wrong_shaped_result_files(self):
+        props = os.path.join(self.td.name, "props")
+        write_json(os.path.join(props, "result_0.json"), {"descriptions": "not-a-list"})
+        write_json(os.path.join(props, "result_1.json"), {"descriptions": ["just a string"]})
+        write_json(os.path.join(props, "result_2.json"), ["Duplicate Charge"])
+        write_json(os.path.join(props, "result_3.json"), {"descriptions": [
+            {"node": "Duplicate Charge", "description": "Customer billed twice for one order."}]})
+        _, rv = R.build_plan("describe", self.cur, proposals_dir=props, db=self.db, now=NOW)
+        self.assertEqual([i["op"]["node"] for i in rv["items"]], ["Duplicate Charge"])
+        self.assertEqual(sorted(os.path.basename(f) for f in rv["skipped_files"]),
+                         ["result_0.json", "result_2.json"])
+
+    def test_describe_plan_cli_survives_wrong_shaped_results(self):
+        props = os.path.join(self.td.name, "props2")
+        write_json(os.path.join(props, "result_0.json"), {"descriptions": "not-a-list"})
+        code, out = cli("plan", "--mode", "describe", "--taxonomy", self.cur, "--proposals", props, "--db", self.db)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(out["skipped_files"]), 1)
+        self.assertTrue(out["skipped_files"][0].endswith("result_0.json"))

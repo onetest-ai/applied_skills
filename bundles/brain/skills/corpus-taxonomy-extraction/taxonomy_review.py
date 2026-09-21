@@ -38,7 +38,9 @@ from taxonomy_merge import load_proposals, plan_additions  # noqa: E402
 
 DESCRIBE_INSTRUCTIONS = """# Drafting category descriptions
 
-For each node below, write a description in the output file `result_k.json`:
+The nodes to describe are in the `batch_k.json` files next to this one (`batch_0.json`,
+`batch_1.json`, …), one batch per file. For each `batch_k.json` you process, write a
+`result_k.json` with the same `k` — one result file per batch — shaped:
 
 ```json
 {"descriptions": [{"node": "<label>", "description": "<text>"}]}
@@ -182,11 +184,21 @@ def _describe_items(tax, proposals_dir, counts, rejections, skipped_files):
             print("skip", rf, e, file=sys.stderr)
             skipped_files.append(rf)
             continue
-        for d in (data.get("descriptions") or []) if isinstance(data, dict) else []:
+        if not isinstance(data, dict) or not isinstance(data.get("descriptions"), list):
+            print("skip", rf, 'expected {"descriptions": [...]}', file=sys.stderr)
+            skipped_files.append(rf)
+            continue
+        bad = 0
+        for d in data["descriptions"]:
+            if not isinstance(d, dict):
+                bad += 1
+                continue
             node = (d.get("node") or "").strip()
             if not node or node in seen:
                 continue
             seen[node] = one_line(d.get("description") or "").strip()
+        if bad:
+            print(f"skip {bad} malformed entries in {rf}", file=sys.stderr)
     items = []
     for node, text in seen.items():
         op = {"type": "describe", "node": node, "description": text}
@@ -228,7 +240,7 @@ def _context(mode, tax, items, stats, version):
         return {"title": "Taxonomy editor",
                 "subtitle": f"v{version} · {len(labels)} categories · {without} without a description"}
     if mode == "describe":
-        drafted = sum(1 for i in items if i["status"] == "proposed")
+        drafted = sum(1 for i in items if i["status"] in ("proposed", "suppressed"))
         return {"title": "Description review", "subtitle": f"v{version} · {drafted} drafted descriptions"}
     raise ValueError(f"unknown mode {mode!r}")
 

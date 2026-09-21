@@ -170,6 +170,25 @@ class ServerTests(unittest.TestCase):
         code, out = self.req("POST", "/api/decision", {"action": "withdraw", "item_id": out["record"]["item_id"]})
         self.assertEqual(code, 200, out)
 
+    def test_clear_undoes_an_approved_plan_item(self):
+        # A real plan item (not a human proposal): approve it via /api/decision, then clear it.
+        with tempfile.TemporaryDirectory() as td:
+            d = os.path.join(td, "taxonomy")
+            cur = os.path.join(d, "current.json"); write_json(cur, taxonomy(version=1))
+            db = os.path.join(td, "k.sqlite"); tagged_store(db, taxonomy(version=1))
+            props = os.path.join(td, "props")
+            write_json(os.path.join(props, "result_0.json"), {"descriptions": [
+                {"node": "Refunds", "description": "Money returned to a customer."}]})
+            path, rv = R.build_plan("describe", cur, proposals_dir=props, db=db, now=NOW)
+            item = next(i for i in rv["items"] if i["op"]["node"] == "Refunds")
+            self.assertEqual(item["status"], "proposed")
+            app = S.ReviewApp(path, db_path=db)
+            code, out = app.decide({"action": "approve", "item_id": item["id"]})
+            self.assertEqual(code, 200, out)
+            code, out = app.decide({"action": "clear", "item_id": item["id"]})
+            self.assertEqual(code, 200, out)
+            self.assertEqual(app.state()["decisions"][item["id"]]["action"], "clear")
+
 
 class TimeoutTests(unittest.TestCase):
     def test_timeout_exits_3(self):
