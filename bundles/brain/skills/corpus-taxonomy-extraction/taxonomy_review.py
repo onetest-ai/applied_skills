@@ -4,10 +4,13 @@
 It never writes a taxonomy file — `taxonomy_merge.py --review … --apply` does that.
 Every subcommand prints one JSON line on stdout (serve prints it on exit).
 
-  plan          --mode draft|drift|browse|describe [--taxonomy taxonomy/current.json] [--proposals DIR]
-                [--consolidated F] [--db K.sqlite] [--decisions D]
+  plan          --mode draft|drift|browse|describe|health [--taxonomy taxonomy/current.json] [--proposals DIR]
+                [--work DIR] [--consolidated F] [--db K.sqlite] [--decisions D]
   describe-prep --taxonomy taxonomy/current.json --db K.sqlite --out DIR [--batches 5] [--all]
+  diagnose  --taxonomy taxonomy/current.json --db K.sqlite --out DIR [--metrics F] [--batches 4]
   serve     --review R --db K.sqlite [--metrics F] [--port 0] [--no-browser] [--timeout 3600] [--reviewer NAME]
+            [--watch-hint]
+  respond   --review R --request ID --op JSON [--reason TEXT]
   record    --review R (--action A [--item ID] [--op JSON] [--reason T] | --submit) [--reviewer NAME]
   status    --review R
   export-md --review R --out F

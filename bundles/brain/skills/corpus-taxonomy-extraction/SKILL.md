@@ -89,6 +89,8 @@ Beyond taxonomy induction, this skill ships the scripts that wire the taxonomy i
 - **`classify_prep.py` → (low-tier agents) → `classify_write.py`** — per-section taxonomy tags at **L1 AND L2**: prep presents the full L1/L2 vocab and asks for the *most specific* fit (an L2 when the chunk is specifically about it, else its L1); agents assign (empty when nothing fits — never forced); write resolves each label to its graph node, writes `chunk_topics` with the real `kind` and — for an L2 — **rolls up its parent L1** so L1 filters still catch it. `about` edges (chunk→vertex). *Meaning is agentic; this step is agents, not a script.*
 
 ## Refreshing the taxonomy (assisted: agent proposes, human decides)
+**The default way to refresh is the health review** (next section): its `untagged/` task runs this same refine step, alongside every other taxonomy problem. Use the standalone drift flow below only when the user asks for new-category proposals alone.
+
 The corpus or the parse shifts (e.g. `visual-parse` now transcribes diagrams, surfacing concepts that were invisible before), so the taxonomy under-covers — the signal is a rising share of **untagged** chunks. **Agents only add.** Renames, merges, moves, splits and removals are human decisions made in the taxonomy review app, which migrates the affected tags (node ids are `slug(label)`, so an unreviewed rename would make `build_graph` prune the node and its tags).
 - **`taxonomy_refine_prep.py --db --taxonomy --out`** — gather the UNTAGGED chunks + the current L1/L2 vocab; batch them for agents.
 - **(low-tier agents)** — per batch, either map a chunk to an existing category the classifier missed, or **propose** a new **L2 under a named parent L1** (preferred) / a new **L1** — with evidence → `result_k.json`.
@@ -97,16 +99,75 @@ The corpus or the parse shifts (e.g. `visual-parse` now transcribes diagrams, su
 - Then: `build_graph.py --taxonomy taxonomy/current.json --db <db>` (runs the tag migrations) → reclassify the queued chunks (see **Reclassifying after a taxonomy change** below) → `related` → vault.
 - **`to_obsidian.py`** — emit the Obsidian vault as a **view of the store**: notes = chunks, real per-section tags from `chunk_topics`, `[[topic · …]]` links = graph vertices.
 
+## Health review (the default way to review)
+One review for every taxonomy and metric problem. A deterministic `diagnose` finds the problems; low-cost agents precompute a specific fix for each one that needs judgment; the user decides in a grouped inbox; the approved fixes are applied. The first-build `draft` review and the `browse` editor stay separate (see the table below).
+
+Every command below runs from the project root, with `<skills>` the skills directory and `<db>` the store. `<run>` is a new directory name for this run, e.g. `health-20260921-1400`.
+
+1. **You run diagnose.**
+   ```bash
+   python <skills>/corpus-taxonomy-extraction/taxonomy_review.py diagnose \
+     --taxonomy taxonomy/current.json --db <db> --out taxonomy/work/<run>
+   ```
+   It prints one JSON line: `problems` (a count per kind) and `tasks` (`[{kind, dir, batches}]`, one per kind that needs agents: `describe`, `notags`, `structure`, `metrics`, `untagged`). Use a new `--out` directory every run: `plan` reads every `result_*.json` in it, so an earlier run's results would come back as this run's fixes. `diagnose` also reads open redo requests from `taxonomy/work/requests.jsonl` and puts their notes on the matching entries.
+2. **You dispatch low-cost subagents (e.g. Haiku), one per `batch_k.json`** in each task `dir`. Each subagent reads that dir's `instructions.md` and its `batch_k.json` and writes `result_k.json` in the same dir. The `untagged` dir also has `vocab.md` for the agent to read, and the `metrics` dir may have `families.json`. The result formats are defined in each `instructions.md`; do not restate them to the agents, point them at the file. Check that each batch has its result file before going on. A missing or malformed result is not fatal: that problem still reaches the inbox with a safe default, marked `fallback`.
+3. **You plan the review.**
+   ```bash
+   python <skills>/corpus-taxonomy-extraction/taxonomy_review.py plan --mode health \
+     --taxonomy taxonomy/current.json --work taxonomy/work/<run> --db <db>
+   ```
+   It prints `{review, review_id, items, …}`; `<review>` below is that `review` path. Any `skipped_files` are result files that could not be read. Name them to the user; do not re-dispatch silently.
+4. **You serve the app and watch for redo requests.** Run this with Bash `run_in_background`:
+   ```bash
+   python <skills>/corpus-taxonomy-extraction/taxonomy_review.py serve --review <review> --db <db> --watch-hint
+   ```
+   Then create the requests file if it is missing (`mkdir -p taxonomy/work && touch taxonomy/work/requests.jsonl`) and arm a **Monitor** on:
+   ```bash
+   tail -n0 -F taxonomy/work/requests.jsonl
+   ```
+   Set `timeout_ms` to 1800000 (30 minutes). When the Monitor expires while `serve` is still running, arm it again. Tell the user a browser tab is open for them, then end your turn.
+
+   Each Monitor event is one JSON line `{"id", "ts", "review_id", "item_id", "note", "status": "open"}`: the user pressed **Redo with a note…** on an item. For each one:
+   1. Find the item in `<review>` (`items[]` with that `id`). Its `kind`, `op` and `alternatives` say what it is.
+   2. Re-run the solve step for that one entry: take the entry the item came from out of the matching task dir's `batch_*.json` (`describe`, `notags`, `structure`, `metrics` or `untagged`, by the item's `kind`), add `"note": "<the note>"`, and have one subagent (or yourself, for a single entry) follow that dir's `instructions.md` for it.
+   3. Turn the new fix into the item's op shape. It must be one of the item's `op`/`alternatives`, or the same op type on the same subject with edited fields (a different description, a narrower `chunk_ids`). `respond` refuses anything else.
+   4. Record it:
+      ```bash
+      python <skills>/corpus-taxonomy-extraction/taxonomy_review.py respond --review <review> \
+        --request <id> --op '<op json>' --reason '<one line: what changed and why>'
+      ```
+   The app picks the response up within seconds and shows it as "Revised by Claude"; the user approves it or not.
+5. **When `serve` exits, stop the Monitor** (TaskStop). `serve` prints one JSON line. Go on only if its `status` is `submitted`; on `cancelled` or `timeout`, tell the user and stop.
+6. **You apply the review and rebuild the graph.**
+   ```bash
+   python <skills>/corpus-taxonomy-extraction/taxonomy_merge.py --review <review> --apply
+   python <skills>/corpus-taxonomy-extraction/build_graph.py --taxonomy taxonomy/current.json --db <db>
+   ```
+   `taxonomy_merge` prints `{status, version, tags_file, governed_drafts_file, taxonomy_changed, …}`. It writes a new taxonomy version only if at least one taxonomy op was approved; run `build_graph` either way.
+7. **You reclassify, if needed.** If `taxonomy/work/reclassify.json` exists, run the sequence in **Reclassifying after a taxonomy change** below. Do this before step 8: reclassifying replaces a chunk's tags, so it would drop tags added in step 8.
+8. **You write the approved tags, if any.** If `tags_file` is not null:
+   ```bash
+   python <skills>/corpus-taxonomy-extraction/classify_write.py --db <db> --results <the directory of tags_file> --merge
+   ```
+   `--merge` only adds labels (an L2 also adds its parent L1); it never removes a tag.
+9. **You tell the user about governed-metric drafts, if any.** If `governed_drafts_file` is not null, it holds the approved `metric_govern` drafts (`{review_id, metric, draft:{key, family, unit, desc, grain}}`, appended across reviews; this review's entries carry its `review_id`). Show the user this review's drafts and ask whether to add them to `schema/metrics.<corpus>.json` with the `tabular-semantic-layer` skill. Edit that file only if they agree. Neither the app nor `taxonomy_merge` ever writes it.
+
+**What the user sees.** Problems are grouped: a group (e.g. "12 categories have no description") is one inbox entry with a row per item and **Accept all remaining**, which leaves `fallback` rows (a safe default, not an agent's recommendation) for the user to decide one by one. **Skip** records nothing; it only moves on, and a skipped problem comes back at the next `diagnose`. A group of labels that differ only by a number or code (a naming pattern) is one item whose default is keep, with no agent work. A near-duplicate cluster of three or more labels is one agent entry and comes back as a group of merge rows. A fix on a node that another approved fix already changes (e.g. describing a label that is merged away) is refused as a conflict; when that happens inside Accept all remaining, nothing is recorded and the app offers to accept the other rows.
+
+**Hosts without Monitor.** Skip the Monitor and run `serve` without `--watch-hint`; the app then says requests are "Queued for next run". Open requests stay in `taxonomy/work/requests.jsonl`, and the next `diagnose` puts their notes on the matching entries. No browser: `export-md` / `import-md` as below (health decisions are `approve`, `reject: <reason>` or `amend: <op json>`).
+
 ## Reviewing and editing the taxonomy (the review app)
 One local app for every taxonomy decision. `taxonomy_review.py` plans a review and serves it on `127.0.0.1` (token-guarded, stdlib only, the store opened read-only); decisions go to the append-only `taxonomy/decisions.jsonl` (commit it in the consuming project); `taxonomy_merge.py --review … --apply` is the only writer.
 
 | when | plan command |
 |---|---|
+| **refresh, maintenance, or "check / clean up the taxonomy" (the default)** | the **Health review** sequence above (`diagnose` → agents → `plan --mode health --work …`) |
 | first build, after `emit_taxonomy.py` | `plan --mode draft --taxonomy taxonomy/taxonomy_v0.json` (evidence from `taxonomy/work/consolidated.json`) |
-| refresh with agent proposals | `plan --mode drift --taxonomy taxonomy/current.json --proposals <dir> --db <db>` |
+| only new-category proposals for untagged chunks (the health review includes these) | `plan --mode drift --taxonomy taxonomy/current.json --proposals <dir> --db <db>` |
+| only descriptions, when the user asks for nothing else (the health review includes these) | `describe-prep --taxonomy taxonomy/current.json --db <db> --out <dir>`, dispatch agents on `<dir>/batch_k.json` with `<dir>/instructions.md` → `plan --mode describe --taxonomy taxonomy/current.json --proposals <dir> --db <db>` |
 | the user wants to see or change the taxonomy or metric inventory | `plan --mode browse --taxonomy taxonomy/current.json --db <db>` |
 
-Then `serve --review <path> --db <db>` in the background → end your turn → on exit, `taxonomy_merge.py --review <path> --apply` → `build_graph.py --taxonomy taxonomy/current.json --db <db>` → reclassify the queued chunks as below.
+For the non-health modes: `serve --review <path> --db <db>` in the background → end your turn → on exit, `taxonomy_merge.py --review <path> --apply` → `build_graph.py --taxonomy taxonomy/current.json --db <db>` → reclassify the queued chunks as below.
 
 **Reclassifying after a taxonomy change.** If `taxonomy/work/reclassify.json` exists after `build_graph`, run this sequence yourself, where `<N>` is the `version` in that file:
 
@@ -119,9 +180,11 @@ python classify_write.py --db <db> --results classify/reclassify-v<N> --reclassi
 
 Always use a fresh `classify/reclassify-v<N>` directory with no `result_*.json` in it. Never reuse the first-build `classify/` directory: `classify_write` reads every `result_*.json` there, so stale first-build results would overwrite the new tags and `--reclassify-done` would drop the queued ids as done. `--reclassify-done` removes only the ids it just wrote and deletes the file once it is empty.
 
-- **Tree** tab: the whole taxonomy with tag counts, samples and sibling overlap; the reviewer renames, merges, moves, splits, removes or adds, each with an impact preview.
-- **Metrics** tab: the metric inventory, with whether each computable metric has a governed definition in `schema/metrics.<corpus>.json` (ungoverned first — kb answers those "not modeled").
-- **Changes** tab: approve / reject (with a reason; rejections stick) / amend proposals, then submit.
+- **Inbox**: the proposals and flags to decide — approve, reject (with a reason; rejections stick), amend, or Redo with a note (health reviews).
+- **Taxonomy**: the whole tree with tag counts, samples and sibling overlap. This is where a person renames, merges, moves, splits, removes, describes or **adds** a category, each with an impact preview. A new category needs a description.
+- **Metrics**: the metric inventory in tabs by what each means (needs a definition, possible duplicates, quoted from documents, governed). A computable metric with no governed definition in `schema/metrics.<corpus>.json` is answered "not modeled" by kb.
+- **Your changes**: the user's own proposals, which they can withdraw, then Submit.
+- **Descriptions matter for classification.** A category's description goes into the classifier's `vocab.md`, the graph, `get_taxonomy` and the vault, so a described taxonomy tags sections more precisely.
 - No browser (SSH, other hosts): `taxonomy_review.py export-md --review <path> --out review.md`, ask the user to fill in the `decision:` lines, then `import-md --review <path> --md review.md --submit`.
 - A Brain built before `current.json` existed: run `taxonomy_review.py adopt --taxonomy taxonomy/taxonomy_v<N>.json --db <db>` once (after telling the user), choosing the version the store was built from; it refuses if that version doesn't match the graph. `browse`/`drift` reviews are refused until this is done.
   - If `taxonomy/current.json` already exists and is ahead of the store (e.g. `build_graph` reports a store with tags but no `meta.taxonomy_version`), add `--meta-only`: it checks the same node set, records only the store's version, and never touches `current.json`; then rebuild with `build_graph.py --taxonomy taxonomy/current.json --db <db>`.

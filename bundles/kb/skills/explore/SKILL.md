@@ -7,7 +7,7 @@ Explore **$topic** across the Brain. The Brain contract below governs; `../_shar
 
 1. **Resolve the Brain.** Use the contract's resolution order: identify candidate servers by tool surface, `health` each, use the override if the user named one, ask if several answer, and follow the contract's guidance if none does.
 
-2. **Anchor the exploration.** Use `get_taxonomy(label=...)` to find a taxonomy node, or fall back to the top `search_knowledge` hit.
+2. **Anchor the exploration.** Use `get_taxonomy(label=...)` to find a taxonomy node, or fall back to the top `search_knowledge` hit. When `get_taxonomy` returns a `description`, use it to state what the category means before listing connections.
 
 3. **Walk the graph.** Iterate through `find_related_content` and `get_taxonomy` subclasses across documents. Gather connections, contradictions, and gaps.
 
