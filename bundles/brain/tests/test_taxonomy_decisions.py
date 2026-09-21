@@ -351,6 +351,11 @@ class HealthAmendAddDescriptionTests(unittest.TestCase):
         promoted = dict(UNTAGGED_ADD_ITEM["op"], level="L1", parent=None, description="x")
         self.assertFalse(D.health_amend_ok(UNTAGGED_ADD_ITEM, promoted))
 
+    def test_add_amend_may_change_an_existing_description(self):
+        described = dict(UNTAGGED_ADD_ITEM, op=dict(UNTAGGED_ADD_ITEM["op"], description="Paying in parts."))
+        op = dict(described["op"], description="Splitting one bill into several payments.")
+        self.assertTrue(D.health_amend_ok(described, op))
+
     def test_add_amend_cannot_add_other_keys(self):
         extra = dict(UNTAGGED_ADD_ITEM["op"], description="x", node="Refunds")
         self.assertFalse(D.health_amend_ok(UNTAGGED_ADD_ITEM, extra))

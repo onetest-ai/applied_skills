@@ -343,7 +343,10 @@ def build_plan(mode, taxonomy_path, proposals_dir=None, consolidated=None, db=No
     context = _context(mode, tax, items, stats, version, problems if mode == "health" else None)
     if mode == "health":
         for item in items:
-            item.pop("_fallback", None)   # bookkeeping only; never persisted in the review
+            # Public only when true (keeps items small): the app leaves fallbacks — a safe default,
+            # not an agent's real recommendation — out of "Accept all remaining".
+            if item.pop("_fallback", None):
+                item["fallback"] = True
     review = {"schema": 1, "review_id": rid, "mode": mode, "created": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
               "base": {"path": os.path.abspath(taxonomy_path), "version": version, "sha256": sha},
               "evidence_available": evidence, "stats": stats, "items": items, "context": context}

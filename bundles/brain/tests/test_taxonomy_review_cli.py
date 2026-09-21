@@ -310,3 +310,54 @@ class DescribeFlowTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(len(out["skipped_files"]), 1)
         self.assertTrue(out["skipped_files"][0].endswith("result_0.json"))
+
+
+class HealthFallbackFlagCliTests(unittest.TestCase):
+    """B5 fix round 2: a health plan's items carry a public `fallback: true` only for safe
+    defaults (no usable agent fix); real agent proposals carry no such field."""
+
+    def setUp(self):
+        import health as H
+        self.td = tempfile.TemporaryDirectory()
+        d = os.path.join(self.td.name, "taxonomy")
+        tax = taxonomy(version=1)
+        tax["intent_taxonomy"]["tree"]["Billing & Payments"].append("Payment Plans")
+        self.cur = os.path.join(d, "current.json"); write_json(self.cur, tax)
+        self.db = os.path.join(self.td.name, "k.sqlite"); tagged_store(self.db, tax)
+        c = sqlite3.connect(self.db)
+        c.execute("CREATE VIRTUAL TABLE chunks_fts USING fts5(text)")
+        c.executemany("INSERT INTO chunks_fts(rowid, text) VALUES(?,?)", list(c.execute("SELECT id, text FROM chunks")))
+        c.execute("INSERT INTO chunks VALUES(9,'doc9.md','Payment plans','customer asks for payment plans')")
+        c.execute("INSERT INTO chunks_fts(rowid, text) VALUES(9,'customer asks for payment plans')")
+        c.commit(); c.close()
+        write_json(os.path.join(self.td.name, "schema", "metrics.acme.json"), {"metrics": {}})
+        self.work = os.path.join(d, "work", "health")
+        H.diagnose(self.cur, self.db, self.work)
+        write_json(os.path.join(self.work, "describe", "result_0.json"),
+                   {"descriptions": [{"node": "Duplicate Charge", "description": "Billed twice."}]})
+        # the agent engaged but named only a non-candidate chunk → remove/demote fallback
+        write_json(os.path.join(self.work, "notags", "result_0.json"),
+                   {"fixes": [{"node": "Payment Plans", "fix": "tag", "chunk_ids": [999], "reason": "none fit"}]})
+        # a genuine agent keep for one ungoverned metric; the other has no result → fallback
+        write_json(os.path.join(self.work, "metrics", "result_0.json"),
+                   {"fixes": [{"kind": "metric_not_governed", "subject": "Porch Rate", "fix": "keep",
+                               "reason": "not worth governing yet"}]})
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def test_plan_items_mark_only_fallbacks(self):
+        code, out = cli("plan", "--mode", "health", "--taxonomy", self.cur, "--work", self.work, "--db", self.db)
+        self.assertEqual(code, 0, out)
+        with open(out["review"], encoding="utf-8") as f:
+            items = json.load(f)["items"]
+        self.assertTrue(all("_fallback" not in i for i in items))
+        self.assertTrue(all(i.get("fallback", True) is True for i in items))   # never `fallback: false`
+        by = lambda kind, key, val: next(i for i in items if i["kind"] == kind and i["op"].get(key) == val)
+        self.assertNotIn("fallback", by("missing_description", "node", "Duplicate Charge"))   # real draft
+        self.assertTrue(by("missing_description", "node", "Refunds")["fallback"])            # no draft
+        notags = by("no_tags", "node", "Payment Plans")
+        self.assertEqual(notags["op"]["type"], "remove")
+        self.assertTrue(notags["fallback"])                    # engaged, nothing usable
+        self.assertNotIn("fallback", by("metric_not_governed", "metric", "Porch Rate"))       # agent keep
+        self.assertTrue(by("metric_not_governed", "metric", "Average Handle Time")["fallback"])

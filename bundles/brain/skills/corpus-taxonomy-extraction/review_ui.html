@@ -602,8 +602,9 @@ function inboxView(){
 // ---------------------------------------------------------------- health: groups, rows, redo
 // Older logs may hold a reject with this reason; Skip itself no longer records anything.
 const SKIP_REASON = "Skipped";
-// A row or item whose op is only the generic fallback: no real proposal to accept in bulk.
-const isFallback = it => it.reason === "no fix proposed" || (it.op.type === "keep" && (it.alternatives || []).some(isTemplate));
+// A fallback is a safe default, not an agent's real proposal; the plan marks it `fallback: true`.
+// Plans written before that field existed still say "no fix proposed" on their fallbacks.
+const isFallback = it => it.fallback === true || it.reason === "no fix proposed";
 // Skip is navigation only: the item stays undecided, and the next undecided row or item opens.
 function skipFrom(it){
   const pos = navPositions(), i = pos.findIndex(p => p.it.id === it.id);
@@ -755,7 +756,9 @@ function groupDetail(e){
   const rows = e.rows;
   if (!rows.find(r => r.id === U.gRow)) U.gRow = (rows.find(r => !isDecided(r)) || rows[0]).id;
   const decided = rows.filter(isDecided).length, open = rows.filter(batchable).length, fb = rows.filter(r => canAccept(r) && isFallback(r)).length;
-  const f = U.batchFail && U.batchFail.kind === e.kind ? U.batchFail : null, bad = f ? S.review.items.find(i => i.id === f.recs[f.index].item_id) : null;
+  let f = U.batchFail && U.batchFail.kind === e.kind ? U.batchFail : null, bad = f ? S.review.items.find(i => i.id === f.recs[f.index].item_id) : null;
+  // Once the refused row is decided on its own, the banner no longer applies.
+  if (f && (!bad || isDecided(bad))){ U.batchFail = null; f = null; bad = null; }
   const others = f ? f.recs.filter((r, i) => i !== f.index).length : 0;
   const failHTML = bad ? `<div class="decided bad"><span>Nothing was recorded: “${esc(itemTitle(bad))}” can't be accepted. ${esc(f.error)}</span><button type="button" data-act="goto-row" data-id="${esc(bad.id)}">Show row</button>${others ? `<button type="button" data-act="accept-others">Accept the other ${num(others)}</button>` : ""}</div>` : "";
   let body;
@@ -1172,8 +1175,11 @@ function dupPairs(){
   return dupMemo.pairs;
 }
 function computeDupPairs(){
-  const items = S.review.items.filter(i => i.kind === "similar_metrics" && i.status !== "invalid" && i.status !== "auto_skipped");
-  if (items.length) return items.map(it => {
+  // The plan's pairs whenever it has any similar_metrics items at all (even if all are invalid);
+  // only a plan with none falls back to the client-side rule.
+  const all = S.review.items.filter(i => i.kind === "similar_metrics");
+  const items = all.filter(i => i.status !== "invalid" && i.status !== "auto_skipped");
+  if (all.length) return items.map(it => {
     const names = []; for (const c of candidatesOf(it)) for (const n of [c.metric, c.from, c.into]) if (n && !names.includes(n)) names.push(n);
     return {a:names[0], b:names[1], score:num((it.support || {}).score), item:it};
   }).filter(p => p.a && p.b);
@@ -1574,8 +1580,8 @@ document.addEventListener("click", async ev => {
   const a = el.dataset.act, id = el.dataset.id;
   const item = id ? S.review.items.find(i => i.id === id) : null;
   switch (a){
-    case "view": U.view = el.dataset.v; render(); break;
-    case "pick-item": U.batchFail = null; U.inboxSel = id; if (String(id).startsWith("g:")) U.gRow = null; renderView(); break;
+    case "view": U.redo = null; U.view = el.dataset.v; render(); break;
+    case "pick-item": U.batchFail = null; U.redo = null; U.inboxSel = id; if (String(id).startsWith("g:")) U.gRow = null; renderView(); break;
     case "pick-node": U.treeSel = {kind:"node", label:el.dataset.label}; if (U.view !== "taxonomy"){ U.view = "taxonomy"; render(); } else renderView(); break;
     case "pick-pending": U.treeSel = {kind:"pending", key:el.dataset.key}; renderView(); break;
     case "new-cat": U.treeSel = {kind:"new", parent: el.dataset.parent || ""}; renderView(); break;
@@ -1709,7 +1715,7 @@ document.addEventListener("keydown", ev => {
 // unless the reviewer is typing, in which case it waits for the next tick.
 let pollRender = false;
 const needsPoll = () => !!S && !closed && !S.submitted && Object.values(S.requests || {}).some(q => q.status === "open" && !(S.revisions || {})[q.item_id]);
-const holdRender = () => typing() || U.sheet || !!$("opform") || U.redo !== null;
+const holdRender = () => typing() || U.sheet || !!$("opform") || !!$("redoNote");
 function flushPoll(){ if (pollRender && !holdRender()) render(); }
 const typing = () => { const a = document.activeElement; return !!a && (a.tagName === "TEXTAREA" || a.tagName === "SELECT" || (a.tagName === "INPUT" && a.type !== "checkbox")); };
 setInterval(async () => {
