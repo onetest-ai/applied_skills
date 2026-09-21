@@ -118,8 +118,8 @@ def _draft_items(tax, clusters, c, counts):
     return items
 
 
-def _drift_items(tax, proposals_dir, c, rejections, stats):
-    items, skipped = plan_additions(tax, load_proposals(proposals_dir))
+def _drift_items(tax, proposals_dir, c, rejections, stats, skipped_files):
+    items, skipped = plan_additions(tax, load_proposals(proposals_dir, skipped_files))
     out = []
     for i in items:
         op = {"type": "add", "level": i["level"], "name": i["name"], "parent": i["parent"]}
@@ -166,6 +166,7 @@ def build_plan(mode, taxonomy_path, proposals_dir=None, consolidated=None, db=No
     c = _ro(db)
     stats, counts = _stats(c), _counts(c)
     rejections = D.standing_rejections(D.read(decisions_path or D.default_path(tax_dir)))
+    skipped_files = []
     if mode == "draft":
         if consolidated is None:
             guess = os.path.join(tax_dir, "work", "consolidated.json")
@@ -175,7 +176,7 @@ def build_plan(mode, taxonomy_path, proposals_dir=None, consolidated=None, db=No
     elif mode == "drift":
         if not proposals_dir:
             raise ValueError("drift mode needs --proposals")
-        items, evidence = _drift_items(tax, proposals_dir, c, rejections, stats), True
+        items, evidence = _drift_items(tax, proposals_dir, c, rejections, stats, skipped_files), True
     elif mode == "browse":
         items, evidence = [], True
     else:
@@ -186,6 +187,8 @@ def build_plan(mode, taxonomy_path, proposals_dir=None, consolidated=None, db=No
     review = {"schema": 1, "review_id": rid, "mode": mode, "created": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
               "base": {"path": os.path.abspath(taxonomy_path), "version": version, "sha256": sha},
               "evidence_available": evidence, "stats": stats, "items": items}
+    if mode == "drift":
+        review["skipped_files"] = skipped_files
     path = os.path.join(tax_dir, "reviews", f"review_{rid}.json")
     data = (json.dumps(review, indent=1, ensure_ascii=False) + "\n").encode("utf-8")
     if os.path.exists(path):
@@ -219,8 +222,11 @@ def _out(obj):
 def cmd_plan(a):
     path, rv = build_plan(a.mode, a.taxonomy, a.proposals, a.consolidated, a.db, a.decisions)
     actionable = sum(1 for i in rv["items"] if i["status"] in ("proposed", "suppressed"))
-    _out({"review": path, "review_id": rv["review_id"], "mode": rv["mode"], "items": actionable,
-          "evidence_available": rv["evidence_available"]})
+    out = {"review": path, "review_id": rv["review_id"], "mode": rv["mode"], "items": actionable,
+           "evidence_available": rv["evidence_available"]}
+    if "skipped_files" in rv:
+        out["skipped_files"] = rv["skipped_files"]
+    _out(out)
     return 0
 
 

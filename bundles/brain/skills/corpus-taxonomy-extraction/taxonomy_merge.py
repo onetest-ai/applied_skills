@@ -43,13 +43,18 @@ def near(name, pool, thresh=0.88):
     return m[0] if m else None
 
 
-def load_proposals(proposals_dir):
+def load_proposals(proposals_dir, skipped_files=None):
+    """Proposals from every result_*.json. An unreadable file is reported on stderr (stdout
+    carries the diff / JSON contract) and its name appended to `skipped_files` if given."""
     out = []
     for rf in sorted(glob.glob(os.path.join(proposals_dir, "result_*.json"))):
         try:
-            data = json.load(open(rf))
+            with open(rf, encoding="utf-8") as f:
+                data = json.load(f)
         except Exception as e:
-            print("skip", rf, e)
+            print("skip", rf, e, file=sys.stderr)
+            if skipped_files is not None:
+                skipped_files.append(rf)
             continue
         out += data.get("proposals", []) if isinstance(data, dict) else []
     return out

@@ -80,6 +80,25 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(pp["support"]["projected_coverage_gain_pts"], 12.5)   # 1 untagged of 8 chunks
         self.assertEqual(rv["stats"], {"total_chunks": 8, "untagged_chunks": 1})
 
+    def test_drift_plan_stdout_is_one_json_line_listing_skipped_files(self):
+        cur = os.path.join(self.dir, "current.json")
+        write_json(cur, taxonomy(version=1))
+        props = os.path.join(self.td.name, "props")
+        write_json(os.path.join(props, "result_0.json"), {"proposals": [
+            {"name": "Payment Plans", "level": "L2", "parent": "Billing & Payments", "example_ids": [8]}]})
+        bad = os.path.join(props, "result_1.json")
+        with open(bad, "w", encoding="utf-8") as f:
+            f.write("{not json")
+        buf, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(buf), unittest.mock.patch("sys.stderr", err):
+            code = R.main(["plan", "--mode", "drift", "--taxonomy", cur, "--proposals", props])
+        self.assertEqual(code, 0)
+        lines = buf.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, lines)
+        out = json.loads(lines[0])
+        self.assertEqual((out["items"], out["skipped_files"]), (1, [bad]))
+        self.assertIn("result_1.json", err.getvalue())
+
     def test_browse_and_drift_on_a_version_file_are_refused_naming_adopt(self):
         v1 = os.path.join(self.dir, "taxonomy_v1.json")
         write_json(v1, taxonomy(version=1))

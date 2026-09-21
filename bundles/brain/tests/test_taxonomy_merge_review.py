@@ -65,6 +65,14 @@ class LegacyCliTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue(r.stdout.startswith(EXPECTED_DRY_RUN.format(p=self.props)), r.stdout)
 
+    def test_malformed_result_file_is_reported_on_stderr_not_stdout(self):
+        with open(os.path.join(self.props, "result_1.json"), "w", encoding="utf-8") as f:
+            f.write("{not json")
+        r = run("--taxonomy", self.tax, "--proposals", self.props)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(r.stdout.startswith(EXPECTED_DRY_RUN.format(p=self.props)), r.stdout)
+        self.assertIn("result_1.json", r.stderr)
+
     def test_apply_without_review_refuses(self):
         r = run("--taxonomy", self.tax, "--proposals", self.props, "--apply")
         self.assertEqual(r.returncode, 2)
