@@ -585,6 +585,13 @@ def cmd_respond(a):
         _out({"status": "refused",
               "errors": [f"{item['id']}: the op must be one of its alternatives or an edit of the same fix"]})
         return 2
+    # the same taxonomy check an amend gets in validate_record: the revised op together with every
+    # other approved op must apply cleanly (refuses empty templates, string drafts, conflicts)
+    trial = records + [{"review_id": review["review_id"], "item_id": item["id"], "action": "amend", "op": op}]
+    errs = D.validate_ops(load_json(review["base"]["path"]), [e["op"] for e in D.effective_ops(review, trial)])
+    if errs:
+        _out({"status": "refused", "errors": errs})
+        return 2
     if a.check:   # dry run: every check above passed; nothing is written
         _out({"status": "ok", "request_id": a.request, "item_id": item["id"], "op": op})
         return 0

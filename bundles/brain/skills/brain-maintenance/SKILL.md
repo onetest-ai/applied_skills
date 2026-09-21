@@ -155,8 +155,8 @@ If `sync_plan.json.reclassify_chunk_ids` is non-empty:
 2. run `classify_prep --chunks <ids> --batches <classification.batches from brain-maintenance.toml>` with the approved taxonomy (default 5 overflows context on VTT corpora — always read the profile value);
 3. dispatch low-cost text subagents;
 4. verify exact chunk-id coverage and valid labels;
-5. run incremental `classify_write` without `--reset`;
-6. rebuild the taxonomy graph.
+5. rebuild the taxonomy graph (`build_graph.py --taxonomy taxonomy/current.json --db <db>`) first, so categories added since the last build are in the graph — `classify_write` drops labels that are not graph nodes;
+6. run incremental `classify_write` without `--reset`.
 
 Do not silently change taxonomy. Agents only add; renames, merges, moves, splits and removals are human decisions made in the taxonomy review app (see `corpus-taxonomy-extraction` → "Reviewing and editing the taxonomy"), which migrates the affected tags. If `taxonomy/work/reclassify.json` exists after `build_graph`, reclassify those chunk ids before verifying with the sequence in `corpus-taxonomy-extraction` → "Reclassifying after a taxonomy change": `classify_prep --chunks <the file's chunk_ids> --out classify/reclassify-v<N>` (a fresh directory per taxonomy version `<N>`) → classification subagents → `classify_write --results classify/reclassify-v<N> --reclassify-done taxonomy/work/reclassify.json`. Never reuse the first-build `classify/` directory: its stale result files would overwrite the new tags and empty the queue.
 

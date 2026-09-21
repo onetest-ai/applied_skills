@@ -44,8 +44,17 @@ def _target_of(op):
     return None
 
 
+def _label_ok(v):
+    return v is None or isinstance(v, str)
+
+
 def _conflicts(ops):
-    errs, seen = [], {}
+    # a subject or target that isn't a label (a list, a number) can't be compared — refuse it
+    # here, cleanly, instead of crashing on an unhashable key below
+    errs = [f"{op.get('type')}: node/from/metric/name/into/new_parent/parent must be labels (strings)"
+            for op in ops if not (_label_ok(subject_of(op)) and _label_ok(_target_of(op)))]
+    ops = [op for op in ops if _label_ok(subject_of(op)) and _label_ok(_target_of(op))]
+    seen = {}
     for op in ops:
         if op.get("type") in ("add", "metric_add", "keep", "tag", "metric_govern"):
             continue
@@ -139,6 +148,8 @@ def _op_add(t, op, mig, applied):
         it["tree"][parent].append(name)
     else:
         raise ValueError("level must be L1 or L2")
+    if not _label_ok(op.get("description")):
+        raise ValueError("description must be text")
     if (op.get("description") or "").strip():
         _descs(t)[name] = one_line(op["description"])
 
@@ -146,6 +157,8 @@ def _op_add(t, op, mig, applied):
 def _op_describe(t, op, mig, applied):
     node = op["node"]
     _need(t, node)
+    if not _label_ok(op.get("description")):
+        raise ValueError("description must be text")
     d = _descs(t)
     applied["previous"] = d.get(node)
     d[node] = _clean_desc(op.get("description"))
@@ -347,7 +360,11 @@ def _op_tag(t, op, mig, applied):
 def _op_metric_govern(t, op, mig, applied):
     _find_metric(t, op.get("metric"))
     draft = op.get("draft") or {}
+    if not isinstance(draft, dict):
+        raise ValueError("draft must be an object {key, family, unit, desc, grain}")
     key = draft.get("key") or ""
+    if not isinstance(key, str):
+        raise ValueError("draft.key must be text")
     if not re.fullmatch(r"[a-z0-9_]+", key):
         raise ValueError("draft.key is required and must match [a-z0-9_]+")
 
@@ -362,7 +379,10 @@ def _run(tax, ops):
     t = copy.deepcopy(tax)
     intent(t)
     t["intent_taxonomy"].pop("l1", None)  # remove stale l1 list so intent() won't re-add removed L1s during ops
-    errors, migrations, applied_ops = _conflicts(ops), [], []
+    bad = [op for op in ops if not isinstance(op, dict) or not isinstance(op.get("type"), str)]
+    errors = [f"an op must be an object with a string type, not {op!r}" for op in bad]
+    ops = [op for op in ops if op not in bad]
+    errors, migrations, applied_ops = errors + _conflicts(ops), [], []
     # fixed type order; within adds, L1 before L2 so an L2 can hang under an L1 added here
     key = lambda o: (ORDER.get(o.get("type"), 99), 0 if o.get("level") == "L1" else 1)
     for op in sorted(ops, key=key):
@@ -375,7 +395,7 @@ def _run(tax, ops):
         trial, mig, applied = copy.deepcopy(t), [], copy.deepcopy(op)
         try:
             fn(trial, op, mig, applied)
-        except (ValueError, KeyError, TypeError) as e:
+        except (ValueError, KeyError, TypeError, AttributeError) as e:
             errors.append(f"{op['type']} {subject_of(op)!r}: {e}")
             continue
         t = trial

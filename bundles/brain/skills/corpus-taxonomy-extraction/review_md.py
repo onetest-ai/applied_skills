@@ -126,7 +126,10 @@ def parse_decision(value, item):
             raise ValueError("reject needs a reason: `reject: <reason>`")
         return "reject", None, rest
     if word == "amend":
-        return "amend", json.loads(rest), None
+        op = json.loads(rest)
+        if not isinstance(op, dict):
+            raise ValueError("amend needs a JSON object: `amend: {\"type\": …}`")
+        return "amend", op, None
     args = shlex.split(rest)
     if word == "describe":
         if item["origin"] not in ("describe", "induction"):

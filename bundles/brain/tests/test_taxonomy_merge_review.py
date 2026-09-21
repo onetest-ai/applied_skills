@@ -118,12 +118,15 @@ class LegacyCliTests(unittest.TestCase):
         self.assertEqual(open(v3, "rb").read(), sentinel_bytes)
         self.assertEqual(open(self.tax, "rb").read(), cur_bytes)
 
-    def test_out_outside_taxonomy_dir_leaves_current_untouched(self):
+    def test_out_outside_taxonomy_dir_is_refused_when_current_exists(self):
+        # a version written outside the taxonomy dir would fork it: a later build from current.json
+        # (same version number, different content) would prune what the fork added
         out = os.path.join(self.td.name, "outside", "out.json")
         cur_bytes = open(self.tax, "rb").read()
         r = run("--taxonomy", self.tax, "--proposals", self.props, "--apply", "--without-review", "--out", out)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertTrue(os.path.exists(out))
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("fork", r.stderr)
+        self.assertFalse(os.path.exists(out))
         self.assertEqual(open(self.tax, "rb").read(), cur_bytes)
         self.assertFalse(os.path.exists(os.path.join(os.path.dirname(self.tax), "taxonomy_v3.json")))
 

@@ -15,7 +15,7 @@ Answer numeric questions over big spreadsheet reporting **deterministically**. T
 
 - You have structured reporting workbooks (often 10s–100s of MB, many sheets) and need exact figures, drill-down, or aggregates.
 - You already have (or will derive) conformed dimensions + a computable-metric inventory — typically from `corpus-taxonomy-extraction`.
-- To decide which metrics to govern next, open the taxonomy review app's **Metrics** tab (`taxonomy_review.py plan --mode browse` → `serve`), or run `taxonomy_review.py gap --taxonomy taxonomy/current.json` yourself (add `--metrics schema/metrics.<corpus>.json` when the project has more than one governed metrics file) and read the `taxonomy/work/metrics_gap.md` it writes: computable metrics induced from the corpus with no entry in `metrics.<corpus>.json`.
+- To decide which metrics to govern next, have the user open the taxonomy review app's **Metrics** tab — you run `taxonomy_review.py plan --mode browse` and then `serve` in the background, and the user reviews in the browser — or run `taxonomy_review.py gap --taxonomy taxonomy/current.json` yourself (add `--metrics schema/metrics.<corpus>.json` when the project has more than one governed metrics file) and read the `taxonomy/work/metrics_gap.md` it writes: computable metrics induced from the corpus with no entry in `metrics.<corpus>.json`.
 
 **Not for:** stated targets/one-off figures in prose/slides (that's the narrative lane), or when you don't yet know the dimensions/metrics (run the taxonomy skill first).
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Local taxonomy review app server.
 
-127.0.0.1 only, a random token on every /api call, the store opened read-only, and the only
-file it writes is decisions.jsonl. `serve` blocks until the reviewer submits or cancels (or the
+127.0.0.1 only, a random token on every /api call, the store opened read-only. It writes
+decisions.jsonl and, for a health review's "Redo with a note…", appends to
+taxonomy/work/requests.jsonl; nothing else. `serve` blocks until the reviewer submits or cancels (or the
 timeout), then prints one JSON line — so an agent can run it in the background and be woken
 by its exit.
 """
@@ -217,6 +218,20 @@ class ReviewApp:
                 return 400, {"errors": errs}
             return 200, {"impact": TI.delta(self.db, self.base_tax, prior, op)}
 
+    def _chunk_errors(self, rec):
+        """A tag op (a human proposal in browse mode, an edited amend) may only name chunks the
+        store has — checked when the store is open; validate_record only checks they are ints."""
+        op = rec.get("op")
+        if not (isinstance(op, dict) and op.get("type") == "tag" and self._has("chunks")):
+            return []
+        ids = sorted(set(op.get("chunk_ids") or []))
+        if not ids:
+            return []
+        q = ",".join("?" * len(ids))
+        found = {r[0] for r in self.db.execute(f"SELECT id FROM chunks WHERE id IN ({q})", ids)}
+        missing = [i for i in ids if i not in found]
+        return [f"{rec.get('item_id')}: no such section(s) in the store: {missing[:10]}"] if missing else []
+
     def decide(self, body):
         if body.get("action") not in D.ITEM_ACTIONS:
             return 400, {"errors": [f"action must be one of {sorted(D.ITEM_ACTIONS)}, not {body.get('action')!r}"]}
@@ -231,7 +246,7 @@ class ReviewApp:
             if self.closing:
                 return self.CLOSED
             records = self._records()
-            errs = D.validate_record(self.review, self.base_tax, records, rec)
+            errs = D.validate_record(self.review, self.base_tax, records, rec) or self._chunk_errors(rec)
             if errs:
                 return 400, {"errors": errs}
             if rec["action"] == "propose":
@@ -262,7 +277,7 @@ class ReviewApp:
                 item = next((i for i in self.review["items"] if i["id"] == rec.get("item_id")), None)
                 if item and rec.get("action") in ("reject", "reopen"):
                     rec["fingerprint"] = item["fingerprint"]
-                errs = D.validate_record(self.review, self.base_tax, accepted, rec)
+                errs = D.validate_record(self.review, self.base_tax, accepted, rec) or self._chunk_errors(rec)
                 if errs:
                     return 400, {"errors": errs, "index": idx}
                 if rec["action"] == "propose":
@@ -282,6 +297,8 @@ class ReviewApp:
             item = next((i for i in self.review["items"] if i["id"] == item_id), None)
             if item is None:
                 return 400, {"errors": [f"{item_id!r} is not an item of this review"]}
+            if self.review.get("mode") != "health" or item.get("origin") != "health":
+                return 400, {"errors": ["redo requests exist only for health review items"]}
             if (item.get("support") or {}).get("pattern"):
                 return 400, {"errors": [f"{item_id!r} is a naming pattern; it has no redo channel — "
                                         "change it in the taxonomy editor instead"]}

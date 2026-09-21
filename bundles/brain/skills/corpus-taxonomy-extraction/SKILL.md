@@ -72,7 +72,7 @@ python parse_corpus.py --corpus <docs> --out <project>/parsed --formats vtt,srt 
 Instantiate `map_instructions.template.md` (shipped with this skill): replace `{{GOAL}}` with the run's goal, `{{MAP_DIR}}` with the run's map-output dir, and `{{AUDIENCE}}` with the project audience (`brain.toml` `[project].audience`, or the store's `health().about.audience`; leave it empty if none); write it to the run dir as `map_instructions.md`. The audience is a **secondary** emphasis lens — it re-orders which goal-relevant intents/dimensions to favor and nudges vocabulary; the goal stays the primary filter and audience never drops a goal-relevant term. Dispatch subagents (model: haiku) that read that instantiated file + their assigned parsed files and write one JSON per source into the map dir. The bulk document context lives and dies inside each subagent — the orchestrator only sees compact JSON. Extract `intent_classes`, `metrics` (with `source_type`), `entities`; each item carries `evidence` (≤200-char quote), `source`, `confidence`. Give any anchor taxonomy doc its own subagent.
 
 ### 3. Reduce — `consolidate.py` (deterministic) + LLM adjudication
-`python consolidate.py --map-dir map --out consolidated.json --threshold 0.86`
+`python consolidate.py --map-dir map --out taxonomy/work/consolidated.json --threshold 0.86` (the first-build review reads its evidence from `taxonomy/work/consolidated.json`; if you write it elsewhere, pass `--consolidated <path>` to `plan --mode draft`)
 - Pools terms by kind, normalizes names, fuzzy-clusters near-duplicates (stdlib difflib; swap in embeddings if fragmentation is high).
 - Flags clusters with >1 surface form as `ambiguous` → a low-tier subagent adjudicates **only those** ("Chicago" vs "Chicago Branch" vs "CHI" → merge?). This is where the real effort is (entity resolution), but it's bounded to ambiguous clusters.
 
@@ -166,7 +166,7 @@ Every command below runs from the project root, with `<skills>` the skills direc
 **Hosts without Monitor.** Skip the Monitor and run `serve` without `--watch-hint`; the app then says requests are "Queued for next run". Open requests stay in `taxonomy/work/requests.jsonl`, and the next `diagnose` puts their notes on the matching entries. No browser: `export-md` / `import-md` as below (health decisions are `approve`, `reject: <reason>` or `amend: <op json>`).
 
 ## Reviewing and editing the taxonomy (the review app)
-One local app for every taxonomy decision. `taxonomy_review.py` plans a review and serves it on `127.0.0.1` (token-guarded, stdlib only, the store opened read-only); decisions go to the append-only `taxonomy/decisions.jsonl` (commit it in the consuming project); `taxonomy_merge.py --review … --apply` is the only writer.
+One local app for every taxonomy decision. `taxonomy_review.py` plans a review and serves it on `127.0.0.1` (token-guarded, stdlib only, the store opened read-only); decisions go to the append-only `taxonomy/decisions.jsonl` (commit it in the consuming project), and a health review's redo requests to `taxonomy/work/requests.jsonl` — the app writes nothing else; `taxonomy_merge.py --review … --apply` is the only writer of the taxonomy.
 
 | when | plan command |
 |---|---|

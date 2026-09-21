@@ -154,12 +154,53 @@ def _write_side_outputs(tax_dir, rid, applied):
     govern_ops = [o for o in applied if o.get("type") == "metric_govern"]
     if govern_ops:
         governed_drafts_file = os.path.join(tax_dir, "work", "governed_metric_drafts.json")
-        drafts = load_json(governed_drafts_file) if os.path.exists(governed_drafts_file) else []
+        drafts = []
+        if os.path.exists(governed_drafts_file):
+            try:
+                drafts = load_json(governed_drafts_file)
+            except ValueError as e:
+                raise Refused(f"{governed_drafts_file} is not valid JSON ({e}); fix or move it, then apply again") from None
+            if not isinstance(drafts, list):
+                raise Refused(f"{governed_drafts_file} must be a JSON list of drafts; fix or move it, then apply again")
+        # idempotent per review: a retried apply replaces this review's drafts, never duplicates them
+        drafts = [d for d in drafts if not (isinstance(d, dict) and d.get("review_id") == rid)]
         for o in govern_ops:
             drafts.append({"review_id": rid, "metric": o.get("metric"), "draft": o.get("draft"), "ts": utc_now()})
         atomic_write_bytes(governed_drafts_file, dump_bytes(drafts))
 
     return tags_file, governed_drafts_file
+
+
+def _recover_applied(tax_dir, rid, decisions_path):
+    """Close the crash window between writing the new version and logging `applied`: when
+    current.json's last history entry is this review, the taxonomy step already happened, so
+    record the missing `applied` and report success instead of refusing (or re-applying)."""
+    cur = os.path.join(tax_dir, CURRENT)
+    if not os.path.exists(cur):
+        return None
+    try:
+        tax = load_json(cur)
+    except ValueError:
+        return None
+    last = (tax.get("history") or [None])[-1]
+    if not isinstance(last, dict) or last.get("review_id") != rid:
+        return None
+    version = tax.get("version")
+    out = os.path.join(tax_dir, f"taxonomy_v{version}.json")
+    tags_file = os.path.join(tax_dir, "work", f"tags_{rid}", "result_0.json")
+    tags_file = tags_file if os.path.exists(tags_file) else None
+    drafts_file = os.path.join(tax_dir, "work", "governed_metric_drafts.json")
+    try:
+        has_drafts = any(isinstance(d, dict) and d.get("review_id") == rid for d in load_json(drafts_file))
+    except (OSError, ValueError, TypeError):
+        has_drafts = False
+    drafts_file = drafts_file if has_drafts else None
+    D.append(decisions_path, {"review_id": rid, "action": "applied", "out": out if os.path.exists(out) else cur,
+                              "version": version, "sha256": sha256_file(cur), "reviewer": "taxonomy_merge.py",
+                              "surface": "script", "tags_file": tags_file, "governed_drafts_file": drafts_file,
+                              "recovered": True})
+    return {"status": "applied", "review_id": rid, "out": out, "version": version, "recovered": True,
+            "tags_file": tags_file, "governed_drafts_file": drafts_file, "taxonomy_changed": True}
 
 
 def apply_review(review_path, decisions_path=None):
@@ -174,6 +215,9 @@ def apply_review(review_path, decisions_path=None):
         raise Refused(f"review {rid} is not submitted — finish it in the review app first")
     if st["applied"]:
         raise Refused(f"review {rid} was already applied ({st['applied'].get('out')})")
+    recovered = _recover_applied(tax_dir, rid, decisions_path)
+    if recovered:
+        return recovered
     if not os.path.exists(base["path"]) or sha256_file(base["path"]) != base["sha256"]:
         raise Refused(f"{base['path']} changed since review {rid} was planned; plan a new review")
     is_draft = review.get("mode") == "draft"
@@ -282,6 +326,11 @@ def legacy_apply(a, tax, items):
             return 2
         next_taxonomy = cur
     else:
+        if os.path.exists(cur):
+            print(f"REFUSED: {cur} exists; writing version {version} to {out}, outside {tax_dir}, would fork the "
+                  f"taxonomy (a later build from current.json would prune what this adds). Write into {tax_dir} "
+                  f"(omit --out), or review the proposals instead.", file=sys.stderr)
+            return 2
         if os.path.exists(out):
             print(f"REFUSED: {out} already exists", file=sys.stderr)
             return 2

@@ -212,6 +212,18 @@ map agents per document
 
 Prefer seed-guided induction when the corpus contains an authoritative taxonomy. Keep the approved taxonomy under `PROJECT/taxonomy/`.
 
+The human gate is runnable: plan the first-build review of the emitted draft, serve it in the background and end the turn (the user decides in the browser), then apply it once `serve` exits with `status: submitted`. Applying creates `$TAX` (`taxonomy/current.json`), which every later step reads:
+
+```bash
+cd "$PROJECT"
+"$PY" "$SKILLS/corpus-taxonomy-extraction/taxonomy_review.py" plan --mode draft \
+  --taxonomy taxonomy/taxonomy_v0.json          # evidence from taxonomy/work/consolidated.json
+"$PY" "$SKILLS/corpus-taxonomy-extraction/taxonomy_review.py" serve \
+  --review <the "review" path it printed>       # run in the background; the user reviews
+"$PY" "$SKILLS/corpus-taxonomy-extraction/taxonomy_merge.py" \
+  --review <the same review path> --apply       # writes taxonomy_v1.json and current.json
+```
+
 The narrative index can run after final assembly; do it once:
 
 ```bash

@@ -42,6 +42,24 @@ def main():
     if a.merge and a.reset:
         print("ERROR: --merge and --reset are mutually exclusive", file=sys.stderr)
         sys.exit(2)
+    if a.merge and a.reclassify_done:
+        # a reclassification REPLACES a chunk's tags; --merge only adds, so the old (migrated-away)
+        # tags would stay while the queue entries were marked done
+        print("ERROR: --merge and --reclassify-done are mutually exclusive: reclassified chunks are written "
+              "without --merge", file=sys.stderr)
+        sys.exit(2)
+    queue = None
+    if a.reclassify_done and os.path.exists(a.reclassify_done):
+        # read and validate the queue BEFORE any write, so a bad queue never leaves tags committed
+        # with the queue untouched
+        try:
+            with open(a.reclassify_done, encoding="utf-8") as f:
+                queue = json.load(f)
+            if not isinstance(queue, dict) or not isinstance(queue.get("reasons"), dict):
+                raise ValueError('expected {"version", "chunk_ids", "reasons": {...}}')
+        except (OSError, ValueError) as e:
+            print(f"ERROR: cannot read the reclassify queue {a.reclassify_done}: {e}", file=sys.stderr)
+            sys.exit(2)
     c = sqlite3.connect(a.db)
     if a.reset:
         tables_now = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -63,7 +81,6 @@ def main():
     live_ids = {r[0] for r in c.execute("SELECT id FROM chunks")}
     stale = [cid for cid in results if cid not in live_ids]
     if stale:
-        import sys
         print(
             f"WARNING: {len(stale)} chunk ID(s) in result files not found in chunks table "
             f"— batch files are stale (re-run classify_prep after re-indexing). "
@@ -75,7 +92,6 @@ def main():
     # graph_edges must exist — created by build_graph.py, which must run before classify_write.py
     tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if "graph_edges" not in tables:
-        import sys
         print("ERROR: graph_edges table not found — run build_graph.py before classify_write.py", file=sys.stderr)
         sys.exit(1)
     # incremental: clear only these chunks' existing tags/edges before re-inserting
@@ -119,9 +135,8 @@ def main():
           + (f" ({skipped} off-vocabulary dropped)" if skipped else ""))
     dist = c.execute("SELECT category_label, count(*) FROM chunk_topics GROUP BY category_id ORDER BY 2 DESC LIMIT 8").fetchall()
     print("top categories:", dist)
-    if a.reclassify_done and os.path.exists(a.reclassify_done):
-        with open(a.reclassify_done, encoding="utf-8") as f:
-            data = json.load(f)
+    if queue is not None:
+        data = queue
         for cid in results:
             data["reasons"].pop(str(cid), None)
         data["chunk_ids"] = sorted(int(k) for k in data["reasons"])

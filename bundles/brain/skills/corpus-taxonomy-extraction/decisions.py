@@ -224,6 +224,12 @@ def health_amend_ok(item, op):
     Shared by decisions.validate_record and respond's live-channel revisions."""
     cands = [item["op"]] + (item.get("alternatives") or [])
     t = op.get("type")
+    if not isinstance(t, str) or any(v is not None and not isinstance(v, str)
+                                     for v in (op.get("node"), op.get("from"), op.get("into"), op.get("metric"))):
+        return False
+    ids = op.get("chunk_ids")
+    if ids is not None and not (isinstance(ids, list) and all(isinstance(i, int) and not isinstance(i, bool) for i in ids)):
+        return False
     field = HEALTH_SUBJECT_FIELD.get(t, "node")
     same_type = [c for c in cands if c.get("type") == t]
     def keys_ok(c):
@@ -251,11 +257,17 @@ def validate_record(review, base_tax, records, rec):
     if st["submit"]:
         return ["this review is already submitted"]
     a, iid = rec.get("action"), rec.get("item_id")
+    if a in ("propose", "amend") and not (isinstance(rec.get("op"), dict) and isinstance(rec["op"].get("type"), str)):
+        return [f"{iid}: {a} needs an op: a JSON object with a string \"type\""]
+    if "op" in rec and not isinstance(rec["op"], dict):
+        return [f"{iid}: op must be a JSON object"]
+    if rec.get("reason") is not None and not isinstance(rec["reason"], str):
+        return [f"{iid}: reason must be text"]
     if a == "reject" and not (rec.get("reason") or "").strip():
         return [f"{iid}: reject needs a reason"]
     op0 = rec.get("op") or {}
     if (a in ("propose", "amend") and rec.get("surface") == "browser" and op0.get("type") == "add"
-            and not (op0.get("description") or "").strip()):
+            and not (op0.get("description") if isinstance(op0.get("description"), str) else "").strip()):
         return [f"{iid}: a new category needs a description"]
     if a == "propose":
         if not (iid or "").startswith("h-") or iid in st["latest"]:
