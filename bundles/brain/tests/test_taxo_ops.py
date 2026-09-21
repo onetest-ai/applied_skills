@@ -162,3 +162,53 @@ class MetricOpTests(unittest.TestCase):
 
     def test_metric_add_duplicate_of_variant(self):
         self.assertTrue(O.validate(taxonomy(), [{"type": "metric_add", "metric": "aht", "source_type": "stated"}]))
+
+
+class DescriptionOpTests(unittest.TestCase):
+    def test_add_with_description_and_describe(self):
+        t, migs, _ = O.apply_ops(taxonomy(), [
+            {"type": "add", "level": "L2", "name": "Payment Plans", "parent": "Billing & Payments",
+             "description": "Requests to split a bill into instalments."},
+            {"type": "describe", "node": "Refunds", "description": "Money returned after a charge."}])
+        self.assertEqual(t["descriptions"], {"Payment Plans": "Requests to split a bill into instalments.",
+                                             "Refunds": "Money returned after a charge."})
+        self.assertEqual(migs, [])
+
+    def test_describe_empty_or_unknown_is_an_error(self):
+        self.assertTrue(O.validate(taxonomy(), [{"type": "describe", "node": "Refunds", "description": "  "}]))
+        self.assertTrue(O.validate(taxonomy(), [{"type": "describe", "node": "Nope", "description": "x"}]))
+
+    def test_describe_records_previous(self):
+        base = taxonomy(); base["descriptions"] = {"Refunds": "old"}
+        _, _, applied = O.apply_ops(base, [{"type": "describe", "node": "Refunds", "description": "new"}])
+        self.assertEqual(applied[0]["previous"], "old")
+
+    def test_rename_moves_description(self):
+        base = taxonomy(); base["descriptions"] = {"Refunds": "Money back."}
+        t, _, _ = O.apply_ops(base, [{"type": "rename", "node": "Refunds", "new_name": "Refund Requests"}])
+        self.assertEqual(t["descriptions"], {"Refund Requests": "Money back."})
+
+    def test_merge_keeps_target_or_inherits(self):
+        base = taxonomy(); base["descriptions"] = {"Billing & Payments Admin": "admin", "Billing & Payments": "main"}
+        t, _, _ = O.apply_ops(base, [{"type": "merge", "from": "Billing & Payments Admin", "into": "Billing & Payments"}])
+        self.assertEqual(t["descriptions"], {"Billing & Payments": "main"})
+        base["descriptions"] = {"Billing & Payments Admin": "admin"}
+        t, _, _ = O.apply_ops(base, [{"type": "merge", "from": "Billing & Payments Admin", "into": "Billing & Payments"}])
+        self.assertEqual(t["descriptions"], {"Billing & Payments": "admin"})
+
+    def test_split_and_remove(self):
+        base = taxonomy(); base["descriptions"] = {"Refunds": "x", "Delivery & Pickup": "y", "Track Delivery": "z"}
+        t, _, _ = O.apply_ops(base, [
+            {"type": "split", "node": "Refunds", "into": ["Full Refund", "Partial Refund"], "retire": True,
+             "descriptions": {"Full Refund": "All money back."}},
+            {"type": "remove", "node": "Delivery & Pickup", "disposition": "demote"}])
+        self.assertEqual(t["descriptions"], {"Full Refund": "All money back."})
+
+    def test_no_empty_descriptions_key(self):
+        t, _, _ = O.apply_ops(taxonomy(), [{"type": "add", "level": "L1", "name": "New Thing"}])
+        self.assertNotIn("descriptions", t)
+
+    def test_rename_and_describe_same_node_conflict(self):
+        errs = O.validate(taxonomy(), [{"type": "rename", "node": "Refunds", "new_name": "R2"},
+                                       {"type": "describe", "node": "Refunds", "description": "d"}])
+        self.assertTrue(any("changed twice" in e for e in errs), errs)

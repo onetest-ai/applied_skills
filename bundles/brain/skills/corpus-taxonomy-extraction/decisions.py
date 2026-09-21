@@ -16,10 +16,10 @@ from taxo_io import utc_now  # noqa: E402
 from taxo_ops import subject_of, validate as validate_ops  # noqa: E402
 
 SCHEMA = 1
-ITEM_ACTIONS = {"approve", "reject", "amend", "propose", "withdraw", "reopen"}
+ITEM_ACTIONS = {"approve", "reject", "amend", "propose", "withdraw", "reopen", "clear"}
 REVIEW_ACTIONS = {"submit", "applied"}
 HUMAN_SURFACES = {"browser", "markdown"}
-AGENT_ALLOWED = {"add", "keep"}
+AGENT_ALLOWED = {"add", "keep", "describe"}
 
 
 class DecisionLogError(ValueError):
@@ -153,6 +153,10 @@ def validate_record(review, base_tax, records, rec):
     a, iid = rec.get("action"), rec.get("item_id")
     if a == "reject" and not (rec.get("reason") or "").strip():
         return [f"{iid}: reject needs a reason"]
+    op0 = rec.get("op") or {}
+    if (a in ("propose", "amend") and rec.get("surface") == "browser" and op0.get("type") == "add"
+            and not (op0.get("description") or "").strip()):
+        return [f"{iid}: a new category needs a description"]
     if a == "propose":
         if not (iid or "").startswith("h-") or iid in st["latest"]:
             return [f"{iid}: a proposal needs a fresh h- id"]
@@ -165,8 +169,12 @@ def validate_record(review, base_tax, records, rec):
             return [f"{iid}: not an item of this review"]
         if item["status"] in ("auto_skipped", "invalid"):
             return [f"{iid}: {item['status']} items take no decision"]
-        if item["origin"] == "induction" and a not in ("approve", "amend"):
+        if item["origin"] == "induction" and a not in ("approve", "amend", "clear"):
             return [f"{iid}: first-build items take approve (keep) or amend, not {a}"]
+        if a == "clear":
+            last = st["latest"].get(iid)
+            if not last or last["action"] == "clear":
+                return [f"{iid}: nothing to undo"]
         if a == "reopen" and item["status"] != "suppressed":
             return [f"{iid}: only suppressed items can be reopened"]
         if item["status"] == "suppressed" and a in ("approve", "amend"):
@@ -179,6 +187,8 @@ def validate_record(review, base_tax, records, rec):
                 return [f"{iid}: a refresh proposal can only be amended into another add"]
             if item["origin"] == "induction" and op.get("type") != "add" and subject_of(op) != item["op"]["node"]:
                 return [f"{iid}: the amended op must act on {item['op']['node']!r}"]
+            if item["origin"] == "describe" and (op.get("type") != "describe" or op.get("node") != item["op"]["node"]):
+                return [f"{iid}: a description proposal can only be amended into another description of {item['op']['node']!r}"]
     entries = effective_ops(review, records + ([] if a == "submit" else [rec]))
     return authorship_errors(entries) + validate_ops(base_tax, [e["op"] for e in entries])
 
@@ -188,4 +198,4 @@ def submit_counts(review, records):
     actionable = [i for i in review["items"] if i.get("status") in ("proposed", "suppressed")]
     acts = [st["latest"].get(i["id"], {}).get("action") for i in actionable]
     return {"approved": acts.count("approve"), "rejected": acts.count("reject"), "amended": acts.count("amend"),
-            "undecided": sum(1 for x in acts if x is None), "proposals": len(st["proposals"])}
+            "undecided": sum(1 for x in acts if x in (None, "clear")), "proposals": len(st["proposals"])}

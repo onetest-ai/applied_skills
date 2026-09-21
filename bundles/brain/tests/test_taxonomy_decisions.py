@@ -129,3 +129,51 @@ class ValidateRecordTests(unittest.TestCase):
         recs = [{"review_id": RID, "item_id": "i-1", "action": "approve"}]
         self.assertEqual(D.submit_counts(review([ADD, KEEP]), recs),
                          {"approved": 1, "rejected": 0, "amended": 0, "undecided": 1, "proposals": 0})
+
+
+DESC = {"id": "i-4", "origin": "describe", "status": "proposed", "fingerprint": "describe|refunds|",
+        "op": {"type": "describe", "node": "Refunds", "description": "Money returned."}, "level": "L2",
+        "parent": "Billing & Payments"}
+
+
+class DescribeAndClearTests(unittest.TestCase):
+    def setUp(self):
+        self.tax = taxonomy()
+
+    def v(self, items, records, rec):
+        return D.validate_record(review(items), self.tax, records, rec)
+
+    def test_describe_is_agent_allowed(self):
+        self.assertIn("describe", D.AGENT_ALLOWED)
+        self.assertEqual(self.v([DESC], [], {"review_id": RID, "item_id": "i-4", "action": "approve",
+                                             "surface": "terminal"}), [])
+
+    def test_describe_amend_must_stay_on_node(self):
+        bad = {"review_id": RID, "item_id": "i-4", "action": "amend", "surface": "browser",
+               "op": {"type": "describe", "node": "Duplicate Charge", "description": "x"}}
+        self.assertTrue(self.v([DESC], [], bad))
+        ok = dict(bad, op={"type": "describe", "node": "Refunds", "description": "Better."})
+        self.assertEqual(self.v([DESC], [], ok), [])
+
+    def test_clear_returns_item_to_undecided(self):
+        recs = [{"review_id": RID, "item_id": "i-1", "action": "approve", "surface": "terminal"}]
+        clear = {"review_id": RID, "item_id": "i-1", "action": "clear", "surface": "browser"}
+        self.assertEqual(self.v([ADD], recs, clear), [])
+        self.assertEqual(D.effective_ops(review([ADD]), recs + [clear]), [])
+        self.assertEqual(D.submit_counts(review([ADD]), recs + [clear])["undecided"], 1)
+
+    def test_clear_needs_a_decision_to_undo(self):
+        self.assertTrue(self.v([ADD], [], {"review_id": RID, "item_id": "i-1", "action": "clear"}))
+
+    def test_clear_allowed_on_induction_items(self):
+        recs = [{"review_id": RID, "item_id": "i-2", "action": "approve", "surface": "browser"}]
+        self.assertEqual(self.v([KEEP], recs, {"review_id": RID, "item_id": "i-2", "action": "clear"}), [])
+
+    def test_browser_add_needs_description(self):
+        rec = {"review_id": RID, "item_id": "h-9", "action": "propose", "surface": "browser",
+               "op": {"type": "add", "level": "L1", "name": "Brand New"}}
+        self.assertTrue(any("description" in e for e in self.v([], [], rec)))
+        rec["op"]["description"] = "What it covers."
+        self.assertEqual(self.v([], [], rec), [])
+        term = dict(rec, surface="terminal", op={"type": "add", "level": "L1", "name": "Other New"})
+        self.assertEqual(self.v([], [], term), [])

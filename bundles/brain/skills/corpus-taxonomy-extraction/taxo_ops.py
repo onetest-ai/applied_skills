@@ -13,7 +13,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from taxo_io import intent, label_taken, locate, nid, norm  # noqa: E402
 
-INTENT_TYPES = ["add", "rename", "merge", "move", "split", "remove"]
+INTENT_TYPES = ["add", "describe", "rename", "merge", "move", "split", "remove"]
 METRIC_TYPES = ["metric_add", "metric_edit", "metric_merge", "metric_remove"]
 ORDER = {t: i for i, t in enumerate(INTENT_TYPES + METRIC_TYPES)}
 KIND = {"L1": "intent_l1", "L2": "intent_l2", "entity": "entity_kind"}
@@ -106,6 +106,17 @@ def _demote(t, label):
         d.append([label, 0])
 
 
+def _descs(t):
+    return t.setdefault("descriptions", {})
+
+
+def _clean_desc(text):
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("a description can't be empty")
+    return text
+
+
 # ---- intent ops ----
 
 def _op_add(t, op, mig, applied):
@@ -120,6 +131,16 @@ def _op_add(t, op, mig, applied):
         it["tree"][parent].append(name)
     else:
         raise ValueError("level must be L1 or L2")
+    if (op.get("description") or "").strip():
+        _descs(t)[name] = op["description"].strip()
+
+
+def _op_describe(t, op, mig, applied):
+    node = op["node"]
+    _need(t, node)
+    d = _descs(t)
+    applied["previous"] = d.get(node)
+    d[node] = _clean_desc(op.get("description"))
 
 
 def _op_rename(t, op, mig, applied):
@@ -135,6 +156,8 @@ def _op_rename(t, op, mig, applied):
     else:
         t["entities"] = {(new if k == node else k): v for k, v in t["entities"].items()}
     _alias(t, node, new)
+    if node in (t.get("descriptions") or {}):
+        _descs(t)[new] = _descs(t).pop(node)
     mig.append({"kind": "repoint", "from_id": nid(node), "to_id": nid(new), "label": new, "to_kind": KIND[level]})
 
 
@@ -157,6 +180,10 @@ def _op_merge(t, op, mig, applied):
             mig.append({"kind": "reclassify_node", "node_id": nid(src),
                         "reason": f"merged into {dst} under a different parent"})
         _remove_from_tree(it, src, "L2", ps)
+    d = _descs(t)
+    src_desc = d.pop(src, None)
+    if src_desc and not d.get(dst):
+        d[dst] = src_desc
     _alias(t, src, dst)
     mig.append({"kind": "repoint", "from_id": nid(src), "to_id": nid(dst), "label": dst, "to_kind": KIND[ld]})
 
@@ -189,10 +216,14 @@ def _op_split(t, op, mig, applied):
     target = it["tree"][node] if level == "L1" else (it["tree"][parent] if parent else it["unassigned_l2"])
     for n in names:
         target.append(_new_name(t, n))
+    for n, txt in (op.get("descriptions") or {}).items():
+        if n in names and (txt or "").strip():
+            _descs(t)[n] = txt.strip()
     mig.append({"kind": "reclassify_node", "node_id": nid(node), "reason": f"split into {', '.join(names)}"})
     if op.get("retire"):
         _remove_from_tree(it, node, "L2", parent)
         _demote(t, node)
+        _descs(t).pop(node, None)
         mig.append({"kind": "delete_node", "node_id": nid(node)})
 
 
@@ -207,6 +238,8 @@ def _op_remove(t, op, mig, applied):
         mig.append({"kind": "reclassify_node", "node_id": nid(v), "reason": f"{node} removed"})
     for v in victims:
         mig.append({"kind": "delete_node", "node_id": nid(v)})
+    for v in victims:
+        _descs(t).pop(v, None)
     if level == "entity":
         del t["entities"][node]
     else:
@@ -285,8 +318,8 @@ def _op_metric_remove(t, op, mig, applied):
     _demote(t, op["metric"])
 
 
-_OPS = {"add": _op_add, "rename": _op_rename, "merge": _op_merge, "move": _op_move, "split": _op_split,
-        "remove": _op_remove, "metric_add": _op_metric_add, "metric_edit": _op_metric_edit,
+_OPS = {"add": _op_add, "describe": _op_describe, "rename": _op_rename, "merge": _op_merge, "move": _op_move,
+        "split": _op_split, "remove": _op_remove, "metric_add": _op_metric_add, "metric_edit": _op_metric_edit,
         "metric_merge": _op_metric_merge, "metric_remove": _op_metric_remove}
 
 
@@ -316,6 +349,8 @@ def _run(tax, ops):
     it = t["intent_taxonomy"]
     it["l1"] = list(it["tree"].keys())
     it.setdefault("unassigned_l2", [])
+    if not t.get("descriptions"):
+        t.pop("descriptions", None)
     return t, migrations, applied_ops, errors
 
 
