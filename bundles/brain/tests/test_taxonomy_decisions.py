@@ -244,3 +244,41 @@ class HealthAmendTests(unittest.TestCase):
         self.assertTrue(self.v([], other))
         foreign = dict(alt, op={"type": "move", "node": "Refunds", "new_parent": "Transform"})
         self.assertTrue(self.v([], foreign))
+
+
+HEALTH_KEEP_FALLBACK = {
+    "id": "i-10", "origin": "health", "kind": "missing_description", "group": "missing_description",
+    "status": "proposed", "fingerprint": "keep|refunds|", "op": {"type": "keep", "node": "Refunds"},
+    "alternatives": [{"type": "describe", "node": "Refunds", "description": ""}]}
+
+
+class HealthAmendFallbackTemplateTests(unittest.TestCase):
+    def v(self, rec):
+        return D.validate_record(review([HEALTH_KEEP_FALLBACK]), taxonomy(), [], rec)
+
+    def test_amend_keep_fallback_into_its_describe_template_with_a_real_description(self):
+        rec = {"review_id": RID, "item_id": "i-10", "action": "amend", "surface": "browser",
+               "op": {"type": "describe", "node": "Refunds", "description": "Money back to the customer."}}
+        self.assertEqual(self.v(rec), [])
+
+    def test_amend_refuses_an_unrelated_type(self):
+        rec = {"review_id": RID, "item_id": "i-10", "action": "amend", "surface": "browser",
+               "op": {"type": "remove", "node": "Refunds", "disposition": "demote"}}
+        self.assertTrue(self.v(rec))
+
+
+class HealthAmendOkTests(unittest.TestCase):
+    """health_amend_ok checks every candidate (item op + alternatives), not just the item's
+    primary op — this is what lets an edited template alternative through."""
+
+    def test_same_type_same_subject_against_an_alternative_not_the_primary_op(self):
+        item = {"op": {"type": "keep", "metric": "Porch Rate"},
+                "alternatives": [{"type": "metric_govern", "metric": "Porch Rate", "draft": {}}]}
+        self.assertTrue(D.health_amend_ok(
+            item, {"type": "metric_govern", "metric": "Porch Rate", "draft": {"key": "porch_rate"}}))
+
+    def test_refuses_unrelated_type_and_subject(self):
+        item = {"op": {"type": "keep", "metric": "Porch Rate"},
+                "alternatives": [{"type": "metric_govern", "metric": "Porch Rate", "draft": {}}]}
+        self.assertFalse(D.health_amend_ok(item, {"type": "metric_merge", "from": "Porch Rate", "into": "X"}))
+        self.assertFalse(D.health_amend_ok(item, {"type": "metric_govern", "metric": "Other Metric", "draft": {}}))

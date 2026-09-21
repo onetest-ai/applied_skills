@@ -170,13 +170,18 @@ def _item(review, item_id):
 
 
 def health_amend_ok(item, op):
-    """The B4 amend rule for a health item: the op must be one of its alternatives, or the
-    same type acting on the same subject (an edit — a changed description, a narrower
-    chunk_ids selection, …). Shared by decisions.validate_record and respond's live-channel
+    """The B4 amend rule for a health item: the op must be one of the item's own op or its
+    alternatives verbatim, OR the same type acting on the same subject as ANY of those
+    candidates (an edit — a changed description, a narrower chunk_ids selection, a filled-in
+    template's draft, …). Checking every candidate (not just the item's primary op) is what
+    lets an edited *template* alternative (e.g. `describe{node, description:""}` on a
+    fallback `keep`) through: the template itself never validates, but a same-type/same-
+    subject edit of it does. Shared by decisions.validate_record and respond's live-channel
     revisions so the rule lives in exactly one place."""
-    alts = item.get("alternatives") or []
-    same_fix = op.get("type") == item["op"].get("type") and subject_of(op) == subject_of(item["op"])
-    return op in alts or same_fix
+    cands = [item["op"]] + (item.get("alternatives") or [])
+    if op in cands:
+        return True
+    return any(op.get("type") == c.get("type") and subject_of(op) == subject_of(c) for c in cands)
 
 
 def validate_record(review, base_tax, records, rec):

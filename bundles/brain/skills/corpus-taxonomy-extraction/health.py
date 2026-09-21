@@ -11,6 +11,7 @@ Stdlib only. Sibling imports: taxonomy_review, flags, metrics_gap, taxo_io, grap
 and (for the `untagged/` task) taxonomy_refine_prep, invoked via `sys.executable` so its
 batching logic is never duplicated.
 """
+import copy
 import glob
 import itertools
 import json
@@ -547,16 +548,50 @@ def diagnose(taxonomy_path, db, out_dir, metrics_path=None, batches=4):
     return result
 
 
+
+
 # ---------------------------------------------------------------------------
 # health_items: problems.json + agents' result_k.json -> grouped review items (B3/B4)
 # ---------------------------------------------------------------------------
+#
+# Binding product rule: every problem `diagnose` detected reaches the inbox — with the
+# agent's fix when one was found and usable, else a documented fallback (a safe default op,
+# reason "no fix proposed" unless the agent DID respond with something unusable, in which
+# case its own reason is kept) plus "template" alternatives (an intentionally invalid or
+# empty-payload op, e.g. `describe{node, description:""}` or `tag{node, chunk_ids:[]}`) a
+# human can amend into a real one. Templates are refused as-is by `taxo_ops.validate` — that
+# is correct; they exist only as an amend target (see `decisions.health_amend_ok`), never as
+# something Approve alone could apply. `untagged_sections` is the one kind whose "problem" is
+# a single aggregate record (not one per node); when its solve step produced nothing usable it
+# gets one informational item with the sentinel op `{"type": "keep", "node": "__untagged__"}`.
+# That sentinel is safe specifically because `taxo_ops._run` skips every `keep` op before it
+# ever reaches a node-existence check (`_OPS` is never consulted), so no real node needs to
+# exist under that name — never introduce a non-`keep` op with this sentinel.
+
+
+def _sanitize_entry(e):
+    """Field-level type guards (mutates `e` in place): chunk_ids/example_ids keep only real
+    ints (bools excluded — `isinstance(True, int)` is true in Python); node/subject/into/
+    description must be strings when present. Returns False when the entry is unusable
+    (a non-string on a string-only field), so the caller can skip + count it."""
+    for k in ("node", "subject", "into", "description"):
+        v = e.get(k)
+        if v is not None and not isinstance(v, str):
+            return False
+    for k in ("chunk_ids", "example_ids"):
+        v = e.get(k)
+        if isinstance(v, list):
+            e[k] = [i for i in v if isinstance(i, int) and not isinstance(i, bool)]
+    return True
+
 
 def _load_entries(task_dir, list_key, skipped_files):
     """Every dict entry of data[list_key] from each result_*.json in task_dir.
 
     Defensive per the global constraint: a wrong-shaped file goes to skipped_files (named on
-    stderr) and is never allowed to crash planning; a non-dict entry inside the list is
-    skipped and counted, without failing the rest of the file.
+    stderr) and is never allowed to crash planning; a non-dict entry, or one that fails
+    `_sanitize_entry`'s field guards, is skipped and counted, without failing the rest of the
+    file.
     """
     out = []
     if not task_dir or not os.path.isdir(task_dir):
@@ -575,7 +610,7 @@ def _load_entries(task_dir, list_key, skipped_files):
             continue
         bad = 0
         for entry in data[list_key]:
-            if not isinstance(entry, dict):
+            if not isinstance(entry, dict) or not _sanitize_entry(entry):
                 bad += 1
                 continue
             out.append(entry)
@@ -584,13 +619,23 @@ def _load_entries(task_dir, list_key, skipped_files):
     return out
 
 
-def _make_item(kind, group, op, alternatives, evidence, support, reason, title, rejections):
-    fp = fingerprint(op)
-    prior = D.match_rejection(fp, rejections)
+def _make_item(tax, kind, group, op, alternatives, evidence, support, reason, title, rejections, fallback=False):
+    """Build one health item, validating `op` (single-op, against `tax`) the way describe mode
+    validates a description target: a failure marks the item invalid instead of crashing or
+    silently dropping the problem. `fallback` is a private bookkeeping flag (stripped by
+    `build_plan` before the review is written) so the health context's "fixes proposed" count
+    can exclude items that carry a safe default rather than an agent's actual recommendation."""
+    errs = taxo_ops.validate(tax, [op])
     item = {"origin": "health", "kind": kind, "group": group, "title": title, "reason": reason,
             "op": op, "alternatives": alternatives, "evidence": evidence, "support": support,
-            "status": "suppressed" if prior else "proposed"}
+            "status": "proposed", "_fallback": fallback}
+    if errs:
+        item["status"] = "invalid"
+        item["reason"] = "; ".join(errs)
+        return item
+    prior = D.match_rejection(fingerprint(op), rejections)
     if prior:
+        item["status"] = "suppressed"
         item["prior"] = {k: prior.get(k) for k in ("review_id", "reason", "reviewer", "ts")}
     return item
 
@@ -619,11 +664,16 @@ def _missing_description_items(tax, work_dir, problems, counts, skipped_files, r
     for p in probs:
         node = p["node"]
         text = by_node.get(node)
-        if not text:
-            continue  # no matching fix: the manual Taxonomy-view path still works
-        op = {"type": "describe", "node": node, "description": text}
-        items.append(_make_item("missing_description", "missing_description", op, [], [],
-                                {"tags": counts.get(nid(node), 0)}, None, title, rejections))
+        support = {"tags": counts.get(nid(node), 0)}
+        if text:
+            op = {"type": "describe", "node": node, "description": text}
+            items.append(_make_item(tax, "missing_description", "missing_description", op, [], [],
+                                    support, None, title, rejections))
+        else:
+            op = {"type": "keep", "node": node}
+            template = {"type": "describe", "node": node, "description": ""}
+            items.append(_make_item(tax, "missing_description", "missing_description", op, [template], [],
+                                    support, "no fix proposed", title, rejections, fallback=True))
     return items
 
 
@@ -647,33 +697,43 @@ def _no_tags_items(tax, work_dir, problems, skipped_files, rejections):
         sibling = _best_sibling(it, node, level, parent)
         merge_op = {"type": "merge", "from": node, "into": sibling} if sibling else None
         remove_op = {"type": "remove", "node": node, "disposition": "demote"}
+        tag_template = {"type": "tag", "node": node, "chunk_ids": []}
+        fallback = False
         if fix_type == "tag":
             ids = [i for i in (fix.get("chunk_ids") or []) if i in cand_ids]
-            op = {"type": "tag", "node": node, "chunk_ids": ids}
-            alts = [a for a in (merge_op, remove_op) if a]
-            evidence = [c for c in candidates if c["chunk_id"] in ids]
-            reason = fix.get("reason")
-        elif fix_type == "merge":
-            op = {"type": "merge", "from": node, "into": fix.get("into")}
+            if ids:
+                op = {"type": "tag", "node": node, "chunk_ids": ids}
+                alts = [a for a in (merge_op, remove_op) if a]
+                evidence = [c for c in candidates if c["chunk_id"] in ids]
+                reason = fix.get("reason")
+            else:
+                # the agent engaged but found nothing usable to tag — fall back to remove,
+                # but keep its reason (it is informative even though we didn't take its op)
+                op, evidence = remove_op, []
+                alts = [a for a in (merge_op, tag_template) if a]
+                reason = fix.get("reason") or "agent found no fitting candidates"
+                fallback = True
+        elif fix_type == "merge" and (fix.get("into") or "").strip():
+            op = {"type": "merge", "from": node, "into": fix["into"]}
             alts = [remove_op]
             evidence = []
             reason = fix.get("reason")
         elif fix_type == "remove":
             op = remove_op
-            alts = [merge_op] if merge_op else []
+            alts = [a for a in (merge_op, tag_template) if a]
             evidence = []
             reason = fix.get("reason")
         else:
-            op = remove_op
-            alts = [merge_op] if merge_op else []
-            evidence = []
-            reason = "no fix proposed; consider removing or merging"
-        items.append(_make_item("no_tags", "no_tags", op, alts, evidence,
-                                {"candidates": len(candidates)}, reason, title, rejections))
+            op, evidence = remove_op, []
+            alts = [a for a in (merge_op, tag_template) if a]
+            reason = "no fix proposed"
+            fallback = True
+        items.append(_make_item(tax, "no_tags", "no_tags", op, alts, evidence,
+                                {"candidates": len(candidates)}, reason, title, rejections, fallback=fallback))
     return items
 
 
-def _structure_items(work_dir, problems, skipped_files, rejections):
+def _structure_items(tax, work_dir, problems, skipped_files, rejections):
     entries = _load_entries(os.path.join(work_dir, "structure"), "fixes", skipped_files)
     nd_fix, oa_fix = {}, {}
     for e in entries:
@@ -689,40 +749,47 @@ def _structure_items(work_dir, problems, skipped_files, rejections):
         a, b = p["a"], p["b"]
         fix = nd_fix.get(a) or nd_fix.get(b)
         keep_op = {"type": "keep", "node": a}
-        default_merge = {"type": "merge", "from": b, "into": a}
-        if fix and fix.get("fix") == "merge":
-            subj = fix.get("subject") or a
-            op = {"type": "merge", "from": subj, "into": fix.get("into")}
-            alts, reason = [keep_op], fix.get("reason")
+        merge_ab = {"type": "merge", "from": b, "into": a}   # b merged away into a
+        merge_ba = {"type": "merge", "from": a, "into": b}   # a merged away into b
+        fallback = False
+        if fix and fix.get("fix") == "merge" and (fix.get("into") or "").strip():
+            subj = fix.get("subject") if fix.get("subject") in (a, b) else a
+            into = fix["into"]
+            op = {"type": "merge", "from": subj, "into": into}
+            reverse = {"type": "merge", "from": into, "into": subj}
+            alts, reason = [keep_op, reverse], fix.get("reason")
         elif fix and fix.get("fix") == "keep":
             op = keep_op
-            alts, reason = [default_merge], fix.get("reason")
+            alts, reason = [merge_ab, merge_ba], fix.get("reason")
         else:
             op = keep_op
-            alts, reason = [default_merge], "no fix proposed; keeping until reviewed"
+            alts, reason, fallback = [merge_ab, merge_ba], "no fix proposed", True
         title = f"{a} looks like {b}"
         support = {"tags_a": p.get("tags_a"), "tags_b": p.get("tags_b"), "overlap": p.get("overlap")}
-        items.append(_make_item("near_duplicate", None, op, alts, [], support, reason, title, rejections))
+        items.append(_make_item(tax, "near_duplicate", None, op, alts, [], support, reason, title,
+                                rejections, fallback=fallback))
     for p in problems.get("off_axis") or []:
         node = p["node"]
         fix = oa_fix.get(node)
         keep_op = {"type": "keep", "node": node}
         default_remove = {"type": "remove", "node": node, "disposition": "demote"}
-        if fix and fix.get("fix") == "remove":
-            op = {"type": "remove", "node": node, "disposition": fix.get("disposition") or "demote"}
+        fallback = False
+        disp = (fix.get("disposition") or "").strip() if fix else ""
+        if fix and fix.get("fix") == "remove" and (disp == "demote" or disp.startswith("entity:")):
+            op = {"type": "remove", "node": node, "disposition": disp or "demote"}
             alts, reason = [keep_op], fix.get("reason")
         elif fix and fix.get("fix") == "keep":
             op = keep_op
             alts, reason = [default_remove], fix.get("reason")
         else:
-            op = keep_op
-            alts, reason = [default_remove], "no fix proposed; keeping until reviewed"
+            op, alts, reason, fallback = keep_op, [default_remove], "no fix proposed", True
         title = f"{node} doesn't look like a call reason"
-        items.append(_make_item("off_axis", None, op, alts, [], {"tags": p.get("tags")}, reason, title, rejections))
+        items.append(_make_item(tax, "off_axis", None, op, alts, [], {"tags": p.get("tags")}, reason, title,
+                                rejections, fallback=fallback))
     return items
 
 
-def _metrics_items(work_dir, problems, skipped_files, rejections):
+def _metrics_items(tax, work_dir, problems, skipped_files, rejections):
     entries = _load_entries(os.path.join(work_dir, "metrics"), "fixes", skipped_files)
     sm_fix, mg_fix = {}, {}
     for e in entries:
@@ -737,38 +804,73 @@ def _metrics_items(work_dir, problems, skipped_files, rejections):
     for p in problems.get("similar_metrics") or []:
         a, b = p["a"], p["b"]
         fix = sm_fix.get(a) or sm_fix.get(b)
-        keep_op = {"type": "keep", "node": a}
-        if fix and fix.get("fix") == "metric_merge":
-            subj = fix.get("subject") or a
-            op = {"type": "metric_merge", "from": subj, "into": fix.get("into")}
-            alts, reason = [keep_op], fix.get("reason")
+        keep_op = {"type": "keep", "metric": a}
+        merge_ab = {"type": "metric_merge", "from": b, "into": a}
+        merge_ba = {"type": "metric_merge", "from": a, "into": b}
+        fallback = False
+        if fix and fix.get("fix") == "metric_merge" and (fix.get("into") or "").strip():
+            subj = fix.get("subject") if fix.get("subject") in (a, b) else a
+            into = fix["into"]
+            op = {"type": "metric_merge", "from": subj, "into": into}
+            reverse = {"type": "metric_merge", "from": into, "into": subj}
+            alts, reason = [keep_op, reverse], fix.get("reason")
         elif fix and fix.get("fix") == "keep":
             op = keep_op
-            alts, reason = [{"type": "metric_merge", "from": b, "into": a}], fix.get("reason")
+            alts, reason = [merge_ab, merge_ba], fix.get("reason")
         else:
-            continue  # no fix proposed: manual only
+            op, alts, reason, fallback = keep_op, [merge_ab, merge_ba], "no fix proposed", True
         title = f"{a} ≈ {b}"
-        items.append(_make_item("similar_metrics", None, op, alts, [], {"score": p.get("score")},
-                                reason, title, rejections))
+        items.append(_make_item(tax, "similar_metrics", None, op, alts, [], {"score": p.get("score")},
+                                reason, title, rejections, fallback=fallback))
     probs = problems.get("metric_not_governed") or []
     title = f"{len(probs)} metrics can't be computed yet"
     for p in probs:
         metric = p["metric"]
         fix = mg_fix.get(metric)
-        if not fix or fix.get("fix") != "metric_govern" or not isinstance(fix.get("draft"), dict):
-            continue  # no fix proposed: manual only
-        op = {"type": "metric_govern", "metric": metric, "draft": fix["draft"]}
-        items.append(_make_item("metric_not_governed", "metric_not_governed", op, [], [],
-                                {"sources": p.get("sources")}, fix.get("reason"), title, rejections))
+        keep_op = {"type": "keep", "metric": metric}
+        template = {"type": "metric_govern", "metric": metric, "draft": {}}
+        if fix and fix.get("fix") == "metric_govern" and isinstance(fix.get("draft"), dict) and fix["draft"]:
+            op = {"type": "metric_govern", "metric": metric, "draft": fix["draft"]}
+            items.append(_make_item(tax, "metric_not_governed", "metric_not_governed", op, [], [],
+                                    {"sources": p.get("sources")}, fix.get("reason"), title, rejections))
+        elif fix and fix.get("fix") == "keep":
+            items.append(_make_item(tax, "metric_not_governed", "metric_not_governed", keep_op, [template], [],
+                                    {"sources": p.get("sources")}, fix.get("reason"), title, rejections))
+        else:
+            items.append(_make_item(tax, "metric_not_governed", "metric_not_governed", keep_op, [template], [],
+                                    {"sources": p.get("sources")}, "no fix proposed", title, rejections,
+                                    fallback=True))
     return items
 
 
-def _untagged_items(tax, work_dir, skipped_files, rejections):
-    task_dir = os.path.join(work_dir, "untagged")
-    if not os.path.isdir(task_dir):
+def _untagged_batch_ids(task_dir):
+    """The chunk ids diagnose actually sent out for review (from batch_k.json), used to keep a
+    `map` entry from tagging a chunk outside the untagged set it was asked about."""
+    ids = set()
+    for bf in sorted(glob.glob(os.path.join(task_dir, "batch_*.json"))):
+        try:
+            with open(bf, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        if isinstance(data, list):
+            for row in data:
+                if isinstance(row, dict) and isinstance(row.get("id"), int) and not isinstance(row.get("id"), bool):
+                    ids.add(row["id"])
+    return ids
+
+
+def _untagged_items(tax, work_dir, problems, skipped_files, rejections):
+    probs = problems.get("untagged_sections") or []
+    count = probs[0].get("count") if probs else 0
+    if not count:
         return []
+    title = f"{count} sections have no category"
+    task_dir = os.path.join(work_dir, "untagged")
+    untagged_ids = _untagged_batch_ids(task_dir) if os.path.isdir(task_dir) else set()
+    result_files = sorted(glob.glob(os.path.join(task_dir, "result_*.json"))) if os.path.isdir(task_dir) else []
     proposals, chunk_map = [], {}
-    for rf in sorted(glob.glob(os.path.join(task_dir, "result_*.json"))):
+    for rf in result_files:
         try:
             with open(rf, encoding="utf-8") as f:
                 data = json.load(f)
@@ -780,53 +882,100 @@ def _untagged_items(tax, work_dir, skipped_files, rejections):
             print(f"health: skip {rf}: expected an object", file=sys.stderr)
             skipped_files.append(rf)
             continue
-        props = data.get("proposals")
-        if props is not None and not isinstance(props, list):
-            print(f"health: skip {rf}: 'proposals' must be a list", file=sys.stderr)
-            skipped_files.append(rf)
+        props, m = data.get("proposals"), data.get("map")
+        if (props is not None and not isinstance(props, list)) or (m is not None and not isinstance(m, dict)):
+            print(f"health: skip {rf}: expected {{\"proposals\": [...], \"map\": {{...}}}}", file=sys.stderr)
+            skipped_files.append(rf)   # a bad map invalidates the whole file — never half-consume it
             continue
-        proposals += [p for p in (props or []) if isinstance(p, dict)]
-        m = data.get("map")
-        if m is not None and not isinstance(m, dict):
-            print(f"health: skip {rf}: 'map' must be an object", file=sys.stderr)
-            continue
+        bad = 0
+        for p in (props or []):
+            if isinstance(p, dict) and _sanitize_entry(p):
+                proposals.append(p)
+            else:
+                bad += 1
         for cid, labels in (m or {}).items():
-            if isinstance(labels, list):
-                chunk_map.setdefault(str(cid), []).extend(l for l in labels if isinstance(l, str))
-    add_items, _skipped = plan_additions(tax, proposals)
-    total = len(add_items) + sum(len(v) for v in chunk_map.values())
-    title = f"{total} sections have no category"
+            if not isinstance(labels, list) or not str(cid).lstrip("-").isdigit():
+                bad += 1
+                continue
+            ok = [l for l in labels if isinstance(l, str) and l.strip()]
+            bad += len(labels) - len(ok)
+            if ok:
+                chunk_map.setdefault(int(cid), []).extend(ok)
+        if bad:
+            print(f"health: skip {bad} malformed entries in {rf}", file=sys.stderr)
+
+    if not proposals and not chunk_map:
+        support = {"count": count, "total": probs[0].get("total")}
+        return [{"origin": "health", "kind": "untagged_sections", "group": "untagged_sections", "title": title,
+                 "reason": "no fix proposed", "op": {"type": "keep", "node": "__untagged__"}, "alternatives": [],
+                 "evidence": [], "support": support, "status": "proposed", "_fallback": True}]
+
     items = []
+    add_items, skipped = plan_additions(tax, proposals)
+    running = copy.deepcopy(tax)
     for add in add_items:
         op = {"type": "add", "level": add["level"], "name": add["name"], "parent": add["parent"]}
         if add.get("description"):
             op["description"] = add["description"]
-        ids = sorted({int(x) for src in add["sources"] for x in (src.get("example_ids") or [])
-                     if str(x).lstrip("-").isdigit()})
-        evidence = [{"quote": s.get("evidence"), "chunk_ids": s.get("example_ids") or []} for s in add["sources"]]
-        items.append(_make_item("untagged_sections", "untagged_sections", op, [], evidence,
-                                {"chunks": len(ids)}, None, title, rejections))
+        ids = sorted({x for src in add["sources"] for x in (src.get("example_ids") or [])
+                     if isinstance(x, int) and not isinstance(x, bool)})
+        evidence = [{"quote": s.get("evidence"), "chunk_ids": [x for x in (s.get("example_ids") or [])
+                    if isinstance(x, int) and not isinstance(x, bool)]} for s in add["sources"]]
+        item = _make_item(running, "untagged_sections", "untagged_sections", op, [], evidence,
+                          {"chunks": len(ids)}, None, title, rejections)
+        items.append(item)
+        if item["status"] != "invalid":
+            try:
+                running, _mig, _ap = taxo_ops.apply_ops(running, [op])
+            except taxo_ops.ChangesetError:
+                pass   # keep validating the rest against the last tax that DID apply cleanly
+    for s in skipped:
+        if s["kind"] == "dup_new":
+            continue
+        op = {"type": "add", "level": s.get("level") or "L2", "name": s["name"], "parent": s.get("parent")}
+        status = "invalid" if s["kind"] == "invalid" else "auto_skipped"
+        items.append({"origin": "health", "kind": "untagged_sections", "group": "untagged_sections", "title": title,
+                      "reason": s["reason"], "op": op, "alternatives": [], "evidence": [], "support": {},
+                      "status": status})
+    label_to_ids = {}
     for cid, labels in chunk_map.items():
-        if not cid.lstrip("-").isdigit():
+        if untagged_ids and cid not in untagged_ids:
             continue
         for label in labels:
-            op = {"type": "tag", "node": label, "chunk_ids": [int(cid)]}
-            items.append(_make_item("untagged_sections", "untagged_sections", op, [], [], {},
-                                    None, title, rejections))
+            label_to_ids.setdefault(label, set()).add(cid)
+    for label, ids in label_to_ids.items():
+        if not ids:
+            continue
+        op = {"type": "tag", "node": label, "chunk_ids": sorted(ids)}
+        items.append(_make_item(running, "untagged_sections", "untagged_sections", op, [], [],
+                                {"chunks": len(ids)}, None, title, rejections))
     return items
 
 
 def health_items(tax, work_dir, counts, rejections, skipped_files):
     """Grouped health review items from `work_dir/problems.json` and each task's result_k.json.
 
-    Every problem record gets an item: the recommended fix from the matching agent result when
-    one exists, else the kind's documented fallback (or, for missing_description and the metric
-    kinds, no item at all — the manual Taxonomy-view path covers those)."""
+    Every problem `diagnose` recorded gets exactly one item (the binding rule: nothing detected
+    is ever silently dropped from the inbox): the agent's fix when `result_k.json` proposed a
+    usable one, else a safe default op (a `keep`/`remove`) carrying "no fix proposed" (or, when
+    the agent DID answer but with nothing usable, its own reason) plus template alternatives —
+    an intentionally-empty or intentionally-invalid op (`describe{..., description:""}`,
+    `tag{..., chunk_ids:[]}`, `metric_govern{..., draft:{}}`) that only exists so a human can
+    amend it into a real one (see `decisions.health_amend_ok`); Approving a template as-is is
+    refused by `taxo_ops.validate`, by design. `untagged_sections` is the exception forced by
+    its shape (one aggregate record, not one per node): with no usable agent results it gets a
+    single informational item using the sentinel op `{"type": "keep", "node": "__untagged__"}`
+    — safe only because `taxo_ops._run` skips every `keep` op before any node lookup runs.
+    Every built item's op is validated (single-op, `taxo_ops.validate`) against `tax`; a
+    failure (a merge with no `into`, a bad off_axis disposition, an untagged `map` label that
+    isn't a real or newly-proposed category, …) marks the item `status: "invalid"` with the
+    validator's reason instead of crashing or emitting an op nothing could ever apply.
+    """
     problems = load_json(os.path.join(work_dir, "problems.json"))
     items = []
     items += _missing_description_items(tax, work_dir, problems, counts, skipped_files, rejections)
     items += _no_tags_items(tax, work_dir, problems, skipped_files, rejections)
-    items += _untagged_items(tax, work_dir, skipped_files, rejections)
-    items += _structure_items(work_dir, problems, skipped_files, rejections)
-    items += _metrics_items(work_dir, problems, skipped_files, rejections)
+    items += _untagged_items(tax, work_dir, problems, skipped_files, rejections)
+    items += _structure_items(tax, work_dir, problems, skipped_files, rejections)
+    items += _metrics_items(tax, work_dir, problems, skipped_files, rejections)
     return items

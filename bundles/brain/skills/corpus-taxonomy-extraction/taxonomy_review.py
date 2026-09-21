@@ -249,7 +249,10 @@ def _context(mode, tax, items, stats, version, problems=None):
         untagged = (problems or {}).get("untagged_sections") or []
         if untagged and untagged[0].get("count"):
             n_problems += 1
-        fixes = sum(1 for i in items if i["status"] in ("proposed", "suppressed"))
+        # "fixes proposed" excludes items carrying a safe default (`_fallback`, stripped by
+        # build_plan before the review is written) — a problem with no usable agent fix still
+        # reaches the inbox, it just isn't counted as a proposed fix here.
+        fixes = sum(1 for i in items if i["status"] in ("proposed", "suppressed") and not i.get("_fallback"))
         return {"title": "Health review", "subtitle": f"v{version} · {n_problems} problems · {fixes} fixes proposed"}
     raise ValueError(f"unknown mode {mode!r}")
 
@@ -337,10 +340,13 @@ def build_plan(mode, taxonomy_path, proposals_dir=None, consolidated=None, db=No
     for n, item in enumerate(items):
         item["fingerprint"] = fingerprint(item["op"])
         item["id"] = "i-" + hashlib.sha1(f"{rid}|{n}|{item['fingerprint']}".encode()).hexdigest()[:6]
+    context = _context(mode, tax, items, stats, version, problems if mode == "health" else None)
+    if mode == "health":
+        for item in items:
+            item.pop("_fallback", None)   # bookkeeping only; never persisted in the review
     review = {"schema": 1, "review_id": rid, "mode": mode, "created": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
               "base": {"path": os.path.abspath(taxonomy_path), "version": version, "sha256": sha},
-              "evidence_available": evidence, "stats": stats, "items": items,
-              "context": _context(mode, tax, items, stats, version, problems if mode == "health" else None)}
+              "evidence_available": evidence, "stats": stats, "items": items, "context": context}
     if mode in ("drift", "describe", "health"):
         review["skipped_files"] = skipped_files
     path = os.path.join(tax_dir, "reviews", f"review_{rid}.json")
@@ -514,10 +520,12 @@ def cmd_diagnose(a):
     return 0
 
 
-def _read_requests(path):
+def _latest_requests(path):
+    """The latest record per `id` in a requests.jsonl — later lines (e.g. a status change)
+    supersede earlier ones for the same request, same convention as health._read_open_requests."""
     if not os.path.exists(path):
-        return []
-    out = []
+        return {}
+    latest = {}
     with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -527,12 +535,15 @@ def _read_requests(path):
                 rec = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(rec, dict):
-                out.append(rec)
-    return out
+            if isinstance(rec, dict) and rec.get("id"):
+                latest[rec["id"]] = rec
+    return latest
 
 
 def cmd_respond(a):
+    if not os.path.exists(a.review):
+        _out({"status": "refused", "errors": [f"{a.review} not found"]})
+        return 2
     review = load_json(a.review)
     tax_dir = tax_dir_of(a.review)
     work_dir = os.path.join(tax_dir, "work")
@@ -541,10 +552,12 @@ def cmd_respond(a):
     if D.review_state(records, review["review_id"])["submit"]:
         _out({"status": "refused", "errors": ["this review is already submitted"]})
         return 2
-    req = next((r for r in _read_requests(os.path.join(work_dir, "requests.jsonl"))
-               if r.get("id") == a.request), None)
+    req = _latest_requests(os.path.join(work_dir, "requests.jsonl")).get(a.request)
     if req is None:
         _out({"status": "refused", "errors": [f"{a.request!r} is not a known request"]})
+        return 2
+    if req.get("status") != "open":
+        _out({"status": "refused", "errors": [f"{a.request!r} is not open (status={req.get('status')!r})"]})
         return 2
     item = next((i for i in review.get("items", []) if i["id"] == req.get("item_id")), None)
     if item is None:
