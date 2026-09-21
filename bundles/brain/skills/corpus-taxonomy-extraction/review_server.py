@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+"""Local taxonomy review app server.
+
+127.0.0.1 only, a random token on every /api call, the store opened read-only, and the only
+file it writes is decisions.jsonl. `serve` blocks until the reviewer submits or cancels (or the
+timeout), then prints one JSON line — so an agent can run it in the background and be woken
+by its exit.
+"""
+import copy
+import json
+import os
+import secrets
+import sqlite3
+import sys
+import threading
+import time
+import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import unquote, urlparse
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import decisions as D  # noqa: E402
+import graph_migrate as GM  # noqa: E402
+import metrics_gap as MG  # noqa: E402
+import taxo_impact as TI  # noqa: E402
+from taxo_io import intent, load_json, locate, nid, reviewer_name, sha256_file  # noqa: E402
+from taxo_ops import ChangesetError, validate as validate_ops  # noqa: E402
+
+UI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "review_ui.html")
+EXIT = {"submitted": 0, "timeout": 3, "cancelled": 4}
+
+
+class ReviewApp:
+    def __init__(self, review_path, db_path=None, decisions_path=None, metrics_path=None, reviewer=None):
+        self.review = load_json(review_path)
+        self.tax_dir = os.path.dirname(os.path.dirname(os.path.abspath(review_path)))
+        self.decisions_path = decisions_path or D.default_path(self.tax_dir)
+        base = self.review["base"]
+        if sha256_file(base["path"]) != base["sha256"]:
+            raise ValueError(f"{base['path']} changed since this review was planned; plan a new review")
+        self.base_tax = load_json(base["path"])
+        self.db = (sqlite3.connect(f"file:{os.path.abspath(db_path)}?mode=ro", uri=True, check_same_thread=False)
+                   if db_path else None)
+        self.governed = MG.load_governed(metrics_path or MG.find_governed(self.tax_dir))
+        self.reviewer = reviewer_name(reviewer)
+        self.token = secrets.token_hex(16)
+        self.lock = threading.Lock()
+        self.ready, self.done = threading.Event(), threading.Event()
+        self.url, self.outcome = None, None
+
+    # ---- reads ----
+    def _records(self):
+        return D.read(self.decisions_path)
+
+    def _ops(self, records):
+        return [e["op"] for e in D.effective_ops(self.review, records)]
+
+    def _has(self, table):
+        return self.db is not None and GM.has_table(self.db, table)
+
+    def _total_impact(self, records):
+        try:
+            return TI.impact(self.db, self.base_tax, self._ops(records))
+        except ChangesetError as e:
+            return {"errors": e.errors}
+
+    def state(self):
+        with self.lock:
+            records = self._records()
+            st = D.review_state(records, self.review["review_id"])
+            counts, totals = {}, {}
+            if self._has("chunk_topics"):
+                counts = dict(self.db.execute(
+                    "SELECT category_id, COUNT(DISTINCT chunk_id) FROM chunk_topics GROUP BY category_id"))
+            if self._has("chunks"):
+                total = self.db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+                tagged = (self.db.execute("SELECT COUNT(DISTINCT chunk_id) FROM chunk_topics").fetchone()[0]
+                          if self._has("chunk_topics") else 0)
+                totals = {"chunks": total, "tagged": tagged, "untagged": total - tagged}
+            caps_path = os.path.join(self.tax_dir, "capabilities.json")
+            caps = load_json(caps_path) if os.path.exists(caps_path) else None
+            t = copy.deepcopy(self.base_tax)
+            return {"review": self.review,
+                    "base": {"intent_taxonomy": intent(t), "entities": list(t.get("entities") or {}),
+                             "aliases": t.get("aliases") or {}, "version": t.get("version") or 0},
+                    "metrics": MG.annotate(t.get("metrics") or [], self.governed),
+                    "governed_file": bool(self.governed), "counts": counts, "totals": totals,
+                    "decisions": st["latest"], "proposals": list(st["proposals"].values()),
+                    "submitted": bool(st["submit"]), "reviewer": self.reviewer, "has_db": self.db is not None,
+                    "capabilities": caps, "impact": self._total_impact(records)}
+
+    def node(self, label):
+        level, parent = locate(copy.deepcopy(self.base_tax), label)
+        if level is None:
+            return {"errors": [f"{label!r} is not in the taxonomy"]}
+        i, out = nid(label), {"label": label, "id": nid(label), "level": level, "parent": parent}
+        out["aliases"] = [a for a, c in (self.base_tax.get("aliases") or {}).items() if c == label]
+        out["item"] = next((it for it in self.review["items"] if it["op"].get("node") == label), None)
+        out["tags"], out["samples"], out["siblings"] = 0, [], []
+        it = intent(copy.deepcopy(self.base_tax))
+        sibs = (it["tree"].get(parent, []) if parent else list(it["tree"])) if level != "entity" else []
+        with self.lock:
+            if self._has("chunk_topics"):
+                out["tags"] = self.db.execute("SELECT COUNT(DISTINCT chunk_id) FROM chunk_topics WHERE category_id=?",
+                                              (i,)).fetchone()[0]
+                out["samples"] = [
+                    {"chunk_id": r[0], "source": r[1], "title": r[2], "preview": " ".join((r[3] or "").split())[:240]}
+                    for r in self.db.execute(
+                        "SELECT c.id, c.source, c.title, substr(c.text,1,400) FROM chunk_topics t JOIN chunks c "
+                        "ON c.id=t.chunk_id WHERE t.category_id=? GROUP BY c.id ORDER BY c.id LIMIT 5", (i,))]
+                for s in sibs:
+                    if s == label:
+                        continue
+                    sid = nid(s)
+                    tags = self.db.execute("SELECT COUNT(DISTINCT chunk_id) FROM chunk_topics WHERE category_id=?",
+                                           (sid,)).fetchone()[0]
+                    overlap = self.db.execute(
+                        "SELECT COUNT(DISTINCT a.chunk_id) FROM chunk_topics a JOIN chunk_topics b "
+                        "ON a.chunk_id=b.chunk_id WHERE a.category_id=? AND b.category_id=?", (i, sid)).fetchone()[0]
+                    out["siblings"].append({"label": s, "tags": tags, "overlap": overlap})
+            else:
+                out["siblings"] = [{"label": s, "tags": 0, "overlap": 0} for s in sibs if s != label]
+        return out
+
+    def chunk(self, cid):
+        if not self._has("chunks"):
+            return 404, {"errors": ["no store attached (serve --db)"]}
+        with self.lock:
+            r = self.db.execute("SELECT id, source, title, text FROM chunks WHERE id=?", (cid,)).fetchone()
+        if not r:
+            return 404, {"errors": [f"chunk {cid} not found"]}
+        return 200, {"chunk_id": r[0], "source": r[1], "title": r[2], "text": r[3]}
+
+    # ---- writes (decisions.jsonl only) ----
+    def impact_of(self, body):
+        op = body.get("op") or {}
+        with self.lock:
+            prior = self._ops(self._records())
+            errs = validate_ops(self.base_tax, prior + [op])
+            if errs:
+                return 400, {"errors": errs}
+            return 200, {"impact": TI.delta(self.db, self.base_tax, prior, op)}
+
+    def decide(self, body):
+        rec = {k: body[k] for k in ("action", "item_id", "op", "reason") if body.get(k) is not None}
+        rec.update({"review_id": self.review["review_id"], "reviewer": self.reviewer, "surface": "browser"})
+        if rec.get("action") == "propose" and not rec.get("item_id"):
+            rec["item_id"] = D.new_human_id()
+        item = next((i for i in self.review["items"] if i["id"] == rec.get("item_id")), None)
+        if item and rec.get("action") in ("reject", "reopen"):
+            rec["fingerprint"] = item["fingerprint"]
+        with self.lock:
+            records = self._records()
+            errs = D.validate_record(self.review, self.base_tax, records, rec)
+            if errs:
+                return 400, {"errors": errs}
+            if rec["action"] == "propose":
+                rec["impact"] = TI.delta(self.db, self.base_tax, self._ops(records), rec["op"])
+            return 200, {"record": D.append(self.decisions_path, rec)}
+
+    def submit(self, body):
+        with self.lock:
+            records = self._records()
+            rec = {"review_id": self.review["review_id"], "action": "submit", "reviewer": self.reviewer,
+                   "surface": "browser"}
+            errs = D.validate_record(self.review, self.base_tax, records, rec)
+            if errs:
+                return 400, {"errors": errs}
+            rec["counts"] = D.submit_counts(self.review, records)
+            rec["impact"] = self._total_impact(records)
+            D.append(self.decisions_path, rec)
+            self.outcome = {"status": "submitted", "review_id": self.review["review_id"], "counts": rec["counts"],
+                            "impact": rec["impact"], "decisions": self.decisions_path}
+        self.done.set()
+        return 200, {"outcome": self.outcome}
+
+    def cancel(self, body):
+        self.outcome = {"status": "cancelled", "review_id": self.review["review_id"],
+                        "decisions": self.decisions_path}
+        self.done.set()
+        return 200, {"outcome": self.outcome}
+
+
+def make_handler(app):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def _send(self, code, body, ctype="application/json"):
+            data = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _authed(self):
+            return secrets.compare_digest(self.headers.get("X-Review-Token", ""), app.token)
+
+        def do_GET(self):
+            u = urlparse(self.path)
+            if u.path == "/":
+                with open(UI, "rb") as f:
+                    return self._send(200, f.read(), "text/html; charset=utf-8")
+            if not self._authed():
+                return self._send(403, {"errors": ["missing or wrong review token"]})
+            try:
+                if u.path == "/api/state":
+                    return self._send(200, app.state())
+                if u.path.startswith("/api/node/"):
+                    return self._send(200, app.node(unquote(u.path[len("/api/node/"):])))
+                if u.path.startswith("/api/chunk/"):
+                    code, payload = app.chunk(u.path[len("/api/chunk/"):])
+                    return self._send(code, payload)
+            except Exception as e:  # surface, never crash the server
+                return self._send(500, {"errors": [str(e)]})
+            return self._send(404, {"errors": ["not found"]})
+
+        def do_POST(self):
+            u = urlparse(self.path)
+            if not self._authed():
+                return self._send(403, {"errors": ["missing or wrong review token"]})
+            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                body = json.loads(self.rfile.read(n) or b"{}")
+            except json.JSONDecodeError:
+                return self._send(400, {"errors": ["request body is not JSON"]})
+            routes = {"/api/impact": app.impact_of, "/api/decision": app.decide,
+                      "/api/submit": app.submit, "/api/cancel": app.cancel}
+            fn = routes.get(u.path)
+            if fn is None:
+                return self._send(404, {"errors": ["not found"]})
+            try:
+                code, payload = fn(body)
+            except (D.DecisionLogError, ChangesetError) as e:
+                code, payload = 400, {"errors": getattr(e, "errors", [str(e)])}
+            except Exception as e:
+                code, payload = 500, {"errors": [str(e)]}
+            return self._send(code, payload)
+
+    return Handler
+
+
+def serve(app, port=0, open_browser=True, timeout=3600, out=sys.stdout, err=sys.stderr):
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app))
+    app.url = f"http://127.0.0.1:{httpd.server_address[1]}/?t={app.token}"
+    print(f"review app: {app.url}", file=err, flush=True)
+    worker = threading.Thread(target=httpd.serve_forever, daemon=True)
+    worker.start()
+    app.ready.set()
+    if open_browser:
+        webbrowser.open(app.url)
+    finished = app.done.wait(timeout)
+    time.sleep(0.2)  # let the final response flush before shutting down
+    httpd.shutdown()
+    httpd.server_close()
+    outcome = app.outcome if finished and app.outcome else {
+        "status": "timeout", "review_id": app.review["review_id"], "decisions": app.decisions_path}
+    print(json.dumps(outcome, ensure_ascii=False), file=out, flush=True)
+    return EXIT[outcome["status"]]
