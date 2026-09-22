@@ -45,7 +45,7 @@ PROJECT/
     families.<corpus>.json
     metrics.<corpus>.json
   taxonomy/
-    taxonomy_v0.json               # emitted draft, ratified in the draft review
+    taxonomy_v0.json               # emitted draft; adopted provisionally, ratified in the first-build review
     taxonomy_vN.json               # ratified versions; immutable
     current.json                   # byte copy of the latest version; every step reads it
     decisions.jsonl                # append-only review decisions; commit it
@@ -491,14 +491,14 @@ Re-run `build_marts.py --strict` only if reporting workbooks or their schema con
 
 ### Update phase 4 — taxonomy gate
 
-Reuse the existing taxonomy by default. If `$TAX` is missing, or `build_graph` stops because the store has tags and no `meta.taxonomy_version`, tell the human and follow `corpus-taxonomy-extraction` → "F. Upgrading an older Brain" with their confirmation. Then check the share of untagged chunks and whether the taxonomy has descriptions:
+Reuse the existing taxonomy by default. If `$TAX` is missing, or `build_graph` stops because the store has tags and no `meta.taxonomy_version`, tell the human and follow `corpus-taxonomy-extraction` → "F. Upgrading an older Brain" with their confirmation. Then check the share of untagged chunks and whether the taxonomy has descriptions. A chunk the classifier verdicted `__no_topic__` (filler, boilerplate, off-goal — stored in `chunk_verdicts`, not `chunk_topics`) is not untagged; exclude it, and report it separately. Older stores predate `chunk_verdicts`, so the query guards for the table's existence:
 
 ```bash
-"$PY" -c 'import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);t=c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0];u=c.execute("SELECT COUNT(*) FROM chunks WHERE id NOT IN (SELECT chunk_id FROM chunk_topics)").fetchone()[0];print(u,"of",t,"chunks untagged")' "$DB"
+"$PY" -c 'import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);t=c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0];has_v=bool(c.execute("SELECT 1 FROM sqlite_master WHERE type=\"table\" AND name=\"chunk_verdicts\"").fetchone());nt=c.execute("SELECT COUNT(*) FROM chunk_verdicts WHERE verdict=\"no_topic\"").fetchone()[0] if has_v else 0;q="SELECT COUNT(*) FROM chunks WHERE id NOT IN (SELECT chunk_id FROM chunk_topics)"+(" AND id NOT IN (SELECT chunk_id FROM chunk_verdicts)" if has_v else "");u=c.execute(q).fetchone()[0];print(u,"of",t,"chunks untagged (excludes",nt,"no-topic)")' "$DB"
 "$PY" -c 'import json,sys;print(len(json.load(open(sys.argv[1])).get("descriptions") or {}),"categories described")' "$TAX"
 ```
 
-If the update introduced concepts the vocabulary cannot express (a rising untagged share), the taxonomy has no descriptions, or the human asks to refresh or clean up the taxonomy, tell the human and offer the **health review**. Run it only if they agree, following `corpus-taxonomy-extraction` → "B. Health review" end to end: `taxonomy_review.py diagnose` → fix subagents per task dir → `plan --mode health --work …` → `serve --watch-hint` in the background with a Monitor on `taxonomy/work/requests.jsonl` for redo requests → on submit `taxonomy_merge.py --review <review> --apply` → `build_graph.py` → reclassify (below) → `classify_write.py --merge` for approved tags → offer governed-metric drafts. When the human wants only new-category proposals for untagged chunks, use "C. Refine review" (`taxonomy_refine_prep.py` → proposal subagents → `plan --mode drift`) instead; when they want to edit categories themselves, "D. Browse and edit".
+If the update introduced concepts the vocabulary cannot express (a rising untagged share, counted as above, excluding no-topic chunks), the taxonomy has no descriptions, or the human asks to refresh or clean up the taxonomy, tell the human and offer the **health review**. Run it only if they agree, following `corpus-taxonomy-extraction` → "B. Health review" end to end: `taxonomy_review.py diagnose` → fix subagents per task dir → `plan --mode health --work …` → `serve --watch-hint` in the background with a Monitor on `taxonomy/work/requests.jsonl` for redo requests → on submit `taxonomy_merge.py --review <review> --apply` → `build_graph.py` → reclassify (below) → `classify_write.py --merge` for approved tags → offer governed-metric drafts. When the human wants only new-category proposals for untagged chunks, use "C. Refine review" (`taxonomy_refine_prep.py` → proposal subagents → `plan --mode drift`) instead; when they want to edit categories themselves, "D. Browse and edit".
 
 After any applied review, run `build_graph.py --taxonomy "$TAX" --db "$DB"`, then, if `$PROJECT/taxonomy/work/reclassify.json` exists, reclassify its chunk ids into a fresh directory named after the file's `version` `<N>`:
 
