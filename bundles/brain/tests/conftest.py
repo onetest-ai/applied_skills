@@ -207,3 +207,17 @@ def _patch_knowledge_index_for_no_ext(monkeypatch):
     sys.modules["sqlite_vec"].serialize_float32 = lambda v: bytes(4 * len(v))
 
     yield
+
+
+def pytest_terminal_summary(terminalreporter):
+    """Print MISSING SYSTEM TOOLS whenever a tool-dependent test was skipped."""
+    from _tools import missing_tools_report
+    reasons = []
+    for rep in terminalreporter.stats.get("skipped", []):
+        lr = rep.longrepr
+        reasons.append(str(lr[2]) if isinstance(lr, tuple) and len(lr) == 3 else str(lr))
+    lines = missing_tools_report(reasons)
+    if lines:
+        terminalreporter.section("MISSING SYSTEM TOOLS", yellow=True, bold=True)
+        for ln in lines:
+            terminalreporter.line(ln, yellow=True)
