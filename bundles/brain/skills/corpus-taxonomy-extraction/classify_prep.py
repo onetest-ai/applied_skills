@@ -45,12 +45,17 @@ def main():
             "For every chunk below, choose the categories from `vocab.md` the chunk is genuinely "
             "ABOUT (0–3). **Prefer the most specific level:** pick an **L2** when the chunk is "
             "specifically about that sub-topic; otherwise pick its **L1**. You may mix L1 and L2. "
-            "Use EXACT names. If a chunk is generic/administrative and fits none, return an empty "
-            "list — do NOT force a tag. Descriptions (after the —) define each category's boundary; "
+            "Use EXACT names. Do NOT force a tag. Two different answers when nothing fits:\n"
+            "- `[\"__no_topic__\"]` — the chunk carries no topic at all: filler (\"Okay.\", \"Yep.\"), "
+            "greetings and introductions, meeting logistics, agenda/boilerplate, or content unrelated to "
+            "the goal (e.g. a case study about another client).\n"
+            "- `[]` — the chunk IS substantive and on-goal, but no category in `vocab.md` fits it. "
+            "These are the gaps the taxonomy review looks at, so do not use `[]` for filler.\n"
+            "Descriptions (after the —) define each category's boundary; "
             "use them to choose between similar labels.\n\n"
             "Output ONE JSON file `result_<k>.json` mapping chunk id -> list of category names "
             "(each an EXACT L1 or L2 label):\n"
-            '  {"12": ["Unauthorized items"], "13": [], "14": ["Track Delivery","Billing & Payments"]}\n'
+            '  {"12": ["Unauthorized items"], "13": [], "14": ["Track Delivery","Billing & Payments"], "15": ["__no_topic__"]}\n'
             "Judge by the title + preview. Be precise, not generous. (An L2 auto-includes its L1.)\n")
     con = sqlite3.connect(a.db)
     where, params = "", [a.preview]

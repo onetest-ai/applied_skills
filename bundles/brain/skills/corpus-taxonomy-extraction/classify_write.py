@@ -4,9 +4,12 @@
 Consumes result_<k>.json ({chunk_id: [category names]}) produced by the low-tier
 classification agents. Names may be **L1 or L2** — this resolves each against the
 graph, writes it with its real `kind` (intent_l1 / intent_l2), and — for an L2 —
-also rolls up its parent L1 (so L1 filters still catch it). Writes:
+also rolls up its parent L1 (so L1 filters still catch it). A result of exactly
+`["__no_topic__"]` is a NO-TOPIC verdict (filler/off-goal, not a category): no tags
+are written, and the chunk is recorded in chunk_verdicts instead. Writes:
   chunk_topics(chunk_id INT, category_id TEXT, category_label TEXT, kind TEXT, source TEXT)
   graph_edges rows: (source='chunk:<id>', target=<category_id>, rel='about')   -- note↔vertex
+  chunk_verdicts(chunk_id INTEGER PRIMARY KEY, verdict TEXT, taxonomy_version INT)
 
 So the vault tags, the retrieval chunks, and the taxonomy graph all reference the
 same category ids (kebab of the L1 label == graph_nodes.id from build_graph.py).
@@ -29,6 +32,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import taxo_io  # noqa: E402
 
 def nid(s): return re.sub(r"[^a-z0-9]+", "_", str(s).lower()).strip("_") or "n"
+
+NO_TOPIC = "__no_topic__"   # classifier sentinel: filler / boilerplate / off-goal — not a category
+
+
+def ensure_verdicts(c):
+    c.execute("CREATE TABLE IF NOT EXISTS chunk_verdicts("
+              "chunk_id INTEGER PRIMARY KEY, verdict TEXT, taxonomy_version INT)")
 
 def main():
     ap = argparse.ArgumentParser()
@@ -64,12 +74,19 @@ def main():
     if a.reset:
         tables_now = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         ge_clause = "DELETE FROM graph_edges WHERE rel='about';" if "graph_edges" in tables_now else ""
-        c.executescript(f"DROP TABLE IF EXISTS chunk_topics; {ge_clause}")
+        c.executescript(f"DROP TABLE IF EXISTS chunk_topics; DROP TABLE IF EXISTS chunk_verdicts; {ge_clause}")
     c.executescript("""
       CREATE TABLE IF NOT EXISTS chunk_topics(chunk_id INT, category_id TEXT, category_label TEXT, kind TEXT);
       CREATE INDEX IF NOT EXISTS idx_ct_chunk ON chunk_topics(chunk_id);
       CREATE INDEX IF NOT EXISTS idx_ct_cat ON chunk_topics(category_id);
     """)
+    ensure_verdicts(c)
+    meta = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    tax_version = None
+    if "meta" in meta:
+        row = c.execute("SELECT value FROM meta WHERE key='taxonomy_version'").fetchone()
+        tax_version = int(row[0]) if row and str(row[0]).isdigit() else None
+    n_no_topic = 0
     # gather results first so we know exactly which chunks are being (re)classified
     results = {}
     for rf in sorted(glob.glob(os.path.join(a.results, "result_*.json"))):
@@ -108,6 +125,17 @@ def main():
     n_assign, n_l2, n_chunks, skipped = 0, 0, 0, 0
     for cid, labels in results.items():
         n_chunks += 1
+        labels = labels or []
+        real = [l for l in labels if l != NO_TOPIC]
+        if NO_TOPIC in labels and not real:
+            if not a.merge:
+                c.execute("INSERT INTO chunk_verdicts VALUES(?,?,?) ON CONFLICT(chunk_id) DO UPDATE SET "
+                          "verdict=excluded.verdict, taxonomy_version=excluded.taxonomy_version",
+                          (cid, "no_topic", tax_version))
+                n_no_topic += 1
+            continue
+        if real:
+            c.execute("DELETE FROM chunk_verdicts WHERE chunk_id=?", (cid,))
         added = set()
         def put(catid, label, kind):
             nonlocal n_assign
@@ -119,7 +147,7 @@ def main():
             c.execute("INSERT INTO chunk_topics VALUES(?,?,?,?)", (cid, catid, label, kind))
             c.execute("INSERT INTO graph_edges VALUES(?,?,?)", (f"chunk:{cid}", catid, "about"))
             n_assign += 1
-        for lbl in (labels or []):
+        for lbl in real:
             cat = nid(lbl)
             if cat not in node and cat in alias: cat = alias[cat]
             if node and cat not in node: skipped += 1; continue     # keep to the graph vocabulary
@@ -132,7 +160,8 @@ def main():
     c.commit()
     print(f"chunk_topics: {n_assign} assignments over {n_chunks} chunks ({n_l2} L2)"
           + (" [reset]" if a.reset else " [merge]" if a.merge else " [incremental]")
-          + (f" ({skipped} off-vocabulary dropped)" if skipped else ""))
+          + (f" ({skipped} off-vocabulary dropped)" if skipped else "")
+          + (f", {n_no_topic} no-topic" if n_no_topic else ""))
     dist = c.execute("SELECT category_label, count(*) FROM chunk_topics GROUP BY category_id ORDER BY 2 DESC LIMIT 8").fetchall()
     print("top categories:", dist)
     if queue is not None:
