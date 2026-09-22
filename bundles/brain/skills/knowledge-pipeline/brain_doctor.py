@@ -318,9 +318,13 @@ def set_video_keys(text: str, updates: dict[str, str]) -> str:
 
 
 def cmd_whisper_models(a) -> int:
-    project = Path(a.config).resolve().parent if a.config else None
-    found = find_models(model_dirs(project))
-    current = configured_video(a.config)["whisper_model"] if a.config else None
+    try:
+        project = Path(a.config).resolve().parent if a.config else None
+        found = find_models(model_dirs(project))
+        current = configured_video(a.config)["whisper_model"] if a.config else None
+    except (OSError, ValueError, tomllib.TOMLDecodeError) as e:
+        print(f"error: cannot read config: {e}", file=sys.stderr)
+        return 2
     if a.json:
         print(json.dumps({"configured": current, "installed": found,
                           "catalogue": [{**e, "url": HF_BASE + e["file"], "download": download_command(e)}
@@ -345,9 +349,13 @@ def cmd_set_whisper_model(a) -> int:
         print(f"error: model file not found: {model}", file=sys.stderr)
         return 1
     cfg = Path(a.config)
-    text = cfg.read_text(encoding="utf-8")
-    new = set_video_keys(text, {"whisper_model": str(model), "language": a.language})
-    tomllib.loads(new)  # never write a config we cannot read back
+    try:
+        text = cfg.read_text(encoding="utf-8")
+        new = set_video_keys(text, {"whisper_model": str(model), "language": a.language})
+        tomllib.loads(new)  # never write a config we cannot read back
+    except (OSError, ValueError, tomllib.TOMLDecodeError) as e:
+        print(f"error: cannot read config: {e}", file=sys.stderr)
+        return 2
     tmp = cfg.with_suffix(cfg.suffix + ".tmp")
     tmp.write_text(new, encoding="utf-8")
     os.replace(tmp, cfg)

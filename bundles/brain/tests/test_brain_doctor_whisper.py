@@ -72,3 +72,13 @@ class SetVideoKeysTests(unittest.TestCase):
             cfg = Path(td) / "brain.toml"; cfg.write_text(HAND_EDITED)
             self.assertEqual(D.main(["set-whisper-model", "--config", str(cfg), "--model", "/nope.bin"]), 1)
             self.assertEqual(cfg.read_text(), HAND_EDITED)
+
+    def test_whisper_models_missing_config_exits_2(self):
+        self.assertEqual(D.main(["whisper-models", "--config", "/does/not/exist.toml"]), 2)
+
+    def test_set_whisper_model_unparsable_config_exits_2_unchanged(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = Path(td) / "brain.toml"; cfg.write_text("version = [")
+            model = Path(td) / "ggml-base.bin"; model.write_bytes(b"m")
+            self.assertEqual(D.main(["set-whisper-model", "--config", str(cfg), "--model", str(model)]), 2)
+            self.assertEqual(cfg.read_text(), "version = [")
