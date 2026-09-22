@@ -81,14 +81,13 @@ def speaker_and_text(text: str) -> tuple[str, str]:
     if voice:
         return voice.group(1).strip(), re.sub(r"</?v[^>]*>", "", voice.group(2)).strip()
     labelled = re.match(
-        r"\s*([A-Z][A-Za-z''.-]*(?:\s+[A-Z][A-Za-z''.-]*){0,2}):\s+(.+)", text, flags=re.S)
+        r"\s*([A-Z][A-Za-z'’.-]*(?:\s+[A-Z][A-Za-z'’.-]*){0,2}):\s+(.+)", text, flags=re.S)
     if labelled:
         name = labelled.group(1).strip()
-        lead = name.split()[0].lower().strip(".''-")
+        lead = name.split()[0].lower().strip(".'’-")
         if lead not in NON_SPEAKER_PREFIXES:
             return name, labelled.group(2).strip()
     return "", re.sub(r"</?v[^>]*>", "", text).strip()
-
 
 def read_cues(path) -> list[dict]:
     """WebVTT or SRT -> [{start, end, speaker, text}] with times in SECONDS."""

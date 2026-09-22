@@ -71,7 +71,7 @@ class CueTests(unittest.TestCase):
 class SpeakerParityTests(unittest.TestCase):
     CASES = ["<v Alice>hi</v>", "<v.loud Bob Jones>hey", "Alice: hello there", "Mary-Jane O'Neil: yes",
              "Note: something", "Today: agenda", "no speaker here", "A B C D: too many words",
-             "alice: lowercase", "Dr. Who: time"]
+             "alice: lowercase", "Dr. Who: time", "O’Brien: hi", "D’Arcy Smith: ok"]
 
     def test_prefix_list_is_identical(self):
         self.assertEqual(V.NON_SPEAKER_PREFIXES, parse_corpus._NON_SPEAKER_PREFIXES)
