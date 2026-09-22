@@ -1,7 +1,7 @@
 """First build, count-grounded: draft v0 → build_graph → adopt --provisional → classify (with a
 no-topic verdict) → signals.json (hand-made: no model download) → diagnose → agent fixes →
 plan --mode health → decisions → submit → apply (marker cleared, v1) → build_graph migrates tags."""
-import json, os, sqlite3, subprocess, sys, tempfile, unittest
+import hashlib, json, os, sqlite3, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 import decisions as D
@@ -48,6 +48,7 @@ class FirstBuildE2E(unittest.TestCase):
 
             work = os.path.join(tdir, "work", "health")
             write_json(os.path.join(tdir, "work", "signals.json"), {"schema": 1, "label_pairs": [], "misplaced": [],
+                       "taxonomy_sha256": hashlib.sha256(open(cur, "rb").read()).hexdigest(),
                        "label_clusters": [{"members": ["Payment Processing", "Refunds"], "level": "L2",
                                            "parent": "Billing & Payments"}]})
             diag = last_json(run("taxonomy_review.py", "diagnose", "--taxonomy", cur, "--db", db, "--out", work))

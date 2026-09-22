@@ -1,4 +1,5 @@
-import json, os, sqlite3, tempfile, unittest
+import hashlib, io, json, os, sqlite3, tempfile, unittest
+from contextlib import redirect_stderr
 
 import health as H
 from taxo_fixtures import tagged_store, taxonomy, write_json
@@ -38,9 +39,48 @@ class FitDetectTests(unittest.TestCase):
         self.assertEqual([x["node"] for x in p["overloaded"]], ["Billing & Payments"])
         self.assertEqual(self.detect(overload_factor=10)["overloaded"], [])
 
+    def _sha(self):
+        return hashlib.sha256(open(self.cur, "rb").read()).hexdigest()
+
+    def _signals(self, sha):
+        sig = os.path.join(self.dir, "work", "signals.json")
+        doc = {"schema": 1, "label_pairs": [],
+               "label_clusters": [{"members": ["Refunds", "Duplicate Charge"], "level": "L2",
+                                   "parent": "Billing & Payments"}],
+               "misplaced": [{"node": "Refunds", "parent": "Billing & Payments",
+                              "better_parent": "Delivery & Pickup", "margin": 0.05, "chunks": 3}]}
+        if sha is not None:
+            doc["taxonomy_sha256"] = sha
+        write_json(sig, doc)
+        return sig
+
+    def test_stale_or_unstamped_signals_fall_back_to_the_string_detector(self):
+        for sha in ("0" * 64, None):
+            sig = self._signals(sha)
+            err = io.StringIO()
+            with redirect_stderr(err):
+                p = self.detect(signals_path=sig)
+            self.assertEqual(p["near_duplicate_source"], "string")
+            self.assertEqual(p["misplaced"], [])
+            self.assertIn("signals.json", err.getvalue())
+            self.assertIn("re-run taxonomy_signals.py", p["signals_warning"])
+
+    def test_diagnose_records_the_stale_signals_warning(self):
+        sig = self._signals("0" * 64)
+        with redirect_stderr(io.StringIO()):
+            res = H.diagnose(self.cur, self.db, self.work, signals_path=sig)
+        self.assertEqual(res["near_duplicate_source"], "string")
+        self.assertTrue(any("taxonomy_signals.py" in w for w in res["warnings"]))
+        self.assertNotIn("signals_warning", res["problems"])
+
+    def test_fresh_signals_record_no_warning(self):
+        p = self.detect(signals_path=self._signals(self._sha()))
+        self.assertEqual(p["near_duplicate_source"], "label-embedding")
+        self.assertIsNone(p["signals_warning"])
+
     def test_signals_file_drives_near_duplicates_and_misplaced(self):
         sig = os.path.join(self.dir, "work", "signals.json")
-        write_json(sig, {"schema": 1, "label_pairs": [],
+        write_json(sig, {"schema": 1, "label_pairs": [], "taxonomy_sha256": self._sha(),
                          "label_clusters": [{"members": ["Refunds", "Duplicate Charge"], "level": "L2",
                                              "parent": "Billing & Payments"},
                                             {"members": ["Gone", "Refunds"], "level": "L2", "parent": None}],

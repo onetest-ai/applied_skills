@@ -28,7 +28,8 @@ import metrics_gap as MG  # noqa: E402
 import taxo_ops  # noqa: E402
 import taxonomy_review as R  # noqa: E402
 from difflib import SequenceMatcher  # noqa: E402
-from taxo_io import CURRENT, atomic_write_bytes, fingerprint, intent, load_json, nid, norm, one_line  # noqa: E402
+from taxo_io import (CURRENT, atomic_write_bytes, fingerprint, intent, load_json, nid, norm, one_line,  # noqa: E402
+                     sha256_file)
 from taxonomy_merge import plan_additions  # noqa: E402
 
 SIMILAR_METRIC_THRESHOLD = 0.85
@@ -274,15 +275,30 @@ def _median(xs):
     return xs[m] if len(xs) % 2 else (xs[m - 1] + xs[m]) / 2
 
 
-def _load_signals(path):
+def _load_signals(path, taxonomy_path):
+    """(signals or None, warning or None). signals.json is used only when its
+    `taxonomy_sha256` matches the bytes of the taxonomy being diagnosed: signals computed from
+    an older taxonomy (or with no stamp) would name clusters and misplacements of nodes that
+    have since moved, so they are ignored and the string detector runs instead."""
     if not path or not os.path.exists(path):
-        return None
+        return None, None
     try:
         data = load_json(path)
     except (OSError, ValueError) as e:
         print(f"health: ignoring unreadable {path}: {e}", file=sys.stderr)
-        return None
-    return data if isinstance(data, dict) and data.get("schema") == 1 else None
+        return None, None
+    if not (isinstance(data, dict) and data.get("schema") == 1):
+        return None, None
+    want = sha256_file(taxonomy_path)
+    have = data.get("taxonomy_sha256")
+    if have != want:
+        why = ("has no taxonomy_sha256" if not have
+               else f"was computed from a different taxonomy than {os.path.basename(taxonomy_path)}")
+        msg = (f"{path} {why}; ignoring it and using the string "
+               f"near-duplicate detector — re-run taxonomy_signals.py on this taxonomy before diagnose")
+        print(f"health: {msg}", file=sys.stderr)
+        return None, msg
+    return data, None
 
 
 def detect(taxonomy_path, db, metrics_path=None, signals_path=None, sparse_max=2, overload_factor=2.0):
@@ -316,7 +332,7 @@ def detect(taxonomy_path, db, metrics_path=None, signals_path=None, sparse_max=2
                                               "no_topic": cov["no_topic"]})
 
     l1s = list(it["tree"])
-    signals = _load_signals(signals_path)
+    signals, problems["signals_warning"] = _load_signals(signals_path, taxonomy_path)
     if signals is not None:
         problems["near_duplicate_source"] = "label-embedding"
         present = {label for label, _, _ in rows}
@@ -726,7 +742,7 @@ def diagnose(taxonomy_path, db, out_dir, metrics_path=None, batches=4, signals_p
     atomic_write_bytes(os.path.join(out_dir, "problems.json"),
                        (json.dumps(problems, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
 
-    warnings = []
+    warnings = [problems["signals_warning"]] if problems.get("signals_warning") else []
     tasks = []
     for builder in (
         lambda: _prepare_describe(tax, taxonomy_path, db, problems, out_dir, notes, batches),
