@@ -244,8 +244,125 @@ def main(argv=None) -> int:
     return a.func(a) if getattr(a, "func", None) else cmd_check(a)
 
 
+HF_BASE = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
+CATALOGUE = [
+    {"name": "tiny.en", "file": "ggml-tiny.en.bin", "size": "75 MB", "lang": "English", "note": "fastest, rough", "recommended": False},
+    {"name": "tiny", "file": "ggml-tiny.bin", "size": "75 MB", "lang": "multilingual", "note": "fastest, rough", "recommended": False},
+    {"name": "base.en", "file": "ggml-base.en.bin", "size": "142 MB", "lang": "English", "note": "fast", "recommended": False},
+    {"name": "base", "file": "ggml-base.bin", "size": "142 MB", "lang": "multilingual", "note": "fast", "recommended": False},
+    {"name": "small.en", "file": "ggml-small.en.bin", "size": "466 MB", "lang": "English", "note": "good for meetings, ~real time on CPU", "recommended": True},
+    {"name": "small", "file": "ggml-small.bin", "size": "466 MB", "lang": "multilingual", "note": "good for meetings, ~real time on CPU", "recommended": True},
+    {"name": "medium.en", "file": "ggml-medium.en.bin", "size": "1.5 GB", "lang": "English", "note": "better, slow on CPU", "recommended": False},
+    {"name": "medium", "file": "ggml-medium.bin", "size": "1.5 GB", "lang": "multilingual", "note": "better, slow on CPU", "recommended": False},
+    {"name": "large-v3-turbo", "file": "ggml-large-v3-turbo.bin", "size": "1.6 GB", "lang": "multilingual", "note": "best quality; fast only with Metal/GPU", "recommended": False},
+]
+
+
+def model_dirs(project: Path | None = None) -> list[Path]:
+    dirs: list[Path] = []
+    brew = which("brew")
+    if brew:
+        try:
+            prefix = subprocess.run([brew, "--prefix"], capture_output=True, text=True, timeout=20).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            prefix = ""
+        if prefix:
+            dirs.append(Path(prefix) / "share" / "whisper-cpp")
+    home = Path.home()
+    dirs += sorted((home / ".cache").glob("whisper*"))
+    dirs += [home / "whisper.cpp" / "models", SHARED_MODEL_DIR]
+    if project:
+        dirs.append(Path(project) / "models")
+    return dirs
+
+
+def find_models(dirs) -> list[dict]:
+    seen, out = set(), []
+    for d in dirs:
+        d = Path(d)
+        if not d.is_dir():
+            continue
+        for p in sorted(d.glob("ggml-*.bin")):
+            rp = p.resolve()
+            if rp in seen:
+                continue
+            seen.add(rp)
+            out.append({"path": str(p), "file": p.name, "bytes": p.stat().st_size})
+    return out
+
+
+def download_command(entry: dict) -> str:
+    dest = SHARED_MODEL_DIR / entry["file"]
+    return f'mkdir -p "{SHARED_MODEL_DIR}" && curl -L --fail -o "{dest}" "{HF_BASE}{entry["file"]}"'
+
+
+def set_video_keys(text: str, updates: dict[str, str]) -> str:
+    """Set keys under [video], touching no other byte of a hand-edited brain.toml."""
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, l in enumerate(lines) if l.strip() == "[video]"), None)
+    if start is None:
+        head = text if (not text or text.endswith("\n")) else text + "\n"
+        return head + ("\n" if head else "") + "[video]\n" + \
+            "".join(f"{k} = {json.dumps(v)}\n" for k, v in updates.items())
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].lstrip().startswith("[")), len(lines))
+    pending = dict(updates)
+    for i in range(start + 1, end):
+        m = re.match(r"\s*([A-Za-z0-9_-]+)\s*=", lines[i])
+        if m and m.group(1) in pending:
+            lines[i] = f"{m.group(1)} = {json.dumps(pending.pop(m.group(1)))}\n"
+    j = end
+    while j > start + 1 and not lines[j - 1].strip():
+        j -= 1
+    lines[j:j] = [f"{k} = {json.dumps(v)}\n" for k, v in pending.items()]
+    return "".join(lines)
+
+
+def cmd_whisper_models(a) -> int:
+    project = Path(a.config).resolve().parent if a.config else None
+    found = find_models(model_dirs(project))
+    current = configured_video(a.config)["whisper_model"] if a.config else None
+    if a.json:
+        print(json.dumps({"configured": current, "installed": found,
+                          "catalogue": [{**e, "url": HF_BASE + e["file"], "download": download_command(e)}
+                                        for e in CATALOGUE]}, indent=2))
+        return 0
+    print(f"configured: {current or 'none'}")
+    print("installed models:" if found else "installed models: none found")
+    for m in found:
+        print(f"  {m['file']:<28} {m['bytes'] / 1e6:>7.0f} MB  {m['path']}")
+    print("downloadable (whisper.cpp ggml models):")
+    for e in CATALOGUE:
+        star = "  ← recommended" if e["recommended"] else ""
+        print(f"  {e['name']:<15} {e['size']:>7}  {e['lang']:<12} {e['note']}{star}")
+        print(f"      {download_command(e)}")
+    print("then: brain_doctor.py set-whisper-model --config brain.toml --model <path> [--language en]")
+    return 0
+
+
+def cmd_set_whisper_model(a) -> int:
+    model = Path(os.path.expanduser(a.model))
+    if not model.is_file():
+        print(f"error: model file not found: {model}", file=sys.stderr)
+        return 1
+    cfg = Path(a.config)
+    text = cfg.read_text(encoding="utf-8")
+    new = set_video_keys(text, {"whisper_model": str(model), "language": a.language})
+    tomllib.loads(new)  # never write a config we cannot read back
+    tmp = cfg.with_suffix(cfg.suffix + ".tmp")
+    tmp.write_text(new, encoding="utf-8")
+    os.replace(tmp, cfg)
+    print(f"[video] whisper_model = {model}  language = {a.language}  -> {cfg}")
+    return 0
+
+
 def add_whisper_subcommands(sub) -> None:
-    """Filled in by Task 3."""
+    w = sub.add_parser("whisper-models", help="list whisper.cpp models on disk and downloadable ones")
+    w.add_argument("--config"); w.add_argument("--json", action="store_true")
+    w.set_defaults(func=cmd_whisper_models)
+    s = sub.add_parser("set-whisper-model", help="record the chosen model in brain.toml [video]")
+    s.add_argument("--config", required=True); s.add_argument("--model", required=True)
+    s.add_argument("--language", default="auto", help="auto, or an ISO code such as en")
+    s.set_defaults(func=cmd_set_whisper_model)
 
 
 if __name__ == "__main__":
