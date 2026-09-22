@@ -225,6 +225,11 @@ def select_frames(frames, diff=0.08, still=0.015, min_hold=3, max_per_min=6, max
 
 # ---- IO helpers ---------------------------------------------------------------
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
+
 
 def die(msg: str, code: int = 1):
     print(f"error: {msg}", file=sys.stderr)
@@ -509,6 +514,55 @@ def cmd_forget(a) -> int:
     return 0
 
 
+# ---- transcribe (whisper.cpp; only when probe chose asr) --------------------------
+
+
+def resolve_model(model: str | None, config: str | None) -> tuple[str | None, str]:
+    language = "auto"
+    cfg_model = None
+    if config:
+        video = tomllib.loads(Path(config).read_text(encoding="utf-8")).get("video", {}) or {}
+        language = str(video.get("language") or "auto")
+        if video.get("whisper_model"):
+            p = Path(os.path.expanduser(str(video["whisper_model"])))
+            cfg_model = str(p if p.is_absolute() else Path(config).resolve().parent / p)
+    return (model or cfg_model), language
+
+
+def cmd_transcribe(a) -> int:
+    probe = json.loads(Path(a.probe).read_text())
+    if probe["transcript"] != "asr":
+        print(f"{probe['source']}: transcript source is {probe['transcript']} — nothing to transcribe")
+        return 0
+    exe = next((shutil.which(b) for b in WHISPER_BINS if shutil.which(b)), None)
+    if not exe:
+        die(f"whisper-cli not found — {DOCTOR_HINT}", 3)
+    model, language = resolve_model(a.model, a.config)
+    language = a.language or language
+    if not model:
+        die("no whisper model configured — choose one with `brain_doctor.py whisper-models`, "
+            "then `brain_doctor.py set-whisper-model --config brain.toml --model <path>`")
+    if not os.path.isfile(model):
+        die(f"whisper model not found: {model} — see `brain_doctor.py whisper-models`")
+    work = os.path.dirname(os.path.abspath(a.probe))
+    key = {"video_sha": sha_file(probe["video"]), "model": os.path.basename(model),
+           "model_bytes": os.path.getsize(model), "language": language}
+    vtt, asr_json = os.path.join(work, "transcript.vtt"), os.path.join(work, "asr.json")
+    if os.path.exists(vtt) and os.path.exists(asr_json) and json.loads(Path(asr_json).read_text()) == key:
+        print(f"{probe['source']}: transcript unchanged (cache hit) -> {vtt}")
+        return 0
+    with tempfile.TemporaryDirectory(dir=work, prefix=".asr-") as td:
+        wav = os.path.join(td, "audio.wav")
+        subprocess.run([need_tool("ffmpeg"), "-v", "error", "-y", "-i", probe["video"], "-vn",
+                        "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav], check=True)
+        out = os.path.join(td, "out")
+        subprocess.run([exe, "-m", model, "-f", wav, "-l", language, "-ovtt", "-of", out, "-np"], check=True)
+        os.replace(out + ".vtt", vtt)  # only a complete transcript ever lands
+    atomic_write(asr_json, json.dumps(key, indent=2) + "\n")
+    print(f"{probe['source']}: {len(read_cues(vtt))} cue(s) via whisper.cpp ({key['model']}) -> {vtt}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="meeting recordings -> the visual lane")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -540,6 +594,12 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--parsed", required=True); g.add_argument("--manifest")
     g.add_argument("--assets-root"); g.add_argument("--work")
     g.set_defaults(func=cmd_forget)
+    t = sub.add_parser("transcribe", help="whisper.cpp transcript (only when probe chose asr)")
+    t.add_argument("--probe", required=True)
+    t.add_argument("--model", help="ggml model path (default: brain.toml [video].whisper_model)")
+    t.add_argument("--config", help="brain.toml")
+    t.add_argument("--language", help="override [video].language (default auto)")
+    t.set_defaults(func=cmd_transcribe)
     return ap
 
 
