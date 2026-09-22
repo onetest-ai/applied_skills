@@ -1,6 +1,6 @@
 ---
 name: visual-parse
-description: Use when a corpus has slide decks / diagram-heavy pages (flows, timelines, circle process charts, complex tables) that a text extractor mangles. Renders each page to an image, flags the visual ones, has a low-tier VISION model transcribe them to faithful structured Markdown, and extracts real table grids deterministically. Two representations per page — a semantic transcription (for retrieval) and the full factual content (image + verbatim text + table cells, for answering). Feeds the knowledge-index.
+description: Use when a corpus has slide decks / diagram-heavy pages (flows, timelines, circle process charts, complex tables) that a text extractor mangles, or meeting recordings whose shared screens carry context a transcript alone would lose. Renders each page to an image, flags the visual ones, has a low-tier VISION model transcribe them to faithful structured Markdown, and extracts real table grids deterministically. Two representations per page — a semantic transcription (for retrieval) and the full factual content (image + verbatim text + table cells, for answering). Feeds the knowledge-index.
 ---
 
 # visual-parse (the vision lane)
@@ -134,8 +134,88 @@ does not sanitize HTML before rendering (stripping `<script>` breaks the JS-rend
 that are much of the corpus, and a partial sanitizer only gives false confidence), so there is
 no mitigation here to rely on.
 
+## Meeting recordings (video)
+
+A recording is a continuous medium like HTML, so this lane substitutes a **frame-selection
+step** in front of the same transcribe→assemble pipeline, and adds the transcript. One
+recording becomes ONE parsed document: transcript turns and on-screen frames interleaved by
+time, each frame carrying its image marker and every interval it was on screen.
+
+**Transcript source.** `probe` picks, in order:
+1. a same-stem `.vtt`, `.srt` or `.docx` next to the video (`standup.mp4` + `standup.vtt`),
+   in that priority — a same-stem `.docx` only if it reads as a Teams transcript (at least one
+   timestamped turn); same-name notes or an agenda are skipped;
+2. a Microsoft Teams transcript `.docx` in the same folder whose **first line is the
+   recording's file name without extension** — Teams names the transcript after the
+   meeting (`Acme_ Billing.docx`), not after the recording, so it is paired by its title.
+   If two `.docx` files claim the same recording, `probe` stops (exit 1) instead of guessing.
+
+For any other transcript, pass it explicitly: `probe … --transcript-file <path>` (a `.vtt`,
+`.srt` or Teams `.docx`; it cannot be combined with `--transcript asr|none`). A `.docx` that
+cannot be opened (typically a truncated download) is never used: as the chosen transcript
+`probe` exits 1 with `not a readable Word file (truncated download?)`; as a mere neighbour
+it is listed in `probe.json`'s `warnings` — tell the user, and re-download it rather than
+letting whisper transcribe a meeting that already has a transcript.
+
+Only when no transcript exists is one generated with whisper.cpp, into
+`<project>/video/<slug>/transcript.vtt` — never into the corpus. No audio and no sidecar →
+a frames-only document (`transcript: none`).
+
+**Before the first recording**, run the doctor; it names exactly what is missing:
+```bash
+"$PY" <skills>/knowledge-pipeline/brain_doctor.py --config brain.toml
+```
+If it reports `whisper-cli` REQUIRED, tell the user which videos lack a transcript, show
+`brain_doctor.py whisper-models`, ask which model to use (recommend `small.en`, or `small`
+for non-English meetings), and — only after they approve — run the printed `curl` download,
+then `brain_doctor.py set-whisper-model --config brain.toml --model <path> [--language en]`.
+Tell the user to install missing system tools themselves (e.g. `! brew install ffmpeg
+whisper-cpp`); never install them yourself.
+
+### Sequence (per recording; `<rel>` is its source-relative path, `<root>` the source root)
+
+```bash
+VC=<skills>/visual-parse/video_capture.py
+"$PY" $VC probe --video <root>/<rel> --rel-to <root> --work <project>/video --manifest <project>/parsed/manifest.json
+# only when probe.json says "transcript": "asr":
+"$PY" $VC transcribe --probe <project>/video/<slug>/probe.json --config <project>/brain.toml
+"$PY" $VC frames --video <root>/<rel> --rel-to <root> --assets-root <project>/assets
+"$PY" <skills>/visual-parse/vision_prep.py --render-dir <project>/assets/<slug> --out <run>/vision --db <db>
+# 🤖 dispatch vision subagents on <run>/vision/batch_k.json → result_k.json (same as decks;
+#    the instructions tell them to answer <!-- no-content --> for people-only frames)
+"$PY" $VC assemble --probe <project>/video/<slug>/probe.json --render-dir <project>/assets/<slug> \
+    --results <run>/vision --parsed <project>/parsed --db <db>
+```
+`<slug>` is printed by `probe` and `frames` (`slug=…`): the source path components
+kebab-cased and joined by `__`, then `--<ext>` — `m/standup.mp4` → `m__standup--mp4`. The
+extension suffix keeps a recording out of a same-stem deck's asset dir (`m/standup.pptx` →
+`m__standup`); `frames` refuses, and `forget` leaves alone, any dir whose `pages.json` is not
+a video render. `assemble` refuses while any kept frame lacks a VLM result — never hand-edit
+around that. When a recording is deleted from the corpus:
+`"$PY" $VC forget --source <rel> --parsed <project>/parsed --assets-root <project>/assets --work <project>/video`.
+
+**Sidecars are retired automatically.** `assemble` records the sidecar as
+`consumed-by-video` and deletes its stale parsed doc (if an earlier parse pass made one).
+On later runs `parse_corpus.py` skips that file (`.vtt`, `.srt` or `.docx`) on its own — but
+only while it is listed in the `inputs` of a `video-lane` manifest entry whose parsed doc
+exists. Consumption follows what `assemble` actually used, not file names: a recording
+assembled with `--transcript asr` consumes nothing. No flag: a corpus that never ran this
+lane parses exactly as before, and a recording's transcript is indexed as its own document
+until the recording is assembled.
+
+**Tuning.** `frames --min-hold` (seconds a frame must stay, default 3), `--diff` (cut
+threshold, 0.08), `--still` (stillness, 0.015 — raise it if slides with a live cursor are
+missed), `--max-per-min` (6), `--max-frames` (300).
+
+### Privacy position — partially mitigated
+
+Frames the VLM marks no-content (faces, speaker grids) have their PNGs deleted by
+`assemble`. Kept frames can still show chat panels, notifications or other windows that were
+on screen; this lane does not detect or redact them. Do not ingest a recording whose screen
+content you would not index as a document.
+
 ## How the classifier / retrieval change
 Nothing in the classifier or retriever changes — they just get **faithful input** instead of fragments. The classify agent now sees `ProjectAlpha Vision & Service Design Blueprint / Future State Architecture / …` instead of `Confidential — Page 4`, so tagging, embeddings, and the related layer all improve for free. For genuinely visual edge cases, `get_evidence` returns the page asset path for a capable local client to open and reason over multimodally.
 
 ## Deps
-`pymupdf` (render + text + `find_tables`) — torch-free. **LibreOffice `soffice`** (system dep) for .pptx/.docx. A cheap vision model for the transcription step (like the taxonomy/classify agents — meaning is agentic).
+`pymupdf` (render + text + `find_tables`) — torch-free. **LibreOffice `soffice`** (system dep) for .pptx/.docx. **`ffmpeg`/`ffprobe`** (system dep) for meeting recordings. **`whisper-cli`** (whisper.cpp, system dep) plus a ggml model — only for recordings that have no transcript (same-stem `.vtt`/`.srt`/`.docx`, or a Teams `.docx` titled with the recording name). A cheap vision model for the transcription step (like the taxonomy/classify agents — meaning is agentic).

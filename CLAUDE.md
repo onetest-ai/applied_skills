@@ -32,6 +32,9 @@ uv run --with-requirements bundles/brain/requirements.txt --with pytest python -
 ./install.sh --target claude            # project-local .claude/skills
 ./install.sh --target all --user        # ~/.claude/skills etc.
 ./install.sh --deps                     # create the venv the brain scripts need
+
+# What system tools does this Brain need? (report only; exit 1 = something required is missing)
+uv run --with-requirements bundles/brain/requirements.txt python bundles/brain/skills/knowledge-pipeline/brain_doctor.py --config <project>/brain.toml
 ```
 
 There is no build step and no linter config. `uv` resolves dependencies per invocation; nothing is installed globally.
@@ -46,11 +49,13 @@ There is no build step and no linter config. `uv` resolves dependencies per invo
 
 **Consume (kb):** skills identify a Brain by its **tool surface**, never by MCP server name — users register Brains under any name, and Claude Code allow-rules cannot glob the server segment.
 
+Tool-dependent tests (needing `ffmpeg`/`ffprobe`/`whisper-cli`) skip rather than fail, and the pytest run ends with a `MISSING SYSTEM TOOLS` warning section listing what was skipped.
+
 ### Cross-file invariants
 
 These are the things that take several files to see, and that tests pass while violating:
 
-**The visual-lane artifact layout is a contract, not an implementation detail.** `render_pages.py` writes, per document slug, `pNN.png`, `pNN.txt` (verbatim text sidecar), optional `pNN.tables.md` (deterministic table grids) and `pages.json`; `vision_prep.py` reads exactly that and hands batches to a vision model; `vision_assemble.py` turns the results into the parsed Markdown that gets indexed. Anything that becomes a second producer of that layout must match it in **field values, not just key names** — `image` is slug-relative (`<slug>/pNN.png`) because `vision_prep` joins it onto the *parent* of the render dir, so a schema check passes while a wrong value breaks every image path.
+**The visual-lane artifact layout is a contract, not an implementation detail.** `render_pages.py` writes, per document slug, `pNN.png`, `pNN.txt` (verbatim text sidecar), optional `pNN.tables.md` (deterministic table grids) and `pages.json`; `vision_prep.py` reads exactly that and hands batches to a vision model; `vision_assemble.py` turns the results into the parsed Markdown that gets indexed. There are three producers — `render_pages.py`, `html_capture.py` and `video_capture.py` — and any further one must match the layout in **field values, not just key names** — `image` is slug-relative (`<slug>/pNN.png`) because `vision_prep` joins it onto the *parent* of the render dir, so a schema check passes while a wrong value breaks every image path.
 
 **`chunking.py` exists twice and the copies must stay byte-identical** (`knowledge-index/` and `corpus-taxonomy-extraction/`), so a retrieval chunk is exactly the vault note a human sees. Change one, change both.
 
@@ -71,6 +76,11 @@ These are the things that take several files to see, and that tests pass while v
 **Health plan items carry a public `fallback: true`.** `health.py` marks a safe default (no usable agent fix) with an internal `_fallback`; `build_plan` counts it for the context line, then replaces it with `fallback: true` (present only when true). `review_ui.html` relies on that field to keep fallbacks out of **Accept all remaining** and its counts; dropping or renaming it in the plan makes the app batch-accept defaults as if they were recommendations.
 
 **`meta` carries `goal`, `audience` and optional `name`.** `write_meta` UPSERTs `goal`/`audience` unconditionally from their source files, but `name` **only when `name.txt` is non-empty** — no existing project has one, and an unconditional write would clear a `meta.name` set by hand. Do not "tidy" that asymmetry into consistency.
+
+**`video_capture.py` is the third producer of the visual-lane layout** (after `render_pages.py` and `html_capture.py`). Its `pages.json` matches `render_pages.py`'s shape (slug-relative `image`, `flagged: true`) plus `medium: "video"`, `t_start`/`t_end`/`shown_at`, and `dropped` once `assemble` has deleted a no-content frame. Three things only hold across files:
+- **Slug namespace.** A recording's slug is `video_slug` = `doc_slug(rel)` + `--<ext>` (`m/standup.mp4` → `m__standup--mp4`), because `doc_slug` drops the extension and a same-stem deck (`m/standup.pptx` → `m__standup`) would otherwise share — and lose — its asset dir. `frames` refuses and `forget` skips any dir whose `pages.json` is not `medium: video`. Do not "unify" the video slug back onto `doc_slug`.
+- **Per-item medium.** Every `vision_prep` batch item carries `medium` (`video` or `document`), and the no-content gate applies only to `video` items. A global gate lets a deck slide of team photos be answered `<!-- no-content -->`, which `page_render` caches forever and `vision_assemble` emits empty.
+- **Manifest-gated sidecar consumption.** `parse_corpus` skips a file (as `consumed-by-video`) only when it is listed in the `inputs` of a `method: "video-lane"` entry in the out dir's manifest whose `md` exists — keyed on `inputs`, never on file names, because a Teams `.docx` transcript is named after the meeting, not the recording (it is paired by its first paragraph), and a video assembled with `--transcript asr` has no sidecar in `inputs` and consumes nothing. There is no flag, so a corpus that never ran the video lane parses byte-identically. `assemble` writes that consumed entry and deletes the sidecar's stale parsed doc in the same step. The entry is what lets `brain_sync` retire the old transcript doc — and only while the video doc exists.
 
 ## Conventions
 

@@ -22,6 +22,7 @@ class LibreOfficeIsolationTests(unittest.TestCase):
                 calls.append(argv)
                 outdir = Path(argv[argv.index("--outdir") + 1])
                 (outdir / "deck.pdf").write_bytes(b"pdf")
+                return P.subprocess.CompletedProcess(argv, 0, stdout=None, stderr="")
             with patch.object(P, "_soffice", return_value="soffice"), \
                  patch.object(P.subprocess, "run", side_effect=fake_run), \
                  patch.object(P, "parse_pdf_pymupdf", return_value="parsed"):

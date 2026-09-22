@@ -15,6 +15,8 @@ Writes one .md per source file plus a manifest.json.
 
 Usage:
   parse_corpus.py --corpus <dir> --out <dir> [--xlsx-max-mb 20] [--sample-rows 8]
+A file that cannot be parsed is reported in one `[ERR] <file>: <reason>` line and an
+`error` manifest entry; pass --verbose for the full traceback.
 """
 import argparse, json, os, shutil, subprocess, sys, tempfile, warnings, traceback
 from pathlib import Path
@@ -48,9 +50,17 @@ def parse_office_pymupdf(path):
     tmp = tempfile.mkdtemp(prefix="parse_")
     profile = tempfile.mkdtemp(prefix="parse_soffice_")
     try:
-        subprocess.run([so, f"-env:UserInstallation={Path(profile).as_uri()}", "--headless", "--convert-to", "pdf", "--outdir", tmp, path],
-                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        r = subprocess.run([so, f"-env:UserInstallation={Path(profile).as_uri()}", "--headless", "--convert-to", "pdf", "--outdir", tmp, path],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors="replace")
         pdf = os.path.join(tmp, os.path.splitext(os.path.basename(path))[0] + ".pdf")
+        # soffice can also exit 0 without writing a PDF; either way the file is the
+        # problem, and the command line is noise the user can't act on.
+        if r.returncode != 0 or not os.path.exists(pdf):
+            lines = [ln.strip() for ln in (r.stderr or "").splitlines() if ln.strip()]
+            # soffice prefixes unrelated warnings (Fontconfig, Java); its verdict is the "Error" line
+            tail = " ".join([ln for ln in lines if "error" in ln.lower()][-2:] or lines[-1:])
+            raise RuntimeError("soffice could not convert it — not a readable Office file (truncated download?)"
+                               + (f"; soffice said: {tail}" if tail else ""))
         return parse_pdf_pymupdf(pdf)
     finally:
         shutil.rmtree(profile, ignore_errors=True)
@@ -332,6 +342,49 @@ def _parse_text(path):
         return f.read().strip()
 
 
+def _video_lane_consumed(out):
+    """``{input_rel: video_rel}`` (``/``-separated) for the transcripts the video lane has
+    consumed into THIS out dir.
+
+    Read from the out dir's manifest as it stands BEFORE this run's merge: every entry
+    with ``method == "video-lane"`` whose ``md`` exists contributes its ``inputs`` other
+    than the video itself. Consumption is keyed on what the video lane actually used, not
+    on file names — a Teams ``.docx`` transcript is named after the meeting, not the
+    recording — so a video assembled with ``--transcript asr`` (no sidecar in ``inputs``)
+    consumes nothing, a corpus that never ran the video lane parses exactly as before,
+    and a video doc that has since been removed gives its transcript back.
+    """
+    path = os.path.join(out, "manifest.json")
+    if not os.path.exists(path):
+        return {}
+    with open(path) as f:
+        data = json.load(f)
+    consumed = {}
+    for e in data if isinstance(data, list) else []:
+        if not (isinstance(e, dict) and e.get("method") == "video-lane" and e.get("source")
+                and e.get("md") and os.path.isfile(os.path.join(out, e["md"]))):
+            continue
+        video = e["source"].replace(os.sep, "/")
+        for inp in e.get("inputs") or []:
+            inp = str(inp).replace(os.sep, "/")
+            if inp != video:
+                consumed[inp] = video
+    return consumed
+
+
+def _merge_manifest(path, fresh, allow):
+    """Keep entries this run did not re-derive (other formats, the video lane); replace the rest."""
+    old = []
+    if os.path.exists(path):
+        with open(path) as f:
+            old = json.load(f)
+    kept = [e for e in old if os.path.splitext(e.get("source", ""))[1].lower() not in allow]
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(kept + fresh, f, indent=2)
+    os.replace(tmp, path)
+
+
 HTML_MIN_TEXT = 220   # mirrors render_pages.py's --min-text 220 rather than inventing a
                       # second notion of "too little text"; tunable per corpus via min_text
 
@@ -399,10 +452,13 @@ def main(argv=None):
                     help="comma-separated extensions (no dot) to include")
     ap.add_argument("--merge-cues", type=int, default=1,
                     help="join N consecutive same-speaker VTT/SRT cues into one chunk (default: 1 = per-cue)")
+    ap.add_argument("--verbose", action="store_true",
+                    help="print the full traceback for a file that fails to parse (default: one line per file)")
     a = ap.parse_args(argv)
     allow = {"." + e.strip().lower().lstrip(".") for e in a.formats.split(",") if e.strip()}
     os.makedirs(a.out, exist_ok=True)
     manifest = []
+    consumed = _video_lane_consumed(a.out)
     for root, _, files in os.walk(a.corpus):
         for fn in sorted(files):
             if fn.startswith(".") or fn.startswith("~$"):
@@ -411,6 +467,15 @@ def main(argv=None):
             rel = os.path.relpath(src, a.corpus)
             ext = os.path.splitext(fn)[1].lower()
             if ext not in allow:
+                continue
+            if rel.replace(os.sep, "/") in consumed:
+                # The video lane already owns this transcript (see _video_lane_consumed).
+                manifest.append({"source": rel, "skipped": True, "method": "consumed-by-video",
+                                 "consumed_by": consumed[rel.replace(os.sep, "/")]})
+                # Remove stale parsed doc from a previous parse run
+                stale = os.path.join(a.out, rel.replace(os.sep, "__") + ".md")
+                if os.path.exists(stale):
+                    os.remove(stale)
                 continue
             try:
                 md, method = parse_one(src, a.xlsx_max_mb, a.sample_rows, merge_cues=a.merge_cues)
@@ -427,10 +492,10 @@ def main(argv=None):
                 print(f"[ok] {method:20} {len(md):>8} chars  {rel}", file=sys.stderr)
             except Exception as e:
                 print(f"[ERR] {rel}: {e}", file=sys.stderr)
-                traceback.print_exc(file=sys.stderr)
+                if a.verbose:
+                    traceback.print_exc(file=sys.stderr)
                 manifest.append({"source": rel, "error": str(e)})
-    with open(os.path.join(a.out, "manifest.json"), "w") as f:
-        json.dump(manifest, f, indent=2)
+    _merge_manifest(os.path.join(a.out, "manifest.json"), manifest, allow)
     ok = [m for m in manifest if "error" not in m]
     print(f"\nparsed {len(ok)}/{len(manifest)} files -> {a.out}", file=sys.stderr)
 

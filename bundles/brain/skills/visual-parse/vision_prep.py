@@ -11,13 +11,39 @@ table is skipped (never re-transcribed) — this is what makes updates cheap.
 
 Reads <render-dir>/pages.json (+ p*.tables.md). Writes:
   <out>/instructions.md
-  <out>/batch_<k>.json   [{img_sha, image, page, n_tables, tables_md, hint}]
+  <out>/batch_<k>.json   [{img_sha, image, page, n_tables, tables_md, hint, medium}]
+  (`medium` is the render dir's pages.json medium — "video" for meeting-recording frames,
+   else "document"; the no-content gate in instructions.md applies per item, by medium)
 
 Usage:
   vision_prep.py --render-dir <assets>/<slug> [--render-dir ...] --out <dir>
                  [--db K.sqlite] [--batches 4]
 """
 import argparse, glob, json, os, sqlite3
+
+INSTRUCTIONS = (
+    "# Transcribe each slide/page image to FAITHFUL structured Markdown\n\n"
+    "For every page below, open its `image` and transcribe what is actually there — "
+    "preserve STRUCTURE, do not summarize away detail and do not invent:\n"
+    "- a process/flow → an ORDERED list of stages with their sub-items, and the sequence (X → Y)\n"
+    "- a timeline/Gantt → a TABLE (rows = activities, columns = the periods/dates shown)\n"
+    "- a diagram → spell out the relationships (A contains B; C precedes D)\n"
+    "- if the page has an extracted table (`tables_md` provided), TRUST those cells for numbers; "
+    "your job is the surrounding meaning/labels, not re-reading the grid\n"
+    "- start with a `# <slide title>` line.\n\n"
+    "Output ONE JSON file `result_<k>.json` mapping each page's `img_sha` -> its Markdown string.\n"
+)
+
+VIDEO_GATE = (
+    "\n## Meeting-recording frames (`medium: video`)\n"
+    "This section applies ONLY to items whose `medium` is `video` (key frames from a meeting "
+    "recording). For such an item, if the frame shows ONLY people, a speaker grid, a webcam "
+    "view, a blank screen or a transition, output exactly `<!-- no-content -->` for it and "
+    "nothing else. Otherwise transcribe only what is on screen, never what might have been "
+    "said.\n"
+    "Never answer `<!-- no-content -->` for an item whose `medium` is `document` (a slide or "
+    "page): transcribe it as above, even when it shows only photos of people.\n"
+)
 
 def cached_shas(db):
     if not db or not os.path.exists(db):
@@ -36,31 +62,23 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     done = cached_shas(a.db)
 
-    open(os.path.join(a.out, "instructions.md"), "w").write(
-        "# Transcribe each slide/page image to FAITHFUL structured Markdown\n\n"
-        "For every page below, open its `image` and transcribe what is actually there — "
-        "preserve STRUCTURE, do not summarize away detail and do not invent:\n"
-        "- a process/flow → an ORDERED list of stages with their sub-items, and the sequence (X → Y)\n"
-        "- a timeline/Gantt → a TABLE (rows = activities, columns = the periods/dates shown)\n"
-        "- a diagram → spell out the relationships (A contains B; C precedes D)\n"
-        "- if the page has an extracted table (`tables_md` provided), TRUST those cells for numbers; "
-        "your job is the surrounding meaning/labels, not re-reading the grid\n"
-        "- start with a `# <slide title>` line.\n\n"
-        "Output ONE JSON file `result_<k>.json` mapping each page's `img_sha` -> its Markdown string.\n")
-
-    items = []
+    items, has_video = [], False
     for rd in a.render_dir:
         pages = json.load(open(os.path.join(rd, "pages.json")))
+        has_video = has_video or pages.get("medium") == "video"
         assets_root = os.path.dirname(rd.rstrip("/"))
         for p in pages["pages"]:
-            if not p["flagged"] or p["img_sha"] in done:
+            if not p["flagged"] or p.get("dropped") or p["img_sha"] in done:
                 continue
             tb = os.path.join(rd, f"p{p['page']:02d}.tables.md")
             items.append({"img_sha": p["img_sha"],
                           "image": os.path.join(assets_root, p["image"]),
                           "page": p["page"], "n_tables": p.get("n_tables", 0),
                           "tables_md": open(tb).read() if os.path.exists(tb) else "",
-                          "hint": f"{pages.get('doc','')} p{p['page']}"})
+                          "hint": f"{pages.get('doc','')} p{p['page']}",
+                          "medium": pages.get("medium", "document")})
+
+    open(os.path.join(a.out, "instructions.md"), "w").write(INSTRUCTIONS + (VIDEO_GATE if has_video else ""))
     n = max(1, a.batches)
     if not items:
         print(f"no flagged/uncached pages -> {a.out}"); return

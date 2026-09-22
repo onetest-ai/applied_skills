@@ -60,6 +60,16 @@ Source modes:
 
 ## Update workflow
 
+### 0. Run the doctor
+
+```bash
+"$PY" "$SKILLS/knowledge-pipeline/brain_doctor.py" --config brain.toml
+```
+
+Stop on exit 1 and show the user the missing items and their install commands before doing
+any registry or source work. If it reports `whisper-cli` REQUIRED, run the model question
+from `visual-parse` → "Meeting recordings" before continuing.
+
 ### 1. Produce a read-only status report
 
 ```bash
@@ -125,14 +135,37 @@ provider) is available on this maintenance pass, re-run that source through the 
 check for `fidelity: degraded` headers in the parsed corpus and treat them as a punch list, not
 a permanent state.
 
+**Meeting recordings.** A recording has no single "changed" signal — the video, its sidecar
+transcript, or both can change independently — so what to re-run depends on which changed.
+See `visual-parse` → "Meeting recordings" for the full per-recording command sequence
+(`probe` / `transcribe` / `frames` / `vision_prep` → 🤖 → `assemble` / `forget`).
+
+| What changed | Re-run |
+|---|---|
+| Video content | `probe`, `transcribe` (only if `probe.json` says `asr`), `frames`, VLM pass, `assemble` |
+| Sidecar `.vtt`/`.srt`/`.docx` (incl. a Teams `.docx` paired by its title) changed or added | `probe`, `assemble` |
+| Sidecar removed | `probe`, `transcribe`, `assemble` |
+| Video removed | `./brain source remove <source-id> --yes` (tombstone), then `video_capture.py forget` |
+
+**Existing projects must add the video globs to `brain.toml`'s `include` list**, the same way
+an existing project needed `"**/*.html"`/`"**/*.htm"` added for the HTML branch — the doctor
+warns when it finds videos in the corpus that no registered root's `include` matches.
+
 **VTT/SRT sources require two separate parse passes** — `--merge-cues` only applies to transcripts and must not be passed for PDF/PPTX/DOCX:
 
 ```bash
-# Pass 1 — transcripts only
+# Pass 1 — transcripts only. A recording's transcript is skipped automatically (recorded as
+# consumed-by-video) while it is in the `inputs` of that recording's video-lane manifest entry
+# and the video doc exists in parsed/ — the same holds for a Teams .docx in pass 2; every
+# other file, including one next to a video this Brain does not ingest, parses as before.
 "$PY" "$SKILLS/corpus-taxonomy-extraction/parse_corpus.py" --corpus <root> --out parsed/ --formats vtt,srt --merge-cues 10
 # Pass 2 — narrative docs
 "$PY" "$SKILLS/corpus-taxonomy-extraction/parse_corpus.py" --corpus <root> --out parsed/ --formats pptx,docx,pdf,md,markdown,txt,html,htm
 ```
+
+**`plan` reports a `superseded_by_video` key.** These are transcript documents retired
+because their video's parsed document now supersedes them — a deletion by design, not drift.
+Do not treat them as an unexpected removal when reviewing the parsed-store delta below.
 
 ### 4. Review and apply parsed-store delta
 

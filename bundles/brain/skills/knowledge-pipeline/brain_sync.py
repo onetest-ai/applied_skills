@@ -228,7 +228,30 @@ def scan(parsed):
     return out
 
 
-def delta(c, parsed, *, mutate_schema=True):
+def _doc_id_for(rel):
+    return rel.replace("\\", "/").replace("/", "__") + ".md"
+
+
+def superseded_docs(parsed, manifest, now):
+    """Transcript docs retired by the video lane: the manifest says the sidecar was
+    consumed-by-video AND the consuming video's parsed doc exists. Anything else stays blocked."""
+    path = Path(manifest) if manifest else Path(parsed) / "manifest.json"
+    if not path.is_file():
+        return set()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        return set()
+    video_md = {e["source"]: e["md"] for e in data if isinstance(e, dict) and e.get("md") and e.get("source")}
+    out = set()
+    for e in data:
+        if isinstance(e, dict) and e.get("method") == "consumed-by-video" and e.get("source"):
+            md = video_md.get(e.get("consumed_by"))
+            if md and md in now:
+                out.add(_doc_id_for(e["source"]))
+    return out
+
+
+def delta(c, parsed, *, mutate_schema=True, manifest=None):
     if mutate_schema:
         ensure_documents(c)
     elif not _has(c, "synced_files"):
@@ -248,14 +271,19 @@ def delta(c, parsed, *, mutate_schema=True):
                WHERE s.state='removed'""")}
     # A tombstoned source is an explicit deletion even when stale parsed output remains.
     effective_now = {doc: meta for doc, meta in now.items() if doc not in removed_linked}
+    # A tombstoned video's own parsed doc must not count as "present" for supersession —
+    # otherwise a stale video doc on disk would silently take its transcript with it.
+    sup = superseded_docs(parsed, manifest, effective_now)
     added = [d for d in effective_now if d not in cur]
     changed = [d for d in effective_now if d in cur and effective_now[d]["sha"] != cur[d]]
     unchanged = [d for d in effective_now if d in cur and effective_now[d]["sha"] == cur[d]]
     missing = [d for d in cur if d not in effective_now]
-    deleted, blocked, legacy = [], [], []
+    deleted, blocked, legacy, superseded = [], [], [], []
     for doc in missing:
         sid = source_for.get(doc)
-        if doc in removed_linked:
+        if doc in sup:
+            deleted.append(doc); superseded.append(doc)
+        elif doc in removed_linked:
             deleted.append(doc)
         elif sid and have_sources:
             blocked.append(doc)
@@ -266,7 +294,8 @@ def delta(c, parsed, *, mutate_schema=True):
     return now, {"added": sorted(added), "changed": sorted(changed),
                  "unchanged": sorted(unchanged), "deleted": sorted(deleted),
                  "blocked_missing_parsed": sorted(blocked),
-                 "legacy_unlinked_deleted": sorted(legacy)}
+                 "legacy_unlinked_deleted": sorted(legacy),
+                 "superseded_by_video": sorted(superseded)}
 
 
 def cmd_plan(a):
@@ -274,9 +303,9 @@ def cmd_plan(a):
     if not db.is_file():
         raise FileNotFoundError(f"knowledge store does not exist: {db}")
     c = sqlite3.connect(db.as_uri() + "?mode=ro", uri=True)
-    _, d = delta(c, a.parsed, mutate_schema=False)
+    _, d = delta(c, a.parsed, mutate_schema=False, manifest=a.manifest)
     _, unmanaged = source_ids(c, a.parsed, a.manifest, a.root_key, a.strict_sources)
-    for k in ("added", "changed", "deleted", "blocked_missing_parsed", "unchanged"):
+    for k in ("added", "changed", "deleted", "superseded_by_video", "blocked_missing_parsed", "unchanged"):
         print(f"{k:9} {len(d[k])}" + ("" if k == "unchanged" else "  " + ", ".join(x[:60] for x in d[k][:12])
                                        + (" …" if len(d[k]) > 12 else "")))
     reclass = d["added"] + d["changed"]
@@ -305,7 +334,7 @@ def cmd_apply(a):
         print(f"snapshot: {snap}")
     c = K.connect(a.db)
     K._ensure_schema(c, a.dim)
-    now, d = delta(c, a.parsed)
+    now, d = delta(c, a.parsed, manifest=a.manifest)
     links, unmanaged = source_ids(c, a.parsed, a.manifest, a.root_key, a.strict_sources)
     if d["blocked_missing_parsed"]:
         c.close()

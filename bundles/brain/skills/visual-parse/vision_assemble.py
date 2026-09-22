@@ -34,6 +34,19 @@ def load_cache(db):
         return {}
     return {sha: md for sha, md in c.execute("SELECT img_sha, md FROM page_render")}
 
+def persist_page_render(db, pages_doc, results):
+    """Persist fresh VLM transcriptions into the page_render cache, keyed by img_sha,
+    so unchanged pages (same sha) are never re-transcribed on the next build/update."""
+    if not (db and results and os.path.exists(db)):
+        return
+    c = sqlite3.connect(db)
+    c.execute("CREATE TABLE IF NOT EXISTS page_render(img_sha TEXT PRIMARY KEY, doc TEXT, page INT, md TEXT)")
+    by_sha = {p["img_sha"]: p["page"] for p in pages_doc["pages"]}
+    for sha, md in results.items():
+        c.execute("INSERT OR REPLACE INTO page_render VALUES(?,?,?,?)",
+                  (sha, pages_doc.get("doc", ""), by_sha.get(sha), md))
+    c.commit(); c.close()
+
 def demote(md):
     """Keep the page as a single top-level section: push VLM '#'/'##' to '###'."""
     out = []
@@ -75,16 +88,7 @@ def main():
     assets_rel = a.assets_rel or pages.get("slug") or os.path.basename(a.render_dir.rstrip("/"))
     results = load_results(a.results)
     vlm = {**load_cache(a.db), **results}                   # results override cache
-    # persist fresh transcriptions into the page_render cache so unchanged pages
-    # (same img_sha) are never re-transcribed on the next build/update
-    if a.db and results and os.path.exists(a.db):
-        c = sqlite3.connect(a.db)
-        c.execute("CREATE TABLE IF NOT EXISTS page_render(img_sha TEXT PRIMARY KEY, doc TEXT, page INT, md TEXT)")
-        by_sha = {p["img_sha"]: p["page"] for p in pages["pages"]}
-        for sha, md in results.items():
-            c.execute("INSERT OR REPLACE INTO page_render VALUES(?,?,?,?)",
-                      (sha, pages.get("doc", ""), by_sha.get(sha), md))
-        c.commit(); c.close()
+    persist_page_render(a.db, pages, results)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
 
     def body_and_title(p):

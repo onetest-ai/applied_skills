@@ -28,6 +28,14 @@ When the user wants to **create a brain** / "get started" / doesn't yet have a p
 - **Deployment target** — *"Will this brain be consumed locally (an agent queries the local store), or served as a hosted MCP to remote clients like Copilot Studio?"* Ask this now: `hosted-mcp` needs auth/TLS, an immutable-image deployment profile, and server-shaped operator docs, so choosing up front avoids rewriting the operator guide later. Recorded in `brain.toml` `[deployment].target`; changeable later.
 
 **2. Scaffold + preflight + scan** (deterministic):
+
+First, run the doctor against the docs folder — `brain.toml` does not exist yet, so point it at
+the corpus directly: `"$PY" .../knowledge-pipeline/brain_doctor.py --corpus <docs>`.
+If it exits 1, show the user the missing items and their install commands and stop until they
+are resolved. If it reports `whisper-cli` REQUIRED, note which videos lack a transcript and
+hold the whisper-model question until after `scaffold` below (`set-whisper-model` writes into
+`brain.toml`, which scaffold creates).
+
 ```bash
 python .../knowledge-pipeline/onboard.py scaffold \
   --project <proj> --goal "<goal>" [--name "<display name>"] [--audience "<roles/personas>"] --docs <docs> [--reporting <xlsx-dir>] \
@@ -44,6 +52,8 @@ This creates the project layout (`schema/ parsed/ taxonomy/ classify/ vision/ ma
 **Canonical project artifacts** (what later maintenance relies on): `goal.txt` is the authoritative analytical goal, `brain.toml` the source registry, `BRAIN.md` the build plan. A host may add its own operator guide (e.g. an `AGENTS.md`), but that never replaces `goal.txt` — keep the goal in `goal.txt` so any agent/operator can recover it. If you find a project whose goal lives only inside a host doc, write it back to `goal.txt`.
 
 Never overwrite an existing `brain.toml`. After scaffold, read it back, explain each root/mode to the user, and adjust modes/includes only with their agreement. Then report missing deps and narrative-vs-reporting counts.
+
+**If the doctor reported `whisper-cli` REQUIRED**, now that `brain.toml` exists run the model question from `visual-parse` → "Meeting recordings" (`brain_doctor.py whisper-models`, the user's choice, then `brain_doctor.py set-whisper-model --config <project>/brain.toml --model <path>`), and re-run `brain_doctor.py --config <project>/brain.toml` to confirm.
 
 **If deps are missing**, install them into the skills' **own isolated venv** (never the project's env) with `uv` via the installer:
 ```bash
@@ -92,8 +102,13 @@ PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-
 # 1a. parse transcripts → Markdown (VTT/SRT corpora — use --merge-cues to join same-speaker cues into speaker turns):
 #     WARNING: omitting --merge-cues produces one chunk per cue (~50-100 chars each), which agents
 #     classify as empty [] and retrieval quality degrades severely. Always pass --merge-cues N > 1 for VTT/SRT.
+#     Recordings' sidecars need no flag: once video_capture.py assemble has produced a recording's
+#     doc, it retires the transcript's doc, and later runs skip that .vtt/.srt/.docx on their own
+#     (keyed on the video-lane manifest entry's `inputs`).
 "$PY" .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats vtt,srt --merge-cues 10
 # 1b. parse narrative docs → Markdown. TEXT pages via pymupdf (torch-free):
+#     If the corpus has meeting recordings, run 1m (below) BEFORE 1b: a Teams transcript .docx is
+#     then consumed by its recording instead of being converted by soffice as an ordinary document.
 "$PY" .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf,md,markdown,txt,html,htm
 #     HTML with no browser degrades to DOM text (fidelity: degraded) via the same command; an
 #     HTML deck needs a browser to capture — see the visual-parse capture step below.
@@ -111,6 +126,10 @@ PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-
 "$PY" .../visual-parse/vision_prep.py --render-dir <project>/assets/<slug> --out <project>/vision --db "$DB"
 #    → 🤖 dispatch VISION subagents (cheap) → vision/result_k.json {img_sha: faithful markdown}
 "$PY" .../visual-parse/vision_assemble.py --render-dir <project>/assets/<slug> --out <project>/parsed/<doc>.md --results <project>/vision --db "$DB"
+# 1m. MEETING RECORDINGS (video) — the visual-parse skill's "Meeting recordings" section has the
+#     full per-recording sequence (probe → transcribe → frames → vision_prep → 🤖 → assemble).
+#     Run it BEFORE 1b when the corpus has recordings (see 1b):
+"$PY" .../visual-parse/video_capture.py probe --video <root>/<rel> --rel-to <root> --work <project>/video --manifest <project>/parsed/manifest.json
 # 2. (optional) induce taxonomy → taxonomy/taxonomy_v0.json  [map→reduce→judge→emit; see that skill]
 #    👤 then the user ratifies it in the review app: corpus-taxonomy-extraction → "A. Draft review"
 #    (plan --mode draft → serve in the background, end your turn → on submit, taxonomy_merge.py --review … --apply
