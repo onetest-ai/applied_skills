@@ -389,6 +389,126 @@ def cmd_frames(a) -> int:
     return 0
 
 
+# ---- assemble / forget ----------------------------------------------------------
+
+
+def doc_name(rel: str) -> str:
+    return rel.replace("/", "__") + ".md"
+
+
+def method_for(probe: dict, work_dir: str) -> str:
+    t = probe["transcript"]
+    if t == "asr":
+        asr = json.loads(Path(work_dir, "asr.json").read_text())
+        stem = os.path.splitext(asr["model"])[0]
+        return f"video-lane (transcript: asr:whisper.cpp:{stem})"
+    return f"video-lane (transcript: {t})"
+
+
+def render_doc(source: str, method: str, slug: str, turns: list[dict], frames: list[tuple]) -> str:
+    items = [(t["start"], 0, t) for t in turns] + [(p["t_start"], 1, (p, md)) for p, md in frames]
+    items.sort(key=lambda x: (x[0], x[1]))
+    out = [f"# SOURCE: {source}\n# method: {method}\n# fidelity: full\n"]
+    seq = 0
+    for _t, kind, obj in items:
+        if kind == 0:
+            seq += 1
+            sp = obj["speaker"]
+            who = f" — {sp}" if sp else ""
+            marker = f"<!-- speaker: {sp} -->\n\n" if sp else ""
+            out.append(f"## {fmt_hms(obj['start'])}{who} (cue {seq})\n\n{marker}{obj['text']}\n")
+        else:
+            p, md = obj
+            n = p["page"]
+            shown = ", ".join(f"{fmt_hms(s)}–{fmt_hms(e)}" for s, e in p["shown_at"])
+            out.append(f"## {fmt_hms(p['t_start'])} · {title_of(md, n)} (frame p{n:02d})\n\n"
+                       f"<!-- image: {slug}/p{n:02d}.png -->\n<!-- on-screen: {shown} -->\n\n"
+                       f"{demote(md.strip())}\n")
+    return "\n".join(out)
+
+
+def _persist_cache(db, pages_doc, results) -> None:
+    if not (db and results and os.path.exists(db)):
+        return
+    c = sqlite3.connect(db)
+    c.execute("CREATE TABLE IF NOT EXISTS page_render(img_sha TEXT PRIMARY KEY, doc TEXT, page INT, md TEXT)")
+    by_sha = {p["img_sha"]: p["page"] for p in pages_doc["pages"]}
+    for sha, md in results.items():
+        c.execute("INSERT OR REPLACE INTO page_render VALUES(?,?,?,?)", (sha, pages_doc.get("doc", ""), by_sha.get(sha), md))
+    c.commit(); c.close()
+
+
+def cmd_assemble(a) -> int:
+    probe = json.loads(Path(a.probe).read_text())
+    work_dir = os.path.dirname(os.path.abspath(a.probe))
+    pj = os.path.join(a.render_dir, "pages.json")
+    pages_doc = json.loads(Path(pj).read_text())
+    if pages_doc.get("medium") != "video":
+        die(f"{pj} is not a video render dir (medium != video)")
+    results = load_results(a.results)
+    vlm = {**load_cache(a.db), **results}
+    live = [p for p in pages_doc["pages"] if not p.get("dropped")]
+    missing = [p["img_sha"] for p in live if p["img_sha"] not in vlm]
+    if missing:
+        die(f"refusing to assemble: {len(missing)} frame(s) have no VLM result "
+            f"(run vision_prep + vision subagents first): {', '.join(missing[:10])}")
+    _persist_cache(a.db, pages_doc, results)
+    if probe["transcript"] == "sidecar":
+        cues = read_cues(probe["sidecar"])
+    elif probe["transcript"] == "asr":
+        vtt = os.path.join(work_dir, "transcript.vtt")
+        if not os.path.exists(vtt):
+            die(f"no ASR transcript at {vtt} — run `video_capture.py transcribe` first")
+        cues = read_cues(vtt)
+    else:
+        cues = []
+    kept = []
+    for p in pages_doc["pages"]:
+        if p.get("dropped"):
+            continue
+        md = vlm[p["img_sha"]].strip()
+        if md == NO_CONTENT:
+            png = os.path.join(a.render_dir, f"p{p['page']:02d}.png")
+            if os.path.exists(png):
+                os.remove(png)  # people-only frames are not retained
+            p["dropped"] = "no-content"
+            continue
+        kept.append((p, md))
+    atomic_write(pj, json.dumps(pages_doc, indent=2) + "\n")
+    dropped = sum(1 for p in pages_doc["pages"] if p.get("dropped") == "no-content")
+    rel = probe["source"]
+    text = render_doc(rel, method_for(probe, work_dir), pages_doc["slug"],
+                      merge_turns(cues, a.merge_cues), kept)
+    atomic_write(os.path.join(a.parsed, doc_name(rel)), text)
+    inputs = [rel] + ([probe["sidecar_source"]] if probe.get("sidecar_source") else [])
+    entries = [{"source": rel, "md": doc_name(rel), "method": "video-lane", "transcript": probe["transcript"],
+                "inputs": inputs, "frames_kept": len(kept), "frames_dropped_no_content": dropped,
+                "frames_capped": bool(pages_doc.get("frames_capped")), "warnings": probe.get("warnings", [])}]
+    if probe.get("sidecar_source"):
+        entries.append({"source": probe["sidecar_source"], "skipped": True,
+                        "method": "consumed-by-video", "consumed_by": rel})
+    upsert_manifest(a.manifest or os.path.join(a.parsed, "manifest.json"), entries)
+    print(f"{rel}: {len(cues)} cue(s), {len(kept)} frame(s) kept, {dropped} dropped -> "
+          f"{os.path.join(a.parsed, doc_name(rel))}")
+    return 0
+
+
+def cmd_forget(a) -> int:
+    manifest = a.manifest or os.path.join(a.parsed, "manifest.json")
+    data = json.loads(Path(manifest).read_text()) if os.path.exists(manifest) else []
+    keep = [e for e in data if e.get("source") != a.source and e.get("consumed_by") != a.source]
+    atomic_write(manifest, json.dumps(keep, indent=2) + "\n")
+    md = os.path.join(a.parsed, doc_name(a.source))
+    if os.path.exists(md):
+        os.remove(md)
+    slug = doc_slug(a.source)
+    for root in (a.assets_root, a.work):
+        if root and os.path.isdir(os.path.join(root, slug)):
+            shutil.rmtree(os.path.join(root, slug))
+    print(f"forgot {a.source}: {len(data) - len(keep)} manifest entr(ies) removed")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="meeting recordings -> the visual lane")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -407,6 +527,19 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--max-per-min", type=int, default=6)
     f.add_argument("--max-frames", type=int, default=300)
     f.set_defaults(func=cmd_frames)
+    s = sub.add_parser("assemble", help="transcript + VLM-gated frames -> one parsed doc")
+    s.add_argument("--probe", required=True); s.add_argument("--render-dir", required=True)
+    s.add_argument("--results", help="dir with the vision subagents' result_*.json")
+    s.add_argument("--parsed", required=True, help="parsed dir (doc name follows parse_corpus)")
+    s.add_argument("--manifest", help="default: <parsed>/manifest.json")
+    s.add_argument("--db", help="knowledge.sqlite — read/write the page_render cache")
+    s.add_argument("--merge-cues", type=int, default=10)
+    s.set_defaults(func=cmd_assemble)
+    g = sub.add_parser("forget", help="remove a deleted recording's parsed doc, manifest entries, assets")
+    g.add_argument("--source", required=True, help="source-relative path of the video")
+    g.add_argument("--parsed", required=True); g.add_argument("--manifest")
+    g.add_argument("--assets-root"); g.add_argument("--work")
+    g.set_defaults(func=cmd_forget)
     return ap
 
 
