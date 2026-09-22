@@ -107,3 +107,24 @@ class ProvisionalTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertTrue(os.path.exists(os.path.join(self.tdir, "taxonomy_v1.json")))
         self.assertFalse(taxo_io.is_provisional(self.tdir))
+
+    def test_without_review_with_nothing_to_apply_still_clears_the_marker(self):
+        # The user explicitly chose to skip review; with no usable proposals there is no version to
+        # write, but their instruction is the human decision the marker waits for. A dry run keeps it.
+        cli("adopt", "--taxonomy", self.v0, "--db", self.db, "--provisional")
+        cur = os.path.join(self.tdir, "current.json")
+        before = open(cur, "rb").read()
+        props = os.path.join(self.td.name, "props")
+        write_json(os.path.join(props, "result_0.json"),      # a duplicate of an existing L1: nothing to add
+                   {"proposals": [{"name": "Billing & Payments", "level": "L1", "parent": None, "evidence": "x"}]})
+        merge = [sys.executable, str(CTE / "taxonomy_merge.py"), "--taxonomy", cur, "--proposals", props]
+        r = subprocess.run(merge, text=True, capture_output=True)                     # dry run
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(taxo_io.is_provisional(self.tdir))
+        r = subprocess.run(merge + ["--apply", "--without-review"], text=True, capture_output=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("nothing to apply", r.stdout)
+        self.assertIn("PROVISIONAL", r.stdout)
+        self.assertFalse(taxo_io.is_provisional(self.tdir))
+        self.assertFalse(os.path.exists(os.path.join(self.tdir, "taxonomy_v1.json")))
+        self.assertEqual(open(cur, "rb").read(), before)                           # current.json untouched

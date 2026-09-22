@@ -298,6 +298,11 @@ def legacy_apply(a, tax, items):
         return 2
     if not items:
         print("\nnothing to apply (all proposals were duplicates, invalid, or suppressed).")
+        # Only reached with --apply --without-review: the user explicitly chose to skip review, which
+        # is the human decision a provisional current.json waits for, so it stands as it is.
+        if clear_provisional(tax_dir):
+            print(f"removed {os.path.join(tax_dir, 'PROVISIONAL')} (review skipped, as requested; "
+                  f"{cur} stands unchanged)")
         return 0
 
     version = (tax.get("version") or 0) + 1

@@ -286,6 +286,8 @@ Only when the user has asked in this conversation to skip the review. It applies
 ```
 Then `build_graph` and the reclassification as in **After apply**. `--apply` without `--review` or `--without-review` is refused.
 
+The `taxonomy/PROVISIONAL` marker: the user's explicit instruction to skip review stands in for the review, so `--apply --without-review` deletes it either way — after writing the new version when there is something to add, or with `current.json` left unchanged when nothing is left to apply (every proposal a duplicate, invalid or suppressed). The script prints `removed …/PROVISIONAL` in both cases. The dry run (no `--apply`) never touches it.
+
 ### F. Upgrading an older Brain
 For a Brain built before `current.json` existed. `browse`, `drift`, `describe` and `health` reviews are refused until this is done.
 1. **You tell the user** what you found and which version the store was built from. Adopt it only with their confirmation.
