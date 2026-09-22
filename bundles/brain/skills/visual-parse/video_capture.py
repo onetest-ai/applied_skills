@@ -222,3 +222,201 @@ def select_frames(frames, diff=0.08, still=0.015, min_hold=3, max_per_min=6, max
     spans = collapse_builds(find_spans(frames, diff, still, min_hold), frames)
     kept, _dropped, capped = cap(dedup(spans, frames), max_per_min, max_frames)
     return kept, capped
+
+
+# ---- IO helpers ---------------------------------------------------------------
+
+
+def die(msg: str, code: int = 1):
+    print(f"error: {msg}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def need_tool(name: str) -> str:
+    path = shutil.which(name)
+    if not path:
+        die(f"{name} not found — {DOCTOR_HINT}", 3)
+    return path
+
+
+def sha_file(path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def atomic_write(path, text: str) -> None:
+    path = str(path)
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)), prefix=".tmp-")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def source_rel(video: str, rel_to: str | None) -> str:
+    if rel_to:
+        rp = os.path.relpath(os.path.abspath(video), os.path.abspath(rel_to))
+        if not rp.startswith(".."):
+            return rp.replace(os.sep, "/")
+    return os.path.basename(video)
+
+
+def find_sidecar(video: str) -> str | None:
+    d, base = os.path.split(os.path.abspath(video))
+    stem = os.path.splitext(base)[0]
+    for ext in SIDECAR_EXT:
+        for n in sorted(os.listdir(d)):
+            if os.path.splitext(n)[0] == stem and os.path.splitext(n)[1].lower() == ext:
+                return os.path.join(d, n)
+    return None
+
+
+def choose_transcript(has_audio: bool, sidecar: str | None, override: str) -> str:
+    if override == "sidecar" and not sidecar:
+        raise ValueError("--transcript sidecar but no same-stem .vtt/.srt exists")
+    if override != "auto":
+        return override
+    return "sidecar" if sidecar else ("asr" if has_audio else "none")
+
+
+def ffprobe(video: str) -> tuple[float, bool]:
+    exe = need_tool("ffprobe")
+    r = subprocess.run([exe, "-v", "error", "-show_entries", "format=duration:stream=codec_type",
+                        "-of", "json", video], capture_output=True, text=True)
+    if r.returncode:
+        raise RuntimeError(f"ffprobe cannot read {video}: {r.stderr.strip()[:300]}")
+    d = json.loads(r.stdout)
+    return float(d["format"]["duration"]), any(s.get("codec_type") == "audio" for s in d.get("streams", []))
+
+
+def read_low_frames(video: str):
+    import numpy as np
+    exe = need_tool("ffmpeg")
+    raw = subprocess.run([exe, "-v", "error", "-i", video, "-vf",
+                          f"fps=1,scale={LOW_W}:{LOW_H},format=gray", "-f", "rawvideo", "-"],
+                         capture_output=True, check=True).stdout
+    return np.frombuffer(raw, np.uint8).reshape(-1, LOW_H, LOW_W).astype(np.float32) / 255.0
+
+
+def extract_frame(video: str, t: float, png: str) -> None:
+    subprocess.run([need_tool("ffmpeg"), "-v", "error", "-y", "-ss", f"{t:.3f}", "-i", video,
+                    "-frames:v", "1", "-vf", "scale='min(1920,iw)':-2", png], check=True)
+
+
+def upsert_manifest(path, entries: list[dict]) -> None:
+    data = json.loads(Path(path).read_text(encoding="utf-8")) if os.path.exists(path) else []
+    srcs = {e["source"] for e in entries}
+    data = [e for e in data if e.get("source") not in srcs] + entries
+    atomic_write(path, json.dumps(data, indent=2) + "\n")
+
+
+# ---- probe / frames -----------------------------------------------------------
+
+
+def cmd_probe(a) -> int:
+    video = os.path.abspath(a.video)
+    rel = source_rel(a.video, a.rel_to)
+    slug = doc_slug(rel)
+    try:
+        duration, has_audio = ffprobe(video)
+    except RuntimeError as e:
+        if a.manifest:
+            upsert_manifest(a.manifest, [{"source": rel, "error": str(e)}])
+        die(str(e))
+    sidecar = find_sidecar(video)
+    try:
+        transcript = choose_transcript(has_audio, sidecar, a.transcript)
+    except ValueError as e:
+        die(str(e))
+    warnings = []
+    if transcript == "sidecar":
+        cues = read_cues(sidecar)
+        if not cues:
+            die(f"sidecar-empty: {sidecar} has no cues — fix it, or override with "
+                "--transcript asr|none")
+        if cues[-1]["end"] > duration + 5:
+            warnings.append(f"sidecar is longer than the video ({fmt_hms(cues[-1]['end'])} > "
+                            f"{fmt_hms(duration)}) — likely a wrong pairing")
+    probe = {"source": rel, "video": video, "slug": slug, "duration": duration, "has_audio": has_audio,
+             "sidecar": sidecar if transcript == "sidecar" else None,
+             "sidecar_source": source_rel(sidecar, a.rel_to) if (sidecar and transcript == "sidecar") else None,
+             "transcript": transcript, "warnings": warnings}
+    out = os.path.join(a.work, slug, "probe.json")
+    atomic_write(out, json.dumps(probe, indent=2) + "\n")
+    for w in warnings:
+        print(f"warning: {w}", file=sys.stderr)
+    print(f"{rel}: {fmt_hms(duration)}, transcript={transcript} -> {out}")
+    return 0
+
+
+def frames_key(video: str, params: dict) -> str:
+    return hashlib.sha256((sha_file(video) + json.dumps(params, sort_keys=True)).encode()).hexdigest()
+
+
+def cmd_frames(a) -> int:
+    video = os.path.abspath(a.video)
+    rel = source_rel(a.video, a.rel_to)
+    slug = doc_slug(rel)
+    outdir = os.path.join(a.assets_root, slug)
+    os.makedirs(outdir, exist_ok=True)
+    params = {"diff": a.diff, "still": a.still, "min_hold": a.min_hold,
+              "max_per_min": a.max_per_min, "max_frames": a.max_frames}
+    key = frames_key(video, params)
+    pj = os.path.join(outdir, "pages.json")
+    if os.path.exists(pj) and json.loads(Path(pj).read_text()).get("frames_key") == key:
+        print(f"{rel}: frames unchanged (cache hit) -> {outdir}")
+        return 0
+    for old in glob.glob(os.path.join(outdir, "p*.png")) + glob.glob(os.path.join(outdir, "p*.txt")):
+        os.remove(old)
+    duration, _ = ffprobe(video)
+    kept, capped = select_frames(read_low_frames(video), **params)
+    pages = []
+    for n, q in enumerate(kept, 1):
+        png = os.path.join(outdir, f"p{n:02d}.png")
+        extract_frame(video, min(q["key"] + 0.5, max(duration - 0.1, 0.0)), png)
+        open(os.path.join(outdir, f"p{n:02d}.txt"), "w").close()
+        pages.append({"page": n, "image": f"{slug}/p{n:02d}.png", "img_sha": sha_file(png),
+                      "text_len": 0, "n_drawings": 0, "n_tables": 0, "img_cover": 0.0,
+                      "flagged": True, "why": "video-frame",
+                      "t_start": q["t_start"], "t_end": q["t_end"], "shown_at": q["shown_at"]})
+    doc = {"doc": os.path.basename(video), "slug": slug, "dpi": None, "medium": "video",
+           "duration": duration, "frames_key": key, "frames_capped": capped, "pages": pages}
+    atomic_write(pj, json.dumps(doc, indent=2) + "\n")
+    print(f"{rel}: {len(pages)} key frame(s) -> {outdir}" + ("  [capped at --max-frames]" if capped else ""))
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(description="meeting recordings -> the visual lane")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("probe", help="ffprobe + choose the transcript source")
+    p.add_argument("--video", required=True); p.add_argument("--rel-to", help="source root (for the rel path/slug)")
+    p.add_argument("--work", required=True, help="<project>/video")
+    p.add_argument("--transcript", choices=["auto", "sidecar", "asr", "none"], default="auto")
+    p.add_argument("--manifest", help="record an ffprobe failure here as an error entry")
+    p.set_defaults(func=cmd_probe)
+    f = sub.add_parser("frames", help="stable-span key frames -> visual-lane layout")
+    f.add_argument("--video", required=True); f.add_argument("--rel-to")
+    f.add_argument("--assets-root", required=True, help="<project>/assets")
+    f.add_argument("--diff", type=float, default=0.08, help="cut when MAD vs the span's first frame exceeds this")
+    f.add_argument("--still", type=float, default=0.015, help="keep a span only if its median step MAD is below this")
+    f.add_argument("--min-hold", type=int, default=3, help="seconds a frame must stay to count")
+    f.add_argument("--max-per-min", type=int, default=6)
+    f.add_argument("--max-frames", type=int, default=300)
+    f.set_defaults(func=cmd_frames)
+    return ap
+
+
+def main(argv=None) -> int:
+    a = build_parser().parse_args(argv)
+    try:
+        return a.func(a)
+    except SystemExit as e:
+        return int(e.code or 0)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
