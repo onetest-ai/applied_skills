@@ -227,7 +227,7 @@ def build_status(profile: dict[str, Any]) -> dict[str, Any]:
     manifest, manifest_errors = _manifest(paths["manifest"], paths["parsed"], sync)
     parsed_delta = {
         "added": [], "changed": [], "unchanged": [], "deleted": [],
-        "blocked_missing_parsed": [], "legacy_unlinked_deleted": [],
+        "blocked_missing_parsed": [], "legacy_unlinked_deleted": [], "superseded_by_video": [],
     }
     unmanaged: list[str] = []
     strict_error = None
@@ -235,7 +235,7 @@ def build_status(profile: dict[str, Any]) -> dict[str, Any]:
         con.row_factory = sqlite3.Row
         if not manifest_errors:
             try:
-                _, parsed_delta = sync.delta(con, str(paths["parsed"]), mutate_schema=False)
+                _, parsed_delta = sync.delta(con, str(paths["parsed"]), mutate_schema=False, manifest=str(paths["manifest"]))
                 _, unmanaged = sync.source_ids(con, str(paths["parsed"]), str(paths["manifest"]), profile["root_key"], True)
             except (ValueError, RuntimeError, sqlite3.Error) as exc:
                 strict_error = str(exc)
