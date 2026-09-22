@@ -65,7 +65,45 @@ class SetVideoKeysTests(unittest.TestCase):
             cfg = Path(td) / "brain.toml"; cfg.write_text(HAND_EDITED)
             model = Path(td) / "ggml-base.bin"; model.write_bytes(b"m")
             self.assertEqual(D.main(["set-whisper-model", "--config", str(cfg), "--model", str(model)]), 0)
-            self.assertEqual(tomllib.loads(cfg.read_text())["video"]["whisper_model"], str(model))
+            self.assertEqual(tomllib.loads(cfg.read_text())["video"]["whisper_model"], str(model.resolve()))
+
+    def test_cli_stores_the_resolved_path_of_a_cwd_relative_model(self):
+        import os
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td); (root / "proj").mkdir(); (root / "models").mkdir()
+            cfg = root / "proj" / "brain.toml"; cfg.write_text(HAND_EDITED)
+            (root / "models" / "ggml-base.bin").write_bytes(b"m")
+            old = os.getcwd(); os.chdir(root)
+            try:
+                self.assertEqual(D.main(["set-whisper-model", "--config", str(cfg),
+                                         "--model", "models/ggml-base.bin"]), 0)
+            finally:
+                os.chdir(old)
+            stored = tomllib.loads(cfg.read_text())["video"]["whisper_model"]
+            self.assertTrue(Path(stored).is_absolute(), stored)
+            self.assertEqual(stored, str((root / "models" / "ggml-base.bin").resolve()))
+            # and brain.toml's own resolution finds the same file
+            self.assertTrue(Path(D.configured_video(str(cfg))["whisper_model"]).is_file())
+
+    def test_top_level_config_and_json_survive_the_subcommand(self):
+        import contextlib
+        import io
+        import json
+        self.assertEqual(D.main(["--config", "/does/not/exist.toml", "whisper-models"]), 2)
+        with tempfile.TemporaryDirectory() as td:
+            cfg = Path(td) / "brain.toml"; cfg.write_text(HAND_EDITED)
+            model = Path(td) / "ggml-base.bin"; model.write_bytes(b"m")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.assertEqual(D.main(["--config", str(cfg), "--json", "whisper-models"]), 0)
+            self.assertIn("catalogue", json.loads(buf.getvalue()))
+            self.assertEqual(D.main(["--config", str(cfg), "set-whisper-model", "--model", str(model)]), 0)
+            self.assertIn("whisper_model", tomllib.loads(cfg.read_text())["video"])
+
+    def test_set_whisper_model_without_any_config_exits_2(self):
+        with tempfile.TemporaryDirectory() as td:
+            model = Path(td) / "ggml-base.bin"; model.write_bytes(b"m")
+            self.assertEqual(D.main(["set-whisper-model", "--model", str(model)]), 2)
 
     def test_cli_refuses_missing_model_file(self):
         with tempfile.TemporaryDirectory() as td:

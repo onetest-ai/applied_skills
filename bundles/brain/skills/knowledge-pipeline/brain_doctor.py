@@ -344,10 +344,14 @@ def cmd_whisper_models(a) -> int:
 
 
 def cmd_set_whisper_model(a) -> int:
+    if not getattr(a, "config", None):
+        print("error: set-whisper-model needs --config brain.toml", file=sys.stderr)
+        return 2
     model = Path(os.path.expanduser(a.model))
     if not model.is_file():
         print(f"error: model file not found: {model}", file=sys.stderr)
         return 1
+    model = model.resolve()  # brain.toml resolves relative paths against ITS dir, not the CWD
     cfg = Path(a.config)
     try:
         text = cfg.read_text(encoding="utf-8")
@@ -365,10 +369,14 @@ def cmd_set_whisper_model(a) -> int:
 
 def add_whisper_subcommands(sub) -> None:
     w = sub.add_parser("whisper-models", help="list whisper.cpp models on disk and downloadable ones")
-    w.add_argument("--config"); w.add_argument("--json", action="store_true")
+    # SUPPRESS: an absent subcommand flag must not overwrite the top-level value
+    # (`brain_doctor.py --config X whisper-models` keeps X).
+    w.add_argument("--config", default=argparse.SUPPRESS)
+    w.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     w.set_defaults(func=cmd_whisper_models)
     s = sub.add_parser("set-whisper-model", help="record the chosen model in brain.toml [video]")
-    s.add_argument("--config", required=True); s.add_argument("--model", required=True)
+    s.add_argument("--config", default=argparse.SUPPRESS, help="brain.toml (here or before the subcommand)")
+    s.add_argument("--model", required=True)
     s.add_argument("--language", default="auto", help="auto, or an ISO code such as en")
     s.set_defaults(func=cmd_set_whisper_model)
 
