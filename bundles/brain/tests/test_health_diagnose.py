@@ -138,8 +138,9 @@ class HealthPlanTests(unittest.TestCase):
         # M-2: "fixes proposed" counts only the real agent fixes — missing_description (1 real
         # draft out of 9 labels), no_tags (1 real tag), near_duplicate (1 real merge) — and
         # excludes the 8 missing_description fallbacks, the off_axis/similar_metrics fallback
-        # keeps, and the untagged_sections informational placeholder.
-        self.assertEqual(rv["context"]["subtitle"], "v1 · 14 problems · 3 fixes proposed")
+        # keeps, and the untagged_sections informational placeholder. The 18 problems include
+        # the fixture's 4 sparse L2s (fit kinds count, like every other problem kind).
+        self.assertEqual(rv["context"]["subtitle"], "v1 · 18 problems · 3 fixes proposed")
 
     def test_respond_records_revision(self):
         from datetime import datetime, timezone
@@ -558,7 +559,8 @@ class NearDuplicateClusterTests(unittest.TestCase):
     def _n_problems(self):
         p = self.problems
         return sum(len(p[k]) for k in ("missing_description", "no_tags", "near_duplicate", "off_axis",
-                                         "similar_metrics", "metric_not_governed")) + 1
+                                         "similar_metrics", "metric_not_governed",
+                                         "sparse", "misplaced", "overloaded")) + 1
 
     def test_cluster_fix_with_a_from_list_keeps_the_rest(self):
         write_json(os.path.join(self.work, "structure", "result_0.json"), {"fixes": [
