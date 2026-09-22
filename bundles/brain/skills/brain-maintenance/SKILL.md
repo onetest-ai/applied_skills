@@ -192,7 +192,7 @@ If `sync_plan.json.reclassify_chunk_ids` is non-empty:
 
 1. rebuild the taxonomy graph first, so categories added since the last build are in the graph (`classify_write` drops labels that are not graph nodes);
 2. prepare batches in a fresh run directory, with `--batches` from `[classification].batches` in `brain-maintenance.toml` (the default 5 overflows agent context on VTT corpora — always read the profile value);
-3. dispatch low-cost text subagents, one per `batch_k.json`: each reads that dir's `instructions.md`, `vocab.md` and its batch and writes `result_k.json`;
+3. dispatch Sonnet text subagents, one per `batch_k.json`: each reads that dir's `instructions.md`, `vocab.md` and its batch and writes `result_k.json`;
 4. verify exact chunk-id coverage and valid labels;
 5. run incremental `classify_write` without `--reset`.
 

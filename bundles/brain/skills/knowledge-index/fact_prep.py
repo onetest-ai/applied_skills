@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Batch corpus chunks + instructions for LOW-TIER fact-extraction agents.
+"""Batch corpus chunks + instructions for Sonnet fact-extraction agents.
 
 Open-category extraction: pull any salient fact (WHO/WHAT + concrete action,
 decision, risk, finding, date, number, status). Skip questions and chit-chat.

@@ -2,7 +2,7 @@
 """Deterministic corpus parser for corpus-taxonomy-extraction.
 
 Converts a heterogeneous document corpus into uniform Markdown that a
-low-tier model can read. No LLM, no torch (docling is retired):
+Sonnet model can read. No LLM, no torch (docling is retired):
   - .pdf         -> PyMuPDF text layer
   - .pptx/.docx  -> LibreOffice (soffice) -> PDF -> PyMuPDF text layer
   - .xlsx/.xlsm  -> openpyxl read_only structure-dump

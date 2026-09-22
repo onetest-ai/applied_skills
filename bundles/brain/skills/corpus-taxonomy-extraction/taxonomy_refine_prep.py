@@ -3,7 +3,7 @@
 
 When the corpus (or the parse) shifts, some chunks carry real concepts with no home
 in the taxonomy — they end up UNTAGGED. This gathers those chunks (the signal) and
-asks low-tier agents to propose **additions only**: either map a chunk to an existing
+asks Sonnet agents to propose **additions only**: either map a chunk to an existing
 L1/L2, or propose a NEW L1, or a NEW L2 under a named parent L1 — with evidence.
 The agent proposes; a human gates the merge (see taxonomy_merge.py). Never rename.
 

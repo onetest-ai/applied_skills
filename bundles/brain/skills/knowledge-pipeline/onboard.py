@@ -294,7 +294,7 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     ```
 
     ## Build sequence
-    Steps marked 🤖 are **low-tier agents** (judgment), the rest are deterministic scripts.
+    Steps marked 🤖 are **Sonnet agents** (judgment), the rest are deterministic scripts.
 
     ```bash
     DB="{db}"
@@ -325,7 +325,7 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     #      whose manifest inputs list that file — no flag).
 
     # 2 · 🤖 induce taxonomy (map→reduce→judge→emit) → taxonomy/taxonomy_v0.json
-    #     see corpus-taxonomy-extraction/SKILL.md; goal = above. Dispatch Haiku subagents.
+    #     see corpus-taxonomy-extraction/SKILL.md; goal = above. Dispatch Sonnet subagents.
     #     Keep the reduce output for review: consolidate.py --out "{proj/'taxonomy'/'work'/'consolidated.json'}"
 
     # 2b · 👤 human review of the draft — the local review app runs until the reviewer submits.
@@ -344,14 +344,14 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     # 4 · taxonomy graph (L1/L2 vertices) into the SAME db — always from current.json
     "$PY" "{CTE/'build_graph.py'}" --taxonomy "{proj/'taxonomy'/'current.json'}" --db "$DB"
 
-    # 5 · 🤖 per-section tags — prep, dispatch Haiku subagents, write
+    # 5 · 🤖 per-section tags — prep, dispatch Sonnet subagents, write
     "$PY" "{CTE/'classify_prep.py'}" --db "$DB" --taxonomy "{proj/'taxonomy'/'current.json'}" --out "{proj/'classify'}" --batches 25
-    #     → N Haiku subagents read classify/{{instructions,vocab,batch_k}} → write classify/result_k.json
+    #     → N Sonnet subagents read classify/{{instructions,vocab,batch_k}} → write classify/result_k.json
     "$PY" "{CTE/'classify_write.py'}" --db "$DB" --results "{proj/'classify'}"
 
     # 6 · temporal fact intake (docs + transcripts → evidence-backed assertions)
     "$PY" "{KI/'fact_prep.py'}" --db "$DB" --out "{proj/'facts'}"
-    # 🤖 dispatch low-tier agents: read facts/instructions.md + facts/batch_*.json → facts/result_*.json
+    # 🤖 dispatch Sonnet agents: read facts/instructions.md + facts/batch_*.json → facts/result_*.json
     "$PY" "{KI/'fact_write.py'}" --db "$DB" --results "{proj/'facts'}" --report "{proj/'facts'/'fact_intake_report.json'}" --apply
 
     # 7 · numeric marts (Excel → facts) into the SAME db   [edit {fam.name} first!]

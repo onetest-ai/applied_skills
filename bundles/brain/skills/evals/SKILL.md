@@ -1,11 +1,11 @@
 ---
 name: evals
-description: Use when the brain is built (knowledge.sqlite exists with chunk_topics populated) and you need to generate adversarial eval suites from a VTT/SRT corpus and run them against a FastMCP brain. Two modes — extraction (verbatim quotes via Bedrock Haiku, recommended) and db-fallback (chunk_topics, smoke-test only). Produces a promptfoo pass rate across Haiku/Sonnet/Opus tiers.
+description: Use when the brain is built (knowledge.sqlite exists with chunk_topics populated) and you need to generate adversarial eval suites from a VTT/SRT corpus and run them against a FastMCP brain. Two modes — extraction (verbatim quotes via Bedrock Sonnet, recommended) and db-fallback (chunk_topics, smoke-test only). Produces a promptfoo pass rate across Haiku/Sonnet/Opus tiers.
 ---
 
 # Evals Skill
 
-Turns a VTT/SRT corpus + a running brain into a scored adversarial eval suite. Every eval row is grounded in real content — either a verbatim quote extracted by Haiku (extraction mode) or a source slug from `chunk_topics` (db-fallback mode). The final output is a promptfoo pass rate that tells you whether the brain retrieves and surfaces the right facts.
+Turns a VTT/SRT corpus + a running brain into a scored adversarial eval suite. Every eval row is grounded in real content — either a verbatim quote extracted by Sonnet (extraction mode) or a source slug from `chunk_topics` (db-fallback mode). The final output is a promptfoo pass rate that tells you whether the brain retrieves and surfaces the right facts.
 
 ## When to use
 
@@ -157,7 +157,7 @@ $VENV $SKILL_EVALS/extract_facts.py \
   --out      "$WORK/extractions"
 ```
 
-Sends the first 8,000 chars of each `.md` to Bedrock Haiku. Writes one `*_extraction.json` per file.
+Sends the first 8,000 chars of each `.md` to Bedrock Sonnet. Writes one `*_extraction.json` per file.
 
 **Check:** `ls $WORK/extractions/*_extraction.json | wc -l` > 0.
 
@@ -275,7 +275,7 @@ bash $SKILL_EVALS/run_brain_eval.sh \
 | File | Purpose |
 |---|---|
 | `run_e2e.sh` | Full pipeline: parse → index → classify → extract → eval |
-| `extract_facts.py` | Bedrock Haiku → verbatim `*_extraction.json` per parsed `.md` |
+| `extract_facts.py` | Bedrock Sonnet → verbatim `*_extraction.json` per parsed `.md` |
 | `generate_evals.py` | `*_extraction.json` or `chunk_topics` → adversarial `evals.csv` |
 | `generate_promptfoo.py` | `evals.csv` + taxonomy persona → `promptfooconfig.yaml` |
 | `run_brain_eval.sh` | Start FastMCP shim + run promptfoo (incremental use) |

@@ -14,6 +14,10 @@ import os
 import sys
 from pathlib import Path
 
+# Bedrock inference profile id for fact extraction. Matches the Sonnet id used
+# elsewhere in this repo (see generate_promptfoo.py PROVIDERS); override with --model.
+DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
+
 
 _EXTRACT_PROMPT_TEMPLATE = """\
 You are a fact-extraction assistant. Given a meeting transcript in Markdown format \
@@ -54,13 +58,12 @@ def _build_prompt(md_text: str, taxonomy_l1: list[str]) -> str:
     )
 
 
-def _make_bedrock_llm():
-    """Return a callable(prompt) → str using Bedrock Haiku. May raise if creds absent."""
+def _make_bedrock_llm(model_id: str = DEFAULT_MODEL_ID):
+    """Return a callable(prompt) → str using Bedrock (Sonnet by default). May raise if creds absent."""
     import boto3  # noqa: PLC0415
     import json as _json
 
     client = boto3.client("bedrock-runtime", region_name=os.environ.get("AWS_REGION", "us-east-1"))
-    model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
     def _call(prompt: str) -> str:
         body = _json.dumps({
@@ -113,13 +116,14 @@ def run_extractions(
     taxonomy: dict,
     out_dir: str,
     llm_fn=None,
+    model_id: str = DEFAULT_MODEL_ID,
 ) -> list[str]:
     """Process all *.md files in parsed_dir; write *_extraction.json to out_dir.
 
     Returns list of written file paths.
     """
     if llm_fn is None:
-        llm_fn = _make_bedrock_llm()
+        llm_fn = _make_bedrock_llm(model_id)
 
     taxonomy_l1 = taxonomy.get("intent_taxonomy", {}).get("l1", [])
     if not taxonomy_l1:
@@ -157,15 +161,16 @@ def run_extractions(
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
-        description="Extract verbatim facts from parsed Markdown using Bedrock Haiku"
+        description="Extract verbatim facts from parsed Markdown using Bedrock Sonnet"
     )
     ap.add_argument("--parsed", required=True, help="Directory of *.md files")
     ap.add_argument("--taxonomy", required=True, help="Path to taxonomy.json")
     ap.add_argument("--out", required=True, help="Output directory for *_extraction.json files")
+    ap.add_argument("--model", default=DEFAULT_MODEL_ID, help=f"Bedrock model id (default: {DEFAULT_MODEL_ID})")
     args = ap.parse_args(argv)
 
     taxonomy = json.loads(Path(args.taxonomy).read_text(encoding="utf-8"))
-    written = run_extractions(args.parsed, taxonomy, args.out)
+    written = run_extractions(args.parsed, taxonomy, args.out, model_id=args.model)
     print(f"\n{len(written)} extraction files written to {args.out}")
 
 

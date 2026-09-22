@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare visual-page transcription for LOW-TIER VISION agents (map stage).
+"""Prepare visual-page transcription for SONNET VISION agents (map stage).
 
 Collects the FLAGGED, UNCACHED pages across one or more rendered docs and writes
 batches (image path + any deterministically-extracted table + page context) plus

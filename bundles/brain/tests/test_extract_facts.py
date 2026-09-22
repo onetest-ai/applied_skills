@@ -154,6 +154,61 @@ def test_run_extractions_empty_parsed_dir(tmp_path):
     assert not list(out_dir.glob("*_extraction.json"))
 
 
+def test_default_model_is_sonnet():
+    """DEFAULT_MODEL_ID is a Bedrock Sonnet inference profile id, not Haiku."""
+    import extract_facts
+    assert "sonnet" in extract_facts.DEFAULT_MODEL_ID.lower()
+    assert "haiku" not in extract_facts.DEFAULT_MODEL_ID.lower()
+
+
+def test_make_bedrock_llm_uses_default_model_id():
+    """_make_bedrock_llm defaults to DEFAULT_MODEL_ID when called with no args."""
+    import extract_facts
+    import inspect
+
+    sig = inspect.signature(extract_facts._make_bedrock_llm)
+    assert sig.parameters["model_id"].default == extract_facts.DEFAULT_MODEL_ID
+
+
+def test_make_bedrock_llm_model_override(monkeypatch):
+    """--model / model_id argument overrides the default model id passed to invoke_model."""
+    import extract_facts
+
+    captured = {}
+
+    class _FakeBody:
+        def read(self):
+            return json.dumps({"content": [{"text": "[]"}]}).encode("utf-8")
+
+    class _FakeClient:
+        def invoke_model(self, modelId, body):
+            captured["modelId"] = modelId
+            return {"body": _FakeBody()}
+
+    class _FakeBoto3:
+        @staticmethod
+        def client(*a, **k):
+            return _FakeClient()
+
+    monkeypatch.setitem(sys.modules, "boto3", _FakeBoto3())
+    call = extract_facts._make_bedrock_llm(model_id="us.anthropic.claude-custom-1:0")
+    call("hello")
+    assert captured["modelId"] == "us.anthropic.claude-custom-1:0"
+
+
+def test_main_accepts_model_flag():
+    """argparse exposes --model defaulting to DEFAULT_MODEL_ID."""
+    import extract_facts
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model", default=extract_facts.DEFAULT_MODEL_ID)
+    args = ap.parse_args(["--model", "custom-id"])
+    assert args.model == "custom-id"
+    args = ap.parse_args([])
+    assert args.model == extract_facts.DEFAULT_MODEL_ID
+
+
 def test_empty_fence_falls_back_to_full_response():
     """LLM returns empty fence block followed by actual JSON — must parse correctly."""
     import sys

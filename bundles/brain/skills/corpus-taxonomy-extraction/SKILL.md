@@ -1,6 +1,6 @@
 ---
 name: corpus-taxonomy-extraction
-description: Use when you need to induce a starting taxonomy (intent classes, entities/dimensions, and a metric inventory) from a heterogeneous document corpus (PDF/PPTX/DOCX/XLSX/MD) under a stated analytical goal — e.g. seeding a local knowledge graph, semantic layer, or classification scheme before building deterministic analytics — or when the user wants to review, refresh, clean up, describe or edit an existing Brain's taxonomy or metric inventory in the local review app. Goal-directed, agentic, runs bulk work on a low-tier model.
+description: Use when you need to induce a starting taxonomy (intent classes, entities/dimensions, and a metric inventory) from a heterogeneous document corpus (PDF/PPTX/DOCX/XLSX/MD) under a stated analytical goal — e.g. seeding a local knowledge graph, semantic layer, or classification scheme before building deterministic analytics — or when the user wants to review, refresh, clean up, describe or edit an existing Brain's taxonomy or metric inventory in the local review app. Goal-directed, agentic, runs bulk work on a Sonnet model.
 ---
 
 # Corpus Taxonomy Extraction
@@ -10,7 +10,7 @@ description: Use when you need to induce a starting taxonomy (intent classes, en
 Induce a **starting taxonomy** from a document corpus, bottom-up and goal-directed. The taxonomy is the seed that everything downstream keys off: the local graph and section classifier, conformed dimensions, and a governed semantic layer of metrics.
 
 **Core principle — separate the two things by what makes each trustworthy:**
-- **Meaning is agentic** (what's a term, what merges, what's in scope) → low-tier LLM + human gate.
+- **Meaning is agentic** (what's a term, what merges, what's in scope) → Sonnet LLM + human gate.
 - **Numbers are deterministic** (any actual value) → computed by code, never asserted by a model. This skill only *inventories* metrics and tags where each lives; it never states a numeric answer.
 
 The goal statement is a **noise filter** — research shows business context is the single biggest accuracy lever. Every extracted term is kept **with provenance and confidence**; off-goal terms are *demoted*, never silently dropped.
@@ -46,16 +46,16 @@ DB=schema/knowledge.sqlite                   # the store (BRAIN.md's $DB)
 
 With no venv, use `uv run --with-requirements <bundle>/requirements.txt python` in place of `"$PY"` (for example `bundles/brain/requirements.txt` in a checkout). Parsing needs `pymupdf` and `openpyxl`, and `.pptx`/`.docx` also need LibreOffice `soffice` (a system dependency). The review, merge, graph and classify scripts (`taxonomy_review.py`, `review_server.py`, `taxonomy_merge.py`, `build_graph.py`, `classify_prep.py`, `classify_write.py`) are stdlib only. They never load `sqlite-vec` and never touch the vector table, so any Python 3.9+ runs them.
 
-The low-tier map, adjudication, judge and fix steps assume a subagent mechanism with a model override (e.g. Haiku). On another harness, use any cheap model that can read a file and write JSON. Nothing corpus-specific is hardcoded: the goal string and arguments drive everything.
+The map, adjudication, judge and fix steps assume a subagent mechanism with a model override (e.g. Sonnet). On another harness, use a Sonnet-class model that can read a file and write JSON. Nothing corpus-specific is hardcoded: the goal string and arguments drive everything.
 
 ## Pipeline (map → reduce → judge → emit)
 
 ```
 goal + corpus + optional seed taxonomy
   → parse   (deterministic, no LLM)   parse_corpus.py  → uniform Markdown
-  → map     (low-tier LLM, per doc)   candidate terms + evidence + provenance + confidence  (JSON/doc)
+  → map     (Sonnet LLM, per doc)     candidate terms + evidence + provenance + confidence  (JSON/doc)
   → reduce  (deterministic + LLM)     consolidate.py clusters near-dupes → LLM adjudicates AMBIGUOUS merges only
-  → judge   (low-tier LLM)            score coverage/coherence, flag low-confidence & unmapped
+  → judge   (Sonnet LLM)              score coverage/coherence, flag low-confidence & unmapped
   → emit    taxonomy_v0.{json,md}     the draft; adopted provisionally, classified, then ratified in the first-build review
 ```
 
@@ -79,16 +79,16 @@ VTT and SRT (meeting transcripts) are parsed separately from the taxonomy induct
 
 `--merge-cues 10` joins up to 10 consecutive same-speaker cues into one speaker-turn paragraph before chunking. **Omitting it produces ~25k single-line chunks averaging 79 chars — classification agents correctly return `[]` for nearly all of them and retrieval quality collapses.** Always pass `--merge-cues N > 1` for VTT/SRT.
 
-### 2. Map — low-tier subagents (Haiku), one batch per subagent
-Instantiate `map_instructions.template.md` (shipped with this skill): replace `{{GOAL}}` with the run's goal, `{{MAP_DIR}}` with the run's map-output dir, and `{{AUDIENCE}}` with the project audience (`brain.toml` `[project].audience`, or the store's `health().about.audience`; leave it empty if none); write it to the run dir as `map_instructions.md`. The audience is a **secondary** emphasis lens — it re-orders which goal-relevant intents/dimensions to favor and nudges vocabulary; the goal stays the primary filter and audience never drops a goal-relevant term. Dispatch subagents (model: haiku) that read that instantiated file + their assigned parsed files and write one JSON per source into the map dir. The bulk document context lives and dies inside each subagent — the orchestrator only sees compact JSON. Extract `intent_classes`, `metrics` (with `source_type`), `entities`; each item carries `evidence` (≤200-char quote), `source`, `confidence`. Give any anchor taxonomy doc its own subagent.
+### 2. Map — Sonnet subagents, one batch per subagent
+Instantiate `map_instructions.template.md` (shipped with this skill): replace `{{GOAL}}` with the run's goal, `{{MAP_DIR}}` with the run's map-output dir, and `{{AUDIENCE}}` with the project audience (`brain.toml` `[project].audience`, or the store's `health().about.audience`; leave it empty if none); write it to the run dir as `map_instructions.md`. The audience is a **secondary** emphasis lens — it re-orders which goal-relevant intents/dimensions to favor and nudges vocabulary; the goal stays the primary filter and audience never drops a goal-relevant term. Dispatch subagents (model: sonnet) that read that instantiated file + their assigned parsed files and write one JSON per source into the map dir. The bulk document context lives and dies inside each subagent — the orchestrator only sees compact JSON. Extract `intent_classes`, `metrics` (with `source_type`), `entities`; each item carries `evidence` (≤200-char quote), `source`, `confidence`. Give any anchor taxonomy doc its own subagent.
 
 ### 3. Reduce — `consolidate.py` (deterministic) + LLM adjudication
 `"$PY" "$CTE/consolidate.py" --map-dir map --out taxonomy/work/consolidated.json --threshold 0.86`
 - Keep this output path: the first-build review reads its evidence from `taxonomy/work/consolidated.json`. If you write it elsewhere, pass `--consolidated <path>` to `plan --mode draft`.
 - Pools terms by kind, normalizes names, fuzzy-clusters near-duplicates (stdlib difflib; swap in embeddings if fragmentation is high).
-- Flags clusters with >1 surface form as `ambiguous` → a low-tier subagent adjudicates **only those** ("Chicago" vs "Chicago Branch" vs "CHI" → merge?). This is where the real effort is (entity resolution), but it's bounded to ambiguous clusters.
+- Flags clusters with >1 surface form as `ambiguous` → a Sonnet subagent adjudicates **only those** ("Chicago" vs "Chicago Branch" vs "CHI" → merge?). This is where the real effort is (entity resolution), but it's bounded to ambiguous clusters.
 
-### 4. Judge — low-tier LLM-as-judge
+### 4. Judge — Sonnet LLM-as-judge
 Score the draft for coverage (did we miss obvious goal-relevant categories?) and coherence (L1/L2 consistency); flag low-confidence and unmapped terms for human review.
 
 ### 5. Emit — `taxonomy_v0.{json,md}`
@@ -102,7 +102,7 @@ The draft: intent hierarchy + entity/dimension candidates + metric inventory (ea
 Beyond taxonomy induction, this skill ships the scripts that wire the taxonomy into the one `knowledge.sqlite` store (shared with `knowledge-index` + `tabular-semantic-layer`):
 - **`chunking.py`** — the shared heading-aware chunker (a chunk = a section = an Obsidian note = a retrieval unit). Identical copy in `knowledge-index`.
 - **`build_graph.py`** — taxonomy → `graph_nodes`/`graph_edges` (L1/L2 vertices with their descriptions, `subclass_of`), always from `taxonomy/current.json`. It first runs the tag migrations of reviewed renames and merges recorded in the taxonomy history, then prunes nodes that left the taxonomy. It refuses (exit 3) to build from a file older than `current.json`, or older than the store's `meta.taxonomy_version`, when that would prune nodes. `--yes-prune` overrides this; pass it only when the user asked for a rollback. **Optional second taxonomy + traceability:** run this skill a second time with a **capability/vision-pillar goal** to induce a `capabilities.json` (same `intent_taxonomy` shape, or under a `capability_taxonomy` key), then `build_graph.py --capabilities capabilities.json --links addressed_by.json` layers in `capability_l1/l2` nodes and **`intent --addressed_by--> capability`** edges. Now a *problem → capability* traceability question resolves as a graph JOIN (see `hybrid-retrieval`) instead of narrative synthesis. `--links` is `{"addressed_by": [{"intent","capability"}, …]}`; a pair whose endpoints aren't known nodes is skipped (never a dangling edge). The script OWNS `subclass_of` + `addressed_by` (rebuilt each run, idempotent) and changes `about` edges only through a reviewed migration or when it prunes a node.
-- **`classify_prep.py` → (low-tier agents) → `classify_write.py`** — per-section taxonomy tags at **L1 AND L2**: prep presents the full L1/L2 vocab (with descriptions) and asks for the *most specific* fit (an L2 when the chunk is specifically about it, else its L1); agents assign (empty when nothing fits — never forced); write resolves each label (or an alias of a renamed/merged label) to its graph node, writes `chunk_topics` with the real `kind` and — for an L2 — **rolls up its parent L1** so L1 filters still catch it. `about` edges (chunk→vertex). `--merge` only adds labels; `--reclassify-done` empties the reclassification queue. *Meaning is agentic; this step is agents, not a script.*
+- **`classify_prep.py` → (Sonnet agents) → `classify_write.py`** — per-section taxonomy tags at **L1 AND L2**: prep presents the full L1/L2 vocab (with descriptions) and asks for the *most specific* fit (an L2 when the chunk is specifically about it, else its L1); agents assign (empty when nothing fits — never forced); write resolves each label (or an alias of a renamed/merged label) to its graph node, writes `chunk_topics` with the real `kind` and — for an L2 — **rolls up its parent L1** so L1 filters still catch it. `about` edges (chunk→vertex). `--merge` only adds labels; `--reclassify-done` empties the reclassification queue. *Meaning is agentic; this step is agents, not a script.*
 - **`to_obsidian.py`** — emit the Obsidian vault as a **view of the store**: notes = chunks, real per-section tags from `chunk_topics`, `[[topic · …]]` links = graph vertices, topic notes carry the category description.
 
 ## Reviewing and editing the taxonomy (the review app)
@@ -146,7 +146,7 @@ Not a review of the bare draft tree — a review of the draft **after** real per
    "$PY" "$CTE/taxonomy_review.py" adopt --taxonomy taxonomy/taxonomy_v0.json --db "$DB" --provisional
    ```
    `adopt --provisional` copies the draft to `taxonomy/current.json` and writes the `taxonomy/PROVISIONAL` marker. Every later step reads `current.json`.
-3. **You classify** every chunk against the provisional taxonomy (`knowledge-pipeline` step 5: `classify_prep.py` → dispatch low-cost subagents → `classify_write.py`). Agents may answer `["__no_topic__"]` for a chunk with no topic at all (filler, boilerplate, off-goal); that verdict is stored in `chunk_verdicts` and is a valid, complete answer — not a missing one.
+3. **You classify** every chunk against the provisional taxonomy (`knowledge-pipeline` step 5: `classify_prep.py` → dispatch Sonnet subagents → `classify_write.py`). Agents may answer `["__no_topic__"]` for a chunk with no topic at all (filler, boilerplate, off-goal); that verdict is stored in `chunk_verdicts` and is a valid, complete answer — not a missing one.
 4. **You compute signals and diagnose**, now that real counts exist:
    ```bash
    "$PY" "$CTE/taxonomy_signals.py" --taxonomy taxonomy/current.json --db "$DB" --out taxonomy/work/signals.json
@@ -174,7 +174,7 @@ Use only when the corpus is not indexed yet, so no real classification counts ar
 5. Continue the build from `taxonomy/current.json` (`knowledge-pipeline` steps 3–5: index, `build_graph`, classify).
 
 ### B. Health review (the default way to review)
-One review for every taxonomy and metric problem. A deterministic `diagnose` finds the problems; low-cost agents precompute a specific fix for each one that needs judgment; the user decides in a grouped inbox and can send any fix back with **Redo with a note…**; you apply the approved fixes. `<run>` is the work directory for this run, e.g. `health` (reused every run) or `health-20260921-1400` (to keep each run's files).
+One review for every taxonomy and metric problem. A deterministic `diagnose` finds the problems; Sonnet agents precompute a specific fix for each one that needs judgment; the user decides in a grouped inbox and can send any fix back with **Redo with a note…**; you apply the approved fixes. `<run>` is the work directory for this run, e.g. `health` (reused every run) or `health-20260921-1400` (to keep each run's files).
 
 1. **You run diagnose.** If `taxonomy/current.json` changed since `taxonomy/work/signals.json` was written (any applied review, adopt or rollback), or the store was reclassified, re-run `taxonomy_signals.py` first (it needs the venv); otherwise skip it:
    ```bash
@@ -183,7 +183,7 @@ One review for every taxonomy and metric problem. A deterministic `diagnose` fin
    ```
    `diagnose` uses `signals.json` only when its `taxonomy_sha256` matches `current.json`. A stale or unstamped file is ignored with a warning (on stderr and in the output's `warnings`), and near-duplicates fall back to the string detector (`near_duplicate_source: "string"`) with no `misplaced` problems; when you see that warning, re-run `taxonomy_signals.py` and `diagnose`.
    It prints one JSON line: `problems` (a count per kind) and `tasks` (`[{kind, dir, batches}]`, one per kind that needs agents: `describe`, `notags`, `structure`, `fit`, `metrics`, `untagged`). `fit` covers three kinds together — `sparse` (a category with only 1–2 tagged sections), `misplaced` (an L2 closer to another L1) and `overloaded` (an L1 far above the median size). Reusing `--out` is safe: `diagnose` first removes an earlier run's `batch_*.json` and `result_*.json` from its task dirs (it names them on stderr and in `removed_stale`), so `plan` never reads old fixes. `diagnose` also reads open redo requests from `taxonomy/work/requests.jsonl` and puts their notes on the matching entries; a request already answered by `respond`, or on an item accepted in a review that was since applied, is not reopened.
-2. **You dispatch low-cost subagents (e.g. Haiku), one per `batch_k.json`** in each task `dir`. Each subagent reads that dir's `instructions.md` and its `batch_k.json` and writes `result_k.json` in the same dir. The `untagged` dir also has `vocab.md` for the agent to read, and the `metrics` dir may have `families.json`. The `fit` dir's `result_k.json` is `{"fixes": [...]}`, one entry per subject: `{"kind": "sparse", "subject": "<label>", "fix": "merge"|"keep", "into": "<sibling label>", "reason": "..."}`, `{"kind": "misplaced", "subject": "<label>", "fix": "move"|"keep", "new_parent": "<L1 label>", "reason": "..."}`, or `{"kind": "overloaded", "subject": "<label>", "fix": "restructure"|"keep", "add": [{"name": "...", "description": "..."}], "moves": [{"node": "...", "new_parent": "..."}], "reason": "..."}` — exact shapes in `taxonomy/work/<run>/fit/instructions.md` (`FIT_INSTRUCTIONS`). The result formats are defined in each `instructions.md`; do not restate them to the agents, point them at the file. Check that each batch has its result file before going on. A missing or malformed result is not fatal: that problem still reaches the inbox with a safe default, marked `fallback`.
+2. **You dispatch Sonnet subagents, one per `batch_k.json`** in each task `dir`. Each subagent reads that dir's `instructions.md` and its `batch_k.json` and writes `result_k.json` in the same dir. The `untagged` dir also has `vocab.md` for the agent to read, and the `metrics` dir may have `families.json`. The `fit` dir's `result_k.json` is `{"fixes": [...]}`, one entry per subject: `{"kind": "sparse", "subject": "<label>", "fix": "merge"|"keep", "into": "<sibling label>", "reason": "..."}`, `{"kind": "misplaced", "subject": "<label>", "fix": "move"|"keep", "new_parent": "<L1 label>", "reason": "..."}`, or `{"kind": "overloaded", "subject": "<label>", "fix": "restructure"|"keep", "add": [{"name": "...", "description": "..."}], "moves": [{"node": "...", "new_parent": "..."}], "reason": "..."}` — exact shapes in `taxonomy/work/<run>/fit/instructions.md` (`FIT_INSTRUCTIONS`). The result formats are defined in each `instructions.md`; do not restate them to the agents, point them at the file. Check that each batch has its result file before going on. A missing or malformed result is not fatal: that problem still reaches the inbox with a safe default, marked `fallback`.
 3. **You plan the review.**
    ```bash
    "$PY" "$CTE/taxonomy_review.py" plan --mode health --taxonomy taxonomy/current.json --work taxonomy/work/<run> --db "$DB"
@@ -243,7 +243,7 @@ Use this only when the user asks for new-category proposals alone; the health re
    ```bash
    "$PY" "$CTE/taxonomy_refine_prep.py" --db "$DB" --taxonomy taxonomy/current.json --out taxonomy/work/refine-<run>
    ```
-2. **You dispatch low-cost subagents, one per `batch_k.json`.** Each reads that dir's `instructions.md`, `vocab.md` and its batch, and writes `result_k.json` there: an existing category the classifier missed, or a proposed new **L2 under a named parent L1** (preferred) or new **L1**, with evidence and a description.
+2. **You dispatch Sonnet subagents, one per `batch_k.json`.** Each reads that dir's `instructions.md`, `vocab.md` and its batch, and writes `result_k.json` there: an existing category the classifier missed, or a proposed new **L2 under a named parent L1** (preferred) or new **L1**, with evidence and a description.
 3. **You plan the review**: `"$PY" "$CTE/taxonomy_review.py" plan --mode drift --taxonomy taxonomy/current.json --proposals taxonomy/work/refine-<run> --db "$DB"`. It dedups against the vocabulary and aliases and suppresses proposals rejected before.
 4. **You serve it** in the background: `"$PY" "$CTE/taxonomy_review.py" serve --review <review> --db "$DB"`. Tell the user the tab is open and end your turn.
 5. **The user approves, rejects (with a reason; rejections stick) or amends** each proposal and submits.
@@ -272,7 +272,7 @@ If `taxonomy/work/reclassify.json` exists after `build_graph`, run this sequence
 ```bash
 IDS=$("$PY" -c 'import json;print(",".join(map(str,json.load(open("taxonomy/work/reclassify.json"))["chunk_ids"])))')
 "$PY" "$CTE/classify_prep.py" --db "$DB" --taxonomy taxonomy/current.json --chunks "$IDS" --out classify/reclassify-v<N>
-# dispatch low-tier classification agents over classify/reclassify-v<N>/batch_*.json → result_*.json in the same dir
+# dispatch Sonnet classification agents over classify/reclassify-v<N>/batch_*.json → result_*.json in the same dir
 "$PY" "$CTE/classify_write.py" --db "$DB" --results classify/reclassify-v<N> --reclassify-done taxonomy/work/reclassify.json
 ```
 
