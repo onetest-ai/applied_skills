@@ -141,8 +141,22 @@ step** in front of the same transcribe→assemble pipeline, and adds the transcr
 recording becomes ONE parsed document: transcript turns and on-screen frames interleaved by
 time, each frame carrying its image marker and every interval it was on screen.
 
-**Transcript source.** A same-stem `.vtt`/`.srt` next to the video (`standup.mp4` +
-`standup.vtt`) always wins. Only when none exists is one generated with whisper.cpp, into
+**Transcript source.** `probe` picks, in order:
+1. a same-stem `.vtt`, `.srt` or `.docx` next to the video (`standup.mp4` + `standup.vtt`),
+   in that priority;
+2. a Microsoft Teams transcript `.docx` in the same folder whose **first line is the
+   recording's file name without extension** — Teams names the transcript after the
+   meeting (`Acme_ Billing.docx`), not after the recording, so it is paired by its title.
+   If two `.docx` files claim the same recording, `probe` stops (exit 1) instead of guessing.
+
+For any other transcript, pass it explicitly: `probe … --transcript-file <path>` (a `.vtt`,
+`.srt` or Teams `.docx`; it cannot be combined with `--transcript asr|none`). A `.docx` that
+cannot be opened (typically a truncated download) is never used: as the chosen transcript
+`probe` exits 1 with `not a readable Word file (truncated download?)`; as a mere neighbour
+it is listed in `probe.json`'s `warnings` — tell the user, and re-download it rather than
+letting whisper transcribe a meeting that already has a transcript.
+
+Only when no transcript exists is one generated with whisper.cpp, into
 `<project>/video/<slug>/transcript.vtt` — never into the corpus. No audio and no sidecar →
 a frames-only document (`transcript: none`).
 
@@ -180,11 +194,13 @@ around that. When a recording is deleted from the corpus:
 `"$PY" $VC forget --source <rel> --parsed <project>/parsed --assets-root <project>/assets --work <project>/video`.
 
 **Sidecars are retired automatically.** `assemble` records the sidecar as
-`consumed-by-video` and deletes its stale parsed doc (if an earlier transcript pass made
-one). On later runs `parse_corpus.py` skips a `.vtt`/`.srt` on its own — but only when its
-same-stem video already has a `video-lane` manifest entry whose parsed doc exists. No flag:
-a corpus that never ran this lane parses its transcripts exactly as before, and a
-recording's sidecar is indexed normally until the recording is assembled.
+`consumed-by-video` and deletes its stale parsed doc (if an earlier parse pass made one).
+On later runs `parse_corpus.py` skips that file (`.vtt`, `.srt` or `.docx`) on its own — but
+only while it is listed in the `inputs` of a `video-lane` manifest entry whose parsed doc
+exists. Consumption follows what `assemble` actually used, not file names: a recording
+assembled with `--transcript asr` consumes nothing. No flag: a corpus that never ran this
+lane parses exactly as before, and a recording's transcript is indexed as its own document
+until the recording is assembled.
 
 **Tuning.** `frames --min-hold` (seconds a frame must stay, default 3), `--diff` (cut
 threshold, 0.08), `--still` (stillness, 0.015 — raise it if slides with a live cursor are
@@ -201,4 +217,4 @@ content you would not index as a document.
 Nothing in the classifier or retriever changes — they just get **faithful input** instead of fragments. The classify agent now sees `ProjectAlpha Vision & Service Design Blueprint / Future State Architecture / …` instead of `Confidential — Page 4`, so tagging, embeddings, and the related layer all improve for free. For genuinely visual edge cases, `get_evidence` returns the page asset path for a capable local client to open and reason over multimodally.
 
 ## Deps
-`pymupdf` (render + text + `find_tables`) — torch-free. **LibreOffice `soffice`** (system dep) for .pptx/.docx. **`ffmpeg`/`ffprobe`** (system dep) for meeting recordings. **`whisper-cli`** (whisper.cpp, system dep) plus a ggml model — only for recordings that have no same-stem `.vtt`/`.srt` sidecar. A cheap vision model for the transcription step (like the taxonomy/classify agents — meaning is agentic).
+`pymupdf` (render + text + `find_tables`) — torch-free. **LibreOffice `soffice`** (system dep) for .pptx/.docx. **`ffmpeg`/`ffprobe`** (system dep) for meeting recordings. **`whisper-cli`** (whisper.cpp, system dep) plus a ggml model — only for recordings that have no transcript (same-stem `.vtt`/`.srt`/`.docx`, or a Teams `.docx` titled with the recording name). A cheap vision model for the transcription step (like the taxonomy/classify agents — meaning is agentic).

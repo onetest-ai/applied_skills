@@ -313,11 +313,13 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats pptx,docx,pdf,md,markdown,txt
 
     # 1m · meeting recordings (.mp4/.mov/…) — the visual-parse "Meeting recordings" lane:
-    #      probe → (transcribe, only when no same-stem .vtt/.srt) → frames → vision_prep → 🤖 VLM → assemble
+    #      probe → (transcribe, only when no transcript: same-stem .vtt/.srt/.docx, or a Teams
+    #      .docx whose first line is the recording name) → frames → vision_prep → 🤖 VLM → assemble
     #      "$PY" "{VP/'video_capture.py'}" probe --video <rel> --rel-to "{docs_s}" --work "{proj/'video'}"
     #      (full sequence: visual-parse/SKILL.md → Meeting recordings)
-    #      assemble retires the recording's sidecar doc; later step-1a runs skip that .vtt/.srt
-    #      on their own (only once the recording has a video-lane doc in parsed/ — no flag).
+    #      assemble retires the recording's transcript doc; later step-1a/1b runs skip that
+    #      .vtt/.srt/.docx on their own (only while the recording has a video-lane doc in parsed/
+    #      whose manifest inputs list that file — no flag).
 
     # 2 · 🤖 induce taxonomy (map→reduce→judge→emit) → taxonomy/taxonomy_v0.json
     #     see corpus-taxonomy-extraction/SKILL.md; goal = above. Dispatch Haiku subagents.

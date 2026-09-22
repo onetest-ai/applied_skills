@@ -103,7 +103,8 @@ PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-
 #     WARNING: omitting --merge-cues produces one chunk per cue (~50-100 chars each), which agents
 #     classify as empty [] and retrieval quality degrades severely. Always pass --merge-cues N > 1 for VTT/SRT.
 #     Recordings' sidecars need no flag: once video_capture.py assemble has produced a recording's
-#     doc, it retires the sidecar's doc, and later runs skip that .vtt/.srt on their own.
+#     doc, it retires the transcript's doc, and later runs skip that .vtt/.srt/.docx on their own
+#     (keyed on the video-lane manifest entry's `inputs`).
 "$PY" .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats vtt,srt --merge-cues 10
 # 1b. parse narrative docs → Markdown. TEXT pages via pymupdf (torch-free):
 "$PY" .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf,md,markdown,txt,html,htm

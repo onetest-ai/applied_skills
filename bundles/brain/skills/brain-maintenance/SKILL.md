@@ -143,7 +143,7 @@ See `visual-parse` → "Meeting recordings" for the full per-recording command s
 | What changed | Re-run |
 |---|---|
 | Video content | `probe`, `transcribe` (only if `probe.json` says `asr`), `frames`, VLM pass, `assemble` |
-| Sidecar `.vtt`/`.srt` changed or added | `probe`, `assemble` |
+| Sidecar `.vtt`/`.srt`/`.docx` (incl. a Teams `.docx` paired by its title) changed or added | `probe`, `assemble` |
 | Sidecar removed | `probe`, `transcribe`, `assemble` |
 | Video removed | `./brain source remove <source-id> --yes` (tombstone), then `video_capture.py forget` |
 
@@ -154,9 +154,10 @@ warns when it finds videos in the corpus that no registered root's `include` mat
 **VTT/SRT sources require two separate parse passes** — `--merge-cues` only applies to transcripts and must not be passed for PDF/PPTX/DOCX:
 
 ```bash
-# Pass 1 — transcripts only. A recording's sidecar is skipped automatically (recorded as
-# consumed-by-video) once that recording has a video-lane doc in parsed/; every other
-# .vtt/.srt, including one next to a video this Brain does not ingest, parses as before.
+# Pass 1 — transcripts only. A recording's transcript is skipped automatically (recorded as
+# consumed-by-video) while it is in the `inputs` of that recording's video-lane manifest entry
+# and the video doc exists in parsed/ — the same holds for a Teams .docx in pass 2; every
+# other file, including one next to a video this Brain does not ingest, parses as before.
 "$PY" "$SKILLS/corpus-taxonomy-extraction/parse_corpus.py" --corpus <root> --out parsed/ --formats vtt,srt --merge-cues 10
 # Pass 2 — narrative docs
 "$PY" "$SKILLS/corpus-taxonomy-extraction/parse_corpus.py" --corpus <root> --out parsed/ --formats pptx,docx,pdf,md,markdown,txt,html,htm
