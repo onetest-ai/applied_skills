@@ -19,7 +19,7 @@ No required cloud service and no lock-in. Copy `knowledge.sqlite` for text/graph
 |---|---|---|
 | **knowledge-pipeline** | 🎛️ build orchestrator — create and answer, plus the dependency doctor | `SKILL.md` (build & answer sequence), `onboard.py`, `brain_doctor.py` |
 | **brain-maintenance** | 🔄 update/release planner — read-only status plus agent-gated update and external deployment guidance | `maintenance.py`, profile template, safety gates |
-| **corpus-taxonomy-extraction** | 🏷️ meaning: parse, induce taxonomy, review it in a local app, build graph, tag sections, emit vault | `parse_corpus.py`, `consolidate.py`, `emit_taxonomy.py`, `taxonomy_review.py` + `review_server.py` + `review_ui.html` (review app), `taxonomy_merge.py`, `taxonomy_refine_prep.py`, `chunking.py`, `build_graph.py`, `classify_prep.py`, `classify_write.py`, `to_obsidian.py` |
+| **corpus-taxonomy-extraction** | 🏷️ meaning: parse, induce taxonomy, build graph, tag sections, review it in a local app (grounded in the tag counts), emit vault | `parse_corpus.py`, `consolidate.py`, `emit_taxonomy.py`, `taxonomy_review.py` + `review_server.py` + `review_ui.html` (review app), `taxonomy_merge.py`, `taxonomy_refine_prep.py`, `chunking.py`, `build_graph.py`, `classify_prep.py`, `classify_write.py`, `to_obsidian.py` |
 | **knowledge-index** | 🔎 narrative: heading-aware chunks → FTS5 + vectors | `knowledge_index.py`, `chunking.py` (shared) |
 | **tabular-semantic-layer** | 🔢 numbers: Excel → deterministic `facts` | `build_marts.py`, `profile_workbooks.py`, `families.example.json`, `metrics.example.json` |
 | **hybrid-retrieval** | 🧭 answer: route each sub-claim to the right lane, fuse, cite | `query.py` |
@@ -275,14 +275,19 @@ flowchart TD
     P --> VP["vision_prep.py: flagged AND uncached pages only"]
     VP --> VA["Vision subagents → result_k.json"]
     VA --> AS["vision_assemble.py → final parsed/*.md + page_render cache"]
-    AS --> TX["Taxonomy agents: map → reduce → judge → adopt --provisional → classify → first-build review → taxonomy/current.json"]
+    AS --> TX["Taxonomy agents: map → reduce → judge → emit taxonomy_v0.json"]
     AS --> IX["knowledge_index.py --reset"]
-    TX --> GR["build_graph.py"]
-    IX --> CP["classify_prep.py"]
-    GR --> CP
+    IX --> GR["build_graph.py --taxonomy taxonomy_v0.json"]
+    TX --> GR
+    GR --> AD["taxonomy_review.py adopt --provisional"]
+    AD --> CP["classify_prep.py"]
     CP --> CA["Classification subagents → result_k.json"]
     CA --> CW["classify_write.py"]
-    CW --> REL["related"]
+    CW --> HR["taxonomy_signals.py → diagnose → fix subagents → plan --mode health"]
+    HR --> FR["First-build review (serve) → taxonomy_merge.py --apply → taxonomy/current.json"]
+    FR --> G2["build_graph.py (tags migrate)"]
+    G2 --> RC["reclassify taxonomy/work/reclassify.json"]
+    RC --> REL["related"]
     REL --> DB[("knowledge.sqlite")]
     X["Reporting workbooks"] --> M["build_marts.py --strict"] --> DB
     DB --> V["to_obsidian.py --clean"]
@@ -295,8 +300,9 @@ Ordering matters:
 2. **Transcribe before taxonomy, indexing, or classification.** `vision_prep.py` creates batches only for `flagged` pages whose `img_sha` is absent from `page_render`. The orchestrator launches vision-capable low-cost subagents; each writes one `result_k.json`. `vision_assemble.py` then combines VLM Markdown for visual pages with PyMuPDF text for ordinary pages and stores fresh VLM results in `page_render`.
 3. **Induce taxonomy from final enriched Markdown.** This is agentic and human-gated. A pre-VLM taxonomy can miss concepts visible only in diagrams.
 4. **Index once, after visual assembly.** Do not classify a provisional text-only index and then redo it; that creates a needless second classification pass.
-5. **Classify after index + graph exist.** `classify_prep.py` creates batches; text agents assign exact L1/L2 labels; `classify_write.py` commits them.
-6. Build `related`, deterministic marts, and the optional vault; verify; finally run `brain_sync.py seed` to establish the update baseline.
+5. **Classify after index + graph exist.** `build_graph.py --taxonomy taxonomy/taxonomy_v0.json` loads the draft, `taxonomy_review.py adopt --provisional` makes it the provisional `current.json`, then `classify_prep.py` creates batches; text agents assign exact L1/L2 labels; `classify_write.py` commits them.
+6. **Review once the counts exist.** `taxonomy_signals.py` → `diagnose` → fix subagents → `plan --mode health` → the user's first-build review → `taxonomy_merge.py --apply` → `build_graph.py` (tags migrate) → reclassify the chunks it queues.
+7. Build `related`, deterministic marts, and the optional vault; verify; finally run `brain_sync.py seed` to establish the update baseline.
 
 The generic text-only `parse_corpus.py` remains useful for corpora known not to need visual understanding. For slide decks, diagrams, timelines, or chart-heavy PDFs, the canonical path is **`render_pages → vision_prep → vision agents → vision_assemble`**, not `parse_corpus.py` alone.
 
@@ -412,21 +418,23 @@ Taxonomy induction is the **first agentic step, right after parsing** — and ev
 ```mermaid
 flowchart TD
     P["1 · parse (+ visual-parse)<br/>docs → parsed/*.md"] --> TX["2 · 🤖 TAXONOMY induction<br/>parsed/ + goal → taxonomy_v0.json<br/><i>map → reduce → judge → emit</i>"]
-    TX --> AD["adopt --provisional<br/>current.json (PROVISIONAL)"]
     P --> IDX["3 · index<br/>chunks + FTS + vector"]
-    AD --> G["4 · build_graph<br/>taxonomy → graph_nodes / edges (L1/L2)"]
+    IDX --> G["4 · build_graph --taxonomy taxonomy_v0.json<br/>taxonomy → graph_nodes / edges (L1/L2)"]
+    TX --> G
+    G --> AD["adopt --provisional<br/>current.json (PROVISIONAL)"]
     AD --> CL["5 · 🤖 classify<br/>chunk × taxonomy-vocab → chunk_topics/chunk_verdicts + about-edges"]
-    IDX --> CL
-    G --> CL
-    CL --> FR["5b · 👤 first-build review<br/>grounded in counts → v1 current.json (PROVISIONAL removed)"]
-    FR --> G2["build_graph (tags migrate)"]
-    G2 --> R["related · marts · vault(opt) · seed"]
+    CL --> HD["taxonomy_signals → diagnose → 🤖 fix agents<br/>→ plan --mode health"]
+    HD --> FR["5b · 👤 first-build review<br/>grounded in counts"]
+    FR --> MA["taxonomy_merge --apply<br/>v1 current.json (PROVISIONAL removed)"]
+    MA --> G2["build_graph (tags migrate)"]
+    G2 --> RC["🤖 reclassify<br/>taxonomy/work/reclassify.json"]
+    RC --> R["related · marts · vault(opt) · seed"]
 
     classDef ag fill:#fff3e0,stroke:#e65100,color:#bf360c;
-    class TX,CL ag
+    class TX,CL,HD,RC ag
 ```
 
-- **`index` (3) does NOT depend on the taxonomy** — it can run in parallel; but **`build_graph` (4) and `classify` (5) do**: the graph *is* the taxonomy as vertices, and the classifier tags each chunk *against the taxonomy vocabulary*. So the taxonomy must exist before them — here, the provisional one.
+- **`index` (3) does NOT depend on the taxonomy** — it runs once, before the graph; but **`build_graph` (4) and `classify` (5) do**: the graph *is* the taxonomy as vertices, and the classifier tags each chunk *against the taxonomy vocabulary*. So the taxonomy must exist before them — here, the draft `taxonomy_v0.json` (graph), then its provisional adoption as `current.json` (classify).
 - Induction reads the **document text** (`parsed/`), not the chunks/store.
 - There is no human gate between induction and `build_graph`/`classify`: the draft is adopted as a **provisional** `current.json` (`taxonomy_review.py adopt --provisional`) precisely so the first human review can be grounded in real per-section counts instead of the bare draft tree. `onboard.py verify` fails and the store must not be deployed while `taxonomy/PROVISIONAL` exists.
 
@@ -435,7 +443,7 @@ flowchart TD
 2. **reduce** — `consolidate.py` deterministically clusters near-duplicates (stdlib difflib); a low-tier agent adjudicates **only the ambiguous** merges ("Chicago" vs "CHI").
 3. **judge** — an LLM-as-judge scores coverage/coherence and flags low-confidence/unmapped terms.
 4. **emit** — `taxonomy_v0.json` (+ `.md`): the draft, with a *demoted* list.
-5. **first-build review** — after the draft is adopted provisionally, indexed, graphed and classified, the user ratifies it — now grounded in real counts — in the local review app; `taxonomy_merge.py` then writes `taxonomy_v1.json` and `taxonomy/current.json` (no new version when the review approved no taxonomy change), and removes `taxonomy/PROVISIONAL` either way.
+5. **first-build review** — after the corpus is indexed, the draft graphed, adopted provisionally and classified, and the health diagnosis and fix agents have run, the user ratifies it — now grounded in real counts — in the local review app; `taxonomy_merge.py` then writes `taxonomy_v1.json` and `taxonomy/current.json` (no new version when the review approved no taxonomy change), and removes `taxonomy/PROVISIONAL` either way.
 
 The **goal string is a noise filter** — extraction is scoped to the analytical goal. Prefer **seed-guided over schema-free**: anchor on any existing taxonomy doc (a "Taxonomy Compendium") and extend it.
 
