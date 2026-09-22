@@ -152,6 +152,13 @@ class ServerTests(unittest.TestCase):
         raw = re.findall(r"\$\{(?:it|i|p|s|c|item)\.(?:id|item_id|chunk_id)\}", html)
         self.assertEqual(raw, [])
 
+    def test_ui_keeps_chunk_ids_as_strings(self):
+        # 64-bit ids arrive as strings; subtraction sorts and Number() on an id would round them.
+        html = open(S.UI, encoding="utf-8").read()
+        self.assertNotIn("(x, y) => x - y", html)
+        self.assertNotIn("Number(box.value)", html)
+        self.assertIn("function cmpId(", html)
+
     def test_ui_offers_revert_to_keep_and_closes_header_after_submit(self):
         html = open(S.UI, encoding="utf-8").read()
         self.assertIn("Revert to keep", html)
@@ -373,3 +380,112 @@ class HealthLiveChannelTests(unittest.TestCase):
         code, st = self.req("GET", "/api/state")
         self.assertEqual(st["requests"][q2]["status"], "answered")
         self.assertEqual(st["revisions"][item["id"]]["op"], fresh_op)
+
+
+BIG = 3142479829755744408   # a real 64-bit hash chunk id: far above 2**53, so a JS Number rounds it
+
+
+class BigChunkIdTests(unittest.TestCase):
+    """Chunk ids leave the server as exact decimal strings (JSON numbers above 2**53 round in the
+    browser) and come back as strings or ints, recorded as plain ints."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.dir = os.path.join(self.td.name, "taxonomy")
+        tax = taxonomy(version=1)
+        tax["intent_taxonomy"]["tree"]["Billing & Payments"].append("Payment Plans")   # 0 tags
+        self.cur = os.path.join(self.dir, "current.json"); write_json(self.cur, tax)
+        self.db = os.path.join(self.td.name, "k.sqlite"); tagged_store(self.db, tax)
+        c = sqlite3.connect(self.db)
+        c.execute("CREATE VIRTUAL TABLE chunks_fts USING fts5(text)")
+        c.executemany("INSERT INTO chunks_fts(rowid, text) VALUES(?,?)", list(c.execute("SELECT id, text FROM chunks")))
+        for cid, text in ((BIG, "customer asks for payment plans to split the bill"),
+                          (9, "payment plans for a large order")):
+            c.execute("INSERT INTO chunks VALUES(?,?,?,?)", (cid, f"doc{cid}.md", "Payment plans", text))
+            c.execute("INSERT INTO chunks_fts(rowid, text) VALUES(?,?)", (cid, text))
+        c.commit(); c.close()
+        self.work = os.path.join(self.dir, "work", "health")
+        H.diagnose(self.cur, self.db, self.work)
+        write_json(os.path.join(self.work, "notags", "result_0.json"), {"fixes": [
+            {"node": "Payment Plans", "fix": "tag", "chunk_ids": [BIG, 9], "reason": "both are about plans"}]})
+        self.path, self.rv = R.build_plan("health", self.cur, work_dir=self.work, db=self.db, now=NOW)
+        self.item = next(i for i in self.rv["items"] if i["kind"] == "no_tags" and i["op"]["node"] == "Payment Plans")
+        self.assertIn(BIG, self.item["support"]["candidate_ids"])
+        self.dec = os.path.join(self.dir, "decisions.jsonl")
+        self.app = S.ReviewApp(self.path, db_path=self.db)
+        self.t = threading.Thread(target=lambda: S.serve(
+            self.app, open_browser=False, timeout=10, out=open(os.devnull, "w"), err=open(os.devnull, "w")))
+        self.t.start()
+        self.assertTrue(self.app.ready.wait(5))
+        self.base = self.app.url.split("/?")[0]
+
+    def tearDown(self):
+        if self.t.is_alive():
+            self.req("POST", "/api/cancel", {})
+        self.t.join(5)
+        self.td.cleanup()
+
+    def req(self, method, path, body=None):
+        data = json.dumps(body).encode() if body is not None else None
+        r = urllib.request.Request(self.base + path, data=data, method=method)
+        r.add_header("X-Review-Token", self.app.token)
+        r.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(r, timeout=5) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read())
+
+    def test_state_carries_chunk_ids_as_exact_strings(self):
+        code, st = self.req("GET", "/api/state")
+        self.assertEqual(code, 200, st)
+        it = next(i for i in st["review"]["items"] if i["id"] == self.item["id"])
+        self.assertIn(str(BIG), it["support"]["candidate_ids"])
+        self.assertTrue(all(isinstance(x, str) for x in it["support"]["candidate_ids"]))
+        self.assertEqual(sorted(it["op"]["chunk_ids"]), sorted([str(BIG), "9"]))
+        self.assertIn(str(BIG), [e["chunk_id"] for e in it["evidence"]])
+        self.assertIsInstance(it["support"]["candidates"], int)     # counts stay numbers
+        self.assertIsInstance(st["base"]["version"], int)
+
+    def test_chunk_endpoint_finds_a_64bit_id(self):
+        code, ch = self.req("GET", f"/api/chunk/{BIG}")
+        self.assertEqual(code, 200, ch)
+        self.assertEqual(ch["chunk_id"], str(BIG))
+        self.assertIn("payment plans", ch["text"])
+        self.assertEqual(self.req("GET", f"/api/chunk/{BIG - 408}")[0], 404)   # the rounded id is another chunk
+
+    def test_amend_with_string_ids_records_exact_ints(self):
+        op = {"type": "tag", "node": "Payment Plans", "chunk_ids": [str(BIG)]}
+        code, out = self.req("POST", "/api/decision", {"action": "amend", "item_id": self.item["id"], "op": op})
+        self.assertEqual(code, 200, out)
+        self.assertEqual(out["record"]["op"]["chunk_ids"], [str(BIG)])
+        code, out = self.req("POST", "/api/decisions", {"records": [
+            {"action": "amend", "item_id": self.item["id"], "op": dict(op, chunk_ids=[str(BIG), 9])}]})
+        self.assertEqual(code, 200, out)
+        recs = D.read(self.dec)
+        self.assertEqual([r["op"]["chunk_ids"] for r in recs], [[BIG], [BIG, 9]])
+        self.assertTrue(all(type(x) is int for r in recs for x in r["op"]["chunk_ids"]))
+        with open(self.dec, encoding="utf-8") as f:
+            self.assertIn(f"[{BIG}]", f.read())                       # plain JSON ints on disk
+
+    def test_rounded_id_is_refused_by_the_candidate_check(self):
+        op = {"type": "tag", "node": "Payment Plans", "chunk_ids": [str(BIG - 408)]}
+        code, out = self.req("POST", "/api/decision", {"action": "amend", "item_id": self.item["id"], "op": op})
+        self.assertEqual(code, 400, out)
+        self.assertFalse(os.path.exists(self.dec))
+
+    def test_non_numeric_ids_are_refused(self):
+        for bad in ("12abc", "", "1.5", " 12"):
+            op = {"type": "tag", "node": "Payment Plans", "chunk_ids": [bad]}
+            code, out = self.req("POST", "/api/decision", {"action": "amend", "item_id": self.item["id"], "op": op})
+            self.assertEqual(code, 400, (bad, out))
+            self.assertTrue(out["errors"], out)
+            code, out = self.req("POST", "/api/impact", {"op": op})
+            self.assertEqual(code, 400, (bad, out))
+        self.assertEqual(self.req("GET", "/api/chunk/12abc")[0], 400)
+        self.assertFalse(os.path.exists(self.dec))
+
+    def test_impact_accepts_string_ids(self):
+        op = {"type": "tag", "node": "Payment Plans", "chunk_ids": [str(BIG)]}
+        code, out = self.req("POST", "/api/impact", {"op": op})
+        self.assertEqual(code, 200, out)

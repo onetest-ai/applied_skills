@@ -274,6 +274,18 @@ const api = {
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const slug = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 const num = x => { const n = Number(x); return Number.isFinite(n) ? n : 0; };
+// Chunk ids are 64-bit hashes the server sends as decimal strings (a JSON number above 2^53 rounds).
+// Keep them opaque strings: never Number()/num()/parseInt them, never sort with subtraction.
+const cidStr = x => String(x);
+function cmpId(a, b){   // exact numeric order of two decimal id strings (sign-aware), no Number()
+  a = cidStr(a); b = cidStr(b);
+  const na = a[0] === "-", nb = b[0] === "-";
+  if (na !== nb) return na ? -1 : 1;
+  const x = na ? a.slice(1) : a, y = nb ? b.slice(1) : b;
+  const c = x.length !== y.length ? x.length - y.length : (x < y ? -1 : x > y ? 1 : 0);
+  return na ? -c : c;
+}
+const idList = ids => (ids || []).map(cidStr).sort(cmpId);
 const plural = (n, one, many) => num(n) + " " + (num(n) === 1 ? one : (many || one + "s"));
 const errText = e => (e && Array.isArray(e.errors)) ? e.errors.join("; ") : String(e && e.message || e);
 const $ = id => document.getElementById(id);
@@ -306,7 +318,7 @@ function canon(v){
 }
 function sameOp(a, b){
   if (!a || !b) return false;
-  if (a.type === "tag" && b.type === "tag") return a.node === b.node && JSON.stringify([...(a.chunk_ids || [])].sort((x, y) => x - y)) === JSON.stringify([...(b.chunk_ids || [])].sort((x, y) => x - y));
+  if (a.type === "tag" && b.type === "tag") return a.node === b.node && JSON.stringify(idList(a.chunk_ids)) === JSON.stringify(idList(b.chunk_ids));
   return JSON.stringify(canon(a)) === JSON.stringify(canon(b));
 }
 // A template alternative is an empty-payload op that exists only to be edited into a real one.
@@ -689,12 +701,12 @@ const tagCand = it => candidatesOf(it).find(c => c.type === "tag") || null;
 function tagChoices(it){
   if (!tagCand(it)) return [];
   const cand = (it.support || {}).candidate_ids;
-  return it.kind === "no_tags" && Array.isArray(cand) ? cand : (tagCand(it).chunk_ids || []);
+  return (it.kind === "no_tags" && Array.isArray(cand) ? cand : (tagCand(it).chunk_ids || [])).map(cidStr);
 }
 function tagChosen(it){
   if (U.tagDraft[it.id]) return U.tagDraft[it.id];
   const op = itemOp(it);
-  return op.type === "tag" ? op.chunk_ids || [] : [];
+  return op.type === "tag" ? (op.chunk_ids || []).map(cidStr) : [];
 }
 function rowCtx(it, base){
   const label = subjectOf(base);
@@ -744,7 +756,8 @@ function rowHTML(it){
     + (cur ? `<tr class="rpanel"><td colspan="4">${rowPanel(it)}</td></tr>` : "");
 }
 function candBrief(it, cid){
-  const e = (it.evidence || []).find(x => x && x.chunk_id === cid && x.preview != null);
+  cid = cidStr(cid);
+  const e = (it.evidence || []).find(x => x && x.chunk_id != null && cidStr(x.chunk_id) === cid && x.preview != null);
   if (e) return e;
   const c = chunkCache[cid];
   if (c && !c.errors) return {chunk_id:cid, source:c.source, title:c.title, preview:String(c.text || "").split(/\s+/).join(" ").trim().slice(0, 240)};
@@ -884,7 +897,7 @@ async function pickCandidate(it, i){
 async function onTagToggle(box){
   const it = S.review.items.find(i => i.id === box.dataset.tag); if (!it) return;
   if (busy){ box.checked = !box.checked; return; }   // one decision at a time
-  const order = tagChoices(it), set = new Set(tagChosen(it)), cid = Number(box.value);
+  const order = tagChoices(it), set = new Set(tagChosen(it)), cid = cidStr(box.value);
   if (box.checked) set.add(cid); else set.delete(cid);
   const ids = order.filter(x => set.has(x));
   if (!ids.length){
