@@ -435,7 +435,7 @@ flowchart TD
 2. **reduce** — `consolidate.py` deterministically clusters near-duplicates (stdlib difflib); a low-tier agent adjudicates **only the ambiguous** merges ("Chicago" vs "CHI").
 3. **judge** — an LLM-as-judge scores coverage/coherence and flags low-confidence/unmapped terms.
 4. **emit** — `taxonomy_v0.json` (+ `.md`): the draft, with a *demoted* list.
-5. **first-build review** — after the draft is adopted provisionally, indexed, graphed and classified, the user ratifies it — now grounded in real counts — in the local review app; `taxonomy_merge.py` then writes `taxonomy_v1.json` and `taxonomy/current.json`, and removes `taxonomy/PROVISIONAL`.
+5. **first-build review** — after the draft is adopted provisionally, indexed, graphed and classified, the user ratifies it — now grounded in real counts — in the local review app; `taxonomy_merge.py` then writes `taxonomy_v1.json` and `taxonomy/current.json` (no new version when the review approved no taxonomy change), and removes `taxonomy/PROVISIONAL` either way.
 
 The **goal string is a noise filter** — extraction is scoped to the analytical goal. Prefer **seed-guided over schema-free**: anchor on any existing taxonomy doc (a "Taxonomy Compendium") and extend it.
 

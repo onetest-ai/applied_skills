@@ -139,8 +139,13 @@ What the user sees: **Inbox** (the proposals to decide), **Taxonomy** (the whole
 ### A. First-build review
 Not a review of the bare draft tree — a review of the draft **after** real per-section classification, so every proposal in the Inbox cites how many sections are actually affected. Until this review is applied, `taxonomy/PROVISIONAL` exists and `onboard.py verify` fails; do not deploy. `<run>` is the work directory for this run, e.g. `health` (reused every run).
 
-1. **You adopt the draft as provisional**, right after emit, before any human sees it: `"$PY" "$CTE/taxonomy_review.py" adopt --taxonomy taxonomy/taxonomy_v0.json --db "$DB" --provisional`. This copies the draft to `taxonomy/current.json` and writes the `taxonomy/PROVISIONAL` marker.
-2. **You index and build the graph** from the provisional `current.json` (`knowledge-pipeline` step 3, then `build_graph.py --taxonomy taxonomy/current.json --db "$DB"`).
+1. **You index the corpus** (`knowledge-pipeline` step 3: `knowledge_index.py index --db "$DB" --corpus <project>/parsed --reset`).
+2. **You build the graph from the draft, then adopt it as provisional**, before any human sees it. The order matters: `adopt` refuses while the store's graph does not hold the draft's node ids, so on a fresh store `build_graph` runs first.
+   ```bash
+   "$PY" "$CTE/build_graph.py" --taxonomy taxonomy/taxonomy_v0.json --db "$DB"
+   "$PY" "$CTE/taxonomy_review.py" adopt --taxonomy taxonomy/taxonomy_v0.json --db "$DB" --provisional
+   ```
+   `adopt --provisional` copies the draft to `taxonomy/current.json` and writes the `taxonomy/PROVISIONAL` marker. Every later step reads `current.json`.
 3. **You classify** every chunk against the provisional taxonomy (`knowledge-pipeline` step 5: `classify_prep.py` → dispatch low-cost subagents → `classify_write.py`). Agents may answer `["__no_topic__"]` for a chunk with no topic at all (filler, boilerplate, off-goal); that verdict is stored in `chunk_verdicts` and is a valid, complete answer — not a missing one.
 4. **You compute signals and diagnose**, now that real counts exist:
    ```bash
@@ -156,6 +161,7 @@ Not a review of the bare draft tree — a review of the draft **after** real per
    "$PY" "$CTE/taxonomy_merge.py" --review <review> --apply    # taxonomy_v1.json + current.json; PROVISIONAL removed
    "$PY" "$CTE/build_graph.py" --taxonomy taxonomy/current.json --db "$DB"   # tags migrate
    ```
+   A review that approves no taxonomy change writes no `taxonomy_v1.json` (`taxonomy_changed: false`), but apply still removes `PROVISIONAL`: the user has reviewed the draft.
 10. **You reclassify, if needed**: if `taxonomy/work/reclassify.json` exists, run **Reclassifying after a taxonomy change** below before step 11. **You write the approved tags, if any**: `classify_write.py --db "$DB" --results <tags_file's directory> --merge`.
 11. Continue the build (`knowledge-pipeline` steps 5b onward: `related`, marts, vault).
 

@@ -131,15 +131,17 @@ PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-
 #     Run it BEFORE 1b when the corpus has recordings (see 1b):
 "$PY" .../visual-parse/video_capture.py probe --video <root>/<rel> --rel-to <root> --work <project>/video --manifest <project>/parsed/manifest.json
 # 2. (optional) induce taxonomy → taxonomy/taxonomy_v0.json  [map→reduce→judge→emit; see that skill]
-#    no human gate yet: adopt the draft as PROVISIONAL current.json so the graph and classifier can
-#    build/run against it — the first human review happens after classification, in step 5b
-"$PY" .../corpus-taxonomy-extraction/taxonomy_review.py adopt --taxonomy <project>/taxonomy/taxonomy_v0.json --db "$DB" --provisional
-#    → writes taxonomy/current.json + taxonomy/PROVISIONAL; onboard.py verify fails and nothing may be
-#    deployed while PROVISIONAL exists
+#    no human gate yet: steps 3–4 build against the draft and adopt it as a PROVISIONAL current.json
+#    so the classifier can run against it — the first human review happens after classification, in step 5b
 # 3. narrative index — heading-aware sections (shared chunker) → chunks+FTS+vector
 "$PY" .../knowledge-index/knowledge_index.py index --db "$DB" --corpus <project>/parsed --reset
-# 4. taxonomy graph (vertices = L1/L2) into the SAME db, from the provisional current.json
-"$PY" .../corpus-taxonomy-extraction/build_graph.py --taxonomy <project>/taxonomy/current.json --db "$DB"
+# 4. taxonomy graph (vertices = L1/L2) into the SAME db, FROM THE DRAFT FILE, then adopt the draft as
+#    provisional. This order is required: adopt refuses while the store's graph does not hold the
+#    draft's node ids, so on a fresh store build_graph must run first.
+"$PY" .../corpus-taxonomy-extraction/build_graph.py --taxonomy <project>/taxonomy/taxonomy_v0.json --db "$DB"
+"$PY" .../corpus-taxonomy-extraction/taxonomy_review.py adopt --taxonomy <project>/taxonomy/taxonomy_v0.json --db "$DB" --provisional
+#    → writes taxonomy/current.json + taxonomy/PROVISIONAL; onboard.py verify fails and nothing may be
+#    deployed while PROVISIONAL exists. Every later step reads taxonomy/current.json.
 # 5. per-section taxonomy tags — LOW-TIER AGENTS (meaning is agentic), not a script. Classifying
 #    against the provisional taxonomy, agents may answer ["__no_topic__"] for a chunk with no topic
 #    at all (filler/boilerplate/off-goal) — a valid, complete verdict, stored in chunk_verdicts:
@@ -152,7 +154,8 @@ PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-
 # 5b. 👤 the first human review, grounded in counts (corpus-taxonomy-extraction → "A. First-build review"):
 #    taxonomy_signals.py → diagnose → 🤖 one fix subagent per task dir (describe, notags, structure,
 #    fit, untagged, metrics) → plan --mode health → serve in the background, end your turn → on submit,
-#    taxonomy_merge.py --review … --apply writes taxonomy_v1.json + current.json and deletes PROVISIONAL,
+#    taxonomy_merge.py --review … --apply writes taxonomy_v1.json + current.json and deletes PROVISIONAL
+#    (a review that approves no taxonomy change writes no new version but still deletes PROVISIONAL),
 #    then build_graph.py migrates tags; reclassify taxonomy/work/reclassify.json if present, then
 #    classify_write.py --merge for the approved-tags result directory the review printed
 "$PY" .../corpus-taxonomy-extraction/taxonomy_signals.py --taxonomy <project>/taxonomy/current.json --db "$DB" --out <project>/taxonomy/work/signals.json

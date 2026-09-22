@@ -338,6 +338,8 @@ This is the human gate: not the bare draft tree, but the draft **after** real cl
   --taxonomy "$TAX" --db "$DB"                  # tags migrate
 ```
 
+A review that approves no taxonomy change writes no `taxonomy_v1.json` (the apply output says `taxonomy_changed: false`), but it still deletes `PROVISIONAL`.
+
 `serve` binds `127.0.0.1` on a free port, prints `review app: <url>` on stderr and opens the browser; if no browser opened, give the user that URL from the background task's output. It exits on submit, on "close without submitting" (`cancelled`) or after `--timeout` seconds (default 3600); decisions are saved, so run `serve` again to continue. The review scripts are stdlib only. Applying deletes `taxonomy/PROVISIONAL`, so `onboard.py verify` can pass and the store can be deployed. If `taxonomy/work/reclassify.json` exists after `build_graph`, reclassify those chunk ids before writing any approved tags, then run `classify_write.py --merge` for the approved-tags result directory the review printed. Full procedure: `corpus-taxonomy-extraction` → "A. First-build review".
 
 **Until this review is applied, `taxonomy/PROVISIONAL` exists and `onboard.py verify` fails; do not deploy.** The old draft-only review (plan/serve/apply on the bare `taxonomy_v0.json`, no classification) remains documented as a fallback for the case where the corpus is not indexed yet — see `corpus-taxonomy-extraction` → "A′. Draft review without an index (fallback)".

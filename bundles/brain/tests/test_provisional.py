@@ -55,3 +55,49 @@ class ProvisionalTests(unittest.TestCase):
         self.assertEqual(res["status"], "applied")
         self.assertTrue(res["provisional_cleared"])
         self.assertFalse(taxo_io.is_provisional(self.tdir))
+
+    def _submitted_remove_review(self):
+        cli("adopt", "--taxonomy", self.v0, "--db", self.db, "--provisional")
+        cur = os.path.join(self.tdir, "current.json")
+        path, rev = R.build_plan("browse", cur, db=self.db)
+        dp = D.default_path(self.tdir)
+        D.append(dp, {"review_id": rev["review_id"], "action": "propose", "item_id": "p-1",
+                      "op": {"type": "remove", "node": "Transform", "disposition": "demote"},
+                      "reviewer": "t", "surface": "browser"})
+        D.append(dp, {"review_id": rev["review_id"], "action": "submit", "reviewer": "t", "surface": "browser"})
+        return path
+
+    def test_marker_is_cleared_before_applied_is_logged_and_recovery_clears_it(self):
+        path = self._submitted_remove_review()
+        real_append = TM.D.append
+
+        def crash_on_applied(p, rec):
+            if rec.get("action") == "applied":
+                raise RuntimeError("crash before logging applied")
+            return real_append(p, rec)
+
+        TM.D.append = crash_on_applied
+        try:
+            with self.assertRaises(RuntimeError):
+                TM.apply_review(path)
+        finally:
+            TM.D.append = real_append
+        self.assertFalse(taxo_io.is_provisional(self.tdir))       # cleared before `applied`
+        # a crash before the clear (after the version was written) leaves the marker: recovery clears it
+        taxo_io.write_provisional(self.tdir, 0, "x")
+        res = TM.apply_review(path)
+        self.assertTrue(res["recovered"])
+        self.assertTrue(res["provisional_cleared"])
+        self.assertFalse(taxo_io.is_provisional(self.tdir))
+
+    def test_apply_without_review_clears_the_marker(self):
+        cli("adopt", "--taxonomy", self.v0, "--db", self.db, "--provisional")
+        props = os.path.join(self.td.name, "props")
+        write_json(os.path.join(props, "result_0.json"),
+                   {"proposals": [{"name": "Brand New Area", "level": "L1", "parent": None, "evidence": "x"}]})
+        r = subprocess.run([sys.executable, str(CTE / "taxonomy_merge.py"), "--taxonomy",
+                            os.path.join(self.tdir, "current.json"), "--proposals", props, "--apply",
+                            "--without-review"], text=True, capture_output=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(os.path.exists(os.path.join(self.tdir, "taxonomy_v1.json")))
+        self.assertFalse(taxo_io.is_provisional(self.tdir))
