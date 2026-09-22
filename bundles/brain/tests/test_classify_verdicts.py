@@ -43,6 +43,12 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(self.q("SELECT category_id FROM chunk_topics WHERE chunk_id=1 ORDER BY 1"),
                          [("billing_payments",), ("refunds",)])
 
+    def test_a_later_empty_answer_clears_the_verdict(self):
+        write(self.db, self.res, {"1": ["__no_topic__"]})
+        write(self.db, self.res, {"1": []})
+        self.assertEqual(self.q("SELECT COUNT(*) FROM chunk_verdicts"), [(0,)])
+        self.assertEqual(self.q("SELECT COUNT(*) FROM chunk_topics WHERE chunk_id=1"), [(0,)])
+
     def test_merge_tag_clears_the_verdict(self):
         write(self.db, self.res, {"8": ["__no_topic__"]})
         write(self.db, self.res, {"8": ["Refunds"]}, "--merge")

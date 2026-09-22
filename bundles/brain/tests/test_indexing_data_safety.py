@@ -571,3 +571,51 @@ def test_safe_incremental_add_new_docs_to_existing_index(tmp_path, monkeypatch):
     )
     # Total chunks grew
     assert _chunk_count(con2) > vtt_chunks_before, "Chunk count must grow after adding new docs"
+
+
+def _add_verdicts(con, source):
+    con.execute("CREATE TABLE IF NOT EXISTS chunk_verdicts("
+                "chunk_id INTEGER PRIMARY KEY, verdict TEXT, taxonomy_version INT)")
+    ids = [r[0] for r in con.execute("SELECT id FROM chunks WHERE source=?", (source,))]
+    for cid in ids:
+        con.execute("INSERT INTO chunk_verdicts VALUES(?,?,?)", (cid, "no_topic", 0))
+    con.commit()
+    return ids
+
+
+def _orphan_verdicts(con):
+    return con.execute("SELECT COUNT(*) FROM chunk_verdicts v LEFT JOIN chunks c ON c.id=v.chunk_id "
+                       "WHERE c.id IS NULL").fetchone()[0]
+
+
+def test_p3_delete_removes_chunk_verdicts_for_deleted_doc(tmp_path, monkeypatch):
+    """A deleted doc's no-topic verdicts go with its chunks (no stale verdict rows)."""
+    monkeypatch.setattr(index, "embed", fake_embed)
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    sources = _build_large_corpus(corpus, n_files=2, sections_per_file=2)
+    db_path = str(tmp_path / "knowledge.sqlite")
+    con = index.connect(db_path)
+    index.index_docs(con, "fake", str(corpus), sources, 384, 1200)
+    assert _add_verdicts(con, "doc_00.md")
+    kept = _add_verdicts(con, "doc_01.md")
+    index.delete_docs(con, ["doc_00.md"])
+    con.commit()
+    assert _orphan_verdicts(con) == 0
+    assert sorted(r[0] for r in con.execute("SELECT chunk_id FROM chunk_verdicts")) == sorted(kept)
+
+
+def test_p4_shrinking_a_doc_removes_verdicts_of_dropped_chunks(tmp_path, monkeypatch):
+    """Re-indexing a doc into fewer sections deletes the dropped chunks' verdicts too."""
+    monkeypatch.setattr(index, "embed", fake_embed)
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    sources = _build_large_corpus(corpus, n_files=1, sections_per_file=4)
+    db_path = str(tmp_path / "knowledge.sqlite")
+    con = index.connect(db_path)
+    index.index_docs(con, "fake", str(corpus), sources, 384, 1200)
+    _add_verdicts(con, "doc_00.md")
+    (corpus / "doc_00.md").write_text("# Document 0\n\n## Only\n\nnew content\n", encoding="utf-8")
+    index.index_docs(con, "fake", str(corpus), ["doc_00.md"], 384, 1200)
+    con.commit()
+    assert _orphan_verdicts(con) == 0

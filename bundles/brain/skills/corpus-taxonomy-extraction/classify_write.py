@@ -111,11 +111,13 @@ def main():
     if "graph_edges" not in tables:
         print("ERROR: graph_edges table not found — run build_graph.py before classify_write.py", file=sys.stderr)
         sys.exit(1)
-    # incremental: clear only these chunks' existing tags/edges before re-inserting
+    # incremental: clear only these chunks' existing tags/edges/verdicts before re-inserting,
+    # so a chunk re-answered [] keeps no old no_topic verdict
     # (--merge skips this: it only adds labels, never deletes existing ones)
     if not a.merge:
         for cid in results:
             c.execute("DELETE FROM chunk_topics WHERE chunk_id=?", (cid,))
+            c.execute("DELETE FROM chunk_verdicts WHERE chunk_id=?", (cid,))
             c.execute("DELETE FROM graph_edges WHERE rel='about' AND source=?", (f"chunk:{cid}",))
     node = {i: (lbl, kind, par) for i, lbl, kind, par in
             c.execute("SELECT id,label,kind,parent FROM graph_nodes")}
