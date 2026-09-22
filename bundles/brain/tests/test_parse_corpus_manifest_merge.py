@@ -41,28 +41,62 @@ class ManifestMergeTests(unittest.TestCase):
         man = self._run("--formats", "vtt,srt,md")
         self.assertEqual(sorted(man), ["talk.vtt"])
 
-    def test_consume_flag_skips_sidecar_with_real_spelling(self):
+    def _video_lane(self, source, md_present=True):
+        """Seed the out dir as `video_capture assemble` would leave it for `source`."""
+        self.out.mkdir(exist_ok=True)
+        md = source.replace("/", "__") + ".md"
+        if md_present:
+            (self.out / md).write_text("# SOURCE: x\n# method: video-lane (transcript: sidecar)\n")
+        (self.out / "manifest.json").write_text(json.dumps(
+            [{"source": source, "md": md, "method": "video-lane"}]))
+
+    def test_no_video_lane_entry_parses_sidecar_normally_byte_identical(self):
+        # Zoom-style mp4+vtt pair in a corpus that does not ingest video: unchanged output.
+        self._run("--formats", "vtt,srt", "--merge-cues", "10")
+        before = (self.out / "talk.vtt.md").read_bytes()
+        (self.corpus / "talk.mp4").write_bytes(b"v")
+        man = self._run("--formats", "vtt,srt", "--merge-cues", "10")
+        self.assertEqual(man["talk.vtt"]["md"], "talk.vtt.md")
+        self.assertEqual((self.out / "talk.vtt.md").read_bytes(), before)
+
+    def test_video_lane_entry_consumes_sidecar_with_real_spelling(self):
         (self.corpus / "talk.MP4").write_bytes(b"v")
-        man = self._run("--formats", "vtt,srt", "--merge-cues", "10", "--consume-video-sidecars")
+        self._video_lane("talk.MP4")
+        man = self._run("--formats", "vtt,srt", "--merge-cues", "10")
         self.assertEqual(man["talk.vtt"], {"source": "talk.vtt", "skipped": True,
                                            "method": "consumed-by-video", "consumed_by": "talk.MP4"})
         self.assertFalse((self.out / "talk.vtt.md").exists())
+        self.assertIn("talk.MP4", man)  # the video-lane entry itself survives
 
-    def test_without_flag_output_is_unchanged(self):
+    def test_video_lane_entry_removes_stale_parsed_doc(self):
+        self._run("--formats", "vtt,srt", "--merge-cues", "10")
+        self.assertTrue((self.out / "talk.vtt.md").exists())
         (self.corpus / "talk.mp4").write_bytes(b"v")
+        man0 = json.loads((self.out / "manifest.json").read_text())
+        (self.out / "talk.mp4.md").write_text("# SOURCE: talk.mp4\n")
+        (self.out / "manifest.json").write_text(json.dumps(
+            man0 + [{"source": "talk.mp4", "md": "talk.mp4.md", "method": "video-lane"}]))
+        man = self._run("--formats", "vtt,srt", "--merge-cues", "10")
+        self.assertFalse((self.out / "talk.vtt.md").exists())
+        self.assertEqual(man["talk.vtt"], {"source": "talk.vtt", "skipped": True,
+                                           "method": "consumed-by-video", "consumed_by": "talk.mp4"})
+
+    def test_video_lane_entry_in_subdir_consumes_sidecar(self):
+        sub = self.corpus / "m"; sub.mkdir()
+        (sub / "standup.vtt").write_text(VTT); (sub / "standup.mp4").write_bytes(b"v")
+        self._video_lane("m/standup.mp4")
+        man = self._run("--formats", "vtt,srt", "--merge-cues", "10")
+        self.assertEqual(man["m/standup.vtt"]["method"], "consumed-by-video")
+        self.assertEqual(man["m/standup.vtt"]["consumed_by"], "m/standup.mp4")
+
+    def test_video_lane_entry_whose_md_is_missing_does_not_consume(self):
+        (self.corpus / "talk.mp4").write_bytes(b"v")
+        self._video_lane("talk.mp4", md_present=False)
         man = self._run("--formats", "vtt,srt", "--merge-cues", "10")
         self.assertEqual(man["talk.vtt"]["md"], "talk.vtt.md")
         self.assertTrue((self.out / "talk.vtt.md").exists())
 
-    def test_consume_flag_removes_stale_parsed_doc(self):
-        # First pass: parse talk.vtt without the flag
-        self._run("--formats", "vtt,srt", "--merge-cues", "10")
-        self.assertTrue((self.out / "talk.vtt.md").exists())
-        # Add the video and re-run with consume flag
-        (self.corpus / "talk.mp4").write_bytes(b"v")
-        man = self._run("--formats", "vtt,srt", "--merge-cues", "10", "--consume-video-sidecars")
-        # The parsed doc should be gone
-        self.assertFalse((self.out / "talk.vtt.md").exists())
-        # And the manifest should have the consumed-by-video entry
-        self.assertEqual(man["talk.vtt"], {"source": "talk.vtt", "skipped": True,
-                                           "method": "consumed-by-video", "consumed_by": "talk.mp4"})
+    def test_flag_is_gone(self):
+        with self.assertRaises(SystemExit):
+            parse_corpus.main(["--corpus", str(self.corpus), "--out", str(self.out),
+                               "--consume-video-sidecars"])
