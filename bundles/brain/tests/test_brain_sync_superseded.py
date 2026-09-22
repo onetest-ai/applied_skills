@@ -86,3 +86,46 @@ class SupersededTests(unittest.TestCase):
             _, d = S.delta(con, str(self.parsed))
         self.assertEqual(d["blocked_missing_parsed"], ["standup.vtt.md"])
         self.assertEqual(d["superseded_by_video"], [])
+
+
+class SupersededDocxTests(unittest.TestCase):
+    """A Teams .docx transcript parsed earlier as a document (soffice) is retired once
+    the video lane consumes it — the file name differs from the recording's."""
+
+    DOCX_MD = "rec__Acme_ Sync.docx.md"
+    VIDEO_REL = "rec/Sync-20260105-Meeting Recording.mp4"
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory(); self.root = Path(self.t.name)
+        self.db = self.root / "k.sqlite"; sqlite3.connect(self.db).close()
+        (self.root / "docs" / "rec").mkdir(parents=True)
+        con = R.connect(str(self.db)); R.ensure_schema(con); con.close()
+        self.parsed = self.root / "parsed"; self.parsed.mkdir()
+        old = self.parsed / self.DOCX_MD
+        old.write_text("# SOURCE: rec/Acme_ Sync.docx\n# method: soffice+pymupdf\n\nbody")
+        src = self.root / "docs" / "rec" / "Acme_ Sync.docx"; src.write_bytes(b"PK")
+        with sqlite3.connect(self.db) as con:
+            S.ensure_documents(con)
+            with R.connect(str(self.db)) as reg:
+                row = R.register(reg, "docs", "rec/Acme_ Sync.docx", src)
+            m = S.scan(str(self.parsed))[self.DOCX_MD]
+            con.execute("INSERT INTO synced_files VALUES(?,?,?,?,?,?)",
+                        (self.DOCX_MD, m["sha"], m["bytes"], m["mtime"], "now", row["source_id"]))
+        old.unlink()  # video_capture assemble removed it when it consumed the transcript
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def test_docx_transcript_is_superseded_by_the_video_doc(self):
+        video_md = self.VIDEO_REL.replace("/", "__") + ".md"
+        (self.parsed / video_md).write_text(f"# SOURCE: {self.VIDEO_REL}\n")
+        (self.parsed / "manifest.json").write_text(json.dumps([
+            {"source": self.VIDEO_REL, "md": video_md, "method": "video-lane",
+             "inputs": [self.VIDEO_REL, "rec/Acme_ Sync.docx"]},
+            {"source": "rec/Acme_ Sync.docx", "skipped": True, "method": "consumed-by-video",
+             "consumed_by": self.VIDEO_REL}]))
+        with sqlite3.connect(self.db) as con:
+            _, d = S.delta(con, str(self.parsed))
+        self.assertEqual(d["superseded_by_video"], [self.DOCX_MD])
+        self.assertIn(self.DOCX_MD, d["deleted"])
+        self.assertEqual(d["blocked_missing_parsed"], [])
