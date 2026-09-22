@@ -61,7 +61,7 @@ Each project has its own Brain endpoint; if you're in two projects, add both con
 
 ## Build a Brain (`brain` · Claude Code)
 
-For the person who turns a messy corpus (PDF/PPTX/DOCX/XLSX/MD) into a queryable Brain.
+For the person who turns a messy corpus (PDF/PPTX/DOCX/XLSX/MD, plus meeting recordings) into a queryable Brain.
 
 **Meaning is agentic (RAG/graph); numbers are computed (deterministic SQL).** RAG never produces figures; the mart lane never guesses.
 
@@ -106,6 +106,8 @@ claude plugin install brain@applied-ai      # the 8 Brain skills (/brain:*)
 ```
 
 Guided onboarding captures three drivers up front — the **goal** (scopes taxonomy), the **audience** (who consumes the KB — drives taxonomy emphasis and how `kb` answers), and the **deployment target** (`local` vs `hosted-mcp`). Full flow: [`bundles/brain/README.md`](bundles/brain/README.md); the build agent's exact runbook: [`bundles/brain/AGENT_README.md`](bundles/brain/AGENT_README.md).
+
+**Meeting recordings** are a supported corpus type: a video with a same-stem `.vtt`/`.srt`, a Microsoft Teams `.docx` transcript (paired by its title, not its filename), or no transcript at all — in which case a local `whisper.cpp` install transcribes it. `visual-parse`'s recording lane (`video_capture.py`) selects stable on-screen key frames, transcribes them with the same vision step as slide decks, and assembles one time-ordered parsed document per recording (transcript turns + frames), run before the narrative parse.
 
 ### The build/answer skills
 
@@ -178,6 +180,6 @@ Restart the host session after installing so it loads the skills. Don't combine 
 
 ## Dependencies
 
-Python 3.10+, stdlib `sqlite3` (with `enable_load_extension`). Per-skill: `pymupdf` (PDF text + page render + table extraction); `sqlite-vec`, `fastembed` (knowledge-index RAG); `openpyxl`, `pandas`, optional `pyarrow` (tabular); `fastmcp` + `uvicorn` (Brain MCP stdio/HTTP). All are pip-installable and **torch-free** (docling retired). `.pptx/.docx` also need LibreOffice `soffice` (a system dep); PDFs need only pymupdf.
+Python 3.10+, stdlib `sqlite3` (with `enable_load_extension`). Per-skill: `pymupdf` (PDF text + page render + table extraction); `sqlite-vec`, `fastembed` (knowledge-index RAG); `openpyxl`, `pandas`, optional `pyarrow` (tabular); `fastmcp` + `uvicorn` (Brain MCP stdio/HTTP). All are pip-installable and **torch-free** (docling retired). `.pptx/.docx` also need LibreOffice `soffice` (a system dep); PDFs need only pymupdf. Meeting recordings need `ffmpeg`/`ffprobe` (system deps) and, only when a recording has no transcript sidecar, `whisper-cli` (whisper.cpp) plus a ggml model. Don't guess what's installed — run `brain_doctor.py` (`bundles/brain/skills/knowledge-pipeline/brain_doctor.py`) against your corpus or `brain.toml`; it reports every gap and the exact install command, and never installs anything itself.
 
 Install them into an **isolated venv that belongs to the skills, not your project** — `install.sh --bundle brain --deps` (uses `uv`) builds `<project>/.claude/venv`. Add `--user` to build **one shared** `~/.claude/venv` (or `~/.dsh/venv`) reused across all projects instead of a venv per project. Zero-install alternative: `uv run --with-requirements bundles/brain/requirements.txt python <script>`. The store remains local and portable; the optional Brain MCP HTTP transport is disabled by default.

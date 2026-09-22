@@ -994,6 +994,7 @@ Each section note has:
 | TC-5 Evals | Yes (Bedrock judges) | — | ≥ 90% pass rate |
 | TC-6 Tabular marts | No | numbers (SQL) | `facts=N`, metric query returns rows with source_file |
 | TC-7 Obsidian vault | No | — (view only) | `wrote N notes`, section notes show real content |
+| TC-8 Video lane (recordings) | No (whisper fallback needs local whisper.cpp) | narrative (RAG), via the recording's parsed doc | `probe` picks the right transcript source; assembled doc has `HH:MM:SS` turns + `(frame pNN)` sections; later `parse_corpus` skips the consumed sidecar; `brain_sync plan` shows `superseded_by_video` |
 
 ---
 
@@ -1113,3 +1114,154 @@ do not need this — they are pure text.
 **Pass criteria:** after running all three steps, the `.md` for a visual page contains
 descriptive text ("A process flow diagram showing four stages: ...") rather than
 disconnected fragments.
+
+---
+
+## Video lane: meeting recordings (optional lane)
+
+**When you need it:** only if your corpus contains meeting recordings (`.mp4`/`.mov`/etc.).
+A recording is a continuous medium, so this lane substitutes a frame-selection step in front
+of the same transcribe→assemble shape used above, and produces **one parsed document per
+recording**: transcript turns and on-screen key frames interleaved by time. Run it *before*
+the narrative `parse_corpus.py` pass (Step 2b above) — a paired Teams `.docx` transcript is
+then consumed by its recording instead of being converted by LibreOffice as an ordinary
+document.
+
+**Before the first recording**, run the doctor — it names exactly what is missing without
+installing anything:
+
+```bash
+$VENV $SKILLS/knowledge-pipeline/brain_doctor.py --config "$PROJECT/brain.toml"
+```
+
+If it reports `whisper-cli` REQUIRED, list which recordings lack a transcript, run
+`brain_doctor.py whisper-models` to see models on disk and downloadable ones, pick one with
+the human (recommend `small.en`, or `small` for non-English meetings), then:
+
+```bash
+$VENV $SKILLS/knowledge-pipeline/brain_doctor.py set-whisper-model \
+  --config "$PROJECT/brain.toml" --model <path/to/model.bin> --language en
+```
+
+### TC-8a — Recording with a Teams `.docx` transcript
+
+**What it tests:** `probe` correctly pairs a Microsoft Teams transcript to its recording by
+the transcript's **first line** (the meeting's name), not by filename — Teams names the
+`.docx` after the meeting, not after the video file — and the assembled document interleaves
+transcript turns with on-screen frames in time order.
+
+**Precondition:** a recording (e.g. `<root>/standup.mp4`) and a Teams transcript `.docx` in
+the same folder whose first paragraph is the recording's file name without extension (or a
+same-stem `standup.vtt`/`standup.srt`/`standup.docx`, checked first).
+
+**Steps:**
+
+```bash
+VC=$SKILLS/visual-parse/video_capture.py
+$VENV $VC probe --video "$SOURCES/standup.mp4" --rel-to "$SOURCES" \
+  --work "$PROJECT/video" --manifest "$PROJECT/parsed/manifest.json"
+```
+
+Check `probe.json`: `"transcript": "sidecar"` and `sidecar`/`sidecar_source` point at the
+paired `.docx` (or `.vtt`/`.srt`). If `probe` exits 1 with two `.docx` files claiming the same
+recording, that is expected behavior (it refuses to guess), not a bug.
+
+```bash
+$VENV $VC frames --video "$SOURCES/standup.mp4" --rel-to "$SOURCES" \
+  --assets-root "$PROJECT/assets"
+```
+
+Check the printed frame count and `$PROJECT/assets/<slug>/pages.json` — one entry per key
+frame, each with `t_start`/`t_end`/`shown_at`.
+
+```bash
+$VENV $SKILLS/visual-parse/vision_prep.py \
+  --render-dir "$PROJECT/assets/<slug>" --out "$PROJECT/vision/video-run" --db "$DB"
+# dispatch vision subagents on video-run/batch_*.json → result_*.json
+# (answer <!-- no-content --> for people-only frames)
+$VENV $VC assemble --probe "$PROJECT/video/<slug>/probe.json" \
+  --render-dir "$PROJECT/assets/<slug>" --results "$PROJECT/vision/video-run" \
+  --parsed "$PROJECT/parsed" --db "$DB"
+```
+
+**What to check:**
+
+- `assemble` reports frames kept vs. dropped; a people-only frame's `.png` should be deleted
+  and its `pages.json` entry marked `"dropped": "no-content"`.
+- `$PROJECT/parsed/standup.mp4.md` (dots replaced with `__` per the doc-naming rule) has
+  `## HH:MM:SS — <Speaker> (cue N)` sections for transcript turns and
+  `## HH:MM:SS · <title> (frame pNN)` sections for kept frames, each with
+  `<!-- image: <slug>/pNN.png -->` and `<!-- on-screen: HH:MM:SS–HH:MM:SS -->` markers, in
+  time order.
+- `$PROJECT/parsed/manifest.json` has a `video-lane` entry for the recording and a
+  `consumed-by-video` entry for the `.docx`; the `.docx`'s own stale parsed doc (if any) is
+  deleted.
+
+Run the narrative pass and confirm the sidecar is skipped, not re-parsed:
+
+```bash
+$VENV $SKILLS/corpus-taxonomy-extraction/parse_corpus.py \
+  --corpus "$SOURCES" --out "$PROJECT/parsed" --formats pptx,docx,pdf,vtt,srt --merge-cues 10
+```
+
+`ls $PROJECT/parsed/*.md` should show no separate doc for the Teams `.docx` — only the
+recording's assembled doc. If the brain was already built and indexed, `brain_sync plan`
+should list the transcript's old parsed doc under `superseded_by_video`:
+
+```bash
+$VENV $SKILLS/knowledge-pipeline/brain_sync.py plan --db "$DB" --parsed "$PROJECT/parsed"
+```
+
+**Pass criteria:** `probe` reports `transcript=sidecar` paired by title; frame count matches
+what `frames` printed; no-content frames are dropped (PNG deleted, entry marked); the
+assembled doc has time-ordered `HH:MM:SS` speaker turns and `(frame pNN)` sections with
+`on-screen` intervals; the later `parse_corpus` pass produces no separate doc for the `.docx`;
+`brain_sync plan` reports it under `superseded_by_video`.
+
+### TC-8b — Recording with no transcript (whisper.cpp fallback)
+
+**What it tests:** a recording with no sidecar and no paired Teams `.docx` falls back to a
+local `whisper.cpp` transcription, gated by the doctor and an explicit model choice — never a
+silent download or an environment variable.
+
+**Precondition:** a recording with no same-stem `.vtt`/`.srt`/`.docx` and no Teams `.docx`
+titled after it; `brain_doctor.py` has confirmed `whisper-cli` and a model are available (see
+above), and `brain.toml`'s `[video]` table has `whisper_model` set.
+
+**Steps:**
+
+```bash
+$VENV $VC probe --video "$SOURCES/onboarding-call.mp4" --rel-to "$SOURCES" \
+  --work "$PROJECT/video" --manifest "$PROJECT/parsed/manifest.json"
+```
+
+Check `probe.json`: `"transcript": "asr"`, `"sidecar": null`.
+
+```bash
+$VENV $VC transcribe --probe "$PROJECT/video/<slug>/probe.json" --config "$PROJECT/brain.toml"
+```
+
+Check `$PROJECT/video/<slug>/transcript.vtt` was written (never into `$PROJECT/parsed`) and
+`$PROJECT/video/<slug>/asr.json` records the model used. Then run `frames`, `vision_prep`,
+the vision subagents, and `assemble` exactly as in TC-8a.
+
+**What to check:**
+
+- the assembled doc's `# method:` header reads `video-lane (transcript: asr:whisper.cpp:<model
+  stem>)`;
+- speaker turns have no `<!-- speaker: ... -->` marker (whisper transcripts carry no speaker
+  names — no diarization);
+- there is no `consumed-by-video` manifest entry (no sidecar existed to retire).
+
+**Pass criteria:** `probe` reports `transcript=asr`; `transcribe` writes a `.vtt` under
+`video/<slug>/`, never into the corpus; the assembled doc's method header names the whisper
+model; retrieval over the recording's doc returns real spoken content on a smoke query.
+
+**Fail signals:**
+
+| Signal | What it means |
+|--------|--------------|
+| `probe` exits 1 with two `.docx` files claiming the recording | Expected — it refuses to guess; disambiguate manually or pass `--transcript-file` |
+| `assemble` refuses, listing `img_sha` values | Some kept frame has no VLM result — run `vision_prep`/dispatch/validate again before retrying `assemble` |
+| whisper transcript has garbled or empty turns | Wrong model for the language — re-run `set-whisper-model` with `--language` set, or a larger model |
+| `parse_corpus` still produces a separate doc for the Teams `.docx` | `assemble` did not run first, or the `.docx`'s first line does not match the recording's file name |
