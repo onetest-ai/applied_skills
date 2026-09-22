@@ -3,7 +3,8 @@
 
 The third producer of the visual-lane artifact layout (after render_pages.py and
 html_capture.py):
-  probe       ffprobe + pick the transcript source (same-stem .vtt/.srt sidecar wins;
+  probe       ffprobe + pick the transcript source (--transcript-file, else a same-stem
+              .vtt/.srt/.docx, else a Teams .docx titled with the recording name wins;
               whisper.cpp only when none exists)                 -> <work>/<slug>/probe.json
   transcribe  whisper.cpp -> <work>/<slug>/transcript.vtt          (only when probe says asr)
   frames      stable-span detection + dedup -> <assets>/<slug>/pNN.png, pNN.txt, pages.json
@@ -38,7 +39,7 @@ from render_pages import doc_slug  # noqa: E402  (same skill directory)
 from vision_assemble import demote, load_cache, load_results, persist_page_render, title_of  # noqa: E402
 
 VIDEO_EXT = (".mp4", ".mov", ".mkv", ".webm", ".m4v")
-SIDECAR_EXT = (".vtt", ".srt")
+SIDECAR_EXT = (".vtt", ".srt", ".docx")  # priority order for the same-stem rule
 NO_CONTENT = "<!-- no-content -->"
 _NO_CONTENT_RE = re.compile(r"<!--\s*no-content\s*-->", re.I)
 LOW_W, LOW_H = 96, 54
@@ -94,8 +95,115 @@ def speaker_and_text(text: str) -> tuple[str, str]:
             return name, labelled.group(2).strip()
     return "", re.sub(r"</?v[^>]*>", "", text).strip()
 
+# ---- Teams .docx transcripts (stdlib only: zipfile + ElementTree) ----------------
+
+_W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_DOCX_TS = re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?$")
+_DOCX_TURN = re.compile(r"^(.+?)\s{2,}(\d{1,2}:\d{2}(?::\d{2})?)(.*)$", re.S)
+_DOCX_EVENTS = ("started transcription", "stopped transcription")
+_DOCX_DURATION = re.compile(r"^\s*(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+)s)?\s*$")
+
+
+def _docx_paragraphs(path) -> list[list[str]]:
+    """word/document.xml body paragraphs -> per paragraph, the text of each run that
+    has <w:t> children. Only <w:t> directly inside a <w:r> is read, so the avatar
+    <w:drawing> (its <wp:posOffset> digits etc.) never enters. <w:br/>/<w:tab/> -> " "."""
+    import xml.etree.ElementTree as ET
+    import zipfile
+    import zlib
+    try:
+        with zipfile.ZipFile(path) as z:
+            root = ET.fromstring(z.read("word/document.xml"))
+    except (zipfile.BadZipFile, KeyError, ET.ParseError, EOFError, zlib.error) as e:
+        # FileNotFoundError is NOT caught: a missing file is a different finding.
+        raise ValueError(f"cannot read transcript {path}: not a readable Word file "
+                         "(truncated download?)") from e
+    paras = []
+    for p in root.iter(_W_NS + "p"):
+        runs = []
+        for r in p.findall(_W_NS + "r"):
+            if r.find(_W_NS + "t") is None:
+                continue
+            parts = []
+            for child in r:
+                if child.tag == _W_NS + "t":
+                    parts.append(child.text or "")
+                elif child.tag in (_W_NS + "br", _W_NS + "tab"):
+                    parts.append(" ")
+            runs.append("".join(parts))
+        paras.append(runs)
+    return paras
+
+
+def _clock_seconds(ts: str) -> float:
+    parts = [int(x) for x in ts.split(":")]
+    h, m, s = ([0] + parts)[-3:]
+    return float(h * 3600 + m * 60 + s)
+
+
+def _duration_seconds(line: str) -> float | None:
+    m = _DOCX_DURATION.match(line)
+    if not m or not any(m.groups()):
+        return None
+    h, mi, s = (int(g or 0) for g in m.groups())
+    return float(h * 3600 + mi * 60 + s)
+
+
+def read_teams_docx(path) -> list[dict]:
+    """A Teams transcript .docx -> [{start, end, speaker, text}] (seconds).
+
+    Body: title, date, duration, then "<Name> started transcription" events and one
+    paragraph per turn: run[0] speaker, run[1] "M:SS"/"H:MM:SS", runs[2:] text. Teams
+    gives start times only: a turn ends where the next begins; the last ends at the
+    header duration (else at its own start). Raises ValueError on an unreadable file."""
+    paras = [runs for runs in _docx_paragraphs(path) if "".join(runs).strip()]
+    duration = None
+    if len(paras) >= 3:
+        duration = _duration_seconds("".join(paras[2]))
+        if duration is not None:
+            paras = paras[3:]  # title, date, duration
+    turns = []
+    for runs in paras:
+        joined = "".join(runs)
+        if joined.strip().lower().endswith(_DOCX_EVENTS) and not (
+                len(runs) > 1 and _DOCX_TS.match(runs[1].strip())):
+            continue
+        if len(runs) > 1 and _DOCX_TS.match(runs[1].strip()):
+            speaker, ts = runs[0].strip(), runs[1].strip()
+            text = " ".join(t.strip() for t in runs[2:] if t.strip())
+        else:
+            m = _DOCX_TURN.match(joined.strip())
+            if not m:
+                continue
+            speaker, ts, text = m.group(1).strip(), m.group(2), m.group(3).strip()
+        text = re.sub(r"\s+", " ", text).strip()
+        if text:
+            turns.append({"start": _clock_seconds(ts), "end": None, "speaker": speaker, "text": text})
+    for a, b in zip(turns, turns[1:]):
+        a["end"] = b["start"]
+    if turns:
+        last = turns[-1]
+        last["end"] = duration if duration is not None and duration >= last["start"] else last["start"]
+    return turns
+
+
+def docx_title(path) -> str | None:
+    """The first non-empty paragraph (run text only), stripped; None when unreadable."""
+    try:
+        paras = _docx_paragraphs(path)
+    except (ValueError, OSError):
+        return None
+    for runs in paras:
+        t = "".join(runs).strip()
+        if t:
+            return t
+    return None
+
+
 def read_cues(path) -> list[dict]:
-    """WebVTT or SRT -> [{start, end, speaker, text}] with times in SECONDS."""
+    """WebVTT, SRT or a Teams .docx -> [{start, end, speaker, text}] with times in SECONDS."""
+    if str(path).lower().endswith(".docx"):
+        return read_teams_docx(path)
     text = Path(path).read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
     text = re.sub(r"^﻿?WEBVTT[^\n]*\n", "", text)
     cues = []
@@ -307,18 +415,42 @@ def source_rel(video: str, rel_to: str | None) -> str:
 
 
 def find_sidecar(video: str) -> str | None:
+    """The recording's transcript, by the first rule that matches:
+    1. same stem, extension case-insensitive, priority .vtt, .srt, .docx (real spelling);
+    2. a .docx in the same directory whose first paragraph (docx_title) is exactly the
+       video's stem — Teams names the transcript after the meeting, not the recording.
+    More than one .docx claiming the video by title -> ValueError (no guessing)."""
     d, base = os.path.split(os.path.abspath(video))
     stem = os.path.splitext(base)[0]
+    names = sorted(os.listdir(d))
     for ext in SIDECAR_EXT:
-        for n in sorted(os.listdir(d)):
+        for n in names:
             if os.path.splitext(n)[0] == stem and os.path.splitext(n)[1].lower() == ext:
                 return os.path.join(d, n)
-    return None
+    claims = [n for n in names if os.path.splitext(n)[1].lower() == ".docx"
+              and not n.startswith((".", "~$")) and docx_title(os.path.join(d, n)) == stem]
+    if len(claims) > 1:
+        raise ValueError(f"{len(claims)} .docx files claim {base} as their recording by title: "
+                         f"{', '.join(claims)} — pick one with --transcript-file")
+    return os.path.join(d, claims[0]) if claims else None
+
+
+def unreadable_docx(d: str) -> list[str]:
+    """Names of .docx files in `d` that cannot be read as Word files."""
+    out = []
+    for n in sorted(os.listdir(d)):
+        if os.path.splitext(n)[1].lower() == ".docx" and not n.startswith((".", "~$")):
+            try:
+                _docx_paragraphs(os.path.join(d, n))
+            except (ValueError, OSError):
+                out.append(n)
+    return out
 
 
 def choose_transcript(has_audio: bool, sidecar: str | None, override: str) -> str:
     if override == "sidecar" and not sidecar:
-        raise ValueError("--transcript sidecar but no same-stem .vtt/.srt exists")
+        raise ValueError("--transcript sidecar but no transcript sidecar exists (same-stem "
+                         ".vtt/.srt/.docx, or a Teams .docx titled with the recording name)")
     if override == "asr" and not has_audio:
         raise ValueError("--transcript asr but the video has no audio stream")
     if override != "auto":
@@ -370,14 +502,35 @@ def cmd_probe(a) -> int:
         if a.manifest:
             upsert_manifest(a.manifest, [{"source": rel, "error": str(e)}])
         die(str(e))
-    sidecar = find_sidecar(video)
-    try:
-        transcript = choose_transcript(has_audio, sidecar, a.transcript)
-    except ValueError as e:
-        die(str(e))
     warnings = []
+    if a.transcript_file:
+        if a.transcript in ("asr", "none"):
+            die(f"--transcript-file and --transcript {a.transcript} are mutually exclusive — "
+                "an explicit transcript file IS the transcript source")
+        sidecar = os.path.abspath(a.transcript_file)
+        if not os.path.isfile(sidecar):
+            die(f"--transcript-file not found: {sidecar}")
+        transcript = "sidecar"
+    else:
+        try:
+            sidecar = find_sidecar(video)
+        except ValueError as e:
+            if a.transcript not in ("asr", "none"):
+                die(str(e))
+            sidecar = None  # the override does not use a sidecar, so the ambiguity is moot
+        try:
+            transcript = choose_transcript(has_audio, sidecar, a.transcript)
+        except ValueError as e:
+            die(str(e))
+        if sidecar is None:
+            warnings += [f"could not read {n} (truncated download?) — it was not considered as a "
+                         "transcript" for n in unreadable_docx(os.path.dirname(video))]
     if transcript == "sidecar":
-        cues = read_cues(sidecar)
+        try:
+            cues = read_cues(sidecar)
+        except ValueError as e:
+            die(f"{e} — fix or re-download it, or override with --transcript-file or "
+                "--transcript asr|none")
         if not cues:
             die(f"sidecar-empty: {sidecar} has no cues — fix it, or override with "
                 "--transcript asr|none")
@@ -634,6 +787,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--video", required=True); p.add_argument("--rel-to", help="source root (for the rel path/slug)")
     p.add_argument("--work", required=True, help="<project>/video")
     p.add_argument("--transcript", choices=["auto", "sidecar", "asr", "none"], default="auto")
+    p.add_argument("--transcript-file", help="explicit transcript (.vtt/.srt/Teams .docx) when it "
+                   "is paired by neither same stem nor .docx title; excludes --transcript asr|none")
     p.add_argument("--manifest", help="record an ffprobe failure here as an error entry")
     p.set_defaults(func=cmd_probe)
     f = sub.add_parser("frames", help="stable-span key frames -> visual-lane layout")
