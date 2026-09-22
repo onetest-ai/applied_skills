@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 import _tools
@@ -136,3 +137,56 @@ class FramesIntegrationTests(unittest.TestCase):
             self.assertTrue(any("longer than the video" in w for w in probe["warnings"]))
         finally:
             side.unlink()
+
+
+@_tools.require_tool("ffmpeg", "ffprobe")
+class FramesRefreshIsAtomicTests(unittest.TestCase):
+    """A refresh that fails part-way must leave the previous render exactly as it was:
+    pages.json and its PNGs change together or not at all."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory(); root = Path(self.td.name)
+        self.corpus = root / "corpus" / "rec"; self.corpus.mkdir(parents=True)
+        self.video = _tools.make_synthetic_video(self.corpus / "standup.mp4")
+        self.assets = root / "assets"
+        self.outdir = self.assets / "rec__standup--mp4"
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def _frames(self, *extra):
+        return V.main(["frames", "--video", str(self.video), "--rel-to", str(self.corpus.parent),
+                       "--assets-root", str(self.assets), *extra])
+
+    def _snapshot(self):
+        return {p.name: p.read_bytes() for p in sorted(self.outdir.iterdir())}
+
+    def test_failed_extraction_keeps_the_previous_render(self):
+        self.assertEqual(self._frames(), 0)
+        before = self._snapshot()
+        self.assertIn("pages.json", before)
+        real = V.extract_frame
+        calls = []
+
+        def flaky(video, t, png):
+            calls.append(png)
+            if len(calls) == 2:
+                V.die("ffmpeg failed (exit 1) on standup.mp4: simulated")
+            real(video, t, png)
+
+        with unittest.mock.patch.object(V, "extract_frame", side_effect=flaky):
+            # different params → different frames_key → a real refresh, not a cache hit
+            self.assertEqual(self._frames("--min-hold", "2"), 1)
+        self.assertEqual(self._snapshot(), before)
+        self.assertEqual([p.name for p in self.assets.iterdir()], ["rec__standup--mp4"])
+
+    def test_successful_refresh_replaces_the_render_and_leaves_no_temp_dirs(self):
+        self.assertEqual(self._frames(), 0)
+        (self.outdir / "p99.png").write_bytes(b"stale frame from an older render")
+        self.assertEqual(self._frames("--min-hold", "2"), 0)
+        names = sorted(p.name for p in self.outdir.iterdir())
+        self.assertNotIn("p99.png", names)
+        pages = json.loads((self.outdir / "pages.json").read_text())
+        for p in pages["pages"]:
+            self.assertTrue((self.assets / p["image"]).is_file())
+        self.assertEqual([p.name for p in self.assets.iterdir()], ["rec__standup--mp4"])

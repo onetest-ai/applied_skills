@@ -23,7 +23,6 @@ variables: the whisper model comes from --model or brain.toml [video].whisper_mo
 from __future__ import annotations
 
 import argparse
-import glob
 import hashlib
 import json
 import os
@@ -519,6 +518,24 @@ def extract_frame(video: str, t: float, png: str) -> None:
                "-frames:v", "1", "-vf", "scale='min(1920,iw)':-2", png], "ffmpeg", video)
 
 
+def swap_dir(new: str, target: str) -> None:
+    """Replace directory `target` with `new` by rename; the old one is removed only
+    after the new one is in place (restored if that rename fails)."""
+    if not os.path.exists(target):
+        os.rename(new, target)
+        return
+    parent = os.path.dirname(os.path.abspath(target))
+    old = tempfile.mkdtemp(dir=parent, prefix=f".{os.path.basename(target)}.old-")
+    os.rmdir(old)
+    os.rename(target, old)
+    try:
+        os.rename(new, target)
+    except OSError:
+        os.rename(old, target)
+        raise
+    shutil.rmtree(old, ignore_errors=True)
+
+
 def upsert_manifest(path, entries: list[dict]) -> None:
     data = json.loads(Path(path).read_text(encoding="utf-8")) if os.path.exists(path) else []
     srcs = {e["source"] for e in entries}
@@ -610,7 +627,6 @@ def cmd_frames(a) -> int:
     if not is_video_render_dir(outdir):
         die(f"{os.path.join(outdir, 'pages.json')} is not a video render (medium != video) — "
             "refusing to overwrite another document's pages")
-    os.makedirs(outdir, exist_ok=True)
     params = {"diff": a.diff, "still": a.still, "min_hold": a.min_hold,
               "max_per_min": a.max_per_min, "max_frames": a.max_frames}
     key = frames_key(video, params)
@@ -618,22 +634,30 @@ def cmd_frames(a) -> int:
     if os.path.exists(pj) and json.loads(Path(pj).read_text()).get("frames_key") == key:
         print(f"{rel}: frames unchanged (cache hit), slug={slug} -> {outdir}")
         return 0
-    for old in glob.glob(os.path.join(outdir, "p*.png")) + glob.glob(os.path.join(outdir, "p*.txt")):
-        os.remove(old)
-    duration, _ = ffprobe(video)
-    kept, capped = select_frames(read_low_frames(video), **params)
-    pages = []
-    for n, q in enumerate(kept, 1):
-        png = os.path.join(outdir, f"p{n:02d}.png")
-        extract_frame(video, min(q["key"] + 0.5, max(duration - 0.1, 0.0)), png)
-        open(os.path.join(outdir, f"p{n:02d}.txt"), "w").close()
-        pages.append({"page": n, "image": f"{slug}/p{n:02d}.png", "img_sha": sha_file(png),
-                      "text_len": 0, "n_drawings": 0, "n_tables": 0, "img_cover": 0.0,
-                      "flagged": True, "why": "video-frame",
-                      "t_start": q["t_start"], "t_end": q["t_end"], "shown_at": q["shown_at"]})
-    doc = {"doc": os.path.basename(video), "slug": slug, "dpi": None, "medium": "video",
-           "duration": duration, "frames_key": key, "frames_capped": capped, "pages": pages}
-    atomic_write(pj, json.dumps(doc, indent=2) + "\n")
+    # Render into a sibling temp dir and swap it in whole: pages.json and its PNGs
+    # change together, and a failure part-way leaves the previous render untouched.
+    parent = os.path.dirname(os.path.abspath(outdir))
+    os.makedirs(parent, exist_ok=True)
+    work = tempfile.mkdtemp(dir=parent, prefix=f".{slug}.tmp-")
+    try:
+        duration, _ = ffprobe(video)
+        kept, capped = select_frames(read_low_frames(video), **params)
+        pages = []
+        for n, q in enumerate(kept, 1):
+            png = os.path.join(work, f"p{n:02d}.png")
+            extract_frame(video, min(q["key"] + 0.5, max(duration - 0.1, 0.0)), png)
+            open(os.path.join(work, f"p{n:02d}.txt"), "w").close()
+            pages.append({"page": n, "image": f"{slug}/p{n:02d}.png", "img_sha": sha_file(png),
+                          "text_len": 0, "n_drawings": 0, "n_tables": 0, "img_cover": 0.0,
+                          "flagged": True, "why": "video-frame",
+                          "t_start": q["t_start"], "t_end": q["t_end"], "shown_at": q["shown_at"]})
+        doc = {"doc": os.path.basename(video), "slug": slug, "dpi": None, "medium": "video",
+               "duration": duration, "frames_key": key, "frames_capped": capped, "pages": pages}
+        atomic_write(os.path.join(work, "pages.json"), json.dumps(doc, indent=2) + "\n")
+        swap_dir(work, outdir)
+    except BaseException:  # includes die()'s SystemExit
+        shutil.rmtree(work, ignore_errors=True)
+        raise
     print(f"{rel}: {len(pages)} key frame(s), slug={slug} -> {outdir}" + ("  [capped at --max-frames]" if capped else ""))
     return 0
 
