@@ -29,10 +29,12 @@ When the user wants to **create a brain** / "get started" / doesn't yet have a p
 
 **2. Scaffold + preflight + scan** (deterministic):
 
-First, run the doctor: `"$PY" .../knowledge-pipeline/brain_doctor.py --config <project>/brain.toml`.
+First, run the doctor against the docs folder — `brain.toml` does not exist yet, so point it at
+the corpus directly: `"$PY" .../knowledge-pipeline/brain_doctor.py --corpus <docs>`.
 If it exits 1, show the user the missing items and their install commands and stop until they
-are resolved; if it reports `whisper-cli` REQUIRED, run the model question from
-`visual-parse` → "Meeting recordings".
+are resolved. If it reports `whisper-cli` REQUIRED, note which videos lack a transcript and
+hold the whisper-model question until after `scaffold` below (`set-whisper-model` writes into
+`brain.toml`, which scaffold creates).
 
 ```bash
 python .../knowledge-pipeline/onboard.py scaffold \
@@ -50,6 +52,8 @@ This creates the project layout (`schema/ parsed/ taxonomy/ classify/ vision/ ma
 **Canonical project artifacts** (what later maintenance relies on): `goal.txt` is the authoritative analytical goal, `brain.toml` the source registry, `BRAIN.md` the build plan. A host may add its own operator guide (e.g. an `AGENTS.md`), but that never replaces `goal.txt` — keep the goal in `goal.txt` so any agent/operator can recover it. If you find a project whose goal lives only inside a host doc, write it back to `goal.txt`.
 
 Never overwrite an existing `brain.toml`. After scaffold, read it back, explain each root/mode to the user, and adjust modes/includes only with their agreement. Then report missing deps and narrative-vs-reporting counts.
+
+**If the doctor reported `whisper-cli` REQUIRED**, now that `brain.toml` exists run the model question from `visual-parse` → "Meeting recordings" (`brain_doctor.py whisper-models`, the user's choice, then `brain_doctor.py set-whisper-model --config <project>/brain.toml --model <path>`), and re-run `brain_doctor.py --config <project>/brain.toml` to confirm.
 
 **If deps are missing**, install them into the skills' **own isolated venv** (never the project's env) with `uv` via the installer:
 ```bash
@@ -98,7 +102,8 @@ PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-
 # 1a. parse transcripts → Markdown (VTT/SRT corpora — use --merge-cues to join same-speaker cues into speaker turns):
 #     WARNING: omitting --merge-cues produces one chunk per cue (~50-100 chars each), which agents
 #     classify as empty [] and retrieval quality degrades severely. Always pass --merge-cues N > 1 for VTT/SRT.
-#     If the corpus has videos, add --consume-video-sidecars (the video lane owns their transcripts).
+#     Recordings' sidecars need no flag: once video_capture.py assemble has produced a recording's
+#     doc, it retires the sidecar's doc, and later runs skip that .vtt/.srt on their own.
 "$PY" .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats vtt,srt --merge-cues 10
 # 1b. parse narrative docs → Markdown. TEXT pages via pymupdf (torch-free):
 "$PY" .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf,md,markdown,txt,html,htm

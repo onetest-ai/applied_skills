@@ -316,8 +316,8 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     #      probe → (transcribe, only when no same-stem .vtt/.srt) → frames → vision_prep → 🤖 VLM → assemble
     #      "$PY" "{VP/'video_capture.py'}" probe --video <rel> --rel-to "{docs_s}" --work "{proj/'video'}"
     #      (full sequence: visual-parse/SKILL.md → Meeting recordings)
-    #      When videos are present, add --consume-video-sidecars to step 1a so a recording's
-    #      transcript is not also indexed as a separate document.
+    #      assemble retires the recording's sidecar doc; later step-1a runs skip that .vtt/.srt
+    #      on their own (only once the recording has a video-lane doc in parsed/ — no flag).
 
     # 2 · 🤖 induce taxonomy (map→reduce→judge→emit) → taxonomy/taxonomy_v0.json
     #     see corpus-taxonomy-extraction/SKILL.md; goal = above. Dispatch Haiku subagents.

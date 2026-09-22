@@ -171,13 +171,20 @@ VC=<skills>/visual-parse/video_capture.py
 "$PY" $VC assemble --probe <project>/video/<slug>/probe.json --render-dir <project>/assets/<slug> \
     --results <run>/vision --parsed <project>/parsed --db <db>
 ```
-`<slug>` is printed by `probe` and `frames` (source path components kebab-cased, joined by
-`__`). `assemble` refuses while any kept frame lacks a VLM result — never hand-edit
+`<slug>` is printed by `probe` and `frames` (`slug=…`): the source path components
+kebab-cased and joined by `__`, then `--<ext>` — `m/standup.mp4` → `m__standup--mp4`. The
+extension suffix keeps a recording out of a same-stem deck's asset dir (`m/standup.pptx` →
+`m__standup`); `frames` refuses, and `forget` leaves alone, any dir whose `pages.json` is not
+a video render. `assemble` refuses while any kept frame lacks a VLM result — never hand-edit
 around that. When a recording is deleted from the corpus:
 `"$PY" $VC forget --source <rel> --parsed <project>/parsed --assets-root <project>/assets --work <project>/video`.
 
-When a Brain ingests videos, run the transcript pass of `parse_corpus.py` with
-`--consume-video-sidecars`, so a recording's sidecar is not also indexed as its own document.
+**Sidecars are retired automatically.** `assemble` records the sidecar as
+`consumed-by-video` and deletes its stale parsed doc (if an earlier transcript pass made
+one). On later runs `parse_corpus.py` skips a `.vtt`/`.srt` on its own — but only when its
+same-stem video already has a `video-lane` manifest entry whose parsed doc exists. No flag:
+a corpus that never ran this lane parses its transcripts exactly as before, and a
+recording's sidecar is indexed normally until the recording is assembled.
 
 **Tuning.** `frames --min-hold` (seconds a frame must stay, default 3), `--diff` (cut
 threshold, 0.08), `--still` (stillness, 0.015 — raise it if slides with a live cursor are
@@ -194,4 +201,4 @@ content you would not index as a document.
 Nothing in the classifier or retriever changes — they just get **faithful input** instead of fragments. The classify agent now sees `ProjectAlpha Vision & Service Design Blueprint / Future State Architecture / …` instead of `Confidential — Page 4`, so tagging, embeddings, and the related layer all improve for free. For genuinely visual edge cases, `get_evidence` returns the page asset path for a capable local client to open and reason over multimodally.
 
 ## Deps
-`pymupdf` (render + text + `find_tables`) — torch-free. **LibreOffice `soffice`** (system dep) for .pptx/.docx. A cheap vision model for the transcription step (like the taxonomy/classify agents — meaning is agentic).
+`pymupdf` (render + text + `find_tables`) — torch-free. **LibreOffice `soffice`** (system dep) for .pptx/.docx. **`ffmpeg`/`ffprobe`** (system dep) for meeting recordings. **`whisper-cli`** (whisper.cpp, system dep) plus a ggml model — only for recordings that have no same-stem `.vtt`/`.srt` sidecar. A cheap vision model for the transcription step (like the taxonomy/classify agents — meaning is agentic).

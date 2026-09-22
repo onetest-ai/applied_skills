@@ -40,3 +40,6 @@ class OnboardDoctorTests(unittest.TestCase):
             self.assertIn("brain_doctor.py", plan)
             self.assertIn("video_capture.py", plan)
             self.assertLess(plan.index("brain_doctor.py"), plan.index("# 1a"))
+            # sidecar consumption is automatic (manifest-gated) — the plan names no flag for it
+            self.assertNotIn("consume-video", plan)
+            self.assertIn("video-lane doc in parsed/", plan)

@@ -154,9 +154,10 @@ warns when it finds videos in the corpus that no registered root's `include` mat
 **VTT/SRT sources require two separate parse passes** — `--merge-cues` only applies to transcripts and must not be passed for PDF/PPTX/DOCX:
 
 ```bash
-# Pass 1 — transcripts only (add --consume-video-sidecars only when brain.toml includes video
-# extensions, so a recording's sidecar is not also indexed as its own document):
-"$PY" "$SKILLS/corpus-taxonomy-extraction/parse_corpus.py" --corpus <root> --out parsed/ --formats vtt,srt --merge-cues 10 --consume-video-sidecars
+# Pass 1 — transcripts only. A recording's sidecar is skipped automatically (recorded as
+# consumed-by-video) once that recording has a video-lane doc in parsed/; every other
+# .vtt/.srt, including one next to a video this Brain does not ingest, parses as before.
+"$PY" "$SKILLS/corpus-taxonomy-extraction/parse_corpus.py" --corpus <root> --out parsed/ --formats vtt,srt --merge-cues 10
 # Pass 2 — narrative docs
 "$PY" "$SKILLS/corpus-taxonomy-extraction/parse_corpus.py" --corpus <root> --out parsed/ --formats pptx,docx,pdf,md,markdown,txt,html,htm
 ```
