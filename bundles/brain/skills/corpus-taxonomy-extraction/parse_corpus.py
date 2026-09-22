@@ -332,6 +332,31 @@ def _parse_text(path):
         return f.read().strip()
 
 
+VIDEO_EXT = (".mp4", ".mov", ".mkv", ".webm", ".m4v")
+
+
+def video_sibling(fn, files):
+    """The on-disk name of a same-stem video next to transcript `fn`, else None."""
+    stem = os.path.splitext(fn)[0]
+    for f in sorted(files):
+        if os.path.splitext(f)[0] == stem and os.path.splitext(f)[1].lower() in VIDEO_EXT:
+            return f
+    return None
+
+
+def _merge_manifest(path, fresh, allow):
+    """Keep entries this run did not re-derive (other formats, the video lane); replace the rest."""
+    old = []
+    if os.path.exists(path):
+        with open(path) as f:
+            old = json.load(f)
+    kept = [e for e in old if os.path.splitext(e.get("source", ""))[1].lower() not in allow]
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(kept + fresh, f, indent=2)
+    os.replace(tmp, path)
+
+
 HTML_MIN_TEXT = 220   # mirrors render_pages.py's --min-text 220 rather than inventing a
                       # second notion of "too little text"; tunable per corpus via min_text
 
@@ -399,6 +424,8 @@ def main(argv=None):
                     help="comma-separated extensions (no dot) to include")
     ap.add_argument("--merge-cues", type=int, default=1,
                     help="join N consecutive same-speaker VTT/SRT cues into one chunk (default: 1 = per-cue)")
+    ap.add_argument("--consume-video-sidecars", action="store_true",
+                    help="skip a .vtt/.srt whose same-stem video exists (the video lane owns it)")
     a = ap.parse_args(argv)
     allow = {"." + e.strip().lower().lstrip(".") for e in a.formats.split(",") if e.strip()}
     os.makedirs(a.out, exist_ok=True)
@@ -412,6 +439,12 @@ def main(argv=None):
             ext = os.path.splitext(fn)[1].lower()
             if ext not in allow:
                 continue
+            if a.consume_video_sidecars and ext in (".vtt", ".srt"):
+                vid = video_sibling(fn, files)
+                if vid:
+                    manifest.append({"source": rel, "skipped": True, "method": "consumed-by-video",
+                                     "consumed_by": os.path.relpath(os.path.join(root, vid), a.corpus)})
+                    continue
             try:
                 md, method = parse_one(src, a.xlsx_max_mb, a.sample_rows, merge_cues=a.merge_cues)
                 if not md:
@@ -429,8 +462,7 @@ def main(argv=None):
                 print(f"[ERR] {rel}: {e}", file=sys.stderr)
                 traceback.print_exc(file=sys.stderr)
                 manifest.append({"source": rel, "error": str(e)})
-    with open(os.path.join(a.out, "manifest.json"), "w") as f:
-        json.dump(manifest, f, indent=2)
+    _merge_manifest(os.path.join(a.out, "manifest.json"), manifest, allow)
     ok = [m for m in manifest if "error" not in m]
     print(f"\nparsed {len(ok)}/{len(manifest)} files -> {a.out}", file=sys.stderr)
 
