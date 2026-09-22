@@ -1100,7 +1100,7 @@ function treeDetailShell(){
   if (!sel){
     const t = S.totals || {};
     return `<p class="note">Select a category to see what's tagged with it and to describe, rename, merge, move, split or remove it.</p>
-      ${t.chunks ? `<p class="note">${num(t.tagged)} of ${num(t.chunks)} sections tagged · ${num(t.untagged)} without a category.</p>` : S.has_db ? "" : `<p class="note">No store attached, so tag counts are zero.</p>`}`;
+      ${t.chunks ? `<p class="note">${num(t.tagged)} of ${num(t.chunks)} sections tagged · ${num(t.untagged)} without a category${t.no_topic ? ` · ${num(t.no_topic)} with no topic` : ""}.</p>` : S.has_db ? "" : `<p class="note">No store attached, so tag counts are zero.</p>`}`;
   }
   if (sel.kind === "new") return `<span class="where">${sel.parent ? "New L2 under " + esc(sel.parent) : "New category"}</span><h3>New category</h3><div id="formslot"></div>`;
   if (sel.kind === "pending") return pendingDetail(sel.key);

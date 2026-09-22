@@ -117,11 +117,10 @@ class ReviewApp:
             if self._has("chunk_topics"):
                 counts = dict(self.db.execute(
                     "SELECT category_id, COUNT(DISTINCT chunk_id) FROM chunk_topics GROUP BY category_id"))
-            if self._has("chunks"):
-                total = self.db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-                tagged = (self.db.execute("SELECT COUNT(DISTINCT chunk_id) FROM chunk_topics").fetchone()[0]
-                          if self._has("chunk_topics") else 0)
-                totals = {"chunks": total, "tagged": tagged, "untagged": total - tagged}
+            cov = GM.chunk_coverage(self.db)
+            if cov is not None:
+                totals = {"chunks": cov["total"], "tagged": cov["tagged"], "untagged": cov["untagged"],
+                          "no_topic": cov["no_topic"]}
             caps_path = os.path.join(self.tax_dir, "capabilities.json")
             caps = load_json(caps_path) if os.path.exists(caps_path) else None
             t = copy.deepcopy(self.base_tax)

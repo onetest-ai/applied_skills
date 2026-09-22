@@ -285,12 +285,6 @@ def _load_signals(path):
     return data if isinstance(data, dict) and data.get("schema") == 1 else None
 
 
-def _no_topic_count(c):
-    if not c or not GM.has_table(c, "chunk_verdicts"):
-        return 0
-    return c.execute("SELECT COUNT(*) FROM chunk_verdicts WHERE verdict='no_topic'").fetchone()[0]
-
-
 def detect(taxonomy_path, db, metrics_path=None, signals_path=None, sparse_max=2, overload_factor=2.0):
     """Return (problems dict, tax, tax_dir, ro connection-or-None, note_map). Caller closes the connection."""
     tax = load_json(taxonomy_path)
@@ -316,13 +310,10 @@ def detect(taxonomy_path, db, metrics_path=None, signals_path=None, sparse_max=2
             problems["no_tags"].append({"node": label, "level": level, "parent": parent,
                                         "candidates": candidates})
 
-    if c and GM.has_table(c, "chunks"):
-        total = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-        tagged = (c.execute("SELECT COUNT(DISTINCT chunk_id) FROM chunk_topics").fetchone()[0]
-                  if GM.has_table(c, "chunk_topics") else 0)
-        no_topic = _no_topic_count(c)
-        problems["untagged_sections"].append({"count": max(0, total - tagged - no_topic), "total": total,
-                                              "no_topic": no_topic})
+    cov = GM.chunk_coverage(c)
+    if cov is not None:
+        problems["untagged_sections"].append({"count": cov["untagged"], "total": cov["total"],
+                                              "no_topic": cov["no_topic"]})
 
     l1s = list(it["tree"])
     signals = _load_signals(signals_path)

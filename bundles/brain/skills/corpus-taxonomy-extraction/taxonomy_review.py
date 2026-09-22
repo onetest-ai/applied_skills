@@ -92,12 +92,10 @@ def _chunk_brief(c, cid):
 
 
 def _stats(c):
-    if not c or not GM.has_table(c, "chunks"):
+    cov = GM.chunk_coverage(c)
+    if cov is None:
         return {}
-    total = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-    tagged = (c.execute("SELECT COUNT(DISTINCT chunk_id) FROM chunk_topics").fetchone()[0]
-              if GM.has_table(c, "chunk_topics") else 0)
-    return {"total_chunks": total, "untagged_chunks": total - tagged}
+    return {"total_chunks": cov["total"], "untagged_chunks": cov["untagged"]}
 
 
 def _flags(tax, label):

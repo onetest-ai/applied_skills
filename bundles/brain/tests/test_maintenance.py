@@ -101,6 +101,19 @@ enabled = false
         self.assertEqual(report["taxonomy_review"], {"current_json": False, "latest_review": "r-1",
                                                      "submitted_unapplied": ["r-1"], "pending_reclassify": 3})
 
+    def test_classification_coverage_excludes_no_topic_chunks(self):
+        with sqlite3.connect(self.db) as con:
+            con.executescript("""
+            CREATE TABLE chunk_verdicts(chunk_id INTEGER PRIMARY KEY, verdict TEXT, taxonomy_version INT);
+            INSERT INTO chunks VALUES(1,'a.pdf.md'),(2,'a.pdf.md'),(3,'a.pdf.md');
+            INSERT INTO chunk_topics VALUES(1);
+            INSERT INTO chunk_verdicts VALUES(2,'no_topic',0);
+            INSERT INTO chunk_verdicts VALUES(99,'no_topic',0);
+            """)
+        cov = M.build_status(M.load_profile(self.profile))["classification_coverage"]
+        self.assertEqual(cov, {"chunks": 3, "unclassified_chunks": 1, "unclassified_pct": 33.3,
+                               "no_topic_chunks": 1})
+
     def test_required_empty_lane_blocks(self):
         self.profile.write_text(self.profile.read_text().replace("required_lanes = []", "required_lanes = [\"narrative\"]"))
         report = M.build_status(M.load_profile(self.profile))

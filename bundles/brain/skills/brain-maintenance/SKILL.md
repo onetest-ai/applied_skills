@@ -208,10 +208,10 @@ If `taxonomy/work/reclassify.json` exists after `build_graph`, reclassify those 
 
 Do not silently change taxonomy. Agents only add; renames, merges, moves, splits and removals are the user's decisions, made in the taxonomy review app, which migrates the affected tags.
 
-**Offer the health review when the taxonomy needs it.** After the reclassification above, check coverage:
+**Offer the health review when the taxonomy needs it.** After the reclassification above, check coverage. A chunk the classifier verdicted `__no_topic__` (filler, boilerplate, off-goal; stored in `chunk_verdicts`) is not untagged, so the query excludes it and reports it separately; it guards for older stores that predate `chunk_verdicts`:
 
 ```bash
-"$PY" -c 'import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);t=c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0];u=c.execute("SELECT COUNT(*) FROM chunks WHERE id NOT IN (SELECT chunk_id FROM chunk_topics)").fetchone()[0];print(u,"of",t,"chunks untagged")' "$DB"
+"$PY" -c 'import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);t=c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0];has_v=bool(c.execute("SELECT 1 FROM sqlite_master WHERE type=\"table\" AND name=\"chunk_verdicts\"").fetchone());nt=c.execute("SELECT COUNT(*) FROM chunk_verdicts WHERE verdict=\"no_topic\" AND chunk_id IN (SELECT id FROM chunks)").fetchone()[0] if has_v else 0;q="SELECT COUNT(*) FROM chunks WHERE id NOT IN (SELECT chunk_id FROM chunk_topics)"+(" AND id NOT IN (SELECT chunk_id FROM chunk_verdicts WHERE verdict=\"no_topic\")" if has_v else "");u=c.execute(q).fetchone()[0];print(u,"of",t,"chunks untagged (excludes",nt,"no-topic)")' "$DB"
 "$PY" -c 'import json;print(len(json.load(open("taxonomy/current.json")).get("descriptions") or {}),"categories described")'
 ```
 

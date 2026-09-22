@@ -60,10 +60,24 @@ class ServerTests(unittest.TestCase):
         code, st = self.req("GET", "/api/state")
         self.assertEqual(code, 200)
         self.assertEqual(st["counts"]["refunds"], 2)
-        self.assertEqual(st["totals"], {"chunks": 8, "tagged": 7, "untagged": 1})
+        self.assertEqual(st["totals"], {"chunks": 8, "tagged": 7, "untagged": 1, "no_topic": 0})
         code, node = self.req("GET", "/api/node/Refunds")
         self.assertEqual((node["level"], node["parent"], node["tags"]), ("L2", "Billing & Payments", 2))
         self.assertEqual({s["label"]: s["overlap"] for s in node["siblings"]}, {"Duplicate Charge": 0})
+
+    def test_totals_exclude_no_topic_chunks_like_health(self):
+        with sqlite3.connect(self.db) as c:
+            c.execute("CREATE TABLE chunk_verdicts(chunk_id INTEGER PRIMARY KEY, verdict TEXT, taxonomy_version INT)")
+            c.execute("INSERT INTO chunk_verdicts VALUES(8,'no_topic',1)")     # the one untagged chunk
+            c.execute("INSERT INTO chunk_verdicts VALUES(99,'no_topic',1)")    # a verdict whose chunk is gone
+        _, st = self.req("GET", "/api/state")
+        self.assertEqual(st["totals"], {"chunks": 8, "tagged": 7, "untagged": 0, "no_topic": 1})
+        problems = H.detect(os.path.join(self.td.name, "taxonomy", "current.json"), self.db)
+        try:
+            self.assertEqual(problems[0]["untagged_sections"][0]["count"], st["totals"]["untagged"])
+        finally:
+            if problems[3] is not None:
+                problems[3].close()
 
     def test_impact_does_not_record(self):
         op = {"type": "merge", "from": "Billing & Payments Admin", "into": "Billing & Payments"}

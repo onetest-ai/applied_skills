@@ -245,12 +245,20 @@ def build_status(profile: dict[str, Any]) -> dict[str, Any]:
         # Classification coverage: chunks carrying no topic. Batch validation only
         # proves dispatched chunks returned; it never checks whole-population
         # coverage, so surface the unclassified share for the human gate.
-        unclassified_chunks = None
+        # A chunk with a `no_topic` verdict (filler, boilerplate, off-goal) was classified: it
+        # is not unclassified, and is reported separately as no_topic_chunks.
+        unclassified_chunks = no_topic_chunks = None
         if "chunks" in tables and "chunk_topics" in tables and counts.get("chunks"):
+            has_v = "chunk_verdicts" in tables
             unclassified_chunks = con.execute(
                 "SELECT COUNT(*) FROM chunks c "
                 "WHERE NOT EXISTS (SELECT 1 FROM chunk_topics t WHERE t.chunk_id = c.id)"
+                + (" AND NOT EXISTS (SELECT 1 FROM chunk_verdicts v WHERE v.chunk_id = c.id AND v.verdict = 'no_topic')"
+                   if has_v else "")
             ).fetchone()[0]
+            no_topic_chunks = (con.execute(
+                "SELECT COUNT(*) FROM chunk_verdicts v WHERE v.verdict = 'no_topic' "
+                "AND EXISTS (SELECT 1 FROM chunks c WHERE c.id = v.chunk_id)").fetchone()[0] if has_v else 0)
         registered_kinds = ({r["source_id"]: r["source_kind"] for r in con.execute("SELECT source_id,source_kind FROM sources")}
                             if "sources" in tables else {})
     actions = Counter(item["action"] for item in source_plan["actions"])
@@ -319,6 +327,7 @@ def build_status(profile: dict[str, Any]) -> dict[str, Any]:
             "unclassified_chunks": unclassified_chunks,
             "unclassified_pct": (round(100.0 * unclassified_chunks / counts["chunks"], 1)
                                  if unclassified_chunks is not None and counts.get("chunks") else None),
+            "no_topic_chunks": no_topic_chunks,
         },
         "empty_required_lanes": empty_required_lanes,
         "classification": {"required_after_apply": bool(narrative_work or parsed_delta["added"] or parsed_delta["changed"]), "chunk_ids": "from sync_plan.json after apply"},

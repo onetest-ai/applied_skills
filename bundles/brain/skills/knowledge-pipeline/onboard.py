@@ -439,9 +439,13 @@ def cmd_verify(a):
             unclassified = con.execute(
                 "SELECT COUNT(*) FROM chunks c "
                 "WHERE NOT EXISTS (SELECT 1 FROM chunk_topics t WHERE t.chunk_id = c.id)"
-                + (" AND NOT EXISTS (SELECT 1 FROM chunk_verdicts v WHERE v.chunk_id = c.id)" if has_v else "")
+                + (" AND NOT EXISTS (SELECT 1 FROM chunk_verdicts v WHERE v.chunk_id = c.id AND v.verdict = 'no_topic')"
+                   if has_v else "")
             ).fetchone()[0]
-            no_topic = con.execute("SELECT COUNT(*) FROM chunk_verdicts").fetchone()[0] if has_v else None
+            # only no_topic verdicts, and only those whose chunk still exists
+            no_topic = con.execute(
+                "SELECT COUNT(*) FROM chunk_verdicts v WHERE v.verdict = 'no_topic' "
+                "AND EXISTS (SELECT 1 FROM chunks c WHERE c.id = v.chunk_id)").fetchone()[0] if has_v else None
         except Exception:
             unclassified = None
     if unclassified is not None and total:

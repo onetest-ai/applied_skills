@@ -23,6 +23,29 @@ def has_table(c, name):
     return c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
 
 
+def chunk_coverage(c):
+    """Classification coverage of the store, or None without a chunks table.
+
+    `untagged` counts chunks with neither a chunk_topics row nor a `no_topic` verdict — a
+    no-topic chunk (filler, boilerplate, off-goal) was classified and is not a coverage gap.
+    `no_topic` counts only verdicts whose chunk still exists. Every review-side view of the
+    untagged count (health, the review app, plan stats) reads it from here so they agree."""
+    if c is None or not has_table(c, "chunks"):
+        return None
+    has_t, has_v = has_table(c, "chunk_topics"), has_table(c, "chunk_verdicts")
+    total = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    tagged = c.execute("SELECT COUNT(DISTINCT chunk_id) FROM chunk_topics").fetchone()[0] if has_t else 0
+    untagged = c.execute(
+        "SELECT COUNT(*) FROM chunks c WHERE 1=1"
+        + (" AND NOT EXISTS (SELECT 1 FROM chunk_topics t WHERE t.chunk_id = c.id)" if has_t else "")
+        + (" AND NOT EXISTS (SELECT 1 FROM chunk_verdicts v WHERE v.chunk_id = c.id AND v.verdict = 'no_topic')"
+           if has_v else "")).fetchone()[0]
+    no_topic = (c.execute("SELECT COUNT(*) FROM chunk_verdicts v WHERE v.verdict = 'no_topic' "
+                          "AND EXISTS (SELECT 1 FROM chunks c WHERE c.id = v.chunk_id)").fetchone()[0]
+                if has_v else 0)
+    return {"total": total, "tagged": tagged, "untagged": untagged, "no_topic": no_topic}
+
+
 def _ensure_meta(c):
     c.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
 
