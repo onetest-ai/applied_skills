@@ -127,3 +127,81 @@ class SofficeCandidatesPinnedTests(unittest.TestCase):
             return tuple(re.findall(r'"([^"]+)"', m.group(1)))
         self.assertEqual(D.SOFFICE_CANDIDATES, tuple_in(SK / "visual-parse" / "render_pages.py"))
         self.assertEqual(D.SOFFICE_CANDIDATES, tuple_in(SK / "corpus-taxonomy-extraction" / "parse_corpus.py"))
+
+
+class DoctorDocxTranscriptTests(unittest.TestCase):
+    """has_sidecar mirrors video_capture.find_sidecar (Teams .docx by stem or by title),
+    and a paired transcript .docx is not an Office file needing soffice."""
+
+    STEM = "Sync wAcme  Plan-20260105_150400-Meeting Recording"
+    TURNS = [("Dana Rivers", "0:05", "hello")]
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory(); self.root = Path(self.t.name)
+        self.p1 = patch.object(D, "check_python_deps", return_value=(True, "all importable"))
+        self.p2 = patch.object(D, "check_sqlite_vec", return_value=(True, "vec v0"))
+        self.p1.start(); self.p2.start()
+
+    def tearDown(self):
+        self.p1.stop(); self.p2.stop(); self.t.cleanup()
+
+    def _fixtures(self):
+        """(video path, expected sidecar name or None or 'ambiguous') per scenario dir."""
+        import _tools
+        out = []
+
+        def case(name, build, expect):
+            d = self.root / "fx" / name; d.mkdir(parents=True)
+            v = d / f"{self.STEM}.mp4"; v.write_bytes(b"v")
+            build(d)
+            out.append((v, expect))
+
+        mk = _tools.make_teams_docx
+        case("title", lambda d: mk(d / "Acme_ Plan.docx", self.STEM, "5m", self.TURNS), "Acme_ Plan.docx")
+        case("stem-docx", lambda d: mk(d / f"{self.STEM}.DOCX", "x", "5m", self.TURNS), f"{self.STEM}.DOCX")
+        case("vtt-wins", lambda d: (mk(d / "Acme_ Plan.docx", self.STEM, "5m", self.TURNS),
+                                    (d / f"{self.STEM}.vtt").write_text("WEBVTT\n")), f"{self.STEM}.vtt")
+        case("srt-over-docx", lambda d: (mk(d / f"{self.STEM}.docx", "x", "5m", self.TURNS),
+                                         (d / f"{self.STEM}.srt").write_text("")), f"{self.STEM}.srt")
+        case("other-title", lambda d: mk(d / "Other.docx", "Not this meeting", "5m", self.TURNS), None)
+        case("truncated", lambda d: _tools.truncate_file(mk(d / "A.docx", self.STEM, "5m", self.TURNS)), None)
+        case("not-a-zip", lambda d: (d / "A.docx").write_bytes(b"x"), None)
+        case("ambiguous", lambda d: (mk(d / "A.docx", self.STEM, "5m", self.TURNS),
+                                     mk(d / "B.docx", self.STEM, "5m", self.TURNS)), "ambiguous")
+        case("nothing", lambda d: None, None)
+        return out
+
+    def test_parity_with_video_capture(self):
+        import video_capture as V
+        for video, expect in self._fixtures():
+            try:
+                vc = V.find_sidecar(str(video))
+                vc_name = Path(vc).name if vc else None
+            except ValueError:
+                vc_name = "ambiguous"
+            self.assertEqual(vc_name, expect, video.parent.name)
+            doc = D.sidecar_of(video)
+            self.assertEqual(doc.name if doc else None, None if expect == "ambiguous" else expect,
+                             video.parent.name)
+            self.assertEqual(D.has_sidecar(video), expect not in (None, "ambiguous"), video.parent.name)
+            for f in video.parent.glob("*.[dD][oO][cC][xX]"):
+                self.assertEqual(D._docx_title(f), V.docx_title(f), f)
+
+    def test_transcript_docx_does_not_require_soffice(self):
+        import _tools
+        docs = self.root / "docs"; (docs / "rec").mkdir(parents=True)
+        (docs / "rec" / f"{self.STEM}.mp4").write_bytes(b"v")
+        _tools.make_teams_docx(docs / "rec" / "Acme_ Plan.docx", self.STEM, "5m", self.TURNS)
+        cfg = _config(self.root, ["**/*.mp4", "**/*.docx"])
+        with patch.object(D, "which", side_effect=lambda n: f"/bin/{n}" if n in ("ffmpeg", "ffprobe") else None), \
+                patch.object(D, "soffice_path", return_value=None):
+            checks = D.run_checks(D.scan_corpus(config=str(cfg)), config=str(cfg))
+            c = _by_name(checks)
+            self.assertFalse(c["soffice"]["required"])
+            self.assertFalse(c["whisper-cli"]["required"])
+            self.assertEqual(D.exit_code(checks), 0)
+            # a real (non-transcript) Word document still needs soffice
+            _tools.make_teams_docx(docs / "rec" / "Minutes.docx", "Board minutes", "5m", self.TURNS)
+            c = _by_name(D.run_checks(D.scan_corpus(config=str(cfg)), config=str(cfg)))
+            self.assertTrue(c["soffice"]["required"])
+            self.assertIn("1 Office file(s)", c["soffice"]["why"])

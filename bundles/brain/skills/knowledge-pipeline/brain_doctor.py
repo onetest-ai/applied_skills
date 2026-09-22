@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import source_registry  # noqa: E402  (same skill directory)
 
 VIDEO_EXT = frozenset({".mp4", ".mov", ".mkv", ".webm", ".m4v"})
-SIDECAR_EXT = frozenset({".vtt", ".srt"})
+SIDECAR_EXT = (".vtt", ".srt", ".docx")  # priority order, as video_capture.find_sidecar
 OFFICE_EXT = frozenset({".pptx", ".ppt", ".docx", ".doc"})
 # Pinned by test to render_pages.soffice_bin / parse_corpus._soffice.
 SOFFICE_CANDIDATES = ("soffice", "libreoffice", "/opt/homebrew/bin/soffice",
@@ -72,14 +72,57 @@ def install_hint(tool: str) -> str:
     return INSTALL[tool][os_key()]
 
 
-def has_sidecar(video: Path) -> bool:
-    """A same-stem .vtt/.srt next to the video (extension case-insensitive)."""
+_W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def _docx_title(path) -> str | None:
+    """First non-empty paragraph of a .docx (text of <w:t> directly inside runs), stripped;
+    None when unreadable. A copy of video_capture.docx_title — skills cannot import across
+    skill dirs — pinned by a parity test."""
+    import xml.etree.ElementTree as ET
+    import zipfile
+    import zlib
     try:
-        names = os.listdir(video.parent)
+        with zipfile.ZipFile(path) as z:
+            root = ET.fromstring(z.read("word/document.xml"))
+    except (OSError, zipfile.BadZipFile, KeyError, ET.ParseError, EOFError, zlib.error):
+        return None
+    for p in root.iter(_W_NS + "p"):
+        text = []
+        for r in p.findall(_W_NS + "r"):
+            if r.find(_W_NS + "t") is None:
+                continue
+            for child in r:
+                if child.tag == _W_NS + "t":
+                    text.append(child.text or "")
+                elif child.tag in (_W_NS + "br", _W_NS + "tab"):
+                    text.append(" ")
+        t = "".join(text).strip()
+        if t:
+            return t
+    return None
+
+
+def sidecar_of(video: Path) -> Path | None:
+    """The transcript video_capture.find_sidecar would pick: a same-stem .vtt/.srt/.docx
+    (in that priority, extension case-insensitive), else the ONE .docx whose first
+    paragraph is the video's stem (Teams). Two title claims -> None (probe refuses)."""
+    try:
+        names = sorted(os.listdir(video.parent))
     except OSError:
-        return False
-    return any(os.path.splitext(n)[0] == video.stem and os.path.splitext(n)[1].lower() in SIDECAR_EXT
-               for n in names)
+        return None
+    for ext in SIDECAR_EXT:
+        for n in names:
+            if os.path.splitext(n)[0] == video.stem and os.path.splitext(n)[1].lower() == ext:
+                return video.parent / n
+    claims = [n for n in names if os.path.splitext(n)[1].lower() == ".docx"
+              and not n.startswith((".", "~$")) and _docx_title(video.parent / n) == video.stem]
+    return video.parent / claims[0] if len(claims) == 1 else None
+
+
+def has_sidecar(video: Path) -> bool:
+    """The video has a transcript the video lane will use (see sidecar_of)."""
+    return sidecar_of(video) is not None
 
 
 def scan_corpus(config: str | None = None, corpus: str | None = None) -> dict:
@@ -158,9 +201,12 @@ def _eg(paths: list[Path]) -> str:
 
 def run_checks(scan: dict, *, config: str | None = None, need: tuple[str, ...] = ()) -> list[dict]:
     files = scan["files"]
-    office = [p for p in files if p.suffix.lower() in OFFICE_EXT]
     videos = [p for p in files if p.suffix.lower() in VIDEO_EXT]
-    bare = [v for v in videos if not has_sidecar(v)]
+    sidecars = {v: sidecar_of(v) for v in videos}
+    bare = [v for v in videos if sidecars[v] is None]
+    # A .docx the video lane reads as a transcript is never converted by soffice.
+    transcripts = {s.resolve() for s in sidecars.values() if s is not None}
+    office = [p for p in files if p.suffix.lower() in OFFICE_EXT and p.resolve() not in transcripts]
     checks: list[dict] = []
 
     def add(name, ok, required, why, detail="", install=None):
@@ -190,7 +236,7 @@ def run_checks(scan: dict, *, config: str | None = None, need: tuple[str, ...] =
         ("" if model_ok else "choose a model: brain_doctor.py whisper-models, then set-whisper-model")
     add("whisper-cli", wb and model_ok, bool(bare),
         f"{len(bare)} of {len(videos)} video(s) have no transcript sidecar" if bare
-        else "only for videos without a .vtt/.srt sidecar", w_detail, w_install)
+        else "only for videos without a transcript (.vtt/.srt/.docx sidecar)", w_detail, w_install)
     nd = which("node") and which("npx")
     add("node", nd, "evals" in need, "evals skill (promptfoo)", nd or "", install_hint("node"))
     return checks
