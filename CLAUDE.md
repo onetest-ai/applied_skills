@@ -32,6 +32,9 @@ uv run --with-requirements bundles/brain/requirements.txt --with pytest python -
 ./install.sh --target claude            # project-local .claude/skills
 ./install.sh --target all --user        # ~/.claude/skills etc.
 ./install.sh --deps                     # create the venv the brain scripts need
+
+# What system tools does this Brain need? (report only; exit 1 = something required is missing)
+uv run --with-requirements bundles/brain/requirements.txt python bundles/brain/skills/knowledge-pipeline/brain_doctor.py --config <project>/brain.toml
 ```
 
 There is no build step and no linter config. `uv` resolves dependencies per invocation; nothing is installed globally.
@@ -45,6 +48,8 @@ There is no build step and no linter config. `uv` resolves dependencies per invo
 **Serve:** `mcp/brain/fastmcp_server.py` wraps `semantic_core.py` and exposes read-only tools (`search_knowledge`, `get_metric`, `get_taxonomy`, `get_evidence`, …). It derives its own identity from the store's `meta` table, so a deployed Brain describes itself.
 
 **Consume (kb):** skills identify a Brain by its **tool surface**, never by MCP server name — users register Brains under any name, and Claude Code allow-rules cannot glob the server segment.
+
+Tool-dependent tests (needing `ffmpeg`/`ffprobe`/`whisper-cli`) skip rather than fail, and the pytest run ends with a `MISSING SYSTEM TOOLS` warning section listing what was skipped.
 
 ### Cross-file invariants
 
@@ -71,6 +76,8 @@ These are the things that take several files to see, and that tests pass while v
 **Health plan items carry a public `fallback: true`.** `health.py` marks a safe default (no usable agent fix) with an internal `_fallback`; `build_plan` counts it for the context line, then replaces it with `fallback: true` (present only when true). `review_ui.html` relies on that field to keep fallbacks out of **Accept all remaining** and its counts; dropping or renaming it in the plan makes the app batch-accept defaults as if they were recommendations.
 
 **`meta` carries `goal`, `audience` and optional `name`.** `write_meta` UPSERTs `goal`/`audience` unconditionally from their source files, but `name` **only when `name.txt` is non-empty** — no existing project has one, and an unconditional write would clear a `meta.name` set by hand. Do not "tidy" that asymmetry into consistency.
+
+**`video_capture.py` is a third producer of the visual-lane layout.** Its `pages.json` matches `render_pages.py`'s shape (slug-relative `image`, `flagged: true`) plus `medium: "video"`, `t_start`/`t_end`/`shown_at`, and `dropped` once `assemble` has deleted a no-content frame; `vision_prep.py` keys its no-content instruction off `medium` and skips `dropped` pages. The video doc's `consumed-by-video` manifest entry is what lets `brain_sync` retire the old transcript doc — and only while the video doc exists.
 
 ## Conventions
 

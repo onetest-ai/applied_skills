@@ -28,6 +28,12 @@ When the user wants to **create a brain** / "get started" / doesn't yet have a p
 - **Deployment target** — *"Will this brain be consumed locally (an agent queries the local store), or served as a hosted MCP to remote clients like Copilot Studio?"* Ask this now: `hosted-mcp` needs auth/TLS, an immutable-image deployment profile, and server-shaped operator docs, so choosing up front avoids rewriting the operator guide later. Recorded in `brain.toml` `[deployment].target`; changeable later.
 
 **2. Scaffold + preflight + scan** (deterministic):
+
+First, run the doctor: `"$PY" .../knowledge-pipeline/brain_doctor.py --config <project>/brain.toml`.
+If it exits 1, show the user the missing items and their install commands and stop until they
+are resolved; if it reports `whisper-cli` REQUIRED, run the model question from
+`visual-parse` → "Meeting recordings".
+
 ```bash
 python .../knowledge-pipeline/onboard.py scaffold \
   --project <proj> --goal "<goal>" [--name "<display name>"] [--audience "<roles/personas>"] --docs <docs> [--reporting <xlsx-dir>] \
@@ -92,6 +98,7 @@ PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-
 # 1a. parse transcripts → Markdown (VTT/SRT corpora — use --merge-cues to join same-speaker cues into speaker turns):
 #     WARNING: omitting --merge-cues produces one chunk per cue (~50-100 chars each), which agents
 #     classify as empty [] and retrieval quality degrades severely. Always pass --merge-cues N > 1 for VTT/SRT.
+#     If the corpus has videos, add --consume-video-sidecars (the video lane owns their transcripts).
 "$PY" .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats vtt,srt --merge-cues 10
 # 1b. parse narrative docs → Markdown. TEXT pages via pymupdf (torch-free):
 "$PY" .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf,md,markdown,txt,html,htm
@@ -111,6 +118,9 @@ PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-
 "$PY" .../visual-parse/vision_prep.py --render-dir <project>/assets/<slug> --out <project>/vision --db "$DB"
 #    → 🤖 dispatch VISION subagents (cheap) → vision/result_k.json {img_sha: faithful markdown}
 "$PY" .../visual-parse/vision_assemble.py --render-dir <project>/assets/<slug> --out <project>/parsed/<doc>.md --results <project>/vision --db "$DB"
+# 1m. MEETING RECORDINGS (video) — the visual-parse skill's "Meeting recordings" section has the
+#     full per-recording sequence (probe → transcribe → frames → vision_prep → 🤖 → assemble):
+"$PY" .../visual-parse/video_capture.py probe --video <root>/<rel> --rel-to <root> --work <project>/video --manifest <project>/parsed/manifest.json
 # 2. (optional) induce taxonomy → taxonomy/taxonomy_v0.json  [map→reduce→judge→emit; see that skill]
 #    👤 then the user ratifies it in the review app: corpus-taxonomy-extraction → "A. Draft review"
 #    (plan --mode draft → serve in the background, end your turn → on submit, taxonomy_merge.py --review … --apply
