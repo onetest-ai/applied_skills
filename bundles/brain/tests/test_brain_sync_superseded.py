@@ -67,3 +67,22 @@ class SupersededTests(unittest.TestCase):
         with sqlite3.connect(self.db) as con:
             _, d = S.delta(con, str(self.parsed))
         self.assertEqual(d["blocked_missing_parsed"], ["standup.vtt.md"])
+
+    def test_still_blocked_when_video_source_is_tombstoned(self):
+        # The video's own parsed doc is stale (source tombstoned) but still on disk.
+        # It must not be able to "supersede" the transcript — the transcript should
+        # stay blocked, not be silently lost alongside the tombstoned video doc.
+        self._manifest([self.CONSUMED, self.VIDEO])
+        (self.parsed / "standup.mp4.md").write_text("# SOURCE: standup.mp4\n")
+        video_src = self.root / "docs" / "standup.mp4"; video_src.write_text("video-bytes")
+        with sqlite3.connect(self.db) as con:
+            with R.connect(str(self.db)) as reg:
+                vrow = R.register(reg, "docs", "standup.mp4", video_src)
+            m = S.scan(str(self.parsed))["standup.mp4.md"]
+            con.execute("INSERT INTO synced_files VALUES(?,?,?,?,?,?)",
+                        ("standup.mp4.md", m["sha"], m["bytes"], m["mtime"], "now", vrow["source_id"]))
+            con.execute("UPDATE sources SET state='removed' WHERE source_id=?", (vrow["source_id"],))
+        with sqlite3.connect(self.db) as con:
+            _, d = S.delta(con, str(self.parsed))
+        self.assertEqual(d["blocked_missing_parsed"], ["standup.vtt.md"])
+        self.assertEqual(d["superseded_by_video"], [])

@@ -263,7 +263,6 @@ def delta(c, parsed, *, mutate_schema=True, manifest=None):
     cur = {r[0]: r[1] for r in rows}
     source_for = {r[0]: r[2] for r in rows}
     now = scan(parsed)
-    sup = superseded_docs(parsed, manifest, now)
     have_sources = _has(c, "sources")
     removed_linked = set()
     if have_sources:
@@ -272,6 +271,9 @@ def delta(c, parsed, *, mutate_schema=True, manifest=None):
                WHERE s.state='removed'""")}
     # A tombstoned source is an explicit deletion even when stale parsed output remains.
     effective_now = {doc: meta for doc, meta in now.items() if doc not in removed_linked}
+    # A tombstoned video's own parsed doc must not count as "present" for supersession —
+    # otherwise a stale video doc on disk would silently take its transcript with it.
+    sup = superseded_docs(parsed, manifest, effective_now)
     added = [d for d in effective_now if d not in cur]
     changed = [d for d in effective_now if d in cur and effective_now[d]["sha"] != cur[d]]
     unchanged = [d for d in effective_now if d in cur and effective_now[d]["sha"] == cur[d]]
