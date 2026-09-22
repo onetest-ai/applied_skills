@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Meeting recordings → the visual lane: key frames + transcript → ONE parsed doc.
 
-A second producer of the visual-lane artifact layout (like html_capture.py):
+The third producer of the visual-lane artifact layout (after render_pages.py and
+html_capture.py):
   probe       ffprobe + pick the transcript source (same-stem .vtt/.srt sidecar wins;
               whisper.cpp only when none exists)                 -> <work>/<slug>/probe.json
   transcribe  whisper.cpp -> <work>/<slug>/transcript.vtt          (only when probe says asr)
@@ -10,6 +11,10 @@ A second producer of the visual-lane artifact layout (like html_capture.py):
    answers "<!-- no-content -->" for people-only frames)
   assemble    transcript turns + kept frames, time-ordered -> <parsed>/<doc>.md + manifest
   forget      remove a deleted recording's parsed doc, manifest entries and assets
+
+<slug> is video_slug(): render_pages.doc_slug of the source-relative path plus
+`--<ext>` (m/standup.mp4 -> m__standup--mp4), so a recording never shares an asset dir
+with a same-stem deck (m/standup.pptx -> m__standup). probe and frames print it.
 
 Deterministic, no LLM. System tools: ffmpeg/ffprobe, whisper-cli. No environment
 variables: the whisper model comes from --model or brain.toml [video].whisper_model.
@@ -35,6 +40,7 @@ from vision_assemble import demote, load_cache, load_results, persist_page_rende
 VIDEO_EXT = (".mp4", ".mov", ".mkv", ".webm", ".m4v")
 SIDECAR_EXT = (".vtt", ".srt")
 NO_CONTENT = "<!-- no-content -->"
+_NO_CONTENT_RE = re.compile(r"<!--\s*no-content\s*-->", re.I)
 LOW_W, LOW_H = 96, 54
 WHISPER_BINS = ("whisper-cli", "whisper-cpp")
 DOCTOR_HINT = "run knowledge-pipeline/brain_doctor.py for install steps"
@@ -225,6 +231,38 @@ def select_frames(frames, diff=0.08, still=0.015, min_hold=3, max_per_min=6, max
 
 # ---- IO helpers ---------------------------------------------------------------
 
+
+def video_slug(rel: str) -> str:
+    """Asset/work slug for a recording: doc_slug(rel) + "--" + the lowercased extension.
+    doc_slug drops the extension, so m/standup.mp4 and m/standup.pptx would share
+    assets/m__standup/ and `frames`/`forget` would destroy the deck's render."""
+    ext = os.path.splitext(rel)[1].lstrip(".").lower()
+    return doc_slug(rel) + (f"--{ext}" if ext else "")
+
+
+def is_no_content(reply: str) -> bool:
+    """The VLM's people-only verdict, tolerant of wrapping: after stripping whitespace
+    and surrounding backticks/quotes, the reply is exactly `<!-- no-content -->`
+    (case-insensitive, inner spaces allowed). Anything else is content."""
+    t = reply.strip()
+    while True:
+        u = t.strip().strip("`'\"").strip()
+        if u == t:
+            break
+        t = u
+    return bool(_NO_CONTENT_RE.fullmatch(t))
+
+
+def is_video_render_dir(d: str) -> bool:
+    """True when `d` has no pages.json or its pages.json is a video render (medium video)."""
+    pj = os.path.join(d, "pages.json")
+    if not os.path.exists(pj):
+        return True
+    try:
+        return json.loads(Path(pj).read_text()).get("medium") == "video"
+    except (json.JSONDecodeError, OSError, AttributeError):
+        return False
+
 try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10
@@ -281,6 +319,8 @@ def find_sidecar(video: str) -> str | None:
 def choose_transcript(has_audio: bool, sidecar: str | None, override: str) -> str:
     if override == "sidecar" and not sidecar:
         raise ValueError("--transcript sidecar but no same-stem .vtt/.srt exists")
+    if override == "asr" and not has_audio:
+        raise ValueError("--transcript asr but the video has no audio stream")
     if override != "auto":
         return override
     return "sidecar" if sidecar else ("asr" if has_audio else "none")
@@ -323,7 +363,7 @@ def upsert_manifest(path, entries: list[dict]) -> None:
 def cmd_probe(a) -> int:
     video = os.path.abspath(a.video)
     rel = source_rel(a.video, a.rel_to)
-    slug = doc_slug(rel)
+    slug = video_slug(rel)
     try:
         duration, has_audio = ffprobe(video)
     except RuntimeError as e:
@@ -352,7 +392,7 @@ def cmd_probe(a) -> int:
     atomic_write(out, json.dumps(probe, indent=2) + "\n")
     for w in warnings:
         print(f"warning: {w}", file=sys.stderr)
-    print(f"{rel}: {fmt_hms(duration)}, transcript={transcript} -> {out}")
+    print(f"{rel}: {fmt_hms(duration)}, transcript={transcript}, slug={slug} -> {out}")
     return 0
 
 
@@ -363,15 +403,18 @@ def frames_key(video: str, params: dict) -> str:
 def cmd_frames(a) -> int:
     video = os.path.abspath(a.video)
     rel = source_rel(a.video, a.rel_to)
-    slug = doc_slug(rel)
+    slug = video_slug(rel)
     outdir = os.path.join(a.assets_root, slug)
+    if not is_video_render_dir(outdir):
+        die(f"{os.path.join(outdir, 'pages.json')} is not a video render (medium != video) — "
+            "refusing to overwrite another document's pages")
     os.makedirs(outdir, exist_ok=True)
     params = {"diff": a.diff, "still": a.still, "min_hold": a.min_hold,
               "max_per_min": a.max_per_min, "max_frames": a.max_frames}
     key = frames_key(video, params)
     pj = os.path.join(outdir, "pages.json")
     if os.path.exists(pj) and json.loads(Path(pj).read_text()).get("frames_key") == key:
-        print(f"{rel}: frames unchanged (cache hit) -> {outdir}")
+        print(f"{rel}: frames unchanged (cache hit), slug={slug} -> {outdir}")
         return 0
     for old in glob.glob(os.path.join(outdir, "p*.png")) + glob.glob(os.path.join(outdir, "p*.txt")):
         os.remove(old)
@@ -389,7 +432,7 @@ def cmd_frames(a) -> int:
     doc = {"doc": os.path.basename(video), "slug": slug, "dpi": None, "medium": "video",
            "duration": duration, "frames_key": key, "frames_capped": capped, "pages": pages}
     atomic_write(pj, json.dumps(doc, indent=2) + "\n")
-    print(f"{rel}: {len(pages)} key frame(s) -> {outdir}" + ("  [capped at --max-frames]" if capped else ""))
+    print(f"{rel}: {len(pages)} key frame(s), slug={slug} -> {outdir}" + ("  [capped at --max-frames]" if capped else ""))
     return 0
 
 
@@ -438,7 +481,7 @@ def cmd_assemble(a) -> int:
     pages_doc = json.loads(Path(pj).read_text())
     if pages_doc.get("medium") != "video":
         die(f"{pj} is not a video render dir (medium != video)")
-    results = load_results(a.results)
+    results = load_results(a.results) if a.results else {}  # never glob the CWD
     vlm = {**load_cache(a.db), **results}
     live = [p for p in pages_doc["pages"] if not p.get("dropped")]
     missing = [p["img_sha"] for p in live if p["img_sha"] not in vlm]
@@ -472,7 +515,7 @@ def cmd_assemble(a) -> int:
         if p.get("dropped"):
             continue
         md = vlm[p["img_sha"]].strip()
-        if md == NO_CONTENT:
+        if is_no_content(md):
             png = os.path.join(a.render_dir, f"p{p['page']:02d}.png")
             if os.path.exists(png):
                 os.remove(png)  # people-only frames are not retained
@@ -493,12 +536,29 @@ def cmd_assemble(a) -> int:
         entries.append({"source": probe["sidecar_source"], "skipped": True,
                         "method": "consumed-by-video", "consumed_by": rel})
     upsert_manifest(a.manifest or os.path.join(a.parsed, "manifest.json"), entries)
+    if probe.get("sidecar_source"):
+        # An earlier parse_corpus pass may have indexed the sidecar as its own doc; the
+        # consumed entry above retires it, so its parsed doc must go too (else the
+        # transcript is indexed twice, or brain_sync's strict-sources check fails).
+        stale = os.path.join(a.parsed, doc_name(probe["sidecar_source"]))
+        if os.path.exists(stale):
+            os.remove(stale)
     print(f"{rel}: {len(cues)} cue(s), {len(kept)} frame(s) kept, {dropped} dropped -> "
           f"{os.path.join(a.parsed, doc_name(rel))}")
     return 0
 
 
+def safe_source(src: str) -> bool:
+    """A source-relative path: non-empty, not ".", not absolute, no ".." component."""
+    if not src or src.strip() in ("", ".") or os.path.isabs(src) or src.startswith(("/", "\\")):
+        return False
+    parts = re.split(r"[\\/]+", src)
+    return ".." not in parts and any(p not in ("", ".") for p in parts)
+
+
 def cmd_forget(a) -> int:
+    if not safe_source(a.source):
+        die(f"--source must be a source-relative path (not empty, '.', absolute or with '..'): {a.source!r}")
     manifest = a.manifest or os.path.join(a.parsed, "manifest.json")
     data = json.loads(Path(manifest).read_text()) if os.path.exists(manifest) else []
     keep = [e for e in data if e.get("source") != a.source and e.get("consumed_by") != a.source]
@@ -506,10 +566,14 @@ def cmd_forget(a) -> int:
     md = os.path.join(a.parsed, doc_name(a.source))
     if os.path.exists(md):
         os.remove(md)
-    slug = doc_slug(a.source)
+    slug = video_slug(a.source)
     for root in (a.assets_root, a.work):
-        if root and os.path.isdir(os.path.join(root, slug)):
-            shutil.rmtree(os.path.join(root, slug))
+        d = os.path.join(root, slug) if root else None
+        if d and os.path.isdir(d):
+            if not is_video_render_dir(d):
+                print(f"warning: {d} holds a non-video render — left in place", file=sys.stderr)
+                continue
+            shutil.rmtree(d)
     print(f"forgot {a.source}: {len(data) - len(keep)} manifest entr(ies) removed")
     return 0
 

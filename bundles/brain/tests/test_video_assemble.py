@@ -17,7 +17,7 @@ class AssembleTests(unittest.TestCase):
         self.sidecar = self.corpus / "standup.vtt"
         self.sidecar.write_text("WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n<v Alice>Look at the roadmap.</v>\n\n"
                                 "01:00:05.000 --> 01:00:07.000\n<v Bob>Done.</v>\n")
-        self.slug = "rec__standup"
+        self.slug = "rec__standup--mp4"
         self.rd = r / "assets" / self.slug; self.rd.mkdir(parents=True)
         pages = []
         for n, (t0, t1) in enumerate([(2, 30), (40, 50)], 1):
@@ -171,6 +171,87 @@ class AssembleTests(unittest.TestCase):
         self.assertFalse((self.parsed / "rec__standup.mp4.md").exists())
         self.assertEqual(json.loads((self.parsed / "manifest.json").read_text()), [])
         self.assertFalse(self.rd.exists())
+
+    def test_assemble_removes_the_sidecars_stale_parsed_doc(self):
+        # An earlier parse_corpus pass indexed the sidecar as its own document.
+        stale = self.parsed / "rec__standup.vtt.md"
+        stale.write_text("# SOURCE: rec/standup.vtt\n# method: transcript-etl\n")
+        other = self.parsed / "rec__other.vtt.md"; other.write_text("keep")
+        self._results({"sha1": "# A", "sha2": "# B"})
+        self.assertEqual(self._assemble(), 0)
+        self.assertFalse(stale.exists())
+        self.assertTrue(other.exists())
+        self.assertTrue((self.parsed / "rec__standup.mp4.md").exists())
+
+    def test_assemble_without_sidecar_removes_nothing(self):
+        keep = self.parsed / "rec__standup.vtt.md"; keep.write_text("keep")
+        p = json.loads(self.probe.read_text()); p.update(transcript="none", sidecar=None, sidecar_source=None)
+        self.probe.write_text(json.dumps(p))
+        self._results({"sha1": "# A", "sha2": "# B"})
+        self.assertEqual(self._assemble(), 0)
+        self.assertTrue(keep.exists())
+
+    def test_backticked_or_quoted_no_content_sentinel_still_drops_the_frame(self):
+        for reply in ("`<!-- no-content -->`", "```\n<!-- no-content -->\n```", '"<!-- No-Content -->"',
+                      "  <!--no-content-->  ", "'<!--  NO-CONTENT  -->'"):
+            self.assertTrue(V.is_no_content(reply), reply)
+        for reply in ("# Slide\n\n<!-- no-content -->", "no-content", "<!-- no content here -->"):
+            self.assertFalse(V.is_no_content(reply), reply)
+        self._results({"sha1": "# Q3 Roadmap", "sha2": "`<!-- no-content -->`"})
+        self.assertEqual(self._assemble(), 0)
+        self.assertFalse((self.rd / "p02.png").exists())
+        md = (self.parsed / "rec__standup.mp4.md").read_text()
+        self.assertNotIn("no-content", md)
+        self.assertNotIn("p02", md)
+
+    def test_without_results_never_reads_result_files_in_the_cwd(self):
+        import os
+        import sqlite3
+        db = str(Path(self.t.name) / "knowledge.sqlite")
+        sqlite3.connect(db).close()
+        self._results({"sha1": "# A", "sha2": "# B"})
+        V.main(["assemble", "--probe", str(self.probe), "--render-dir", str(self.rd),
+                "--results", str(self.results), "--parsed", str(self.parsed), "--db", db])
+        # A stray result file in the CWD must not override the cache.
+        cwd = Path(self.t.name) / "cwd"; cwd.mkdir()
+        (cwd / "result_0.json").write_text(json.dumps({"sha1": "# HIJACKED", "sha2": "# B"}))
+        old = os.getcwd(); os.chdir(cwd)
+        try:
+            code = V.main(["assemble", "--probe", str(self.probe), "--render-dir", str(self.rd),
+                           "--parsed", str(self.parsed), "--db", db])
+        finally:
+            os.chdir(old)
+        self.assertEqual(code, 0)
+        self.assertNotIn("HIJACKED", (self.parsed / "rec__standup.mp4.md").read_text())
+
+    def test_forget_leaves_a_same_stem_deck_render_alone(self):
+        self._results({"sha1": "# A", "sha2": "# B"})
+        self._assemble()
+        deck = self.rd.parent / "rec__standup"; deck.mkdir()
+        (deck / "pages.json").write_text(json.dumps({"doc": "standup.pptx", "pages": []}))
+        code = V.main(["forget", "--source", "rec/standup.mp4", "--parsed", str(self.parsed),
+                       "--assets-root", str(self.rd.parent)])
+        self.assertEqual(code, 0)
+        self.assertFalse(self.rd.exists())
+        self.assertTrue((deck / "pages.json").exists())
+
+    def test_forget_keeps_a_dir_whose_pages_json_is_not_video(self):
+        pj = self.rd / "pages.json"
+        pj.write_text(json.dumps({"doc": "x.pdf", "slug": self.slug, "pages": []}))
+        code = V.main(["forget", "--source", "rec/standup.mp4", "--parsed", str(self.parsed),
+                       "--assets-root", str(self.rd.parent)])
+        self.assertEqual(code, 0)
+        self.assertTrue(pj.exists())
+
+    def test_forget_rejects_unsafe_sources(self):
+        (self.parsed / "manifest.json").write_text(json.dumps([{"source": "a.pdf", "md": "a.pdf.md"}]))
+        before = (self.parsed / "manifest.json").read_text()
+        for bad in ("", ".", "/abs/standup.mp4", "../standup.mp4", "rec/../../x.mp4", "rec/./.."):
+            code = V.main(["forget", "--source", bad, "--parsed", str(self.parsed),
+                           "--assets-root", str(self.rd.parent), "--work", str(self.work.parent)])
+            self.assertEqual(code, 1, bad)
+        self.assertEqual((self.parsed / "manifest.json").read_text(), before)
+        self.assertTrue(self.rd.exists()); self.assertTrue(self.work.exists())
 
     def test_forget_with_work_removes_work_dir(self):
         self._results({"sha1": "# A", "sha2": "# B"})

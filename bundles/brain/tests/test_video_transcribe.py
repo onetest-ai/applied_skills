@@ -40,7 +40,7 @@ class TranscribeTests(unittest.TestCase):
         self.work = r / "video"
         self.assertEqual(V.main(["probe", "--video", str(self.video), "--rel-to", str(corpus),
                                  "--work", str(self.work)]), 0)
-        self.probe = self.work / "talk" / "probe.json"
+        self.probe = self.work / "talk--mp4" / "probe.json"
         self.bin = r / "bin"; self.bin.mkdir()
         exe = self.bin / "whisper-cli"; exe.write_text(FAKE_WHISPER.format(py=sys.executable))
         exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
@@ -56,9 +56,9 @@ class TranscribeTests(unittest.TestCase):
 
     def test_transcribe_writes_vtt_and_cache_key(self):
         self.assertEqual(V.main(["transcribe", "--probe", str(self.probe), "--model", str(self.model)]), 0)
-        vtt = self.work / "talk" / "transcript.vtt"
+        vtt = self.work / "talk--mp4" / "transcript.vtt"
         self.assertEqual(V.read_cues(vtt)[0]["text"], "hello from asr")
-        asr = json.loads((self.work / "talk" / "asr.json").read_text())
+        asr = json.loads((self.work / "talk--mp4" / "asr.json").read_text())
         self.assertEqual((asr["model"], asr["language"]), ("ggml-small.en.bin", "auto"))
         mtime = vtt.stat().st_mtime_ns
         self.assertEqual(V.main(["transcribe", "--probe", str(self.probe), "--model", str(self.model)]), 0)

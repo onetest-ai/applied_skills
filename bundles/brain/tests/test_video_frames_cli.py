@@ -25,6 +25,38 @@ class SidecarAndChoiceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             V.choose_transcript(True, None, "sidecar")
 
+    def test_choose_transcript_rejects_asr_without_audio(self):
+        with self.assertRaises(ValueError):
+            V.choose_transcript(False, None, "asr")
+        with self.assertRaises(ValueError):
+            V.choose_transcript(False, "/a.vtt", "asr")
+
+
+class VideoSlugTests(unittest.TestCase):
+    def test_slug_carries_the_extension(self):
+        self.assertEqual(V.video_slug("m/standup.mp4"), "m__standup--mp4")
+        self.assertEqual(V.video_slug("rec/Weekly Sync.MOV"), "rec__weekly-sync--mov")
+        self.assertEqual(V.video_slug("talk.webm"), "talk--webm")
+
+    def test_slug_never_equals_the_same_stem_deck_slug(self):
+        from render_pages import doc_slug
+        self.assertNotEqual(V.video_slug("m/standup.mp4"), doc_slug("m/standup.pptx"))
+
+    def test_frames_refuses_a_non_video_render_dir_without_touching_it(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td); corpus = root / "c"; corpus.mkdir()
+            (corpus / "standup.mp4").write_bytes(b"not really a video")
+            d = root / "assets" / "standup--mp4"; d.mkdir(parents=True)
+            (d / "p01.png").write_bytes(b"deck"); (d / "p01.txt").write_text("deck text")
+            pj = json.dumps({"doc": "standup.pptx", "slug": "standup--mp4", "pages": []})
+            (d / "pages.json").write_text(pj)
+            code = V.main(["frames", "--video", str(corpus / "standup.mp4"), "--rel-to", str(corpus),
+                           "--assets-root", str(root / "assets")])
+            self.assertEqual(code, 1)
+            self.assertEqual((d / "pages.json").read_text(), pj)
+            self.assertEqual((d / "p01.png").read_bytes(), b"deck")
+            self.assertEqual((d / "p01.txt").read_text(), "deck text")
+
 
 @_tools.require_tool("ffmpeg", "ffprobe")
 class FramesIntegrationTests(unittest.TestCase):
@@ -43,17 +75,30 @@ class FramesIntegrationTests(unittest.TestCase):
         code = V.main(["frames", "--video", str(self.video), "--rel-to", str(self.corpus.parent),
                        "--assets-root", str(self.assets)])
         self.assertEqual(code, 0)
-        return json.loads((self.assets / "rec__standup" / "pages.json").read_text())
+        return json.loads((self.assets / "rec__standup--mp4" / "pages.json").read_text())
 
     def test_finds_exactly_the_three_slides(self):
         pages = self._frames()
         self.assertEqual(pages["medium"], "video")
         self.assertEqual([p["t_start"] for p in pages["pages"]], [0, 10, 30])
         for p in pages["pages"]:
-            self.assertEqual(p["image"], f"rec__standup/p{p['page']:02d}.png")
+            self.assertEqual(p["image"], f"rec__standup--mp4/p{p['page']:02d}.png")
             self.assertTrue((self.assets / p["image"]).is_file())
-            self.assertEqual((self.assets / "rec__standup" / f"p{p['page']:02d}.txt").read_text(), "")
+            self.assertEqual((self.assets / "rec__standup--mp4" / f"p{p['page']:02d}.txt").read_text(), "")
             self.assertTrue(p["flagged"]); self.assertEqual(p["why"], "video-frame")
+
+    def test_same_stem_deck_render_is_left_alone(self):
+        # m/standup.pptx renders to assets/rec__standup/ (render_pages.doc_slug drops the
+        # extension); the recording must never delete or overwrite that deck's pages.
+        deck = self.assets / "rec__standup"; deck.mkdir(parents=True, exist_ok=True)
+        (deck / "p01.png").write_bytes(b"deck-png"); (deck / "p01.txt").write_text("deck text")
+        pj = json.dumps({"doc": "standup.pptx", "slug": "rec__standup", "pages": [{"page": 1}]})
+        (deck / "pages.json").write_text(pj)
+        pages = self._frames()
+        self.assertEqual(pages["slug"], "rec__standup--mp4")
+        self.assertEqual((deck / "pages.json").read_text(), pj)
+        self.assertEqual((deck / "p01.png").read_bytes(), b"deck-png")
+        self.assertEqual((deck / "p01.txt").read_text(), "deck text")
 
     def test_second_run_is_a_cache_hit(self):
         first = self._frames()
@@ -66,7 +111,7 @@ class FramesIntegrationTests(unittest.TestCase):
         code = V.main(["probe", "--video", str(self.video), "--rel-to", str(self.corpus.parent),
                        "--work", str(self.work)])
         self.assertEqual(code, 0)
-        probe = json.loads((self.work / "rec__standup" / "probe.json").read_text())
+        probe = json.loads((self.work / "rec__standup--mp4" / "probe.json").read_text())
         self.assertEqual((probe["source"], probe["transcript"], probe["has_audio"]), ("rec/standup.mp4", "none", False))
         self.assertAlmostEqual(probe["duration"], 40.0, delta=0.5)
 
@@ -85,7 +130,7 @@ class FramesIntegrationTests(unittest.TestCase):
         try:
             self.assertEqual(V.main(["probe", "--video", str(self.video), "--rel-to", str(self.corpus.parent),
                                      "--work", str(self.work)]), 0)
-            probe = json.loads((self.work / "rec__standup" / "probe.json").read_text())
+            probe = json.loads((self.work / "rec__standup--mp4" / "probe.json").read_text())
             self.assertEqual(probe["transcript"], "sidecar")
             self.assertEqual(probe["sidecar_source"], "rec/standup.vtt")
             self.assertTrue(any("longer than the video" in w for w in probe["warnings"]))
