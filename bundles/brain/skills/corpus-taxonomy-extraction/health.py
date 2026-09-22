@@ -789,7 +789,7 @@ def _sanitize_entry(e):
     true in Python). Returns False when the entry is unusable (a non-string on a string-only
     field, or a non-list on a list-only field), so the caller can skip + count it rather than
     silently pass through, say, `chunk_ids: 5` or `disposition: 3`."""
-    for k in ("node", "subject", "into", "description", "disposition", "reason", "fix"):
+    for k in ("node", "subject", "into", "new_parent", "description", "disposition", "reason", "fix"):
         v = e.get(k)
         if v is not None and not isinstance(v, str):
             return False
@@ -1165,6 +1165,100 @@ def _structure_items(tax, work_dir, problems, skipped_files, rejections):
     return items
 
 
+def _most_tagged_sibling(siblings):
+    sibs = [s for s in siblings or [] if isinstance(s, dict) and s.get("node")]
+    return max(sibs, key=lambda s: (s.get("tags") or 0, -sibs.index(s)))["node"] if sibs else None
+
+
+def _fit_items(tax, work_dir, problems, skipped_files, rejections):
+    """Review items for the `fit` task's three problem kinds — sparse (too few tagged
+    sections), misplaced (fits another L1 better) and overloaded (an L1 with too many
+    tagged sections). Same house pattern as `_structure_items`/`_metrics_items`: an
+    agent's `fit/result_k.json` fix is used when it targets something real, else a safe
+    `keep` fallback carries the problem into the inbox — nothing detected is dropped."""
+    fixes = {}
+    for e in _load_entries(os.path.join(work_dir, "fit"), "fixes", skipped_files):
+        subj = (e.get("subject") or "").strip()
+        if subj and e.get("kind") in ("sparse", "misplaced", "overloaded"):
+            fixes.setdefault((e["kind"], subj), e)
+    it = intent(tax)
+    items = []
+
+    sparse = problems.get("sparse") or []
+    title = f"{len(sparse)} categories have only 1–2 tagged sections"
+    for p in sparse:
+        node, fix = p["node"], fixes.get(("sparse", p["node"]))
+        keep_op = {"type": "keep", "node": node}
+        best = _most_tagged_sibling(p.get("siblings"))
+        best_merge = {"type": "merge", "from": node, "into": best} if best else None
+        sib_names = {s["node"] for s in p.get("siblings") or [] if isinstance(s, dict)}
+        into = (fix.get("into") or "").strip() if fix else ""
+        fallback = False
+        if fix and fix.get("fix") == "merge" and into in sib_names:
+            op = {"type": "merge", "from": node, "into": into}
+            alts = [keep_op] + ([best_merge] if best_merge and best != into else [])
+            reason = fix.get("reason")
+        elif fix and fix.get("fix") == "keep":
+            op, alts, reason = keep_op, [a for a in (best_merge,) if a], fix.get("reason")
+        else:
+            op, alts, fallback = keep_op, [a for a in (best_merge,) if a], True
+            reason = (_unusable_reason(f"the merge target {into!r} is not a sibling" if into else "the merge names no target",
+                                       fix.get("reason")) if fix and fix.get("fix") == "merge" else "no fix proposed")
+        items.append(_make_item(tax, "sparse", "sparse", op, alts, [],
+                                {"tags": p.get("tags"), "into_tags": next((s.get("tags") for s in p.get("siblings") or []
+                                                                           if s.get("node") == op.get("into")), None)},
+                                reason, title, rejections, fallback=fallback))
+
+    mis = problems.get("misplaced") or []
+    title = f"{len(mis)} categories fit another L1 better"
+    for p in mis:
+        node, fix = p["node"], fixes.get(("misplaced", p["node"]))
+        keep_op = {"type": "keep", "node": node}
+        default_move = {"type": "move", "node": node, "new_parent": p["better_parent"]}
+        newp = (fix.get("new_parent") or "").strip() if fix else ""
+        fallback = False
+        if fix and fix.get("fix") == "move" and newp:
+            op, alts, reason = {"type": "move", "node": node, "new_parent": newp}, [keep_op], fix.get("reason")
+        elif fix and fix.get("fix") == "keep":
+            op, alts, reason = keep_op, [default_move], fix.get("reason")
+        else:
+            op, alts, reason, fallback = keep_op, [default_move], "no fix proposed", True
+        items.append(_make_item(tax, "misplaced", "misplaced", op, alts, [],
+                                {"tags": p.get("tags"), "margin": p.get("margin"), "better_parent": p["better_parent"]},
+                                reason, title, rejections, fallback=fallback))
+
+    for p in problems.get("overloaded") or []:
+        node, fix = p["node"], fixes.get(("overloaded", p["node"]))
+        group = f"overloaded:{node}"
+        title = f"{node} is overloaded ({p.get('tags')} sections, {p.get('l2_count')} L2s)"
+        support = {"tags": p.get("tags"), "l2_count": p.get("l2_count"),
+                   "median_tags": p.get("median_tags"), "median_l2": p.get("median_l2")}
+        rows = []
+        if fix and fix.get("fix") == "restructure":
+            for add in fix.get("add") or []:
+                if isinstance(add, dict) and isinstance(add.get("name"), str) and add["name"].strip():
+                    op = {"type": "add", "level": "L1", "name": add["name"].strip(), "parent": None}
+                    if isinstance(add.get("description"), str) and add["description"].strip():
+                        op["description"] = add["description"].strip()
+                    rows.append(_make_item(tax, "overloaded", group, op, [], [], support, fix.get("reason"),
+                                           title, rejections))
+            for mv in fix.get("moves") or []:
+                if not (isinstance(mv, dict) and isinstance(mv.get("node"), str) and isinstance(mv.get("new_parent"), str)):
+                    continue
+                if mv["node"] not in it["tree"].get(node, []):
+                    continue
+                op = {"type": "move", "node": mv["node"], "new_parent": mv["new_parent"]}
+                rows.append(_make_item(tax, "overloaded", group, op, [{"type": "keep", "node": mv["node"]}], [],
+                                       support, fix.get("reason"), title, rejections))
+        if not rows:
+            answered_keep = bool(fix and fix.get("fix") == "keep")
+            rows.append(_make_item(tax, "overloaded", group, {"type": "keep", "node": node}, [], [], support,
+                                   (fix or {}).get("reason") if answered_keep else "no fix proposed", title, rejections,
+                                   fallback=not answered_keep))
+        items += rows
+    return items
+
+
 def _metrics_items(tax, work_dir, problems, skipped_files, rejections):
     entries = _load_entries(os.path.join(work_dir, "metrics"), "fixes", skipped_files)
     sm_fix, mg_fix = {}, {}
@@ -1446,5 +1540,6 @@ def health_items(tax, work_dir, counts, rejections, skipped_files):
     items += _no_tags_items(tax, work_dir, problems, skipped_files, rejections)
     items += _untagged_items(tax, work_dir, problems, skipped_files, rejections)
     items += _structure_items(tax, work_dir, problems, skipped_files, rejections)
+    items += _fit_items(tax, work_dir, problems, skipped_files, rejections)
     items += _metrics_items(tax, work_dir, problems, skipped_files, rejections)
     return items

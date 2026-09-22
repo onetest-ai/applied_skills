@@ -75,3 +75,66 @@ class FitDetectTests(unittest.TestCase):
         self.assertEqual(res["near_duplicate_source"], "string")
         self.assertTrue(all(isinstance(v, int) for v in res["problems"].values()))
         self.assertNotIn("near_duplicate_source", res["problems"])
+
+
+class FitItemsTests(unittest.TestCase):
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.work = self.td.name
+        self.tax = taxonomy(version=1)
+        problems = {"sparse": [{"node": "Refunds", "level": "L2", "parent": "Billing & Payments", "tags": 2,
+                                "siblings": [{"node": "Duplicate Charge", "tags": 1}]},
+                               {"node": "Track Delivery", "level": "L2", "parent": "Delivery & Pickup", "tags": 1,
+                                "siblings": [{"node": "Proof of Delivery", "tags": 1}]}],
+                    "misplaced": [{"node": "Proof of Delivery", "parent": "Delivery & Pickup",
+                                   "better_parent": "Billing & Payments", "margin": 0.05, "tags": 1}],
+                    "overloaded": [{"node": "Billing & Payments", "tags": 9, "l2_count": 2, "median_tags": 2,
+                                    "median_l2": 1, "children": [{"node": "Refunds", "tags": 2}]}]}
+        write_json(os.path.join(self.work, "problems.json"), problems)
+        write_json(os.path.join(self.work, "fit", "result_0.json"), {"fixes": [
+            {"kind": "sparse", "subject": "Refunds", "fix": "merge", "into": "Duplicate Charge", "reason": "same"},
+            {"kind": "misplaced", "subject": "Proof of Delivery", "fix": "move", "new_parent": "Billing & Payments",
+             "reason": "billing"},
+            {"kind": "overloaded", "subject": "Billing & Payments", "fix": "restructure",
+             "add": [{"name": "Refunds & Credits", "description": "Money back."}],
+             "moves": [{"node": "Refunds", "new_parent": "Delivery & Pickup"}], "reason": "split"}]})
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def items(self):
+        problems = json.load(open(os.path.join(self.work, "problems.json")))
+        return H._fit_items(self.tax, self.work, problems, [], {})
+
+    def test_sparse_merge_and_fallback(self):
+        it = [i for i in self.items() if i["kind"] == "sparse"]
+        refunds = next(i for i in it if i["op"].get("from") == "Refunds" or i["op"].get("node") == "Refunds")
+        self.assertEqual(refunds["op"], {"type": "merge", "from": "Refunds", "into": "Duplicate Charge"})
+        self.assertEqual(refunds["group"], "sparse")
+        track = next(i for i in it if i["op"].get("node") == "Track Delivery")
+        self.assertEqual(track["op"]["type"], "keep")
+        self.assertTrue(track["_fallback"])
+        self.assertIn({"type": "merge", "from": "Track Delivery", "into": "Proof of Delivery"}, track["alternatives"])
+
+    def test_misplaced_move(self):
+        m = next(i for i in self.items() if i["kind"] == "misplaced")
+        self.assertEqual(m["op"], {"type": "move", "node": "Proof of Delivery", "new_parent": "Billing & Payments"})
+        self.assertEqual(m["status"], "proposed")
+
+    def test_overloaded_restructure_becomes_add_and_move_items(self):
+        rows = [i for i in self.items() if i["kind"] == "overloaded"]
+        self.assertEqual({i["group"] for i in rows}, {"overloaded:Billing & Payments"})
+        self.assertIn({"type": "add", "level": "L1", "name": "Refunds & Credits", "parent": None,
+                       "description": "Money back."}, [i["op"] for i in rows])
+        self.assertIn({"type": "move", "node": "Refunds", "new_parent": "Delivery & Pickup"}, [i["op"] for i in rows])
+
+    def test_invalid_target_is_kept_as_invalid_item(self):
+        write_json(os.path.join(self.work, "fit", "result_0.json"), {"fixes": [
+            {"kind": "misplaced", "subject": "Proof of Delivery", "fix": "move", "new_parent": "Nope"}]})
+        m = next(i for i in self.items() if i["kind"] == "misplaced")
+        self.assertEqual(m["status"], "invalid")
+
+    def test_amend_to_alternative_is_allowed(self):
+        import decisions as D
+        m = next(i for i in self.items() if i["kind"] == "misplaced")
+        self.assertTrue(D.health_amend_ok(m, {"type": "keep", "node": "Proof of Delivery"}))
