@@ -35,7 +35,7 @@ Six kinds of problem can show up, each its own grouped inbox entry. **Anything n
 
 - **Empty** — a category with no sections tagged to it at all. The default fix is to remove it, but you can keep a category you know will be used once more of the corpus is covered.
 - **Barely used** — a category with only one or two tagged sections. Claude proposes merging it into the sibling it overlaps with, or keeping it if it is a real, distinct topic the corpus just mentions rarely.
-- **Duplicates** — two or more category names that read as the same thing (compared by their description text, not just spelling). Claude proposes merging the cluster into one.
+- **Duplicates** — two or more category names that read as the same thing (compared by what the names themselves mean, not just their spelling; descriptions are not compared). Claude proposes merging the cluster into one.
 - **Fits another category** — a sub-category (L2) whose tagged sections are actually about a different top-level category (L1) than the one it is drafted under. Claude proposes moving it.
 - **Overloaded** — a top-level category with far more tagged sections than a typical one, usually because it is really several topics bundled together. Claude proposes splitting out new sub-categories and moving some existing ones under them.
 - **Untagged content** — sections no category fits. Claude checks a sample of these by hand: some genuinely need a new category (see "propose new categories for the untagged sections" in the table above); many turn out to be filler with no topic at all (a chunk like "Okay." or "Yep."), which the classifier already marked `__no_topic__` rather than leaving unlabeled. Filler is not a taxonomy gap — you are not asked to add a category for it.

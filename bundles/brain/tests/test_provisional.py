@@ -42,6 +42,12 @@ class ProvisionalTests(unittest.TestCase):
         self.assertIn("everything else is kept", ctx["subtitle"])
         self.assertEqual(R._context("health", taxonomy(), [], {}, 0, {})["title"], "Health review")
 
+    def test_health_subtitle_counts_fit_problems(self):
+        problems = {"sparse": [{"node": "a"}, {"node": "b"}], "misplaced": [{"node": "c"}],
+                    "overloaded": [{"node": "d"}], "near_duplicate": [{"members": []}]}
+        ctx = R._context("health", taxonomy(), [], {}, 3, problems)
+        self.assertEqual(ctx["subtitle"], "v3 · 5 problems · 0 fixes proposed")
+
     def test_applying_a_review_clears_the_marker(self):
         cli("adopt", "--taxonomy", self.v0, "--db", self.db, "--provisional")
         cur = os.path.join(self.tdir, "current.json")

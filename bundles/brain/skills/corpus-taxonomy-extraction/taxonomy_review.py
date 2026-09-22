@@ -246,7 +246,7 @@ def _context(mode, tax, items, stats, version, problems=None, provisional=False)
         return {"title": "Description review", "subtitle": f"v{version} · {drafted} drafted descriptions"}
     if mode == "health":
         counted = ("missing_description", "no_tags", "near_duplicate", "off_axis",
-                   "similar_metrics", "metric_not_governed")
+                   "similar_metrics", "metric_not_governed", "sparse", "misplaced", "overloaded")
         n_problems = sum(len((problems or {}).get(k) or []) for k in counted)
         untagged = (problems or {}).get("untagged_sections") or []
         if untagged and untagged[0].get("count"):

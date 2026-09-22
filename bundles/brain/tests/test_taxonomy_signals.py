@@ -55,3 +55,7 @@ class SignalsTests(unittest.TestCase):
         a = TS.compute(TAX, store({}), embed)
         b = TS.compute(TAX, store({}), embed)
         self.assertEqual(a, b)
+
+    def test_min_chunks_zero_skips_an_l2_with_no_tagged_chunks(self):
+        chunks = {1: ([1, 0, 0], ["billing"]), 3: ([0, 0, 1], ["delivery"])}   # no L2 has a centroid
+        self.assertEqual(TS.compute(TAX, store(chunks), embed, min_chunks=0)["misplaced"], [])

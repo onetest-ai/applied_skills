@@ -104,6 +104,8 @@ def misplaced(tax, conn, margin, min_chunks, warnings):
         if l1 not in l1c:
             continue
         for k in kids:
+            if nid(k) not in cent:      # no tagged chunk with a vector (reachable at --min-chunks 0)
+                continue
             n = len(members.get(nid(k), []))
             if n < min_chunks:
                 continue
