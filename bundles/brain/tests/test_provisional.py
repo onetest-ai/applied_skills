@@ -61,6 +61,20 @@ class ProvisionalTests(unittest.TestCase):
         self.assertEqual(open(os.path.join(self.tdir, "current.json"), "rb").read(), open(self.v0, "rb").read())
         self.assertTrue(taxo_io.is_provisional(self.tdir))
 
+    def test_a_failed_marker_write_adopts_nothing(self):
+        self._adopt_failing_at("taxonomy_review.write_provisional", OSError("read-only filesystem"))
+        self.assertFalse(taxo_io.is_provisional(self.tdir))
+        self.assertFalse(os.path.exists(os.path.join(self.tdir, "current.json")))   # draft never became effective
+
+    def test_after_a_failed_adopt_verify_still_blocks(self):
+        # a "restart": a fresh process sees the marker left by the interrupted adopt and refuses
+        self._adopt_failing_at("taxonomy_review.GM.write_version", OSError("power loss"))
+        onboard = Path(__file__).resolve().parent.parent / "skills" / "knowledge-pipeline" / "onboard.py"
+        r = subprocess.run([sys.executable, str(onboard), "verify", "--db", self.db, "--taxonomy-dir", self.tdir],
+                           text=True, capture_output=True)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("PROVISIONAL", r.stdout)
+
     def test_refused_adopt_writes_no_marker(self):
         write_json(os.path.join(self.tdir, "current.json"), taxonomy(version=3))   # a ratified, different current
         r = cli("adopt", "--taxonomy", self.v0, "--db", self.db, "--provisional")
