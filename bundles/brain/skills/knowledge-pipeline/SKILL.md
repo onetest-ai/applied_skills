@@ -107,6 +107,8 @@ PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-
 #     (keyed on the video-lane manifest entry's `inputs`).
 "$PY" .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats vtt,srt --merge-cues 10
 # 1b. parse narrative docs → Markdown. TEXT pages via pymupdf (torch-free):
+#     If the corpus has meeting recordings, run 1m (below) BEFORE 1b: a Teams transcript .docx is
+#     then consumed by its recording instead of being converted by soffice as an ordinary document.
 "$PY" .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf,md,markdown,txt,html,htm
 #     HTML with no browser degrades to DOM text (fidelity: degraded) via the same command; an
 #     HTML deck needs a browser to capture — see the visual-parse capture step below.
@@ -125,7 +127,8 @@ PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-
 #    → 🤖 dispatch VISION subagents (cheap) → vision/result_k.json {img_sha: faithful markdown}
 "$PY" .../visual-parse/vision_assemble.py --render-dir <project>/assets/<slug> --out <project>/parsed/<doc>.md --results <project>/vision --db "$DB"
 # 1m. MEETING RECORDINGS (video) — the visual-parse skill's "Meeting recordings" section has the
-#     full per-recording sequence (probe → transcribe → frames → vision_prep → 🤖 → assemble):
+#     full per-recording sequence (probe → transcribe → frames → vision_prep → 🤖 → assemble).
+#     Run it BEFORE 1b when the corpus has recordings (see 1b):
 "$PY" .../visual-parse/video_capture.py probe --video <root>/<rel> --rel-to <root> --work <project>/video --manifest <project>/parsed/manifest.json
 # 2. (optional) induce taxonomy → taxonomy/taxonomy_v0.json  [map→reduce→judge→emit; see that skill]
 #    👤 then the user ratifies it in the review app: corpus-taxonomy-extraction → "A. Draft review"

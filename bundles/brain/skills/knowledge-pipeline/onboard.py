@@ -309,10 +309,13 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats vtt,srt --merge-cues 10
 
     # 1b · parse narrative docs → Markdown (pymupdf text; visual pages via visual-parse)
+    #      If the corpus has meeting recordings, run step 1m (below) BEFORE this step, so a
+    #      Teams transcript .docx is consumed by its recording rather than parsed by soffice.
     #      md/markdown/txt pass through untouched — already-Markdown corpora need no conversion.
     "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats pptx,docx,pdf,md,markdown,txt
 
-    # 1m · meeting recordings (.mp4/.mov/…) — the visual-parse "Meeting recordings" lane:
+    # 1m · meeting recordings (.mp4/.mov/…) — the visual-parse "Meeting recordings" lane
+    #      (run it BEFORE 1b when the corpus has recordings):
     #      probe → (transcribe, only when no transcript: same-stem .vtt/.srt/.docx, or a Teams
     #      .docx whose first line is the recording name) → frames → vision_prep → 🤖 VLM → assemble
     #      "$PY" "{VP/'video_capture.py'}" probe --video <rel> --rel-to "{docs_s}" --work "{proj/'video'}"
