@@ -77,6 +77,10 @@ These are the things that take several files to see, and that tests pass while v
 
 **`meta` carries `goal`, `audience` and optional `name`.** `write_meta` UPSERTs `goal`/`audience` unconditionally from their source files, but `name` **only when `name.txt` is non-empty** — no existing project has one, and an unconditional write would clear a `meta.name` set by hand. Do not "tidy" that asymmetry into consistency.
 
+**`taxonomy/PROVISIONAL` gates deployment, and only two scripts touch it.** `taxonomy_review.py adopt --provisional` creates it (copying the draft to `current.json` and marking it unreviewed); `taxonomy_merge.py`'s `apply_review` deletes it, the same commit that writes the first ratified version. Nothing else creates or clears it. `onboard.py verify` fails while it exists, so a build/classify/graph pass over a provisional taxonomy can never be mistaken for a deployable one — the marker, not the presence of `current.json`, is what "reviewed" means.
+
+**The `__no_topic__` sentinel is a verdict, not a missing tag.** The classifier writes it (alone, never mixed with real labels) for a chunk that carries no topic at all — filler, boilerplate, off-goal; `classify_write.py` stores it in `chunk_verdicts` keyed by `chunk_id`/`taxonomy_version`, separately from `chunk_topics`. `health.detect`, `onboard.py verify` and `taxonomy_refine_prep` all exclude chunks with a `no_topic` verdict from their "untagged" counts. Any new path that counts untagged chunks must join against `chunk_verdicts` and exclude `no_topic` too, or it will report real coverage gaps that are actually filler.
+
 **`video_capture.py` is the third producer of the visual-lane layout** (after `render_pages.py` and `html_capture.py`). Its `pages.json` matches `render_pages.py`'s shape (slug-relative `image`, `flagged: true`) plus `medium: "video"`, `t_start`/`t_end`/`shown_at`, and `dropped` once `assemble` has deleted a no-content frame. Three things only hold across files:
 - **Slug namespace.** A recording's slug is `video_slug` = `doc_slug(rel)` + `--<ext>` (`m/standup.mp4` → `m__standup--mp4`), because `doc_slug` drops the extension and a same-stem deck (`m/standup.pptx` → `m__standup`) would otherwise share — and lose — its asset dir. `frames` refuses and `forget` skips any dir whose `pages.json` is not `medium: video`. Do not "unify" the video slug back onto `doc_slug`.
 - **Per-item medium.** Every `vision_prep` batch item carries `medium` (`video` or `document`), and the no-content gate applies only to `video` items. A global gate lets a deck slide of team photos be answered `<!-- no-content -->`, which `page_render` caches forever and `vision_assemble` emits empty.
@@ -93,7 +97,7 @@ These are the things that take several files to see, and that tests pass while v
 
 ## In flight
 
-PR #26 (HTML deck ingestion) has merged, so the invariants above about visual-lane field values and the preamble are load-bearing for `html_capture.py` and the `# fidelity:` line. `feat/taxonomy-workbench` adds the taxonomy review workbench (review app, decisions log, versioned taxonomy, health review); check `git log` before assuming this section is current.
+PR #26 (HTML deck ingestion) has merged, so the invariants above about visual-lane field values and the preamble are load-bearing for `html_capture.py` and the `# fidelity:` line. PR #28 (taxonomy review workbench: review app, decisions log, versioned taxonomy, health review) has also merged. `feat/count-grounded-first-review` builds on it: the first build now adopts the draft taxonomy as provisional, classifies against it, and runs the first human review after classification instead of on the bare draft — see the `PROVISIONAL` and `__no_topic__` invariants above. Check `git log` before assuming this section is current.
 
 ## Working on skills
 
