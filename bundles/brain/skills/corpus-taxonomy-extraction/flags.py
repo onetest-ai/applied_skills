@@ -204,7 +204,8 @@ def off_axis_l1(label):
     lower = text.lower()
 
     for w in _PHASE_WORDS:
-        if w in lower:
+        # word START only: "Transformation" matches 'transform', "Divisional" does not match 'vision'
+        if re.search(r"\b" + re.escape(w), lower):
             return f"looks like a roadmap/phase label (matched {w!r}), not an intent"
 
     has_intent_cue = any(cue in lower for cue in _INTENT_CUES)

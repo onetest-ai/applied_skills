@@ -59,6 +59,17 @@ class TestOffAxisL1(unittest.TestCase):
         self.assertIsNone(off_axis_l1(""))
         self.assertIsNone(off_axis_l1(None))
 
+    def test_phase_word_inside_another_word_is_not_flagged(self):
+        # 'vision' inside Divisional / Provisioning, 'wave' inside Microwave
+        self.assertIsNone(off_axis_l1("Regional & Divisional Performance Management"))
+        self.assertIsNone(off_axis_l1("System Access Provisioning"))
+        self.assertIsNone(off_axis_l1("Microwave Ordering"))
+
+    def test_phase_word_at_word_start_is_still_flagged(self):
+        self.assertIn("vision", off_axis_l1("Contact Center Service Vision"))
+        self.assertIn("transform", off_axis_l1("CX Transformation Workstreams"))
+        self.assertIn("roadmap", off_axis_l1("AI & Technology Roadmap"))
+
 
 if __name__ == "__main__":
     unittest.main()
