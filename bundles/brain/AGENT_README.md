@@ -83,6 +83,28 @@ Run `./brain source plan` before source-driven work. Treat `root_unavailable` as
 
 ### Phase 0 — intake and preflight
 
+Before anything else, run the doctor — it reports what this corpus needs without installing
+anything:
+
+```bash
+"$PY" "$SKILLS/knowledge-pipeline/brain_doctor.py" --corpus "$DOCS"
+```
+
+Stop on exit 1. Show the human every missing item and its printed install command (e.g. `!
+brew install ffmpeg whisper-cpp`); never install system packages yourself. If it reports
+`whisper-cli` REQUIRED, note which recordings lack a transcript and hold the whisper-model
+choice until after `scaffold` below writes `brain.toml` — `set-whisper-model` needs it to
+exist. Once `brain.toml` exists, run `brain_doctor.py whisper-models`, let the human choose a
+model (recommend `small.en`, or `small` for non-English meetings), run the printed `curl`
+download only after they approve, then:
+
+```bash
+"$PY" "$SKILLS/knowledge-pipeline/brain_doctor.py" set-whisper-model \
+  --config "$PROJECT/brain.toml" --model <path> [--language en]
+```
+
+Re-run `brain_doctor.py --config "$PROJECT/brain.toml"` to confirm the gap is closed.
+
 Ask for missing values one at a time:
 
 1. analytical goal;
@@ -120,6 +142,41 @@ Ensure the SQLite file exists before visual assembly so `vision_assemble.py --db
 ```bash
 "$PY" -c 'import sqlite3,sys; sqlite3.connect(sys.argv[1]).close()' "$DB"
 ```
+
+### Phase 0b — meeting recordings (run before Phase 1, if the corpus has any)
+
+A recording is a continuous medium, so this lane substitutes a frame-selection step in front
+of the same transcribe→assemble shape, and produces ONE parsed document per recording:
+transcript turns and on-screen frames interleaved by time. Run it before the narrative parse
+so a paired Teams `.docx` transcript is consumed by its recording instead of being parsed as
+an ordinary document. For each recording (`<rel>` its source-relative path, `<root>` the
+source root):
+
+```bash
+VC="$SKILLS/visual-parse/video_capture.py"
+VIDEO_VISION_RUN="$PROJECT/vision/$(date +%Y%m%d-%H%M%S)-video"
+mkdir -p "$VIDEO_VISION_RUN"
+"$PY" "$VC" probe --video "<root>/<rel>" --rel-to "<root>" \
+  --work "$PROJECT/video" --manifest "$PROJECT/parsed/manifest.json"
+# only when probe.json says "transcript": "asr":
+"$PY" "$VC" transcribe --probe "$PROJECT/video/<slug>/probe.json" --config "$PROJECT/brain.toml"
+"$PY" "$VC" frames --video "<root>/<rel>" --rel-to "<root>" --assets-root "$PROJECT/assets"
+"$PY" "$SKILLS/visual-parse/vision_prep.py" \
+  --render-dir "$PROJECT/assets/<slug>" --out "$VIDEO_VISION_RUN" --db "$DB"
+# dispatch vision subagents on <VIDEO_VISION_RUN>/batch_k.json → result_k.json — same contract
+# as Phase 2 below, plus: answer <!-- no-content --> for people-only frames.
+"$PY" "$VC" assemble --probe "$PROJECT/video/<slug>/probe.json" \
+  --render-dir "$PROJECT/assets/<slug>" --results "$VIDEO_VISION_RUN" \
+  --parsed "$PROJECT/parsed" --db "$DB"
+```
+
+`<slug>` is printed by `probe` and `frames` (`slug=…`). `assemble` **refuses while any kept
+frame lacks a VLM result** — never hand-edit around that; validate the same way as the batch
+validation checklist below, applied to this run's batches/results. On success, `assemble`
+records the sidecar transcript (if any) as `consumed-by-video` in the manifest and deletes its
+stale parsed doc, so the narrative parse pass (Phase 1 for docs, or the `vtt,srt,docx` pass in
+`knowledge-pipeline`) skips it automatically. Full reference: `visual-parse` → "Meeting
+recordings".
 
 ### Phase 1 — render and route every narrative document
 
@@ -348,6 +405,24 @@ For deleted sources, remove their final parsed Markdown and corresponding assets
 
 If a changed source produces identical final parsed Markdown, `brain_sync` correctly marks it unchanged. If the rendered page is identical, VLM is skipped by `img_sha` even when the enclosing file changed.
 
+### Update phase 1b — refresh changed meeting recordings
+
+A recording has no single "changed" signal — the video, its sidecar transcript, or both can
+change independently — so what to re-run depends on which changed:
+
+| What changed | Re-run |
+|---|---|
+| Video content | `probe`, `transcribe` (only if `probe.json` says `asr`), `frames`, VLM pass, `assemble` |
+| Sidecar `.vtt`/`.srt`/`.docx` (incl. a Teams `.docx` paired by its title) changed or added | `probe`, `assemble` |
+| Sidecar removed | `probe`, `transcribe`, `assemble` |
+| Video removed | `./brain source remove <source-id> --yes` (tombstone), then `video_capture.py forget --source <rel> --parsed "$PROJECT/parsed" --assets-root "$PROJECT/assets" --work "$PROJECT/video"` |
+
+Existing projects must have the video globs (e.g. `"**/*.mp4"`) in `brain.toml`'s `include`
+list — `brain_doctor.py` warns when it finds videos in the corpus that no registered root's
+`include` matches. `brain_sync plan` reports a `superseded_by_video` key for transcript
+documents retired because their video's parsed document now supersedes them: expected, not an
+unexpected removal.
+
 ### Update phase 2 — inspect and apply parsed delta
 
 ```bash
@@ -445,13 +520,19 @@ A rollback restores SQLite only. Also restore/reconcile `parsed/`, assets, and t
 
 ## Batch validation checklist
 
-Before consuming vision results:
+Before consuming vision results (this applies identically to a recording's video-vision run
+directory):
 
 - expected hashes = union of all `vision/batch_*.json` `img_sha` values;
 - actual hashes = union of all `vision/result_*.json` keys;
 - expected equals actual;
 - no duplicate keys across result files;
 - values are non-empty strings.
+
+Before running `video_capture.py assemble` for a recording: every **kept** (non-`dropped`)
+frame in `pages.json` must have a matching VLM result — `assemble` itself refuses and lists
+the missing `img_sha` values, so treat that refusal as validation failing, not as a bug to
+route around; rerun `vision_prep.py` and dispatch the missing batch instead.
 
 Before consuming classification results:
 

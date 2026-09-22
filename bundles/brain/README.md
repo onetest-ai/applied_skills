@@ -17,13 +17,13 @@ No required cloud service and no lock-in. Copy `knowledge.sqlite` for text/graph
 
 | Skill | Role | Ships |
 |---|---|---|
-| **knowledge-pipeline** | 🎛️ build orchestrator — create and answer | `SKILL.md` (build & answer sequence) |
+| **knowledge-pipeline** | 🎛️ build orchestrator — create and answer, plus the dependency doctor | `SKILL.md` (build & answer sequence), `onboard.py`, `brain_doctor.py` |
 | **brain-maintenance** | 🔄 update/release planner — read-only status plus agent-gated update and external deployment guidance | `maintenance.py`, profile template, safety gates |
 | **corpus-taxonomy-extraction** | 🏷️ meaning: parse, induce taxonomy, review it in a local app, build graph, tag sections, emit vault | `parse_corpus.py`, `consolidate.py`, `emit_taxonomy.py`, `taxonomy_review.py` + `review_server.py` + `review_ui.html` (review app), `taxonomy_merge.py`, `taxonomy_refine_prep.py`, `chunking.py`, `build_graph.py`, `classify_prep.py`, `classify_write.py`, `to_obsidian.py` |
 | **knowledge-index** | 🔎 narrative: heading-aware chunks → FTS5 + vectors | `knowledge_index.py`, `chunking.py` (shared) |
 | **tabular-semantic-layer** | 🔢 numbers: Excel → deterministic `facts` | `build_marts.py`, `profile_workbooks.py`, `families.example.json`, `metrics.example.json` |
 | **hybrid-retrieval** | 🧭 answer: route each sub-claim to the right lane, fuse, cite | `query.py` |
-| **visual-parse** | 👁️ page routing + visual understanding | `render_pages.py`, `vision_prep.py`, `vision_assemble.py` |
+| **visual-parse** | 👁️ page routing + visual understanding, incl. meeting recordings | `render_pages.py`, `vision_prep.py`, `vision_assemble.py`, `video_capture.py` |
 | **obsidian-vault** | 🗂️ navigate the generated human-readable view | `SKILL.md` |
 
 Plus the repo's top-level **`mcp/brain/`** — the governed FastMCP **tool layer** (`fastmcp_server.py`) with local stdio and opt-in Streamable HTTP. It lives in `mcp/`, not `skills/` (see below).
@@ -68,6 +68,13 @@ flowchart TD
 ```
 
 <sub>**Blue** = meaning (agentic RAG/graph) · **green** = numbers (computed marts) · **yellow** = the one portable store · **purple** = the cited answer.</sub>
+
+**Meeting recordings feed the same `docs` lane.** A video is run through `visual-parse`'s
+recording sequence (probe → transcribe → frames → vision → assemble) into one parsed
+document *before* the narrative parse, so `corpus-taxonomy-extraction` sees it like any
+other Markdown source. Before the first recording (and before any build or update), run
+`knowledge-pipeline/brain_doctor.py` — it reports what this Brain's corpus needs (LibreOffice,
+ffmpeg/ffprobe, whisper-cli + a model) without installing anything.
 
 ---
 
@@ -293,6 +300,16 @@ Ordering matters:
 
 The generic text-only `parse_corpus.py` remains useful for corpora known not to need visual understanding. For slide decks, diagrams, timelines, or chart-heavy PDFs, the canonical path is **`render_pages → vision_prep → vision agents → vision_assemble`**, not `parse_corpus.py` alone.
 
+**Meeting recordings run before the narrative parse.** `video_capture.py` substitutes a
+frame-selection step in front of the same transcribe→assemble shape: `probe` picks the
+transcript source (a same-stem `.vtt`/`.srt`/`.docx`, a Teams `.docx` paired by its title, or
+whisper.cpp when none exists), `frames` selects stable-span key frames, the same vision
+subagents transcribe them (answering `<!-- no-content -->` for people-only frames, which get
+dropped), and `assemble` interleaves transcript turns with on-screen frames into one
+time-ordered parsed document — retiring the sidecar transcript's own parsed doc in the same
+step. Run this lane, and `knowledge-pipeline/brain_doctor.py` beforehand, before `parse_corpus.py`'s
+narrative pass; see `visual-parse` → "Meeting recordings" for the full sequence.
+
 ### Full update flow
 
 `./brain update <parsed>` starts at the **already assembled `parsed/` boundary**. It does not inspect source PDFs, render pages, or launch agents. A correct source-to-store update is therefore orchestrated as follows:
@@ -307,6 +324,12 @@ The generic text-only `parse_corpus.py` remains useful for corpora known not to 
 8. Run `classify_prep.py --chunks <sync_plan.reclassify_chunk_ids>`, dispatch text subagents, validate results, and run incremental `classify_write.py` **without `--reset`**.
 9. Rebuild graph and related; rebuild marts only if reporting workbooks changed; regenerate the vault with `--clean`; run verify.
 10. Keep the current taxonomy unless coverage indicates vocabulary drift. Taxonomy changes are a separate, human-reviewed operation in the taxonomy review app: agents only propose additions; renames, merges and removals are human decisions whose tags are migrated, never silently pruned. When coverage drops or the taxonomy has no descriptions, the agent offers the health review (see [Reviewing the taxonomy](#reviewing-the-taxonomy)).
+
+**Meeting recordings have no single "changed" signal** — the video, its sidecar transcript,
+or both can change independently. Re-run `probe`/`transcribe`/`frames`/`assemble` for the
+combination that actually changed (see `brain-maintenance` → "Meeting recordings" for the
+exact table), before step 3 above. `brain_sync plan` reports retired transcript docs under
+`superseded_by_video` — expected, not drift.
 
 ```text
 source change
@@ -375,6 +398,7 @@ The agent should create a visible task list and checkpoints. You approve:
 - Agent batch directories are transient work products and must be fresh per run; stale `result_*.json` files are otherwise consumed. Keep a run directory until validation succeeds, then archive or remove it. The durable VLM cache is in SQLite.
 - Extracted `pNN.tables.md` grids remain factual sidecars served by `get_evidence`; `vision_assemble.py` does not append them to parsed Markdown. Preserve `assets/` and use evidence retrieval for table figures.
 - A rendered page is one top-level `##` section, but VLM subheadings can split it into multiple chunks/notes. The image marker is inherited across those sibling chunks.
+- **Meeting recordings:** no speaker diarization for whisper-generated transcripts (only a same-stem `.vtt`/`.srt`/Teams `.docx` carries speaker names). Frames are transcribed faithfully, so anything on screen — including personal data in chat panels or notifications — is indexed; this lane does not detect or redact it (see `visual-parse`'s privacy position). Windows path separators and multiple same-stem videos in one source folder are not handled.
 
 ---
 
@@ -494,7 +518,9 @@ sequenceDiagram
 
 ## Dependencies & the skills' venv
 
-Python ≥ 3.9, all pip-installable: `sqlite-vec`, `fastembed`, `pymupdf`, `openpyxl`, `pandas`, `pyarrow` (`sqlite3` is stdlib). **Torch-free** (docling retired) — the installed set is small (~200 MB, mostly onnxruntime). `.pptx/.docx` also need LibreOffice `soffice` (a system dep); PDFs need only pymupdf.
+Python ≥ 3.9, all pip-installable: `sqlite-vec`, `fastembed`, `pymupdf`, `openpyxl`, `pandas`, `pyarrow` (`sqlite3` is stdlib). **Torch-free** (docling retired) — the installed set is small (~200 MB, mostly onnxruntime). `.pptx/.docx` also need LibreOffice `soffice` (a system dep); PDFs need only pymupdf. Meeting recordings need `ffmpeg`/`ffprobe` (system deps, for probing and frame extraction) and, only for a recording with no transcript sidecar, `whisper-cli` (whisper.cpp) plus a ggml model.
+
+**Don't guess what's missing — ask the doctor.** `knowledge-pipeline/brain_doctor.py` reports exactly what this Brain's corpus needs (it never installs anything): `--corpus <docs>` before a project exists, `--config brain.toml` after. It exits 1 when something required is missing, prints the install command for each gap, and — when whisper is needed — `brain_doctor.py whisper-models` lists models on disk and downloadable ones, and `brain_doctor.py set-whisper-model --config brain.toml --model <path>` records the chosen model in `brain.toml`'s `[video]` table (no environment variables).
 
 These deps live in a venv that **belongs to the skills, not your project** — kept separate so they never mix with your project's own Python env. The installer (via `uv`) builds it next to the skills inside the host dir:
 
