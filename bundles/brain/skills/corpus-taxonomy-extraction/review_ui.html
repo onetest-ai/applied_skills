@@ -533,10 +533,12 @@ function advanceRow(id){
 
 const KIND_WORDS = {missing_description:"Missing description", no_tags:"No tagged sections", untagged_sections:"Untagged sections",
   near_duplicate:"Near-duplicate", off_axis:"Off-axis category", similar_metrics:"Similar metrics", metric_not_governed:"Not governed",
-  refresh_proposal:"New category"};
+  refresh_proposal:"New category", sparse:"Barely used", misplaced:"Fits another L1", overloaded:"Overloaded L1"};
 const GROUP_WORDS = {missing_description:["category has no description", "categories have no description"],
   no_tags:["category has no tagged sections", "categories have no tagged sections"],
-  metric_not_governed:["metric can't be computed yet", "metrics can't be computed yet"]};
+  metric_not_governed:["metric can't be computed yet", "metrics can't be computed yet"],
+  sparse:["category has only 1–2 tagged sections", "categories have only 1–2 tagged sections"],
+  misplaced:["category fits another L1 better", "categories fit another L1 better"]};
 function groupTitle(e){
   const w = GROUP_WORDS[e.kind];
   return w ? plural(e.rows.length, w[0], w[1]) : (e.rows[0].title || KIND_WORDS[e.kind] || e.kind);
@@ -548,7 +550,8 @@ function fixSummary(rows){
   for (const it of rows){ const k = it.reason === "no fix proposed" ? "none" : it.op.type; if (!c[k]){ c[k] = 0; order.push(k); } c[k]++; }
   return order.map(k => { const w = W[k] || [k.replace("_", " ")]; return num(c[k]) + " " + (c[k] === 1 ? w[0] : (w[1] || w[0] + "s")); }).join(" · ");
 }
-const GROUP_ICON = {missing_description:["✎", "chg"], no_tags:["∅", "flag"], untagged_sections:["+", "add"], metric_not_governed:["✓", "chg"]};
+const GROUP_ICON = {missing_description:["✎", "chg"], no_tags:["∅", "flag"], untagged_sections:["+", "add"], metric_not_governed:["✓", "chg"],
+  sparse:["·", "flag"], misplaced:["↷", "chg"]};
 function groupRow(e){
   const und = e.rows.filter(r => !isDecided(r)).length, [c, k] = GROUP_ICON[e.kind] || ["!", "flag"];
   return `<button type="button" class="item ${U.inboxSel === e.id ? "sel" : ""}" data-act="pick-item" data-id="${esc(e.id)}"><span class="ic ${esc(k)}" title="group">${esc(c)}</span><span class="t">${esc(groupTitle(e))}</span><span class="st">${und ? `<span class="pill warn">${num(und)} of ${num(e.rows.length)} left</span>` : `<span class="pill ok">all decided</span>`}</span><span class="s">${esc(fixSummary(e.rows))}</span></button>`;
@@ -729,6 +732,8 @@ function rowNote(it){
   if (it.kind === "no_tags") return plural((s.candidate_ids || []).length, "candidate section");
   if (it.kind === "near_duplicate") return plural(s.tags, "tagged section");
   if (it.kind === "metric_not_governed") return s.sources != null ? plural(Array.isArray(s.sources) ? s.sources.length : s.sources, "source") : "";
+  if (it.kind === "sparse") return plural(s.tags, "tagged section");
+  if (it.kind === "misplaced") return `closer to ${s.better_parent}`;
   if (s.chunks != null) return plural(s.chunks, "section");
   return "";
 }
@@ -834,6 +839,9 @@ function healthDetail(it){
   }
   if (it.kind === "off_axis" && s.tags != null) facts.push(`<span class="pill mute">${esc(plural(s.tags, "tagged section"))}</span>`);
   if (it.kind === "similar_metrics" && s.score != null) facts.push(`<span class="pill warn">${esc(Math.round(num(s.score) * 100) + "% alike")}</span>`);
+  if (it.kind === "misplaced" && s.better_parent) facts.push(`<span class="pill mute wrap">${esc(plural(s.tags, "tagged section"))} · closer to “${esc(s.better_parent)}”</span>`);
+  if (it.kind === "sparse" && s.tags != null) facts.push(`<span class="pill mute">${esc(plural(s.tags, "tagged section"))}</span>`);
+  if (it.kind === "overloaded" && s.l2_count != null) facts.push(`<span class="pill mute wrap">${esc(num(s.tags))} sections · ${esc(num(s.l2_count))} L2s (median ${esc(num(s.median_tags))} · ${esc(num(s.median_l2))})</span>`);
   let acts;
   if (isDecided(it)){
     const d = latest(it.id), text = d.action === "reject" ? (d.reason === SKIP_REASON ? "Skipped. Nothing changes for it." : `Rejected: ${d.reason}.`)

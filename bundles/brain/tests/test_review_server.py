@@ -221,6 +221,33 @@ class ServerTests(unittest.TestCase):
             self.assertIn(needle, html)
 
 
+class SparseHealthStateTests(unittest.TestCase):
+    """Task 7: a health review planned from a work dir holding only `problems.json` (no
+    fit/result_k.json) carries its sparse problem into state() as a fallback item."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.dir = os.path.join(self.td.name, "taxonomy")
+        tax = taxonomy(version=1)
+        self.cur = os.path.join(self.dir, "current.json"); write_json(self.cur, tax)
+        self.db = os.path.join(self.td.name, "k.sqlite"); tagged_store(self.db, tax)
+        self.work = os.path.join(self.dir, "work", "health")
+        write_json(os.path.join(self.work, "problems.json"), {"sparse": [
+            {"node": "Refunds", "level": "L2", "parent": "Billing & Payments", "tags": 2,
+             "siblings": [{"node": "Duplicate Charge", "tags": 1}]}]})
+        self.path, self.rv = R.build_plan("health", self.cur, work_dir=self.work, db=self.db, now=NOW)
+        self.app = S.ReviewApp(self.path, db_path=self.db)
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def test_sparse_item_is_a_fallback_in_state(self):
+        st = self.app.state()
+        it = next(i for i in st["review"]["items"] if i["kind"] == "sparse")
+        self.assertEqual(it["group"], "sparse")
+        self.assertIs(it["fallback"], True)
+
+
 class TimeoutTests(unittest.TestCase):
     def test_timeout_exits_3(self):
         with tempfile.TemporaryDirectory() as td:
