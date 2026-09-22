@@ -85,9 +85,66 @@ class AssembleTests(unittest.TestCase):
         self.assertEqual(self._assemble(), 0)  # re-run: dropped page needs no VLM result
 
     def test_refuses_when_a_frame_has_no_vlm_result(self):
+        before = (self.rd / "pages.json").read_bytes()
         self._results({"sha1": "# Q3 Roadmap"})
         self.assertEqual(self._assemble(), 1)
         self.assertFalse((self.parsed / "rec__standup.mp4.md").exists())
+        self.assertTrue((self.rd / "p01.png").exists())
+        self.assertTrue((self.rd / "p02.png").exists())
+        self.assertEqual((self.rd / "pages.json").read_bytes(), before)
+        self.assertFalse((self.parsed / "manifest.json").exists())
+
+    def test_refuses_on_missing_sidecar_without_touching_anything(self):
+        before = (self.rd / "pages.json").read_bytes()
+        p = json.loads(self.probe.read_text())
+        p["sidecar"] = str(self.corpus / "does-not-exist.vtt")
+        self.probe.write_text(json.dumps(p))
+        self._results({"sha1": "# A", "sha2": "# B"})
+        self.assertEqual(self._assemble(), 1)
+        self.assertFalse((self.parsed / "rec__standup.mp4.md").exists())
+        self.assertTrue((self.rd / "p01.png").exists())
+        self.assertTrue((self.rd / "p02.png").exists())
+        self.assertEqual((self.rd / "pages.json").read_bytes(), before)
+        self.assertFalse((self.parsed / "manifest.json").exists())
+
+    def test_asr_transcript_uses_work_dir_transcript_and_model(self):
+        p = json.loads(self.probe.read_text())
+        p.update(transcript="asr", sidecar=None, sidecar_source=None)
+        self.probe.write_text(json.dumps(p))
+        (self.work / "asr.json").write_text(json.dumps({"model": "ggml-small.en.bin"}))
+        (self.work / "transcript.vtt").write_text(
+            "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n<v Alice>From the machine.</v>\n")
+        self._results({"sha1": "# A", "sha2": "# B"})
+        self.assertEqual(self._assemble(), 0)
+        md = (self.parsed / "rec__standup.mp4.md").read_text()
+        self.assertIn("# method: video-lane (transcript: asr:whisper.cpp:ggml-small.en)", md)
+        self.assertIn("From the machine.", md)
+
+    def test_asr_transcript_missing_vtt_refuses_without_writing_doc(self):
+        p = json.loads(self.probe.read_text())
+        p.update(transcript="asr", sidecar=None, sidecar_source=None)
+        self.probe.write_text(json.dumps(p))
+        (self.work / "asr.json").write_text(json.dumps({"model": "ggml-small.en.bin"}))
+        self._results({"sha1": "# A", "sha2": "# B"})
+        self.assertEqual(self._assemble(), 1)
+        self.assertFalse((self.parsed / "rec__standup.mp4.md").exists())
+        self.assertFalse((self.parsed / "manifest.json").exists())
+
+    def test_db_cache_round_trip_survives_results_dir_deletion(self):
+        import shutil
+        import sqlite3
+        db = str(Path(self.t.name) / "knowledge.sqlite")
+        sqlite3.connect(db).close()
+        self._results({"sha1": "# A", "sha2": "# B"})
+        code = V.main(["assemble", "--probe", str(self.probe), "--render-dir", str(self.rd),
+                       "--results", str(self.results), "--parsed", str(self.parsed), "--db", db])
+        self.assertEqual(code, 0)
+        first = (self.parsed / "rec__standup.mp4.md").read_text()
+        shutil.rmtree(self.results)
+        code = V.main(["assemble", "--probe", str(self.probe), "--render-dir", str(self.rd),
+                       "--parsed", str(self.parsed), "--db", db])
+        self.assertEqual(code, 0)
+        self.assertEqual((self.parsed / "rec__standup.mp4.md").read_text(), first)
 
     def test_transcript_none_is_frames_only(self):
         p = json.loads(self.probe.read_text()); p.update(transcript="none", sidecar=None, sidecar_source=None)
@@ -114,3 +171,12 @@ class AssembleTests(unittest.TestCase):
         self.assertFalse((self.parsed / "rec__standup.mp4.md").exists())
         self.assertEqual(json.loads((self.parsed / "manifest.json").read_text()), [])
         self.assertFalse(self.rd.exists())
+
+    def test_forget_with_work_removes_work_dir(self):
+        self._results({"sha1": "# A", "sha2": "# B"})
+        self._assemble()
+        self.assertTrue(self.work.exists())
+        code = V.main(["forget", "--source", "rec/standup.mp4", "--parsed", str(self.parsed),
+                       "--work", str(self.work.parent)])
+        self.assertEqual(code, 0)
+        self.assertFalse(self.work.exists())

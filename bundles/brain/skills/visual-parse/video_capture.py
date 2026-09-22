@@ -23,7 +23,6 @@ import json
 import os
 import re
 import shutil
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -31,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from render_pages import doc_slug  # noqa: E402  (same skill directory)
-from vision_assemble import demote, load_cache, load_results, title_of  # noqa: E402
+from vision_assemble import demote, load_cache, load_results, persist_page_render, title_of  # noqa: E402
 
 VIDEO_EXT = (".mp4", ".mov", ".mkv", ".webm", ".m4v")
 SIDECAR_EXT = (".vtt", ".srt")
@@ -427,17 +426,6 @@ def render_doc(source: str, method: str, slug: str, turns: list[dict], frames: l
     return "\n".join(out)
 
 
-def _persist_cache(db, pages_doc, results) -> None:
-    if not (db and results and os.path.exists(db)):
-        return
-    c = sqlite3.connect(db)
-    c.execute("CREATE TABLE IF NOT EXISTS page_render(img_sha TEXT PRIMARY KEY, doc TEXT, page INT, md TEXT)")
-    by_sha = {p["img_sha"]: p["page"] for p in pages_doc["pages"]}
-    for sha, md in results.items():
-        c.execute("INSERT OR REPLACE INTO page_render VALUES(?,?,?,?)", (sha, pages_doc.get("doc", ""), by_sha.get(sha), md))
-    c.commit(); c.close()
-
-
 def cmd_assemble(a) -> int:
     probe = json.loads(Path(a.probe).read_text())
     work_dir = os.path.dirname(os.path.abspath(a.probe))
@@ -452,9 +440,20 @@ def cmd_assemble(a) -> int:
     if missing:
         die(f"refusing to assemble: {len(missing)} frame(s) have no VLM result "
             f"(run vision_prep + vision subagents first): {', '.join(missing[:10])}")
-    _persist_cache(a.db, pages_doc, results)
+    # Resolve everything that can fail BEFORE any write/delete, so a bad sidecar
+    # path or missing/malformed asr.json leaves pages.json/PNGs/manifest untouched.
+    try:
+        method = method_for(probe, work_dir)
+    except FileNotFoundError:
+        die(f"no ASR model info at {os.path.join(work_dir, 'asr.json')} — "
+            "run `video_capture.py transcribe` first")
+    except (json.JSONDecodeError, KeyError) as e:
+        die(f"malformed {os.path.join(work_dir, 'asr.json')}: {e}")
     if probe["transcript"] == "sidecar":
-        cues = read_cues(probe["sidecar"])
+        try:
+            cues = read_cues(probe["sidecar"])
+        except FileNotFoundError:
+            die(f"sidecar not found: {probe['sidecar']}")
     elif probe["transcript"] == "asr":
         vtt = os.path.join(work_dir, "transcript.vtt")
         if not os.path.exists(vtt):
@@ -462,6 +461,7 @@ def cmd_assemble(a) -> int:
         cues = read_cues(vtt)
     else:
         cues = []
+    persist_page_render(a.db, pages_doc, results)
     kept = []
     for p in pages_doc["pages"]:
         if p.get("dropped"):
@@ -477,7 +477,7 @@ def cmd_assemble(a) -> int:
     atomic_write(pj, json.dumps(pages_doc, indent=2) + "\n")
     dropped = sum(1 for p in pages_doc["pages"] if p.get("dropped") == "no-content")
     rel = probe["source"]
-    text = render_doc(rel, method_for(probe, work_dir), pages_doc["slug"],
+    text = render_doc(rel, method, pages_doc["slug"],
                       merge_turns(cues, a.merge_cues), kept)
     atomic_write(os.path.join(a.parsed, doc_name(rel)), text)
     inputs = [rel] + ([probe["sidecar_source"]] if probe.get("sidecar_source") else [])
