@@ -46,7 +46,7 @@ brain-maintenance.toml             # required maintenance planner profile
 brain.deploy.toml                  # optional external-adapter profile; no secrets
 parsed/manifest.json               # {source, md} mapping for final parsed documents
 schema/knowledge.sqlite OR configured DB path
-taxonomy/current.json              # approved taxonomy (copy of the latest ratified version)
+taxonomy/current.json              # copy of the latest ratified version, or of the draft while taxonomy/PROVISIONAL exists
 ./brain                            # launcher
 ```
 
@@ -185,6 +185,8 @@ The apply step must create a SQLite snapshot, update changed documents atomicall
 Commands use `$PY`, `$SKILLS` and `$DB` as set under **Required project contract**; the taxonomy scripts are stdlib only.
 
 **Preflight — Brains built before `current.json`.** If `taxonomy/current.json` is missing, or `build_graph` below stops because the store has tags and no `meta.taxonomy_version`, tell the user and follow `corpus-taxonomy-extraction` → "F. Upgrading an older Brain" (`taxonomy_review.py adopt`, with `--meta-only` when `current.json` already exists) with their confirmation. Then set `[paths].taxonomy = "taxonomy/current.json"` in `brain-maintenance.toml`. Pass `--force` only if the user explicitly says so.
+
+**Preflight — first-build review not yet applied.** If `taxonomy/PROVISIONAL` exists, you stop: this update or deploy cannot proceed while the taxonomy is only provisionally adopted. Tell the user the first-build review has not been applied yet, and offer to run it with `corpus-taxonomy-extraction` → "A. First-build review". Do not deploy while `taxonomy/PROVISIONAL` exists.
 
 If `sync_plan.json.reclassify_chunk_ids` is non-empty:
 

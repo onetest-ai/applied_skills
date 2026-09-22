@@ -206,7 +206,8 @@ def taxonomy_review_status(taxonomy_path: Path) -> dict[str, Any]:
         except json.JSONDecodeError:
             pending = 0
     return {"current_json": (tax_dir / "current.json").is_file(), "latest_review": latest,
-            "submitted_unapplied": [r for r in submitted if r not in applied], "pending_reclassify": pending}
+            "submitted_unapplied": [r for r in submitted if r not in applied], "pending_reclassify": pending,
+            "provisional": (tax_dir / "PROVISIONAL").is_file()}
 
 
 def build_status(profile: dict[str, Any]) -> dict[str, Any]:
@@ -279,6 +280,8 @@ def build_status(profile: dict[str, Any]) -> dict[str, Any]:
     if strict_error: blockers.append("strict_source_validation_failed")
     if unmanaged: blockers.append("unmanaged_parsed_documents")
     if parsed_delta["blocked_missing_parsed"]: blockers.append("active_source_missing_parsed_output")
+    taxonomy_review = taxonomy_review_status(paths["taxonomy"])
+    if taxonomy_review["provisional"]: blockers.append("taxonomy_provisional_not_ratified")
     if parsed_delta["legacy_unlinked_deleted"] and not profile["safety"].get("allow_legacy_unlinked_delete", False):
         blockers.append("legacy_unlinked_delete_forbidden")
     if len(parsed_delta["deleted"]) > profile["safety"].get("max_deleted_docs", 0):
@@ -310,7 +313,7 @@ def build_status(profile: dict[str, Any]) -> dict[str, Any]:
         "database_sha256": sha_file(paths["db"]),
         "manifest_sha256": sha_file(paths["manifest"]),
         "taxonomy_sha256": sha_file(paths["taxonomy"]),
-        "taxonomy_review": taxonomy_review_status(paths["taxonomy"]),
+        "taxonomy_review": taxonomy_review,
         "source_plan": source_plan,
         "source_action_counts": dict(sorted(actions.items())),
         "narrative_work": narrative_work,

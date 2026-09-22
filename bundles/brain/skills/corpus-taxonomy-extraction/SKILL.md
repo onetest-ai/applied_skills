@@ -56,7 +56,7 @@ goal + corpus + optional seed taxonomy
   → map     (low-tier LLM, per doc)   candidate terms + evidence + provenance + confidence  (JSON/doc)
   → reduce  (deterministic + LLM)     consolidate.py clusters near-dupes → LLM adjudicates AMBIGUOUS merges only
   → judge   (low-tier LLM)            score coverage/coherence, flag low-confidence & unmapped
-  → emit    taxonomy_v0.{json,md}     the draft, reviewed in the app before anything reads it
+  → emit    taxonomy_v0.{json,md}     the draft; adopted provisionally, classified, then ratified in the first-build review
 ```
 
 ### 1. Parse — `parse_corpus.py` (deterministic, no LLM)

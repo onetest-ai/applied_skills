@@ -99,7 +99,20 @@ enabled = false
         (tdir / "work" / "reclassify.json").write_text('{"chunk_ids":[1,2,3],"reasons":{}}', encoding="utf-8")
         report = M.build_status(M.load_profile(self.profile))
         self.assertEqual(report["taxonomy_review"], {"current_json": False, "latest_review": "r-1",
-                                                     "submitted_unapplied": ["r-1"], "pending_reclassify": 3})
+                                                     "submitted_unapplied": ["r-1"], "pending_reclassify": 3,
+                                                     "provisional": False})
+
+    def test_provisional_marker_blocks(self):
+        (self.project / "schema" / "PROVISIONAL").write_text("", encoding="utf-8")
+        report = M.build_status(M.load_profile(self.profile))
+        self.assertFalse(report["ready_to_stage"])
+        self.assertIn("taxonomy_provisional_not_ratified", report["blockers"])
+        self.assertTrue(report["taxonomy_review"]["provisional"])
+
+    def test_no_provisional_marker_is_not_reported(self):
+        report = M.build_status(M.load_profile(self.profile))
+        self.assertNotIn("taxonomy_provisional_not_ratified", report["blockers"])
+        self.assertFalse(report["taxonomy_review"]["provisional"])
 
     def test_classification_coverage_excludes_no_topic_chunks(self):
         with sqlite3.connect(self.db) as con:
