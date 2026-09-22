@@ -14,6 +14,7 @@ import tempfile
 from datetime import datetime, timezone
 
 CURRENT = "current.json"
+PROVISIONAL = "PROVISIONAL"   # taxonomy/PROVISIONAL: current.json is the unreviewed draft (first build)
 
 
 def nid(s):
@@ -152,6 +153,29 @@ def atomic_write_bytes(path, data):
         if os.path.exists(tmp):
             os.unlink(tmp)
         raise
+
+
+def provisional_path(tax_dir):
+    return os.path.join(tax_dir, PROVISIONAL)
+
+
+def is_provisional(tax_dir):
+    return os.path.exists(provisional_path(tax_dir))
+
+
+def write_provisional(tax_dir, version, sha):
+    path = provisional_path(tax_dir)
+    rec = {"version": version, "sha256": sha, "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    atomic_write_bytes(path, (json.dumps(rec) + "\n").encode("utf-8"))
+    return path
+
+
+def clear_provisional(tax_dir):
+    path = provisional_path(tax_dir)
+    if os.path.exists(path):
+        os.remove(path)
+        return True
+    return False
 
 
 def write_version_and_current(tax_dir, tax):

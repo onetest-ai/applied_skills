@@ -23,8 +23,8 @@ import argparse, difflib, glob, json, os, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import decisions as D  # noqa: E402
-from taxo_io import (CURRENT, atomic_write_bytes, dump_bytes, fingerprint, intent, load_json,  # noqa: E402
-                     reviewer_name, sha256_file, utc_now, write_version_and_current)
+from taxo_io import (CURRENT, atomic_write_bytes, clear_provisional, dump_bytes, fingerprint, intent,  # noqa: E402
+                     load_json, reviewer_name, sha256_file, utc_now, write_version_and_current)
 from taxo_ops import ChangesetError, apply_ops  # noqa: E402
 
 
@@ -246,8 +246,9 @@ def apply_review(review_path, decisions_path=None):
         version = tax.get("version") or 0
         D.append(decisions_path, {"review_id": rid, "action": "applied", "out": None, "version": version,
                                   "sha256": base["sha256"], "reviewer": "taxonomy_merge.py", "surface": "script"})
+        cleared = clear_provisional(tax_dir)
         return {"status": "no_changes", "review_id": rid, "version": version, "tags_file": None,
-                "governed_drafts_file": None, "taxonomy_changed": False}
+                "governed_drafts_file": None, "taxonomy_changed": False, "provisional_cleared": cleared}
 
     if not taxo_ops and not is_draft:
         # side-only review (tag / metric_govern only): no new taxonomy version.
@@ -255,8 +256,10 @@ def apply_review(review_path, decisions_path=None):
         D.append(decisions_path, {"review_id": rid, "action": "applied", "out": None, "version": version,
                                   "sha256": base["sha256"], "reviewer": "taxonomy_merge.py", "surface": "script",
                                   "tags_file": tags_file, "governed_drafts_file": governed_drafts_file})
+        cleared = clear_provisional(tax_dir)
         return {"status": "applied", "review_id": rid, "version": version, "tags_file": tags_file,
-                "governed_drafts_file": governed_drafts_file, "taxonomy_changed": False}
+                "governed_drafts_file": governed_drafts_file, "taxonomy_changed": False,
+                "provisional_cleared": cleared}
 
     version = (tax.get("version") or 0) + 1
     new["version"] = version
@@ -275,9 +278,10 @@ def apply_review(review_path, decisions_path=None):
     D.append(decisions_path, {"review_id": rid, "action": "applied", "out": out, "version": version, "sha256": sha,
                               "reviewer": "taxonomy_merge.py", "surface": "script",
                               "tags_file": tags_file, "governed_drafts_file": governed_drafts_file})
+    cleared = clear_provisional(tax_dir)
     return {"status": "applied", "review_id": rid, "out": out, "version": version, "ops": len(taxo_ops),
             "migrations": len(migs), "tags_file": tags_file, "governed_drafts_file": governed_drafts_file,
-            "taxonomy_changed": True}
+            "taxonomy_changed": True, "provisional_cleared": cleared}
 
 
 def legacy_apply(a, tax, items):

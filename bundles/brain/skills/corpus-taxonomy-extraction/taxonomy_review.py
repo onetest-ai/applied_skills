@@ -16,7 +16,7 @@ Every subcommand prints one JSON line on stdout (serve prints it on exit).
   status    --review R
   export-md --review R --out F
   import-md --review R --md F [--submit]
-  adopt     --taxonomy taxonomy/taxonomy_vN.json --db K.sqlite [--meta-only] [--force]
+  adopt     --taxonomy taxonomy/taxonomy_vN.json --db K.sqlite [--meta-only] [--force] [--provisional]
   gap       [--taxonomy F] [--metrics F] [--out F]
 
 In a Claude Code session, run `serve` in the BACKGROUND and end the turn: it exits when the
@@ -36,8 +36,8 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import decisions as D  # noqa: E402
 import graph_migrate as GM  # noqa: E402
-from taxo_io import (CURRENT, atomic_write_bytes, fingerprint, intent, load_json, locate, nid, node_ids,  # noqa: E402
-                     one_line, reviewer_name, sha256_bytes, utc_now)
+from taxo_io import (CURRENT, atomic_write_bytes, fingerprint, intent, is_provisional, load_json, locate,  # noqa: E402
+                     nid, node_ids, one_line, reviewer_name, sha256_bytes, utc_now, write_provisional)
 from taxonomy_merge import load_proposals, plan_additions  # noqa: E402
 
 DESCRIBE_INSTRUCTIONS = """# Drafting category descriptions
@@ -225,7 +225,7 @@ def _describe_items(tax, proposals_dir, counts, rejections, skipped_files):
     return items
 
 
-def _context(mode, tax, items, stats, version, problems=None):
+def _context(mode, tax, items, stats, version, problems=None, provisional=False):
     it = intent(tax)
     labels = list(it["tree"]) + [k for kids in it["tree"].values() for k in kids] + list(it["unassigned_l2"])
     descs = tax.get("descriptions") or {}
@@ -257,6 +257,9 @@ def _context(mode, tax, items, stats, version, problems=None):
         # build_plan before the review is written) — a problem with no usable agent fix still
         # reaches the inbox, it just isn't counted as a proposed fix here.
         fixes = sum(1 for i in items if i["status"] in ("proposed", "suppressed") and not i.get("_fallback"))
+        if provisional:
+            return {"title": "First-build review",
+                    "subtitle": f"{len(labels)} categories · {fixes} changes proposed · everything else is kept"}
         return {"title": "Health review", "subtitle": f"v{version} · {n_problems} problems · {fixes} fixes proposed"}
     raise ValueError(f"unknown mode {mode!r}")
 
@@ -344,7 +347,8 @@ def build_plan(mode, taxonomy_path, proposals_dir=None, consolidated=None, db=No
     for n, item in enumerate(items):
         item["fingerprint"] = fingerprint(item["op"], item.get("kind") if item.get("origin") == "health" else None)
         item["id"] = "i-" + hashlib.sha1(f"{rid}|{n}|{item['fingerprint']}".encode()).hexdigest()[:12]
-    context = _context(mode, tax, items, stats, version, problems if mode == "health" else None)
+    context = _context(mode, tax, items, stats, version, problems if mode == "health" else None,
+                       provisional=is_provisional(tax_dir))
     if mode == "health":
         for item in items:
             # Public only when true (keeps items small): the app leaves fallbacks — a safe default,
@@ -453,6 +457,11 @@ def cmd_adopt(a):
         _out({"status": "refused", "reason": "this taxonomy does not match the store's graph",
               "only_in_file": only_file, "only_in_db": only_db})
         return 2
+    if a.meta_only and a.provisional:
+        c.close()
+        _out({"status": "refused", "reason": "--provisional adopts current.json; it is meaningless with "
+                                             "--meta-only, which never touches current.json"})
+        return 2
     if a.meta_only:
         # The store's tags already match this version; current.json (if any) is left alone —
         # e.g. it is already ahead and build_graph will migrate the store up to it.
@@ -469,8 +478,12 @@ def cmd_adopt(a):
     atomic_write_bytes(cur, raw)
     GM.write_version(c, tax.get("version") or 0, sha256_bytes(raw))
     c.commit()
+    out = {"status": "adopted", "current": cur, "version": tax.get("version") or 0, "nodes": len(file_ids)}
+    if a.provisional:
+        write_provisional(os.path.dirname(cur), tax.get("version") or 0, sha256_bytes(raw))
+        out["provisional"] = True
     c.close()
-    _out({"status": "adopted", "current": cur, "version": tax.get("version") or 0, "nodes": len(file_ids)})
+    _out(out)
     return 0
 
 
@@ -671,6 +684,9 @@ def main(argv=None):
     p.add_argument("--meta-only", action="store_true",
                    help="only record this version in the store's meta (never touches current.json)")
     p.add_argument("--force", action="store_true")
+    p.add_argument("--provisional", action="store_true",
+                   help="first build: adopt the unreviewed draft as current.json and mark it provisional "
+                        "until the first review is applied")
     p.set_defaults(fn=cmd_adopt)
     p = sub.add_parser("serve")
     p.add_argument("--review", required=True)
