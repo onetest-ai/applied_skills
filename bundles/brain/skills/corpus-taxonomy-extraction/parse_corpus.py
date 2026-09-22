@@ -15,6 +15,8 @@ Writes one .md per source file plus a manifest.json.
 
 Usage:
   parse_corpus.py --corpus <dir> --out <dir> [--xlsx-max-mb 20] [--sample-rows 8]
+A file that cannot be parsed is reported in one `[ERR] <file>: <reason>` line and an
+`error` manifest entry; pass --verbose for the full traceback.
 """
 import argparse, json, os, shutil, subprocess, sys, tempfile, warnings, traceback
 from pathlib import Path
@@ -48,9 +50,17 @@ def parse_office_pymupdf(path):
     tmp = tempfile.mkdtemp(prefix="parse_")
     profile = tempfile.mkdtemp(prefix="parse_soffice_")
     try:
-        subprocess.run([so, f"-env:UserInstallation={Path(profile).as_uri()}", "--headless", "--convert-to", "pdf", "--outdir", tmp, path],
-                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        r = subprocess.run([so, f"-env:UserInstallation={Path(profile).as_uri()}", "--headless", "--convert-to", "pdf", "--outdir", tmp, path],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors="replace")
         pdf = os.path.join(tmp, os.path.splitext(os.path.basename(path))[0] + ".pdf")
+        # soffice can also exit 0 without writing a PDF; either way the file is the
+        # problem, and the command line is noise the user can't act on.
+        if r.returncode != 0 or not os.path.exists(pdf):
+            lines = [ln.strip() for ln in (r.stderr or "").splitlines() if ln.strip()]
+            # soffice prefixes unrelated warnings (Fontconfig, Java); its verdict is the "Error" line
+            tail = " ".join([ln for ln in lines if "error" in ln.lower()][-2:] or lines[-1:])
+            raise RuntimeError("soffice could not convert it — not a readable Office file (truncated download?)"
+                               + (f"; soffice said: {tail}" if tail else ""))
         return parse_pdf_pymupdf(pdf)
     finally:
         shutil.rmtree(profile, ignore_errors=True)
@@ -442,6 +452,8 @@ def main(argv=None):
                     help="comma-separated extensions (no dot) to include")
     ap.add_argument("--merge-cues", type=int, default=1,
                     help="join N consecutive same-speaker VTT/SRT cues into one chunk (default: 1 = per-cue)")
+    ap.add_argument("--verbose", action="store_true",
+                    help="print the full traceback for a file that fails to parse (default: one line per file)")
     a = ap.parse_args(argv)
     allow = {"." + e.strip().lower().lstrip(".") for e in a.formats.split(",") if e.strip()}
     os.makedirs(a.out, exist_ok=True)
@@ -480,7 +492,8 @@ def main(argv=None):
                 print(f"[ok] {method:20} {len(md):>8} chars  {rel}", file=sys.stderr)
             except Exception as e:
                 print(f"[ERR] {rel}: {e}", file=sys.stderr)
-                traceback.print_exc(file=sys.stderr)
+                if a.verbose:
+                    traceback.print_exc(file=sys.stderr)
                 manifest.append({"source": rel, "error": str(e)})
     _merge_manifest(os.path.join(a.out, "manifest.json"), manifest, allow)
     ok = [m for m in manifest if "error" not in m]
