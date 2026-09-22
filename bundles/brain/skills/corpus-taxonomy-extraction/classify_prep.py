@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Prepare per-chunk taxonomy classification for LOW-TIER agents (map stage).
+"""Prepare per-chunk taxonomy classification for SONNET agents (map stage).
 
 Meaning is agentic: rather than force a deterministic classifier, hand each chunk
-to a cheap model (Haiku) with the taxonomy vocabulary and let it assign the real
+to a Sonnet model with the taxonomy vocabulary and let it assign the real
 L1 categories. This script only prepares batches + the vocabulary + instructions;
-low-tier subagents do the classification; classify_write.py writes results back.
+Sonnet subagents do the classification; classify_write.py writes results back.
 
 Reads `chunks` from the knowledge SQLite, writes:
   <out>/vocab.md          — L1 categories (each with its L2 children) — the closed list

@@ -19,7 +19,7 @@ You don't run the app yourself. Ask Claude in Claude Code, in the Brain project:
 | "propose new categories for the untagged sections" | a **refine review**: only proposals for new categories |
 | "open the taxonomy editor", "I want to change some categories" | **browse**: the whole taxonomy and metric inventory, no proposals, for your own edits |
 
-Claude prepares the review (for a health review, low-cost agents first draft a fix for each problem), then starts the app and tells you a browser tab is open. It then waits for you.
+Claude prepares the review (for a health review, Sonnet agents first draft a fix for each problem), then starts the app and tells you a browser tab is open. It then waits for you.
 
 **How the app runs:**
 

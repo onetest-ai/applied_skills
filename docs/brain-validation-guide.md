@@ -350,7 +350,7 @@ $VENV $SKILLS/corpus-taxonomy-extraction/parse_corpus.py \
 > VTT/XLSX excluded deliberately: VTT adds noise; XLSX explodes into number-grids.
 > This parse is separate from Step 2 — it writes to `map_parsed/`, not `parsed/`.
 
-**Stage 2 — Map subagents (agentic — Haiku reads docs, writes JSON):**
+**Stage 2 — Map subagents (agentic — Sonnet reads docs, writes JSON):**
 
 Prepare the instructions file (reads `goal.txt` written by scaffold):
 
@@ -457,7 +457,7 @@ $VENV $SKILLS/corpus-taxonomy-extraction/taxonomy_review.py diagnose \
 
 `diagnose` prints one `tasks` entry per problem kind that needs a fix (`describe`, `notags`,
 `structure`, `fit`, `metrics`, `untagged`), each a directory of `batch_k.json` files. In Claude
-Code, Claude dispatches one low-cost fix subagent per batch, reading that task's
+Code, Claude dispatches one Sonnet fix subagent per batch, reading that task's
 `instructions.md`. Skipping that dispatch is fine too: any item with no computed fix still reaches
 the Inbox with a safe default, marked `fallback`, for you to decide by hand.
 
@@ -1064,7 +1064,7 @@ Each section note has:
 | TC-1 Fresh build | No | narrative (RAG) | `chunks=N`, `fts>0 vec>0` |
 | TC-2 Add new file | No | — | chunk count increased |
 | TC-3 Re-run unchanged | No | — | `skipped N unchanged doc(s)` |
-| TC-4 Taxonomy tagging | Yes (Haiku agents) | taxonomy graph | `chunk_topics=N`, unclassified <10% |
+| TC-4 Taxonomy tagging | Yes (Sonnet agents) | taxonomy graph | `chunk_topics=N`, unclassified <10% |
 | TC-5 Evals | Yes (Bedrock judges) | — | ≥ 90% pass rate |
 | TC-6 Tabular marts | No | numbers (SQL) | `facts=N`, metric query returns rows with source_file |
 | TC-7 Obsidian vault | No | — (view only) | `wrote N notes`, section notes show real content |

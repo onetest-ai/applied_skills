@@ -1,7 +1,7 @@
 # MAP task — goal-directed taxonomy & metric extraction
 
 > Instantiate this template per run: replace {{GOAL}} and {{MAP_DIR}}, then hand it to
-> each low-tier map subagent along with its assigned parsed files. Nothing here is
+> each Sonnet map subagent along with its assigned parsed files. Nothing here is
 > corpus-specific except the goal you supply.
 
 ## Goal lens (use to filter what matters)

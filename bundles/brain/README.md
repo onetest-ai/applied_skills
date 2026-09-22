@@ -297,7 +297,7 @@ flowchart TD
 Ordering matters:
 
 1. **Render first.** `render_pages.py` converts Office files through LibreOffice, renders every page, extracts text and table grids, and flags pages whose layout probably carries meaning.
-2. **Transcribe before taxonomy, indexing, or classification.** `vision_prep.py` creates batches only for `flagged` pages whose `img_sha` is absent from `page_render`. The orchestrator launches vision-capable low-cost subagents; each writes one `result_k.json`. `vision_assemble.py` then combines VLM Markdown for visual pages with PyMuPDF text for ordinary pages and stores fresh VLM results in `page_render`.
+2. **Transcribe before taxonomy, indexing, or classification.** `vision_prep.py` creates batches only for `flagged` pages whose `img_sha` is absent from `page_render`. The orchestrator launches vision-capable Sonnet subagents; each writes one `result_k.json`. `vision_assemble.py` then combines VLM Markdown for visual pages with PyMuPDF text for ordinary pages and stores fresh VLM results in `page_render`.
 3. **Induce taxonomy from final enriched Markdown.** This is agentic and human-gated. A pre-VLM taxonomy can miss concepts visible only in diagrams.
 4. **Index once, after visual assembly.** Do not classify a provisional text-only index and then redo it; that creates a needless second classification pass.
 5. **Classify after index + graph exist.** `build_graph.py --taxonomy taxonomy/taxonomy_v0.json` loads the draft, `taxonomy_review.py adopt --provisional` makes it the provisional `current.json`, then `classify_prep.py` creates batches; text agents assign exact L1/L2 labels; `classify_write.py` commits them.
@@ -439,8 +439,8 @@ flowchart TD
 - There is no human gate between induction and `build_graph`/`classify`: the draft is adopted as a **provisional** `current.json` (`taxonomy_review.py adopt --provisional`) precisely so the first human review can be grounded in real per-section counts instead of the bare draft tree. `onboard.py verify` fails and the store must not be deployed while `taxonomy/PROVISIONAL` exists.
 
 ### How it's made (`map → reduce → judge → emit`)
-1. **map** — low-tier (Haiku) subagents, per document, extract candidate terms (intent classes, entities, metrics) each with an evidence quote, source, and confidence → one JSON per doc. The bulk context lives and dies inside each subagent.
-2. **reduce** — `consolidate.py` deterministically clusters near-duplicates (stdlib difflib); a low-tier agent adjudicates **only the ambiguous** merges ("Chicago" vs "CHI").
+1. **map** — Sonnet subagents, per document, extract candidate terms (intent classes, entities, metrics) each with an evidence quote, source, and confidence → one JSON per doc. The bulk context lives and dies inside each subagent.
+2. **reduce** — `consolidate.py` deterministically clusters near-duplicates (stdlib difflib); a Sonnet agent adjudicates **only the ambiguous** merges ("Chicago" vs "CHI").
 3. **judge** — an LLM-as-judge scores coverage/coherence and flags low-confidence/unmapped terms.
 4. **emit** — `taxonomy_v0.json` (+ `.md`): the draft, with a *demoted* list.
 5. **first-build review** — after the corpus is indexed, the draft graphed, adopted provisionally and classified, and the health diagnosis and fix agents have run, the user ratifies it — now grounded in real counts — in the local review app; `taxonomy_merge.py` then writes `taxonomy_v1.json` and `taxonomy/current.json` (no new version when the review approved no taxonomy change), and removes `taxonomy/PROVISIONAL` either way.
@@ -479,7 +479,7 @@ Every taxonomy decision is made in a **local review app**: `taxonomy_review.py s
 | **Refine** | only new categories for untagged sections | agent proposals for new L1/L2s |
 | **Browse** | you want to change categories or metrics yourself | the whole tree and metric inventory, no proposals |
 
-**The health review** finds every problem deterministically (`taxonomy_review.py diagnose`): categories with no description or no tagged sections, untagged sections, near-duplicate and off-axis labels, and similar or ungoverned metrics. Low-cost agents then draft a specific fix for each one that needs judgment (a description, the sections to tag, a merge direction, a governed-metric draft). You decide in the app's grouped inbox and can send any proposal back with **Redo with a note**, which Claude answers live in Claude Code. Approved fixes are applied by `taxonomy_merge.py`; approved tags are added by `classify_write.py --merge`, which never removes a tag; governed-metric drafts go to a work file and reach `schema/metrics.<corpus>.json` only if you agree.
+**The health review** finds every problem deterministically (`taxonomy_review.py diagnose`): categories with no description or no tagged sections, untagged sections, near-duplicate and off-axis labels, and similar or ungoverned metrics. Sonnet agents then draft a specific fix for each one that needs judgment (a description, the sections to tag, a merge direction, a governed-metric draft). You decide in the app's grouped inbox and can send any proposal back with **Redo with a note**, which Claude answers live in Claude Code. Approved fixes are applied by `taxonomy_merge.py`; approved tags are added by `classify_write.py --merge`, which never removes a tag; governed-metric drafts go to a work file and reach `schema/metrics.<corpus>.json` only if you agree.
 
 **Category descriptions** are carried through the taxonomy into the classifier's vocabulary (`vocab.md`), the graph (`graph_nodes.description`), the MCP `get_taxonomy` tool and the Obsidian vault, so they sharpen tagging and let kb say what a category means.
 
@@ -543,7 +543,7 @@ These deps live in a venv that **belongs to the skills, not your project** — k
 
 Use `--user` to build **one shared venv reused by every project** instead of a venv per project. The generated `BRAIN.md` and scripts then run under that interpreter (`BRAIN_PY`). Zero-install alternative (no venv, uv caches the deps): `uv run --with-requirements requirements.txt python <script>`.
 
-The low-tier map/classify steps assume a subagent mechanism with a model override (e.g. Haiku); on another harness, substitute any cheap model that can read a file and emit JSON.
+The map/classify steps assume a subagent mechanism with a model override (e.g. Sonnet); on another harness, substitute a Sonnet-class model that can read a file and emit JSON.
 
 ## Generic vs project-specific
 

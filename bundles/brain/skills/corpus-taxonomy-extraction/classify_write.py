@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write agent chunk-classification results into the knowledge SQLite.
 
-Consumes result_<k>.json ({chunk_id: [category names]}) produced by the low-tier
+Consumes result_<k>.json ({chunk_id: [category names]}) produced by the Sonnet
 classification agents. Names may be **L1 or L2** — this resolves each against the
 graph, writes it with its real `kind` (intent_l1 / intent_l2), and — for an L2 —
 also rolls up its parent L1 (so L1 filters still catch it). A result of exactly

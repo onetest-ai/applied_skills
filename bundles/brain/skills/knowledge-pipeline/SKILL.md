@@ -142,14 +142,14 @@ PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-
 "$PY" .../corpus-taxonomy-extraction/taxonomy_review.py adopt --taxonomy <project>/taxonomy/taxonomy_v0.json --db "$DB" --provisional
 #    → writes taxonomy/current.json + taxonomy/PROVISIONAL; onboard.py verify fails and nothing may be
 #    deployed while PROVISIONAL exists. Every later step reads taxonomy/current.json.
-# 5. per-section taxonomy tags — LOW-TIER AGENTS (meaning is agentic), not a script. Classifying
+# 5. per-section taxonomy tags — SONNET AGENTS (meaning is agentic), not a script. Classifying
 #    against the provisional taxonomy, agents may answer ["__no_topic__"] for a chunk with no topic
 #    at all (filler/boilerplate/off-goal) — a valid, complete verdict, stored in chunk_verdicts:
 "$PY" .../corpus-taxonomy-extraction/classify_prep.py --db "$DB" --taxonomy <project>/taxonomy/current.json --out <project>/classify --batches 25
 #    --batches controls chunks-per-agent: too few batches → agent hits context limit and writes nothing.
 #    Rule of thumb: ceil(total_chunks / 1000) batches. Default 25 handles corpora up to ~25k chunks safely.
 #    Agents write result_k.json into the SAME <project>/classify/ dir as the batch files (not a subdir).
-#    → dispatch N Haiku subagents: each reads classify/{instructions,vocab,batch_k}.md/json → writes classify/result_k.json
+#    → dispatch N Sonnet subagents: each reads classify/{instructions,vocab,batch_k}.md/json → writes classify/result_k.json
 "$PY" .../corpus-taxonomy-extraction/classify_write.py --db "$DB" --results <project>/classify   # -> chunk_topics + graph 'about' edges
 # 5b. 👤 the first human review, grounded in counts (corpus-taxonomy-extraction → "A. First-build review"):
 #    taxonomy_signals.py → diagnose → 🤖 one fix subagent per task dir (describe, notags, structure,
@@ -179,7 +179,7 @@ PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-
 "$PY" .../knowledge-pipeline/brain_sync.py seed --db "$DB" --parsed <project>/parsed --require-goal
 ```
 Chunk ids are deterministic (`f(source, section-ordinal)`), so an unchanged document with unchanged section boundaries keeps its ids across rebuilds. During an update, changed documents are delete-then-reindexed and their new chunk ids are explicitly reclassified; unchanged documents keep their tags/graph edges.
-Result: one `knowledge.sqlite` — `chunks`/`chunks_fts`/`chunks_vec` (a chunk = a section = an Obsidian note), `chunk_topics` (real per-section taxonomy tags via low-tier agents), `facts` (marts), `graph_nodes`/`graph_edges` (taxonomy vertices + `subclass_of` + `about` edges to chunks). Check the `build_marts` audit (`--strict` in CI). The vault is generated from the store, so notes, retrieval chunks, tags, and graph all reference the same ids.
+Result: one `knowledge.sqlite` — `chunks`/`chunks_fts`/`chunks_vec` (a chunk = a section = an Obsidian note), `chunk_topics` (real per-section taxonomy tags via Sonnet agents), `facts` (marts), `graph_nodes`/`graph_edges` (taxonomy vertices + `subclass_of` + `about` edges to chunks). Check the `build_marts` audit (`--strict` in CI). The vault is generated from the store, so notes, retrieval chunks, tags, and graph all reference the same ids.
 
 ## Updating the brain (documents add / change / delete)
 
@@ -200,7 +200,7 @@ Read `bundles/brain/AGENT_README.md` for the authoritative source-to-store updat
 # Use a fresh result directory; scripts do not clean stale result_*.json:
 "$PY" .../corpus-taxonomy-extraction/classify_prep.py \
   --db "$DB" --taxonomy <tax> --out <fresh-cls-run> --chunks <ids from sync_plan.json>
-# → low-tier text subagents → <fresh-cls-run>/result_k.json; validate complete ID coverage
+# → Sonnet text subagents → <fresh-cls-run>/result_k.json; validate complete ID coverage
 "$PY" .../corpus-taxonomy-extraction/classify_write.py --db "$DB" --results <fresh-cls-run>
 "$PY" .../corpus-taxonomy-extraction/build_graph.py --db "$DB" --taxonomy <tax>
 "$PY" .../knowledge-index/knowledge_index.py related --db "$DB"

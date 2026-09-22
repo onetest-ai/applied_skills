@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Deterministic consolidation for corpus-taxonomy-extraction (reduce stage).
 
-Reads per-document map outputs (JSON produced by low-tier map subagents),
+Reads per-document map outputs (JSON produced by Sonnet map subagents),
 pools candidate terms by kind (intent_class | metric | entity), normalizes
-names, and clusters near-duplicates so a low-tier model only has to adjudicate
+names, and clusters near-duplicates so a Sonnet model only has to adjudicate
 AMBIGUOUS merges rather than eyeball the whole corpus.
 
 Torch-free: uses difflib (stdlib) for fuzzy grouping. No embedding model needed

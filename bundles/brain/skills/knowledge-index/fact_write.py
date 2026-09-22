@@ -3,6 +3,11 @@
 import argparse, json, math, os, sqlite3, sys
 import fact_schema as FS
 
+# Bedrock inference profile id for the disagreement judge. Matches the Sonnet id
+# used elsewhere in this repo (see evals/generate_promptfoo.py PROVIDERS);
+# override with --judge-model.
+DEFAULT_JUDGE_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
+
 
 def _cos(a, b):
     dot = sum(x * y for x, y in zip(a, b))
@@ -182,13 +187,12 @@ def run(con, results, aliases, embed_fn, judge_fn, high, low, now_iso, apply=Fal
     return report
 
 
-def _bedrock_judge(model):
+def _bedrock_judge(model_id=DEFAULT_JUDGE_MODEL_ID):
     """Return a callable(dis) -> {"relation": ...} backed by Bedrock. Lazy boto3 import."""
 
     def _call(dis):
         import boto3  # noqa: PLC0415
         client = boto3.client("bedrock-runtime", region_name=os.environ.get("AWS_REGION", "us-east-1"))
-        model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
         prompt = (
             "Two assertions about the same entity/predicate disagree.\n"
             f"New value: {dis['new_value']!r} (assertion {dis['new_id']})\n"
@@ -219,11 +223,13 @@ def main(argv=None):
     ap.add_argument("--apply", action="store_true"); ap.add_argument("--strict-merges", action="store_true")
     ap.add_argument("--merge-high", type=float, default=0.90); ap.add_argument("--merge-low", type=float, default=0.75)
     ap.add_argument("--model", default="BAAI/bge-small-en-v1.5")
+    ap.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL_ID,
+                     help=f"Bedrock model id for the disagreement judge (default: {DEFAULT_JUDGE_MODEL_ID})")
     a = ap.parse_args(argv)
     from datetime import datetime, timezone
     import knowledge_index as KI
     aliases = json.load(open(a.aliases)) if a.aliases else {}
-    judge = _bedrock_judge(a.model)
+    judge = _bedrock_judge(a.judge_model)
     con = sqlite3.connect(a.db)
     # Second-precision (microsecond=0) so the no-event_date fallback compares
     # consistently against date-derived asserted_at values (which carry no

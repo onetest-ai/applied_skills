@@ -28,7 +28,7 @@ fastmcp==2.14.7
 uvicorn>=0.30,<1
 
 # evals skill (corpus-evals): Bedrock extraction + promptfoo YAML generation
-boto3             # extract_facts.py — AWS Bedrock Haiku for verbatim fact extraction
+boto3             # extract_facts.py — AWS Bedrock Sonnet for verbatim fact extraction
 pyyaml            # generate_promptfoo.py — write promptfooconfig.yaml
 # System (not pip): LibreOffice `soffice` for rendering/parsing .pptx/.docx.
 # System (not pip): node + npx for promptfoo eval runner (npx promptfoo@0.123.0).

@@ -17,7 +17,7 @@ Numbers stay deterministic and meaning stays agentic: this script does the DB
 surgery + tells the orchestrating agent exactly what to reclassify; it never tags.
 
 After `apply`, the orchestrator finishes the delta (see knowledge-pipeline SKILL):
-  classify_prep --chunks <reclassify_chunk_ids> -> Haiku agents -> classify_write
+  classify_prep --chunks <reclassify_chunk_ids> -> Sonnet agents -> classify_write
   build_graph (rebuild subclass_of; about edges preserved) ; to_obsidian --clean
 
 Usage:
@@ -389,7 +389,7 @@ def cmd_apply(a):
         print(f"NEXT (agentic): reclassify {len(recids)} chunk(s) of {len(reclass)} changed doc(s):")
         print(f"  classify_prep.py --db {a.db} --taxonomy <tax> --out <cls> "
               f"--chunks {','.join(map(str, recids[:6]))}{',…' if len(recids) > 6 else ''}")
-        print("  → Haiku agents → classify_write.py (incremental) → build_graph.py → to_obsidian.py --clean")
+        print("  → Sonnet agents → classify_write.py (incremental) → build_graph.py → to_obsidian.py --clean")
     else:
         print("no doc changes — RAG lane already current.")
     # surface governance (hard --require-goal fail already handled up front)

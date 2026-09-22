@@ -9,7 +9,7 @@ You are the orchestrator. A human starts you from a coding-agent host and gives 
 1. load the `knowledge-pipeline` skill and the component skills it names;
 2. run deterministic scripts in the consuming brain project;
 3. create batch files for judgment work;
-4. dispatch low-cost subagents to read those batches and write result JSON;
+4. dispatch Sonnet subagents to read those batches and write result JSON;
 5. validate completeness and schema before consuming results;
 6. show human gates and failures instead of silently guessing;
 7. checkpoint long runs and verify the finished store.
@@ -223,7 +223,7 @@ mkdir -p "$VISION_RUN"
 
 The script emits only **flagged and uncached** pages. It skips any `img_sha` already in SQLite `page_render`.
 
-For every `vision/batch_K.json`, dispatch one vision-capable low-cost subagent. Its contract:
+For every `vision/batch_K.json`, dispatch one vision-capable Sonnet subagent. Its contract:
 
 1. read `vision/instructions.md` and its assigned batch;
 2. open each `image` path;
@@ -303,7 +303,7 @@ mkdir -p "$CLASSIFY_RUN"
   --db "$DB" --taxonomy "$TAX" --out "$CLASSIFY_RUN" --batches 8
 ```
 
-For each `classify/batch_K.json`, dispatch one low-cost text subagent. Its contract:
+For each `classify/batch_K.json`, dispatch one Sonnet text subagent. Its contract:
 
 1. read `instructions.md`, `vocab.md`, and its batch;
 2. assign 0–3 exact L1/L2 labels per chunk, or `["__no_topic__"]` when the chunk carries no topic at all;
