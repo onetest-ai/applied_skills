@@ -274,6 +274,18 @@ const api = {
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const slug = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 const num = x => { const n = Number(x); return Number.isFinite(n) ? n : 0; };
+// Chunk ids are 64-bit hashes the server sends as decimal strings (a JSON number above 2^53 rounds).
+// Keep them opaque strings: never Number()/num()/parseInt them, never sort with subtraction.
+const cidStr = x => String(x);
+function cmpId(a, b){   // exact numeric order of two decimal id strings (sign-aware), no Number()
+  a = cidStr(a); b = cidStr(b);
+  const na = a[0] === "-", nb = b[0] === "-";
+  if (na !== nb) return na ? -1 : 1;
+  const x = na ? a.slice(1) : a, y = nb ? b.slice(1) : b;
+  const c = x.length !== y.length ? x.length - y.length : (x < y ? -1 : x > y ? 1 : 0);
+  return na ? -c : c;
+}
+const idList = ids => (ids || []).map(cidStr).sort(cmpId);
 const plural = (n, one, many) => num(n) + " " + (num(n) === 1 ? one : (many || one + "s"));
 const errText = e => (e && Array.isArray(e.errors)) ? e.errors.join("; ") : String(e && e.message || e);
 const $ = id => document.getElementById(id);
@@ -306,7 +318,7 @@ function canon(v){
 }
 function sameOp(a, b){
   if (!a || !b) return false;
-  if (a.type === "tag" && b.type === "tag") return a.node === b.node && JSON.stringify([...(a.chunk_ids || [])].sort((x, y) => x - y)) === JSON.stringify([...(b.chunk_ids || [])].sort((x, y) => x - y));
+  if (a.type === "tag" && b.type === "tag") return a.node === b.node && JSON.stringify(idList(a.chunk_ids)) === JSON.stringify(idList(b.chunk_ids));
   return JSON.stringify(canon(a)) === JSON.stringify(canon(b));
 }
 // A template alternative is an empty-payload op that exists only to be edited into a real one.
@@ -533,10 +545,12 @@ function advanceRow(id){
 
 const KIND_WORDS = {missing_description:"Missing description", no_tags:"No tagged sections", untagged_sections:"Untagged sections",
   near_duplicate:"Near-duplicate", off_axis:"Off-axis category", similar_metrics:"Similar metrics", metric_not_governed:"Not governed",
-  refresh_proposal:"New category"};
+  refresh_proposal:"New category", sparse:"Barely used", misplaced:"Fits another L1", overloaded:"Overloaded L1"};
 const GROUP_WORDS = {missing_description:["category has no description", "categories have no description"],
   no_tags:["category has no tagged sections", "categories have no tagged sections"],
-  metric_not_governed:["metric can't be computed yet", "metrics can't be computed yet"]};
+  metric_not_governed:["metric can't be computed yet", "metrics can't be computed yet"],
+  sparse:["category has only 1–2 tagged sections", "categories have only 1–2 tagged sections"],
+  misplaced:["category fits another L1 better", "categories fit another L1 better"]};
 function groupTitle(e){
   const w = GROUP_WORDS[e.kind];
   return w ? plural(e.rows.length, w[0], w[1]) : (e.rows[0].title || KIND_WORDS[e.kind] || e.kind);
@@ -548,7 +562,8 @@ function fixSummary(rows){
   for (const it of rows){ const k = it.reason === "no fix proposed" ? "none" : it.op.type; if (!c[k]){ c[k] = 0; order.push(k); } c[k]++; }
   return order.map(k => { const w = W[k] || [k.replace("_", " ")]; return num(c[k]) + " " + (c[k] === 1 ? w[0] : (w[1] || w[0] + "s")); }).join(" · ");
 }
-const GROUP_ICON = {missing_description:["✎", "chg"], no_tags:["∅", "flag"], untagged_sections:["+", "add"], metric_not_governed:["✓", "chg"]};
+const GROUP_ICON = {missing_description:["✎", "chg"], no_tags:["∅", "flag"], untagged_sections:["+", "add"], metric_not_governed:["✓", "chg"],
+  sparse:["·", "flag"], misplaced:["↷", "chg"]};
 function groupRow(e){
   const und = e.rows.filter(r => !isDecided(r)).length, [c, k] = GROUP_ICON[e.kind] || ["!", "flag"];
   return `<button type="button" class="item ${U.inboxSel === e.id ? "sel" : ""}" data-act="pick-item" data-id="${esc(e.id)}"><span class="ic ${esc(k)}" title="group">${esc(c)}</span><span class="t">${esc(groupTitle(e))}</span><span class="st">${und ? `<span class="pill warn">${num(und)} of ${num(e.rows.length)} left</span>` : `<span class="pill ok">all decided</span>`}</span><span class="s">${esc(fixSummary(e.rows))}</span></button>`;
@@ -686,12 +701,12 @@ const tagCand = it => candidatesOf(it).find(c => c.type === "tag") || null;
 function tagChoices(it){
   if (!tagCand(it)) return [];
   const cand = (it.support || {}).candidate_ids;
-  return it.kind === "no_tags" && Array.isArray(cand) ? cand : (tagCand(it).chunk_ids || []);
+  return (it.kind === "no_tags" && Array.isArray(cand) ? cand : (tagCand(it).chunk_ids || [])).map(cidStr);
 }
 function tagChosen(it){
   if (U.tagDraft[it.id]) return U.tagDraft[it.id];
   const op = itemOp(it);
-  return op.type === "tag" ? op.chunk_ids || [] : [];
+  return op.type === "tag" ? (op.chunk_ids || []).map(cidStr) : [];
 }
 function rowCtx(it, base){
   const label = subjectOf(base);
@@ -729,6 +744,8 @@ function rowNote(it){
   if (it.kind === "no_tags") return plural((s.candidate_ids || []).length, "candidate section");
   if (it.kind === "near_duplicate") return plural(s.tags, "tagged section");
   if (it.kind === "metric_not_governed") return s.sources != null ? plural(Array.isArray(s.sources) ? s.sources.length : s.sources, "source") : "";
+  if (it.kind === "sparse") return plural(s.tags, "tagged section");
+  if (it.kind === "misplaced") return `closer to ${s.better_parent}`;
   if (s.chunks != null) return plural(s.chunks, "section");
   return "";
 }
@@ -739,7 +756,8 @@ function rowHTML(it){
     + (cur ? `<tr class="rpanel"><td colspan="4">${rowPanel(it)}</td></tr>` : "");
 }
 function candBrief(it, cid){
-  const e = (it.evidence || []).find(x => x && x.chunk_id === cid && x.preview != null);
+  cid = cidStr(cid);
+  const e = (it.evidence || []).find(x => x && x.chunk_id != null && cidStr(x.chunk_id) === cid && x.preview != null);
   if (e) return e;
   const c = chunkCache[cid];
   if (c && !c.errors) return {chunk_id:cid, source:c.source, title:c.title, preview:String(c.text || "").split(/\s+/).join(" ").trim().slice(0, 240)};
@@ -834,6 +852,9 @@ function healthDetail(it){
   }
   if (it.kind === "off_axis" && s.tags != null) facts.push(`<span class="pill mute">${esc(plural(s.tags, "tagged section"))}</span>`);
   if (it.kind === "similar_metrics" && s.score != null) facts.push(`<span class="pill warn">${esc(Math.round(num(s.score) * 100) + "% alike")}</span>`);
+  if (it.kind === "misplaced" && s.better_parent) facts.push(`<span class="pill mute wrap">${esc(plural(s.tags, "tagged section"))} · closer to “${esc(s.better_parent)}”</span>`);
+  if (it.kind === "sparse" && s.tags != null) facts.push(`<span class="pill mute">${esc(plural(s.tags, "tagged section"))}</span>`);
+  if (it.kind === "overloaded" && s.l2_count != null) facts.push(`<span class="pill mute wrap">${esc(num(s.tags))} sections · ${esc(num(s.l2_count))} L2s (median ${esc(num(s.median_tags))} · ${esc(num(s.median_l2))})</span>`);
   let acts;
   if (isDecided(it)){
     const d = latest(it.id), text = d.action === "reject" ? (d.reason === SKIP_REASON ? "Skipped. Nothing changes for it." : `Rejected: ${d.reason}.`)
@@ -876,7 +897,7 @@ async function pickCandidate(it, i){
 async function onTagToggle(box){
   const it = S.review.items.find(i => i.id === box.dataset.tag); if (!it) return;
   if (busy){ box.checked = !box.checked; return; }   // one decision at a time
-  const order = tagChoices(it), set = new Set(tagChosen(it)), cid = Number(box.value);
+  const order = tagChoices(it), set = new Set(tagChosen(it)), cid = cidStr(box.value);
   if (box.checked) set.add(cid); else set.delete(cid);
   const ids = order.filter(x => set.has(x));
   if (!ids.length){
@@ -1092,7 +1113,7 @@ function treeDetailShell(){
   if (!sel){
     const t = S.totals || {};
     return `<p class="note">Select a category to see what's tagged with it and to describe, rename, merge, move, split or remove it.</p>
-      ${t.chunks ? `<p class="note">${num(t.tagged)} of ${num(t.chunks)} sections tagged · ${num(t.untagged)} without a category.</p>` : S.has_db ? "" : `<p class="note">No store attached, so tag counts are zero.</p>`}`;
+      ${t.chunks ? `<p class="note">${num(t.tagged)} of ${num(t.chunks)} sections tagged · ${num(t.untagged)} without a category${t.no_topic ? ` · ${num(t.no_topic)} with no topic` : ""}.</p>` : S.has_db ? "" : `<p class="note">No store attached, so tag counts are zero.</p>`}`;
   }
   if (sel.kind === "new") return `<span class="where">${sel.parent ? "New L2 under " + esc(sel.parent) : "New category"}</span><h3>New category</h3><div id="formslot"></div>`;
   if (sel.kind === "pending") return pendingDetail(sel.key);

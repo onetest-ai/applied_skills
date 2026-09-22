@@ -401,26 +401,94 @@ $VENV $SKILLS/corpus-taxonomy-extraction/emit_taxonomy.py \
 
 `$PROJECT/taxonomy/taxonomy_v0.md` is a readable copy of the draft; its `review_flags` section is advisory only.
 
-**Stage 5 — Draft review (you decide in the browser):**
+**Stage 5 — First-build review (index → classify → ratify in the browser):**
 
-Nothing downstream reads the draft until it is ratified. In Claude Code, ask Claude to "review the draft taxonomy"; it runs these commands, with `serve` in the background, and applies the review when you submit. By hand:
+The draft is used **provisionally** before anyone reviews it, so the Inbox shows real per-section
+tag counts instead of a bare tree. Indexing must already be done (Step 3 above — this stage reads
+`$PROJECT/schema/knowledge.sqlite`). In Claude Code, ask Claude to "run the first-build taxonomy
+review"; it runs the commands below, dispatches the fix agents, runs `serve` in the background,
+and applies the review when you submit. By hand:
+
+**5a — Build the graph from the draft, then adopt it as provisional:**
 
 ```bash
 cd "$PROJECT"
-$VENV $SKILLS/corpus-taxonomy-extraction/taxonomy_review.py plan --mode draft \
-  --taxonomy taxonomy/taxonomy_v0.json            # prints {"review": "<path>", ...}
-$VENV $SKILLS/corpus-taxonomy-extraction/taxonomy_review.py serve --review <that path>
-# a browser tab opens on 127.0.0.1; decide, then click Review & submit — serve exits
-$VENV $SKILLS/corpus-taxonomy-extraction/taxonomy_merge.py --review <that path> --apply
+$VENV $SKILLS/corpus-taxonomy-extraction/build_graph.py \
+  --taxonomy taxonomy/taxonomy_v0.json \
+  --db       "$PROJECT/schema/knowledge.sqlite"
+$VENV $SKILLS/corpus-taxonomy-extraction/taxonomy_review.py adopt \
+  --taxonomy taxonomy/taxonomy_v0.json \
+  --db       "$PROJECT/schema/knowledge.sqlite" \
+  --provisional
 ```
 
-The last command writes `taxonomy/taxonomy_v1.json` and `taxonomy/current.json`. See [the taxonomy review guide](taxonomy-review-guide.md) for the app.
+`adopt --provisional` copies the draft to `taxonomy/current.json` and writes the
+`taxonomy/PROVISIONAL` marker. **While that marker exists, `onboard.py verify` exits 1 and nothing
+may be deployed.**
+
+**5b — Classify every chunk against the provisional taxonomy** — same batch-prep/dispatch/write
+mechanics as TC-4 steps 1–2 below, pointed at `taxonomy/current.json` instead of a fixed `$TAXO`:
+
+```bash
+$VENV $SKILLS/corpus-taxonomy-extraction/classify_prep.py \
+  --db       "$PROJECT/schema/knowledge.sqlite" \
+  --taxonomy taxonomy/current.json \
+  --out      "$PROJECT/classify" \
+  --batches  25
+# dispatch one agent per batch_*.json -> result_*.json (see TC-4 step 2 for the full prompt)
+$VENV $SKILLS/corpus-taxonomy-extraction/classify_write.py \
+  --db      "$PROJECT/schema/knowledge.sqlite" \
+  --results "$PROJECT/classify"
+```
+
+Agents may answer `["__no_topic__"]` for a chunk with no topic at all — that's a valid, complete
+answer, not a missing one.
+
+**5c — Compute signals, then diagnose**, now that real classification counts exist:
+
+```bash
+$VENV $SKILLS/corpus-taxonomy-extraction/taxonomy_signals.py \
+  --taxonomy taxonomy/current.json --db "$PROJECT/schema/knowledge.sqlite" \
+  --out taxonomy/work/signals.json
+$VENV $SKILLS/corpus-taxonomy-extraction/taxonomy_review.py diagnose \
+  --taxonomy taxonomy/current.json --db "$PROJECT/schema/knowledge.sqlite" \
+  --out taxonomy/work/first-build
+```
+
+`diagnose` prints one `tasks` entry per problem kind that needs a fix (`describe`, `notags`,
+`structure`, `fit`, `metrics`, `untagged`), each a directory of `batch_k.json` files. In Claude
+Code, Claude dispatches one low-cost fix subagent per batch, reading that task's
+`instructions.md`. Skipping that dispatch is fine too: any item with no computed fix still reaches
+the Inbox with a safe default, marked `fallback`, for you to decide by hand.
+
+**5d — Plan, serve, and apply the review, then rebuild the graph:**
+
+```bash
+$VENV $SKILLS/corpus-taxonomy-extraction/taxonomy_review.py plan --mode health \
+  --taxonomy taxonomy/current.json --db "$PROJECT/schema/knowledge.sqlite" \
+  --work taxonomy/work/first-build                # prints {"review": "<path>", ...}
+$VENV $SKILLS/corpus-taxonomy-extraction/taxonomy_review.py serve --review <that path> \
+  --db "$PROJECT/schema/knowledge.sqlite"
+# a browser tab opens on 127.0.0.1; decide, then click Review & submit — serve exits
+$VENV $SKILLS/corpus-taxonomy-extraction/taxonomy_merge.py --review <that path> --apply
+$VENV $SKILLS/corpus-taxonomy-extraction/build_graph.py \
+  --taxonomy taxonomy/current.json --db "$PROJECT/schema/knowledge.sqlite"
+```
+
+`taxonomy_merge --apply` writes `taxonomy/taxonomy_v1.json` and `taxonomy/current.json` (a review
+that approves no change writes no new version, but still removes `taxonomy/PROVISIONAL` — the
+review happened either way); `build_graph` then migrates any renamed/merged tags. See
+[the taxonomy review guide](taxonomy-review-guide.md) for the app.
 
 Set `TAXO` to the ratified taxonomy:
 
 ```bash
 TAXO="$PROJECT/taxonomy/current.json"
 ```
+
+**No index yet?** Use the fallback instead of Stage 5 — `plan --mode draft` on the bare
+`taxonomy_v0.json`, reviewed with no real classification counts (corpus-taxonomy-extraction's
+"A′. Draft review without an index").
 
 ---
 
@@ -609,6 +677,12 @@ is not working.
 **What it tests:** chunks get category labels from the taxonomy so that eval questions routed
 by category (ActionItem, QualityRisk, etc.) can find relevant content. This is what fills the
 `taxonomy graph ⚠ EMPTY` warning from TC-1.
+
+**Skip this scenario if you just ran Stage 5 above** (the first-build review): classification and
+the graph are already done there, and `taxonomy_merge --apply` already ratified `current.json` —
+go straight to this scenario's **Pass criteria**/`verify` below. Run TC-4 on its own when you're
+reusing an existing ratified taxonomy against a fresh index (the "Reuse" row in Step 5's table
+above), or redoing classification after a taxonomy change.
 
 **Precondition:** TC-1 passed (parse + index done). You need a taxonomy JSON and AWS credentials.
 

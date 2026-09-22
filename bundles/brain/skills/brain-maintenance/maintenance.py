@@ -206,7 +206,8 @@ def taxonomy_review_status(taxonomy_path: Path) -> dict[str, Any]:
         except json.JSONDecodeError:
             pending = 0
     return {"current_json": (tax_dir / "current.json").is_file(), "latest_review": latest,
-            "submitted_unapplied": [r for r in submitted if r not in applied], "pending_reclassify": pending}
+            "submitted_unapplied": [r for r in submitted if r not in applied], "pending_reclassify": pending,
+            "provisional": (tax_dir / "PROVISIONAL").is_file()}
 
 
 def build_status(profile: dict[str, Any]) -> dict[str, Any]:
@@ -245,12 +246,20 @@ def build_status(profile: dict[str, Any]) -> dict[str, Any]:
         # Classification coverage: chunks carrying no topic. Batch validation only
         # proves dispatched chunks returned; it never checks whole-population
         # coverage, so surface the unclassified share for the human gate.
-        unclassified_chunks = None
+        # A chunk with a `no_topic` verdict (filler, boilerplate, off-goal) was classified: it
+        # is not unclassified, and is reported separately as no_topic_chunks.
+        unclassified_chunks = no_topic_chunks = None
         if "chunks" in tables and "chunk_topics" in tables and counts.get("chunks"):
+            has_v = "chunk_verdicts" in tables
             unclassified_chunks = con.execute(
                 "SELECT COUNT(*) FROM chunks c "
                 "WHERE NOT EXISTS (SELECT 1 FROM chunk_topics t WHERE t.chunk_id = c.id)"
+                + (" AND NOT EXISTS (SELECT 1 FROM chunk_verdicts v WHERE v.chunk_id = c.id AND v.verdict = 'no_topic')"
+                   if has_v else "")
             ).fetchone()[0]
+            no_topic_chunks = (con.execute(
+                "SELECT COUNT(*) FROM chunk_verdicts v WHERE v.verdict = 'no_topic' "
+                "AND EXISTS (SELECT 1 FROM chunks c WHERE c.id = v.chunk_id)").fetchone()[0] if has_v else 0)
         registered_kinds = ({r["source_id"]: r["source_kind"] for r in con.execute("SELECT source_id,source_kind FROM sources")}
                             if "sources" in tables else {})
     actions = Counter(item["action"] for item in source_plan["actions"])
@@ -271,6 +280,8 @@ def build_status(profile: dict[str, Any]) -> dict[str, Any]:
     if strict_error: blockers.append("strict_source_validation_failed")
     if unmanaged: blockers.append("unmanaged_parsed_documents")
     if parsed_delta["blocked_missing_parsed"]: blockers.append("active_source_missing_parsed_output")
+    taxonomy_review = taxonomy_review_status(paths["taxonomy"])
+    if taxonomy_review["provisional"]: blockers.append("taxonomy_provisional_not_ratified")
     if parsed_delta["legacy_unlinked_deleted"] and not profile["safety"].get("allow_legacy_unlinked_delete", False):
         blockers.append("legacy_unlinked_delete_forbidden")
     if len(parsed_delta["deleted"]) > profile["safety"].get("max_deleted_docs", 0):
@@ -302,7 +313,7 @@ def build_status(profile: dict[str, Any]) -> dict[str, Any]:
         "database_sha256": sha_file(paths["db"]),
         "manifest_sha256": sha_file(paths["manifest"]),
         "taxonomy_sha256": sha_file(paths["taxonomy"]),
-        "taxonomy_review": taxonomy_review_status(paths["taxonomy"]),
+        "taxonomy_review": taxonomy_review,
         "source_plan": source_plan,
         "source_action_counts": dict(sorted(actions.items())),
         "narrative_work": narrative_work,
@@ -319,6 +330,7 @@ def build_status(profile: dict[str, Any]) -> dict[str, Any]:
             "unclassified_chunks": unclassified_chunks,
             "unclassified_pct": (round(100.0 * unclassified_chunks / counts["chunks"], 1)
                                  if unclassified_chunks is not None and counts.get("chunks") else None),
+            "no_topic_chunks": no_topic_chunks,
         },
         "empty_required_lanes": empty_required_lanes,
         "classification": {"required_after_apply": bool(narrative_work or parsed_delta["added"] or parsed_delta["changed"]), "chunk_ids": "from sync_plan.json after apply"},

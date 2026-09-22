@@ -10,6 +10,7 @@ by its exit.
 import copy
 import json
 import os
+import re
 import secrets
 import sqlite3
 import sys
@@ -29,6 +30,73 @@ from taxo_ops import ChangesetError, validate as validate_ops  # noqa: E402
 
 UI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "review_ui.html")
 EXIT = {"submitted": 0, "timeout": 3, "cancelled": 4}
+
+# Chunk ids are 64-bit hashes; a JSON number above 2**53 is rounded by the browser's JSON.parse,
+# so every chunk id crosses the HTTP boundary as a decimal string, both ways. These are the keys
+# that hold one (a scalar) or a list of them anywhere in a payload: `chunk_id` (samples, candidate
+# evidence, /api/chunk), `chunk_ids` (tag ops, evidence quotes), `candidate_ids` (a tag item's
+# allowed set), `example_ids` (proposal sources) and `ids`. Nothing else is converted: counts,
+# versions and scores stay numbers. Inside the server, and in decisions.jsonl, they are ints.
+CHUNK_ID_KEYS = frozenset({"chunk_id", "chunk_ids", "candidate_ids", "example_ids", "ids"})
+_INT_RE = re.compile(r"-?[0-9]+")
+
+
+def _is_int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def ids_out(v, key=None):
+    """A copy of `v` with every int under a CHUNK_ID_KEYS key (scalar or list item) as a string."""
+    if isinstance(v, dict):
+        return {k: ids_out(x, k) for k, x in v.items()}
+    if isinstance(v, list):
+        return [ids_out(x, key) for x in v]
+    if key in CHUNK_ID_KEYS and _is_int(v):
+        return str(v)
+    return v
+
+
+def parse_chunk_id(v):
+    """An exact int, within signed-64-bit range, from an int or a plain decimal string
+    ("-?[0-9]+", at most 20 digits); None if `v` isn't recognizable as a chunk id at all.
+    Raises ValueError if it IS recognizable but out of range (an over-long digit string, or
+    an int/parsed value outside [-2**63, 2**63)) — that's the caller's cue for a 400, not a
+    silent None that reads as "not a chunk id"."""
+    if _is_int(v):
+        n = v
+    elif isinstance(v, str) and _INT_RE.fullmatch(v):
+        digits = v[1:] if v.startswith("-") else v
+        if len(digits) > 20:
+            raise ValueError(f"{v!r} is out of range for a chunk id")
+        n = int(v)
+    else:
+        return None
+    if not (-(2 ** 63) <= n < 2 ** 63):
+        raise ValueError(f"{n} is out of range for a chunk id")
+    return n
+
+
+def ids_in(v, key=None, errors=None):
+    """A copy of a request body with every decimal-string chunk id (under a CHUNK_ID_KEYS key)
+    turned back into an int. A string that is not a whole number is named in `errors`; any other
+    value is left for the record's own validation to judge."""
+    if isinstance(v, dict):
+        return {k: ids_in(x, k, errors) for k, x in v.items()}
+    if isinstance(v, list):
+        return [ids_in(x, key, errors) for x in v]
+    if key in CHUNK_ID_KEYS and isinstance(v, str):
+        try:
+            n = parse_chunk_id(v)
+        except ValueError as e:
+            if errors is not None:
+                errors.append(f"{key}: {e}")
+            return v
+        if n is None:
+            if errors is not None:
+                errors.append(f"{key}: {v!r} is not a section id (a whole number)")
+            return v
+        return n
+    return v
 
 
 class ReviewApp:
@@ -117,11 +185,10 @@ class ReviewApp:
             if self._has("chunk_topics"):
                 counts = dict(self.db.execute(
                     "SELECT category_id, COUNT(DISTINCT chunk_id) FROM chunk_topics GROUP BY category_id"))
-            if self._has("chunks"):
-                total = self.db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-                tagged = (self.db.execute("SELECT COUNT(DISTINCT chunk_id) FROM chunk_topics").fetchone()[0]
-                          if self._has("chunk_topics") else 0)
-                totals = {"chunks": total, "tagged": tagged, "untagged": total - tagged}
+            cov = GM.chunk_coverage(self.db)
+            if cov is not None:
+                totals = {"chunks": cov["total"], "tagged": cov["tagged"], "untagged": cov["untagged"],
+                          "no_topic": cov["no_topic"]}
             caps_path = os.path.join(self.tax_dir, "capabilities.json")
             caps = load_json(caps_path) if os.path.exists(caps_path) else None
             t = copy.deepcopy(self.base_tax)
@@ -189,6 +256,12 @@ class ReviewApp:
         return out
 
     def chunk(self, cid):
+        try:
+            cid = parse_chunk_id(cid)
+        except ValueError as e:
+            return 400, {"errors": [str(e)]}
+        if cid is None:
+            return 400, {"errors": ["a section id is a whole number"]}
         if not self._has("chunks"):
             return 404, {"errors": ["no store attached (serve --db)"]}
         with self.lock:
@@ -357,7 +430,7 @@ def make_handler(app):
             pass
 
         def _send(self, code, body, ctype="application/json"):
-            data = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode("utf-8")
+            data = body if isinstance(body, bytes) else json.dumps(ids_out(body), ensure_ascii=False).encode("utf-8")
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
@@ -381,7 +454,7 @@ def make_handler(app):
                 if u.path.startswith("/api/node/"):
                     return self._send(200, app.node(unquote(u.path[len("/api/node/"):])))
                 if u.path.startswith("/api/chunk/"):
-                    code, payload = app.chunk(u.path[len("/api/chunk/"):])
+                    code, payload = app.chunk(unquote(u.path[len("/api/chunk/"):]))
                     return self._send(code, payload)
             except Exception as e:  # surface, never crash the server
                 return self._send(500, {"errors": [str(e)]})
@@ -396,6 +469,13 @@ def make_handler(app):
                 body = json.loads(self.rfile.read(n) or b"{}")
             except json.JSONDecodeError:
                 return self._send(400, {"errors": ["request body is not JSON"]})
+            bad_ids = []
+            try:
+                body = ids_in(body, errors=bad_ids)   # string chunk ids back to exact ints before anything validates
+            except ValueError as e:
+                return self._send(400, {"errors": [str(e)]})
+            if bad_ids:
+                return self._send(400, {"errors": bad_ids})
             routes = {"/api/impact": app.impact_of, "/api/decision": app.decide,
                       "/api/decisions": app.decisions, "/api/request": app.request,
                       "/api/submit": app.submit, "/api/cancel": app.cancel}

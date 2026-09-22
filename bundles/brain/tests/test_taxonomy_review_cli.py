@@ -80,6 +80,16 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(pp["support"]["projected_coverage_gain_pts"], 12.5)   # 1 untagged of 8 chunks
         self.assertEqual(rv["stats"], {"total_chunks": 8, "untagged_chunks": 1})
 
+    def test_stats_untagged_excludes_no_topic_chunks(self):
+        with sqlite3.connect(self.db) as c:
+            c.execute("CREATE TABLE chunk_verdicts(chunk_id INTEGER PRIMARY KEY, verdict TEXT, taxonomy_version INT)")
+            c.execute("INSERT INTO chunk_verdicts VALUES(8,'no_topic',1)")
+        c = R._ro(self.db)
+        try:
+            self.assertEqual(R._stats(c), {"total_chunks": 8, "untagged_chunks": 0})
+        finally:
+            c.close()
+
     def test_drift_plan_stdout_is_one_json_line_listing_skipped_files(self):
         cur = os.path.join(self.dir, "current.json")
         write_json(cur, taxonomy(version=1))

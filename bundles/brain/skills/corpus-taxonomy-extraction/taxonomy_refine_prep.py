@@ -65,6 +65,8 @@ def main():
             '  }\n')
     con = sqlite3.connect(a.db)
     where, params = "t.chunk_id IS NULL", [a.preview]
+    if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chunk_verdicts'").fetchone():
+        where += " AND NOT EXISTS (SELECT 1 FROM chunk_verdicts v WHERE v.chunk_id = c.id AND v.verdict = 'no_topic')"
     if a.docs:
         docs = [s.strip() for s in a.docs.split(",") if s.strip()]
         where += " AND c.source IN (" + ",".join("?" * len(docs)) + ")"; params += docs

@@ -129,6 +129,7 @@ def delete_docs(c, sources):
     has_topics = _has(c, "chunk_topics")
     has_edges  = _has(c, "graph_edges")
     has_rel    = _has(c, "related")
+    has_verd   = _has(c, "chunk_verdicts")
     for src in sources:
         ids = [r[0] for r in c.execute("SELECT id FROM chunks WHERE source=?", (src,))]
         for cid in ids:
@@ -136,6 +137,8 @@ def delete_docs(c, sources):
             c.execute("DELETE FROM chunks_vec WHERE rowid=?", (cid,))
             if has_topics:
                 c.execute("DELETE FROM chunk_topics WHERE chunk_id=?", (cid,))
+            if has_verd:
+                c.execute("DELETE FROM chunk_verdicts WHERE chunk_id=?", (cid,))
             if has_edges:
                 c.execute("DELETE FROM graph_edges WHERE rel='about' AND source=?", (f"chunk:{cid}",))
             if has_rel:
@@ -236,6 +239,8 @@ def index_docs(c, model, corpus, sources, dim, max_chars):
             c.execute("DELETE FROM chunks_vec WHERE rowid=?", (cid,))
             if _has(c, "chunk_topics"):
                 c.execute("DELETE FROM chunk_topics WHERE chunk_id=?", (cid,))
+            if _has(c, "chunk_verdicts"):
+                c.execute("DELETE FROM chunk_verdicts WHERE chunk_id=?", (cid,))
             if _has(c, "graph_edges"):
                 c.execute("DELETE FROM graph_edges WHERE rel='about' AND source=?", (f"chunk:{cid}",))
             if _has(c, "related"):

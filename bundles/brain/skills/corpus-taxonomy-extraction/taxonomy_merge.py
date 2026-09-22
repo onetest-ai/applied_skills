@@ -23,8 +23,8 @@ import argparse, difflib, glob, json, os, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import decisions as D  # noqa: E402
-from taxo_io import (CURRENT, atomic_write_bytes, dump_bytes, fingerprint, intent, load_json,  # noqa: E402
-                     reviewer_name, sha256_file, utc_now, write_version_and_current)
+from taxo_io import (CURRENT, atomic_write_bytes, clear_provisional, dump_bytes, fingerprint, intent,  # noqa: E402
+                     load_json, reviewer_name, sha256_file, utc_now, write_version_and_current)
 from taxo_ops import ChangesetError, apply_ops  # noqa: E402
 
 
@@ -195,12 +195,16 @@ def _recover_applied(tax_dir, rid, decisions_path):
     except (OSError, ValueError, TypeError):
         has_drafts = False
     drafts_file = drafts_file if has_drafts else None
+    # Clear the marker before logging `applied`: a crash in between must leave the review
+    # unapplied (so it recovers again), never applied with the marker still standing.
+    cleared = clear_provisional(tax_dir)
     D.append(decisions_path, {"review_id": rid, "action": "applied", "out": out if os.path.exists(out) else cur,
                               "version": version, "sha256": sha256_file(cur), "reviewer": "taxonomy_merge.py",
                               "surface": "script", "tags_file": tags_file, "governed_drafts_file": drafts_file,
                               "recovered": True})
     return {"status": "applied", "review_id": rid, "out": out, "version": version, "recovered": True,
-            "tags_file": tags_file, "governed_drafts_file": drafts_file, "taxonomy_changed": True}
+            "tags_file": tags_file, "governed_drafts_file": drafts_file, "taxonomy_changed": True,
+            "provisional_cleared": cleared}
 
 
 def apply_review(review_path, decisions_path=None):
@@ -244,19 +248,22 @@ def apply_review(review_path, decisions_path=None):
 
     if not applied and not is_draft:
         version = tax.get("version") or 0
+        cleared = clear_provisional(tax_dir)  # before `applied`: see _recover_applied
         D.append(decisions_path, {"review_id": rid, "action": "applied", "out": None, "version": version,
                                   "sha256": base["sha256"], "reviewer": "taxonomy_merge.py", "surface": "script"})
         return {"status": "no_changes", "review_id": rid, "version": version, "tags_file": None,
-                "governed_drafts_file": None, "taxonomy_changed": False}
+                "governed_drafts_file": None, "taxonomy_changed": False, "provisional_cleared": cleared}
 
     if not taxo_ops and not is_draft:
         # side-only review (tag / metric_govern only): no new taxonomy version.
         version = tax.get("version") or 0
+        cleared = clear_provisional(tax_dir)  # before `applied`: see _recover_applied
         D.append(decisions_path, {"review_id": rid, "action": "applied", "out": None, "version": version,
                                   "sha256": base["sha256"], "reviewer": "taxonomy_merge.py", "surface": "script",
                                   "tags_file": tags_file, "governed_drafts_file": governed_drafts_file})
         return {"status": "applied", "review_id": rid, "version": version, "tags_file": tags_file,
-                "governed_drafts_file": governed_drafts_file, "taxonomy_changed": False}
+                "governed_drafts_file": governed_drafts_file, "taxonomy_changed": False,
+                "provisional_cleared": cleared}
 
     version = (tax.get("version") or 0) + 1
     new["version"] = version
@@ -272,12 +279,13 @@ def apply_review(review_path, decisions_path=None):
         existing = os.path.join(tax_dir, f"taxonomy_v{version}.json")
         raise Refused(f"{existing} already exists but {cur} was not updated to match it; "
                       "the taxonomy directory is in an inconsistent state — investigate before retrying") from None
+    cleared = clear_provisional(tax_dir)  # before `applied`: see _recover_applied
     D.append(decisions_path, {"review_id": rid, "action": "applied", "out": out, "version": version, "sha256": sha,
                               "reviewer": "taxonomy_merge.py", "surface": "script",
                               "tags_file": tags_file, "governed_drafts_file": governed_drafts_file})
     return {"status": "applied", "review_id": rid, "out": out, "version": version, "ops": len(taxo_ops),
             "migrations": len(migs), "tags_file": tags_file, "governed_drafts_file": governed_drafts_file,
-            "taxonomy_changed": True}
+            "taxonomy_changed": True, "provisional_cleared": cleared}
 
 
 def legacy_apply(a, tax, items):
@@ -290,6 +298,11 @@ def legacy_apply(a, tax, items):
         return 2
     if not items:
         print("\nnothing to apply (all proposals were duplicates, invalid, or suppressed).")
+        # Only reached with --apply --without-review: the user explicitly chose to skip review, which
+        # is the human decision a provisional current.json waits for, so it stands as it is.
+        if clear_provisional(tax_dir):
+            print(f"removed {os.path.join(tax_dir, 'PROVISIONAL')} (review skipped, as requested; "
+                  f"{cur} stands unchanged)")
         return 0
 
     version = (tax.get("version") or 0) + 1
@@ -324,6 +337,9 @@ def legacy_apply(a, tax, items):
         except FileExistsError as e:
             print(f"REFUSED: {e}", file=sys.stderr)
             return 2
+        # The user explicitly authorised skipping review, so this version replaces a provisional draft.
+        if clear_provisional(tax_dir):
+            print(f"removed {os.path.join(tax_dir, 'PROVISIONAL')} (applied without review, as requested)")
         next_taxonomy = cur
     else:
         if os.path.exists(cur):

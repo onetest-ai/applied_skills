@@ -56,7 +56,7 @@ goal + corpus + optional seed taxonomy
   → map     (low-tier LLM, per doc)   candidate terms + evidence + provenance + confidence  (JSON/doc)
   → reduce  (deterministic + LLM)     consolidate.py clusters near-dupes → LLM adjudicates AMBIGUOUS merges only
   → judge   (low-tier LLM)            score coverage/coherence, flag low-confidence & unmapped
-  → emit    taxonomy_v0.{json,md}     the draft, reviewed in the app before anything reads it
+  → emit    taxonomy_v0.{json,md}     the draft; adopted provisionally, classified, then ratified in the first-build review
 ```
 
 ### 1. Parse — `parse_corpus.py` (deterministic, no LLM)
@@ -96,7 +96,7 @@ Score the draft for coverage (did we miss obvious goal-relevant categories?) and
 "$PY" "$CTE/emit_taxonomy.py" --consolidated taxonomy/work/consolidated.json --map-dir map \
   --out-json taxonomy/taxonomy_v0.json --out-md taxonomy/taxonomy_v0.md --goal "$(cat goal.txt)"
 ```
-The draft: intent hierarchy + entity/dimension candidates + metric inventory (each tagged computed/stated/both, with provenance), category descriptions (when the map agents drafted them), `review_flags` (near-duplicate and off-axis L1s), and a **demoted** list. Nothing reads it until the user ratifies it in the draft review (procedure A below).
+The draft: intent hierarchy + entity/dimension candidates + metric inventory (each tagged computed/stated/both, with provenance), category descriptions (when the map agents drafted them), `review_flags` (near-duplicate and off-axis L1s), and a **demoted** list. Nothing is deployed until the user ratifies it, after classification, in the first-build review (procedure A below).
 
 ## Companion scripts — populate the local knowledge SQLite
 Beyond taxonomy induction, this skill ships the scripts that wire the taxonomy into the one `knowledge.sqlite` store (shared with `knowledge-index` + `tabular-semantic-layer`):
@@ -126,7 +126,7 @@ What the user sees: **Inbox** (the proposals to decide), **Taxonomy** (the whole
 
 | situation | procedure |
 |---|---|
-| first build, right after emit | **A. Draft review** |
+| first build, after the draft has been classified | **A. First-build review** |
 | refresh, maintenance, or "check / clean up the taxonomy" (the default) | **B. Health review** |
 | only new-category proposals for untagged chunks | **C. Refine review** |
 | the user wants to see or change the taxonomy or the metric inventory | **D. Browse and edit** |
@@ -136,7 +136,37 @@ What the user sees: **Inbox** (the proposals to decide), **Taxonomy** (the whole
 
 `plan` prints one JSON line, `{review, review_id, mode, items, …}`. `<review>` below is its `review` path.
 
-### A. Draft review (first build)
+### A. First-build review
+Not a review of the bare draft tree — a review of the draft **after** real per-section classification, so every proposal in the Inbox cites how many sections are actually affected. Until this review is applied, `taxonomy/PROVISIONAL` exists and `onboard.py verify` fails; do not deploy. `<run>` is the work directory for this run, e.g. `health` (reused every run).
+
+1. **You index the corpus** (`knowledge-pipeline` step 3: `knowledge_index.py index --db "$DB" --corpus <project>/parsed --reset`).
+2. **You build the graph from the draft, then adopt it as provisional**, before any human sees it. The order matters: `adopt` refuses while the store's graph does not hold the draft's node ids, so on a fresh store `build_graph` runs first.
+   ```bash
+   "$PY" "$CTE/build_graph.py" --taxonomy taxonomy/taxonomy_v0.json --db "$DB"
+   "$PY" "$CTE/taxonomy_review.py" adopt --taxonomy taxonomy/taxonomy_v0.json --db "$DB" --provisional
+   ```
+   `adopt --provisional` copies the draft to `taxonomy/current.json` and writes the `taxonomy/PROVISIONAL` marker. Every later step reads `current.json`.
+3. **You classify** every chunk against the provisional taxonomy (`knowledge-pipeline` step 5: `classify_prep.py` → dispatch low-cost subagents → `classify_write.py`). Agents may answer `["__no_topic__"]` for a chunk with no topic at all (filler, boilerplate, off-goal); that verdict is stored in `chunk_verdicts` and is a valid, complete answer — not a missing one.
+4. **You compute signals and diagnose**, now that real counts exist:
+   ```bash
+   "$PY" "$CTE/taxonomy_signals.py" --taxonomy taxonomy/current.json --db "$DB" --out taxonomy/work/signals.json
+   "$PY" "$CTE/taxonomy_review.py" diagnose --taxonomy taxonomy/current.json --db "$DB" --out taxonomy/work/<run>
+   ```
+5. **You dispatch one fix subagent per task dir** (`describe`, `notags`, `structure`, `fit`, `untagged`, `metrics`), each reading that dir's `instructions.md` and batches — same contract as step 2 of **B. Health review** below.
+6. **You plan the review**: `"$PY" "$CTE/taxonomy_review.py" plan --mode health --taxonomy taxonomy/current.json --db "$DB" --work taxonomy/work/<run>`. It titles the review "First-build review".
+7. **You serve it** in the background: `"$PY" "$CTE/taxonomy_review.py" serve --review <review> --db "$DB"`. Tell the user the tab is open and end your turn.
+8. **The user decides**: keeps, merges, moves, restructures or edits each proposal in the Inbox, and submits.
+9. **When `serve` exits with `submitted`**, you apply it and rebuild the graph:
+   ```bash
+   "$PY" "$CTE/taxonomy_merge.py" --review <review> --apply    # taxonomy_v1.json + current.json; PROVISIONAL removed
+   "$PY" "$CTE/build_graph.py" --taxonomy taxonomy/current.json --db "$DB"   # tags migrate
+   ```
+   A review that approves no taxonomy change writes no `taxonomy_v1.json` (`taxonomy_changed: false`), but apply still removes `PROVISIONAL`: the user has reviewed the draft.
+10. **You reclassify, if needed**: if `taxonomy/work/reclassify.json` exists, run **Reclassifying after a taxonomy change** below before step 11. **You write the approved tags, if any**: `classify_write.py --db "$DB" --results <tags_file's directory> --merge`.
+11. Continue the build (`knowledge-pipeline` steps 5b onward: `related`, marts, vault).
+
+### A′. Draft review without an index (fallback)
+Use only when the corpus is not indexed yet, so no real classification counts are available — a review of the bare draft tree.
 1. **You plan it** after emit: `"$PY" "$CTE/taxonomy_review.py" plan --mode draft --taxonomy taxonomy/taxonomy_v0.json` (evidence from `taxonomy/work/consolidated.json`).
 2. **You serve it** in the background as above: `"$PY" "$CTE/taxonomy_review.py" serve --review <review>`. Tell the user the tab is open and end your turn.
 3. **The user decides**: keeps or changes each draft category in the Inbox, fixes the tree in the Taxonomy view, and submits.
@@ -146,12 +176,14 @@ What the user sees: **Inbox** (the proposals to decide), **Taxonomy** (the whole
 ### B. Health review (the default way to review)
 One review for every taxonomy and metric problem. A deterministic `diagnose` finds the problems; low-cost agents precompute a specific fix for each one that needs judgment; the user decides in a grouped inbox and can send any fix back with **Redo with a note…**; you apply the approved fixes. `<run>` is the work directory for this run, e.g. `health` (reused every run) or `health-20260921-1400` (to keep each run's files).
 
-1. **You run diagnose.**
+1. **You run diagnose.** If `taxonomy/current.json` changed since `taxonomy/work/signals.json` was written (any applied review, adopt or rollback), or the store was reclassified, re-run `taxonomy_signals.py` first (it needs the venv); otherwise skip it:
    ```bash
+   "$PY" "$CTE/taxonomy_signals.py" --taxonomy taxonomy/current.json --db "$DB" --out taxonomy/work/signals.json
    "$PY" "$CTE/taxonomy_review.py" diagnose --taxonomy taxonomy/current.json --db "$DB" --out taxonomy/work/<run>
    ```
-   It prints one JSON line: `problems` (a count per kind) and `tasks` (`[{kind, dir, batches}]`, one per kind that needs agents: `describe`, `notags`, `structure`, `metrics`, `untagged`). Reusing `--out` is safe: `diagnose` first removes an earlier run's `batch_*.json` and `result_*.json` from its task dirs (it names them on stderr and in `removed_stale`), so `plan` never reads old fixes. `diagnose` also reads open redo requests from `taxonomy/work/requests.jsonl` and puts their notes on the matching entries; a request already answered by `respond`, or on an item accepted in a review that was since applied, is not reopened.
-2. **You dispatch low-cost subagents (e.g. Haiku), one per `batch_k.json`** in each task `dir`. Each subagent reads that dir's `instructions.md` and its `batch_k.json` and writes `result_k.json` in the same dir. The `untagged` dir also has `vocab.md` for the agent to read, and the `metrics` dir may have `families.json`. The result formats are defined in each `instructions.md`; do not restate them to the agents, point them at the file. Check that each batch has its result file before going on. A missing or malformed result is not fatal: that problem still reaches the inbox with a safe default, marked `fallback`.
+   `diagnose` uses `signals.json` only when its `taxonomy_sha256` matches `current.json`. A stale or unstamped file is ignored with a warning (on stderr and in the output's `warnings`), and near-duplicates fall back to the string detector (`near_duplicate_source: "string"`) with no `misplaced` problems; when you see that warning, re-run `taxonomy_signals.py` and `diagnose`.
+   It prints one JSON line: `problems` (a count per kind) and `tasks` (`[{kind, dir, batches}]`, one per kind that needs agents: `describe`, `notags`, `structure`, `fit`, `metrics`, `untagged`). `fit` covers three kinds together — `sparse` (a category with only 1–2 tagged sections), `misplaced` (an L2 closer to another L1) and `overloaded` (an L1 far above the median size). Reusing `--out` is safe: `diagnose` first removes an earlier run's `batch_*.json` and `result_*.json` from its task dirs (it names them on stderr and in `removed_stale`), so `plan` never reads old fixes. `diagnose` also reads open redo requests from `taxonomy/work/requests.jsonl` and puts their notes on the matching entries; a request already answered by `respond`, or on an item accepted in a review that was since applied, is not reopened.
+2. **You dispatch low-cost subagents (e.g. Haiku), one per `batch_k.json`** in each task `dir`. Each subagent reads that dir's `instructions.md` and its `batch_k.json` and writes `result_k.json` in the same dir. The `untagged` dir also has `vocab.md` for the agent to read, and the `metrics` dir may have `families.json`. The `fit` dir's `result_k.json` is `{"fixes": [...]}`, one entry per subject: `{"kind": "sparse", "subject": "<label>", "fix": "merge"|"keep", "into": "<sibling label>", "reason": "..."}`, `{"kind": "misplaced", "subject": "<label>", "fix": "move"|"keep", "new_parent": "<L1 label>", "reason": "..."}`, or `{"kind": "overloaded", "subject": "<label>", "fix": "restructure"|"keep", "add": [{"name": "...", "description": "..."}], "moves": [{"node": "...", "new_parent": "..."}], "reason": "..."}` — exact shapes in `taxonomy/work/<run>/fit/instructions.md` (`FIT_INSTRUCTIONS`). The result formats are defined in each `instructions.md`; do not restate them to the agents, point them at the file. Check that each batch has its result file before going on. A missing or malformed result is not fatal: that problem still reaches the inbox with a safe default, marked `fallback`.
 3. **You plan the review.**
    ```bash
    "$PY" "$CTE/taxonomy_review.py" plan --mode health --taxonomy taxonomy/current.json --work taxonomy/work/<run> --db "$DB"
@@ -254,6 +286,8 @@ Only when the user has asked in this conversation to skip the review. It applies
 ```
 Then `build_graph` and the reclassification as in **After apply**. `--apply` without `--review` or `--without-review` is refused.
 
+The `taxonomy/PROVISIONAL` marker: the user's explicit instruction to skip review stands in for the review, so `--apply --without-review` deletes it either way — after writing the new version when there is something to add, or with `current.json` left unchanged when nothing is left to apply (every proposal a duplicate, invalid or suppressed). The script prints `removed …/PROVISIONAL` in both cases. The dry run (no `--apply`) never touches it.
+
 ### F. Upgrading an older Brain
 For a Brain built before `current.json` existed. `browse`, `drift`, `describe` and `health` reviews are refused until this is done.
 1. **You tell the user** what you found and which version the store was built from. Adopt it only with their confirmation.
@@ -273,4 +307,4 @@ For a Brain built before `current.json` existed. `browse`, `drift`, `describe` a
 - **Keep provenance + a demoted list** — the goal lens can over-filter; make demotion visible and reversible, never a silent delete.
 - **Don't parse giant numeric workbooks here.** Restrict `--formats` to narrative/summary types.
 - **Seed-guided beats schema-free** — anchor on any existing taxonomy (e.g. a "Taxonomy Compendium") and the existing knowledge graph; extend rather than invent.
-- Treat `taxonomy_v0` as a draft: ratify it in the review app (`plan --mode draft`) before `build_graph`. Every later step reads `taxonomy/current.json`, never a versioned file.
+- Build and classify against the draft only through `adopt --provisional`; the first human review happens after classification, and nothing is deployed while `taxonomy/PROVISIONAL` exists. Every later step reads `taxonomy/current.json`, never a versioned file.

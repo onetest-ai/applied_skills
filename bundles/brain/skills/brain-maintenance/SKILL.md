@@ -46,7 +46,7 @@ brain-maintenance.toml             # required maintenance planner profile
 brain.deploy.toml                  # optional external-adapter profile; no secrets
 parsed/manifest.json               # {source, md} mapping for final parsed documents
 schema/knowledge.sqlite OR configured DB path
-taxonomy/current.json              # approved taxonomy (copy of the latest ratified version)
+taxonomy/current.json              # copy of the latest ratified version, or of the draft while taxonomy/PROVISIONAL exists
 ./brain                            # launcher
 ```
 
@@ -186,6 +186,8 @@ Commands use `$PY`, `$SKILLS` and `$DB` as set under **Required project contract
 
 **Preflight — Brains built before `current.json`.** If `taxonomy/current.json` is missing, or `build_graph` below stops because the store has tags and no `meta.taxonomy_version`, tell the user and follow `corpus-taxonomy-extraction` → "F. Upgrading an older Brain" (`taxonomy_review.py adopt`, with `--meta-only` when `current.json` already exists) with their confirmation. Then set `[paths].taxonomy = "taxonomy/current.json"` in `brain-maintenance.toml`. Pass `--force` only if the user explicitly says so.
 
+**Preflight — first-build review not yet applied.** If `taxonomy/PROVISIONAL` exists, you stop: this update or deploy cannot proceed while the taxonomy is only provisionally adopted. Tell the user the first-build review has not been applied yet, and offer to run it with `corpus-taxonomy-extraction` → "A. First-build review". Do not deploy while `taxonomy/PROVISIONAL` exists.
+
 If `sync_plan.json.reclassify_chunk_ids` is non-empty:
 
 1. rebuild the taxonomy graph first, so categories added since the last build are in the graph (`classify_write` drops labels that are not graph nodes);
@@ -208,10 +210,10 @@ If `taxonomy/work/reclassify.json` exists after `build_graph`, reclassify those 
 
 Do not silently change taxonomy. Agents only add; renames, merges, moves, splits and removals are the user's decisions, made in the taxonomy review app, which migrates the affected tags.
 
-**Offer the health review when the taxonomy needs it.** After the reclassification above, check coverage:
+**Offer the health review when the taxonomy needs it.** After the reclassification above, check coverage. A chunk the classifier verdicted `__no_topic__` (filler, boilerplate, off-goal; stored in `chunk_verdicts`) is not untagged, so the query excludes it and reports it separately; it guards for older stores that predate `chunk_verdicts`:
 
 ```bash
-"$PY" -c 'import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);t=c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0];u=c.execute("SELECT COUNT(*) FROM chunks WHERE id NOT IN (SELECT chunk_id FROM chunk_topics)").fetchone()[0];print(u,"of",t,"chunks untagged")' "$DB"
+"$PY" -c 'import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);t=c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0];has_v=bool(c.execute("SELECT 1 FROM sqlite_master WHERE type=\"table\" AND name=\"chunk_verdicts\"").fetchone());nt=c.execute("SELECT COUNT(*) FROM chunk_verdicts WHERE verdict=\"no_topic\" AND chunk_id IN (SELECT id FROM chunks)").fetchone()[0] if has_v else 0;q="SELECT COUNT(*) FROM chunks WHERE id NOT IN (SELECT chunk_id FROM chunk_topics)"+(" AND id NOT IN (SELECT chunk_id FROM chunk_verdicts WHERE verdict=\"no_topic\")" if has_v else "");u=c.execute(q).fetchone()[0];print(u,"of",t,"chunks untagged (excludes",nt,"no-topic)")' "$DB"
 "$PY" -c 'import json;print(len(json.load(open("taxonomy/current.json")).get("descriptions") or {}),"categories described")'
 ```
 

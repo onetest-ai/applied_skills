@@ -28,7 +28,8 @@ import metrics_gap as MG  # noqa: E402
 import taxo_ops  # noqa: E402
 import taxonomy_review as R  # noqa: E402
 from difflib import SequenceMatcher  # noqa: E402
-from taxo_io import CURRENT, atomic_write_bytes, fingerprint, intent, load_json, nid, norm, one_line  # noqa: E402
+from taxo_io import (CURRENT, atomic_write_bytes, fingerprint, intent, load_json, nid, norm, one_line,  # noqa: E402
+                     sha256_file)
 from taxonomy_merge import plan_additions  # noqa: E402
 
 SIMILAR_METRIC_THRESHOLD = 0.85
@@ -266,7 +267,41 @@ def _find_families(tax_dir):
     return hits[0] if len(hits) == 1 else None
 
 
-def detect(taxonomy_path, db, metrics_path=None):
+def _median(xs):
+    xs = sorted(xs)
+    if not xs:
+        return 0
+    m = len(xs) // 2
+    return xs[m] if len(xs) % 2 else (xs[m - 1] + xs[m]) / 2
+
+
+def _load_signals(path, taxonomy_path):
+    """(signals or None, warning or None). signals.json is used only when its
+    `taxonomy_sha256` matches the bytes of the taxonomy being diagnosed: signals computed from
+    an older taxonomy (or with no stamp) would name clusters and misplacements of nodes that
+    have since moved, so they are ignored and the string detector runs instead."""
+    if not path or not os.path.exists(path):
+        return None, None
+    try:
+        data = load_json(path)
+    except (OSError, ValueError) as e:
+        print(f"health: ignoring unreadable {path}: {e}", file=sys.stderr)
+        return None, None
+    if not (isinstance(data, dict) and data.get("schema") == 1):
+        return None, None
+    want = sha256_file(taxonomy_path)
+    have = data.get("taxonomy_sha256")
+    if have != want:
+        why = ("has no taxonomy_sha256" if not have
+               else f"was computed from a different taxonomy than {os.path.basename(taxonomy_path)}")
+        msg = (f"{path} {why}; ignoring it and using the string "
+               f"near-duplicate detector — re-run taxonomy_signals.py on this taxonomy before diagnose")
+        print(f"health: {msg}", file=sys.stderr)
+        return None, msg
+    return data, None
+
+
+def detect(taxonomy_path, db, metrics_path=None, signals_path=None, sparse_max=2, overload_factor=2.0):
     """Return (problems dict, tax, tax_dir, ro connection-or-None, note_map). Caller closes the connection."""
     tax = load_json(taxonomy_path)
     tax_dir = os.path.dirname(os.path.abspath(taxonomy_path))
@@ -278,7 +313,8 @@ def detect(taxonomy_path, db, metrics_path=None):
 
     problems = {"missing_description": [], "no_tags": [], "untagged_sections": [],
                 "near_duplicate": [], "off_axis": [], "similar_metrics": [],
-                "metric_not_governed": [], "open_requests": []}
+                "metric_not_governed": [], "open_requests": [],
+                "sparse": [], "misplaced": [], "overloaded": [], "near_duplicate_source": "string"}
 
     for label, level, parent in rows:
         if not (descs.get(label) or "").strip():
@@ -290,18 +326,27 @@ def detect(taxonomy_path, db, metrics_path=None):
             problems["no_tags"].append({"node": label, "level": level, "parent": parent,
                                         "candidates": candidates})
 
-    if c and GM.has_table(c, "chunks"):
-        total = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-        tagged = (c.execute("SELECT COUNT(DISTINCT chunk_id) FROM chunk_topics").fetchone()[0]
-                  if GM.has_table(c, "chunk_topics") else 0)
-        problems["untagged_sections"].append({"count": total - tagged, "total": total})
+    cov = GM.chunk_coverage(c)
+    if cov is not None:
+        problems["untagged_sections"].append({"count": cov["untagged"], "total": cov["total"],
+                                              "no_topic": cov["no_topic"]})
 
     l1s = list(it["tree"])
-    for group in flags.near_duplicate_labels(l1s):
-        problems["near_duplicate"].append(_cluster_problem(c, counts, group, "L1", None))
-    for l1, kids in it["tree"].items():
-        for group in flags.near_duplicate_labels(kids):
-            problems["near_duplicate"].append(_cluster_problem(c, counts, group, "L2", l1))
+    signals, problems["signals_warning"] = _load_signals(signals_path, taxonomy_path)
+    if signals is not None:
+        problems["near_duplicate_source"] = "label-embedding"
+        present = {label for label, _, _ in rows}
+        for cl in signals.get("label_clusters") or []:
+            members = [m for m in cl.get("members") or [] if m in present]
+            if len(members) >= 2:
+                problems["near_duplicate"].append(
+                    _cluster_problem(c, counts, members, cl.get("level") or "L2", cl.get("parent")))
+    else:
+        for group in flags.near_duplicate_labels(l1s):
+            problems["near_duplicate"].append(_cluster_problem(c, counts, group, "L1", None))
+        for l1, kids in it["tree"].items():
+            for group in flags.near_duplicate_labels(kids):
+                problems["near_duplicate"].append(_cluster_problem(c, counts, group, "L2", l1))
 
     for l1 in l1s:
         reason = flags.off_axis_l1(l1)
@@ -322,6 +367,33 @@ def detect(taxonomy_path, db, metrics_path=None):
 
     open_requests, note_map = _open_requests(tax_dir)
     problems["open_requests"] = open_requests
+
+    for l1, kids in it["tree"].items():
+        for k in kids:
+            n = counts.get(nid(k), 0)
+            if 1 <= n <= sparse_max:
+                problems["sparse"].append({
+                    "node": k, "level": "L2", "parent": l1, "tags": n,
+                    "siblings": [{"node": s, "tags": counts.get(nid(s), 0)} for s in kids if s != k]})
+
+    if signals is not None:
+        for m in signals.get("misplaced") or []:
+            node, par = m.get("node"), m.get("parent")
+            if node in it["tree"].get(par, []) and m.get("better_parent") in it["tree"]:
+                problems["misplaced"].append({"node": node, "parent": par, "better_parent": m["better_parent"],
+                                              "margin": m.get("margin"), "tags": counts.get(nid(node), 0)})
+
+    l1_tags = {l1: counts.get(nid(l1), 0) for l1 in it["tree"]}
+    l1_kids = {l1: len(k) for l1, k in it["tree"].items()}
+    med_tags = _median([v for v in l1_tags.values() if v])
+    med_kids = _median([v for v in l1_kids.values() if v])
+    for l1 in it["tree"]:
+        if (med_tags and l1_tags[l1] > overload_factor * med_tags) or \
+                (med_kids and l1_kids[l1] > overload_factor * med_kids):
+            problems["overloaded"].append({
+                "node": l1, "tags": l1_tags[l1], "l2_count": l1_kids[l1],
+                "median_tags": med_tags, "median_l2": med_kids,
+                "children": [{"node": k, "tags": counts.get(nid(k), 0)} for k in it["tree"][l1]]})
 
     return problems, tax, tax_dir, c, note_map
 
@@ -451,6 +523,40 @@ Rules:
   the ungoverned metric's name, for `metric_not_governed`).
 - If an entry has a `note`, the reviewer rejected the earlier proposal for this reason;
   propose something that addresses it.
+"""
+
+
+FIT_INSTRUCTIONS = """# Fitting categories to the data
+
+Each `batch_k.json` next to this file is a list of entries of three kinds. For each
+`batch_k.json` you process, write a `result_k.json` with the same `k`, shaped:
+
+```json
+{"fixes": [
+  {"kind": "sparse", "subject": "Payment Processing", "fix": "merge", "into": "Payment Transactions",
+   "reason": "2 sections, both about the same thing as the sibling's 14"},
+  {"kind": "misplaced", "subject": "Payment & Billing Self-Service", "fix": "move",
+   "new_parent": "Billing & Payments", "reason": "its sections are billing questions, not self-service design"},
+  {"kind": "overloaded", "subject": "Platform & Salesforce Implementation", "fix": "restructure",
+   "add": [{"name": "Data & Integration", "description": "one sentence"}],
+   "moves": [{"node": "CTI & Telephony Integration", "new_parent": "Agent & Field Enablement"}],
+   "reason": "72 L2s mixing data integration, telephony and CRM"}
+]}
+```
+
+- `sparse` (a category with only 1-2 tagged sections; you get `siblings` with their tag counts and
+  `samples`): `"merge"` into ONE sibling (`into`, exact label) when the sections belong there, or
+  `"keep"` when it is a real, distinct topic the corpus just mentions rarely. Explain in `reason`.
+- `misplaced` (an L2 whose sections are closer to another L1; you get `parent`, `better_parent`,
+  `margin`, `samples`): `"move"` with `new_parent` (an EXISTING L1, usually `better_parent`) or `"keep"`.
+- `overloaded` (an L1 far above the median size; you get `children` with tag counts): `"restructure"`
+  with `add` (new L1s, each with a one-sentence `description`) and/or `moves` of its L2s to EXISTING
+  L1s only, or `"keep"`. Moves into an L1 you are adding are not allowed: the reviewer decides the new
+  L1 first, then moves its L2s in the taxonomy view.
+
+Rules: prefer `"keep"` when unsure; be specific in `reason` (cite the samples and counts); one fix per
+entry (`subject` is the entry's `node`). If an entry has a `note`, the reviewer rejected the earlier
+proposal for this reason; propose something that addresses it.
 """
 
 
@@ -591,7 +697,21 @@ def _prepare_untagged(tax_dir, db, taxonomy_path, problems, out_dir, batches, wa
     return {"kind": "untagged", "dir": task_dir, "batches": n}
 
 
-TASK_DIRS = ("describe", "notags", "structure", "metrics", "untagged")
+def _prepare_fit(tax, problems, out_dir, c, notes, batches):
+    out = []
+    for kind in ("sparse", "misplaced", "overloaded"):
+        for p in problems.get(kind) or []:
+            entry = dict(p, kind=kind, samples=R._samples(c, nid(p["node"])))
+            if notes.get(p["node"]):
+                entry["note"] = notes[p["node"]]
+            out.append(entry)
+    if not out:
+        return None
+    task_dir = os.path.join(out_dir, "fit")
+    return {"kind": "fit", "dir": task_dir, "batches": _write_batches(task_dir, out, batches, FIT_INSTRUCTIONS)}
+
+
+TASK_DIRS = ("describe", "notags", "structure", "metrics", "untagged", "fit")
 
 
 def _clear_stale(out_dir):
@@ -611,22 +731,25 @@ def _clear_stale(out_dir):
     return removed
 
 
-def diagnose(taxonomy_path, db, out_dir, metrics_path=None, batches=4):
+def diagnose(taxonomy_path, db, out_dir, metrics_path=None, batches=4, signals_path=None,
+            sparse_max=2, overload_factor=2.0):
     if os.path.basename(taxonomy_path) != CURRENT:
         raise ValueError(f"diagnose is planned on taxonomy/{CURRENT}, not {taxonomy_path}")
-    problems, tax, tax_dir, c, notes = detect(taxonomy_path, db, metrics_path)
+    problems, tax, tax_dir, c, notes = detect(taxonomy_path, db, metrics_path, signals_path,
+                                              sparse_max, overload_factor)
     os.makedirs(out_dir, exist_ok=True)
     removed = _clear_stale(out_dir)
     atomic_write_bytes(os.path.join(out_dir, "problems.json"),
                        (json.dumps(problems, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
 
-    warnings = []
+    warnings = [problems["signals_warning"]] if problems.get("signals_warning") else []
     tasks = []
     for builder in (
         lambda: _prepare_describe(tax, taxonomy_path, db, problems, out_dir, notes, batches),
         lambda: _prepare_notags(tax, tax_dir, problems, out_dir, notes, batches),
         lambda: _prepare_structure(tax, tax_dir, problems, out_dir, c, notes, batches),
         lambda: _prepare_metrics(tax, tax_dir, problems, out_dir, notes, batches),
+        lambda: _prepare_fit(tax, problems, out_dir, c, notes, batches),
         lambda: _prepare_untagged(tax_dir, db, taxonomy_path, problems, out_dir, batches, warnings),
     ):
         t = builder()
@@ -636,7 +759,8 @@ def diagnose(taxonomy_path, db, out_dir, metrics_path=None, batches=4):
     if c:
         c.close()
 
-    result = {"problems": {k: len(v) for k, v in problems.items()}, "tasks": tasks, "out": out_dir}
+    result = {"problems": {k: len(v) for k, v in problems.items() if isinstance(v, list)},
+              "near_duplicate_source": problems["near_duplicate_source"], "tasks": tasks, "out": out_dir}
     if removed:
         result["removed_stale"] = removed
     if warnings:
@@ -672,7 +796,7 @@ def _sanitize_entry(e):
     true in Python). Returns False when the entry is unusable (a non-string on a string-only
     field, or a non-list on a list-only field), so the caller can skip + count it rather than
     silently pass through, say, `chunk_ids: 5` or `disposition: 3`."""
-    for k in ("node", "subject", "into", "description", "disposition", "reason", "fix"):
+    for k in ("node", "subject", "into", "new_parent", "description", "disposition", "reason", "fix"):
         v = e.get(k)
         if v is not None and not isinstance(v, str):
             return False
@@ -1048,6 +1172,100 @@ def _structure_items(tax, work_dir, problems, skipped_files, rejections):
     return items
 
 
+def _most_tagged_sibling(siblings):
+    sibs = [s for s in siblings or [] if isinstance(s, dict) and s.get("node")]
+    return max(sibs, key=lambda s: (s.get("tags") or 0, -sibs.index(s)))["node"] if sibs else None
+
+
+def _fit_items(tax, work_dir, problems, skipped_files, rejections):
+    """Review items for the `fit` task's three problem kinds — sparse (too few tagged
+    sections), misplaced (fits another L1 better) and overloaded (an L1 with too many
+    tagged sections). Same house pattern as `_structure_items`/`_metrics_items`: an
+    agent's `fit/result_k.json` fix is used when it targets something real, else a safe
+    `keep` fallback carries the problem into the inbox — nothing detected is dropped."""
+    fixes = {}
+    for e in _load_entries(os.path.join(work_dir, "fit"), "fixes", skipped_files):
+        subj = (e.get("subject") or "").strip()
+        if subj and e.get("kind") in ("sparse", "misplaced", "overloaded"):
+            fixes.setdefault((e["kind"], subj), e)
+    it = intent(tax)
+    items = []
+
+    sparse = problems.get("sparse") or []
+    title = f"{len(sparse)} categories have only 1–2 tagged sections"
+    for p in sparse:
+        node, fix = p["node"], fixes.get(("sparse", p["node"]))
+        keep_op = {"type": "keep", "node": node}
+        best = _most_tagged_sibling(p.get("siblings"))
+        best_merge = {"type": "merge", "from": node, "into": best} if best else None
+        sib_names = {s["node"] for s in p.get("siblings") or [] if isinstance(s, dict)}
+        into = (fix.get("into") or "").strip() if fix else ""
+        fallback = False
+        if fix and fix.get("fix") == "merge" and into in sib_names:
+            op = {"type": "merge", "from": node, "into": into}
+            alts = [keep_op] + ([best_merge] if best_merge and best != into else [])
+            reason = fix.get("reason")
+        elif fix and fix.get("fix") == "keep":
+            op, alts, reason = keep_op, [a for a in (best_merge,) if a], fix.get("reason")
+        else:
+            op, alts, fallback = keep_op, [a for a in (best_merge,) if a], True
+            reason = (_unusable_reason(f"the merge target {into!r} is not a sibling" if into else "the merge names no target",
+                                       fix.get("reason")) if fix and fix.get("fix") == "merge" else "no fix proposed")
+        items.append(_make_item(tax, "sparse", "sparse", op, alts, [],
+                                {"tags": p.get("tags"), "into_tags": next((s.get("tags") for s in p.get("siblings") or []
+                                                                           if s.get("node") == op.get("into")), None)},
+                                reason, title, rejections, fallback=fallback))
+
+    mis = problems.get("misplaced") or []
+    title = f"{len(mis)} categories fit another L1 better"
+    for p in mis:
+        node, fix = p["node"], fixes.get(("misplaced", p["node"]))
+        keep_op = {"type": "keep", "node": node}
+        default_move = {"type": "move", "node": node, "new_parent": p["better_parent"]}
+        newp = (fix.get("new_parent") or "").strip() if fix else ""
+        fallback = False
+        if fix and fix.get("fix") == "move" and newp:
+            op, alts, reason = {"type": "move", "node": node, "new_parent": newp}, [keep_op], fix.get("reason")
+        elif fix and fix.get("fix") == "keep":
+            op, alts, reason = keep_op, [default_move], fix.get("reason")
+        else:
+            op, alts, reason, fallback = keep_op, [default_move], "no fix proposed", True
+        items.append(_make_item(tax, "misplaced", "misplaced", op, alts, [],
+                                {"tags": p.get("tags"), "margin": p.get("margin"), "better_parent": p["better_parent"]},
+                                reason, title, rejections, fallback=fallback))
+
+    for p in problems.get("overloaded") or []:
+        node, fix = p["node"], fixes.get(("overloaded", p["node"]))
+        group = f"overloaded:{node}"
+        title = f"{node} is overloaded ({p.get('tags')} sections, {p.get('l2_count')} L2s)"
+        support = {"tags": p.get("tags"), "l2_count": p.get("l2_count"),
+                   "median_tags": p.get("median_tags"), "median_l2": p.get("median_l2")}
+        rows = []
+        if fix and fix.get("fix") == "restructure":
+            for add in fix.get("add") or []:
+                if isinstance(add, dict) and isinstance(add.get("name"), str) and add["name"].strip():
+                    op = {"type": "add", "level": "L1", "name": add["name"].strip(), "parent": None}
+                    if isinstance(add.get("description"), str) and add["description"].strip():
+                        op["description"] = add["description"].strip()
+                    rows.append(_make_item(tax, "overloaded", group, op, [], [], support, fix.get("reason"),
+                                           title, rejections))
+            for mv in fix.get("moves") or []:
+                if not (isinstance(mv, dict) and isinstance(mv.get("node"), str) and isinstance(mv.get("new_parent"), str)):
+                    continue
+                if mv["node"] not in it["tree"].get(node, []):
+                    continue
+                op = {"type": "move", "node": mv["node"], "new_parent": mv["new_parent"]}
+                rows.append(_make_item(tax, "overloaded", group, op, [{"type": "keep", "node": mv["node"]}], [],
+                                       support, fix.get("reason"), title, rejections))
+        if not rows:
+            answered_keep = bool(fix and fix.get("fix") == "keep")
+            rows.append(_make_item(tax, "overloaded", group, {"type": "keep", "node": node}, [], [], support,
+                                   (fix or {}).get("reason") if answered_keep else "no fix proposed", title, rejections,
+                                   fallback=not answered_keep))
+        items += rows
+    return items
+
+
 def _metrics_items(tax, work_dir, problems, skipped_files, rejections):
     entries = _load_entries(os.path.join(work_dir, "metrics"), "fixes", skipped_files)
     sm_fix, mg_fix = {}, {}
@@ -1242,7 +1460,7 @@ def _untagged_items(tax, work_dir, problems, skipped_files, rejections):
 
 KIND_TASK = {"missing_description": "describe", "no_tags": "notags", "near_duplicate": "structure",
              "off_axis": "structure", "similar_metrics": "metrics", "metric_not_governed": "metrics",
-             "untagged_sections": "untagged"}
+             "untagged_sections": "untagged", "sparse": "fit", "misplaced": "fit", "overloaded": "fit"}
 _TASK_SIDE_FILES = ("instructions.md", "vocab.md", "families.json")
 
 
@@ -1329,5 +1547,6 @@ def health_items(tax, work_dir, counts, rejections, skipped_files):
     items += _no_tags_items(tax, work_dir, problems, skipped_files, rejections)
     items += _untagged_items(tax, work_dir, problems, skipped_files, rejections)
     items += _structure_items(tax, work_dir, problems, skipped_files, rejections)
+    items += _fit_items(tax, work_dir, problems, skipped_files, rejections)
     items += _metrics_items(tax, work_dir, problems, skipped_files, rejections)
     return items
