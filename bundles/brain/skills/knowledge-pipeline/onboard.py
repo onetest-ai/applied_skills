@@ -23,6 +23,11 @@ SKILLS = Path(__file__).resolve().parent.parent
 CTE = SKILLS / "corpus-taxonomy-extraction"
 KI  = SKILLS / "knowledge-index"
 TSL = SKILLS / "tabular-semantic-layer"
+VP  = SKILLS / "visual-parse"
+
+# make the skill dir importable so `import brain_doctor` (single source of truth
+# for system tool checks) resolves regardless of the caller's cwd.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 def brain_py():
@@ -42,7 +47,8 @@ def brain_py():
             return str(c)
     return sys.executable
 
-NARRATIVE_EXT = {".pdf", ".pptx", ".ppt", ".docx", ".doc", ".md", ".markdown", ".txt", ".vtt", ".srt", ".html", ".htm"}
+NARRATIVE_EXT = {".pdf", ".pptx", ".ppt", ".docx", ".doc", ".md", ".markdown", ".txt", ".vtt", ".srt", ".html", ".htm",
+                 ".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 REPORTING_EXT = {".xlsx", ".xlsm", ".xls", ".csv"}
 
 # module -> pip name (for the preflight message). All torch-free (docling retired).
@@ -83,11 +89,6 @@ def cmd_scan(a):
     print(f"  present: {', '.join(ok) or 'none'}")
     print(f"  MISSING: {', '.join(missing) or 'none'}"
           + (f"   →  pip install {' '.join(missing)}" if missing else ""))
-    # LibreOffice `soffice` is a SYSTEM dep (not pip): .pptx/.docx rendering
-    # silently fails without it. Check PATH and warn — PDFs need only pymupdf.
-    import shutil
-    soffice = shutil.which("soffice") or shutil.which("libreoffice")
-    print(f"  soffice (LibreOffice, for .pptx/.docx): {soffice or 'MISSING'}")
     if docs is not None:
         nar, rep, oth = _scan_docs(docs)
         print(f"\n== corpus scan: {docs} ==")
@@ -99,10 +100,10 @@ def cmd_scan(a):
             print("  ⚠ no narrative docs found — the RAG/taxonomy lanes will be empty.")
         if not rep:
             print("  ⚠ no reporting spreadsheets — the numeric (marts) lane will be empty.")
-        office = [p for p in nar if p.suffix.lower() in {".pptx", ".ppt", ".docx", ".doc"}]
-        if office and not soffice:
-            print(f"  ⚠ {len(office)} Office doc(s) (.pptx/.docx) but LibreOffice `soffice` "
-                  "is MISSING — these will fail to render. Install LibreOffice first.")
+    import brain_doctor  # same skill dir; single source of truth for system tools
+    scan = brain_doctor.scan_corpus(corpus=str(docs) if docs is not None else None)
+    print()
+    print(brain_doctor.format_report(brain_doctor.run_checks(scan)))
     return 0
 
 
@@ -151,7 +152,7 @@ def cmd_scaffold(a):
                  'include = ["**/*"]']
         if docs:
             lines += ["", "[sources.roots.docs]", f"path = {json.dumps(docs_path)}", f"mode = {json.dumps(a.docs_mode)}",
-                      'include = ["**/*.pdf", "**/*.ppt", "**/*.pptx", "**/*.doc", "**/*.docx", "**/*.vtt", "**/*.srt", "**/*.json", "**/*.md", "**/*.markdown", "**/*.txt", "**/*.html", "**/*.htm"]']
+                      'include = ["**/*.pdf", "**/*.ppt", "**/*.pptx", "**/*.doc", "**/*.docx", "**/*.vtt", "**/*.srt", "**/*.json", "**/*.md", "**/*.markdown", "**/*.txt", "**/*.html", "**/*.htm", "**/*.mp4", "**/*.mov", "**/*.mkv", "**/*.webm", "**/*.m4v"]']
         if reporting:
             lines += ["", "[sources.roots.reporting]", f"path = {json.dumps(reporting_path)}", f"mode = {json.dumps(a.reporting_mode)}",
                       'include = ["**/*.xlsx", "**/*.xlsm", "**/*.xls"]']
@@ -299,6 +300,9 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     DB="{db}"
     PY="{py}"          # the brain venv interpreter (BRAIN_PY)
 
+    # 0 · preflight — every system tool THIS corpus needs; stop if it exits 1
+    "$PY" "{Path(__file__).resolve().parent/'brain_doctor.py'}" --config "{proj/'brain.toml'}"
+
     # 1a · parse transcripts → Markdown (VTT/SRT corpora only — skip if no transcripts)
     #      --merge-cues joins same-speaker cues into speaker turns; omitting it produces
     #      ~25k single-line chunks that agents classify as [] and retrieval quality collapses.
@@ -307,6 +311,13 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     # 1b · parse narrative docs → Markdown (pymupdf text; visual pages via visual-parse)
     #      md/markdown/txt pass through untouched — already-Markdown corpora need no conversion.
     "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats pptx,docx,pdf,md,markdown,txt
+
+    # 1m · meeting recordings (.mp4/.mov/…) — the visual-parse "Meeting recordings" lane:
+    #      probe → (transcribe, only when no same-stem .vtt/.srt) → frames → vision_prep → 🤖 VLM → assemble
+    #      "$PY" "{VP/'video_capture.py'}" probe --video <rel> --rel-to "{docs_s}" --work "{proj/'video'}"
+    #      (full sequence: visual-parse/SKILL.md → Meeting recordings)
+    #      When videos are present, add --consume-video-sidecars to step 1a so a recording's
+    #      transcript is not also indexed as a separate document.
 
     # 2 · 🤖 induce taxonomy (map→reduce→judge→emit) → taxonomy/taxonomy_v0.json
     #     see corpus-taxonomy-extraction/SKILL.md; goal = above. Dispatch Haiku subagents.

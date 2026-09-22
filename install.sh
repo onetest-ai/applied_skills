@@ -129,6 +129,10 @@ if [ -n "$DEPS" ]; then
     uv venv --allow-existing "$venv"
     uv pip install --python "$venv" -r "$REQ"
     echo "   ✓ installed $(basename "$REQ") into $venv"
+    if [ "$BUNDLE" = "brain" ]; then
+      echo "   dependency report (nothing is installed by this step):"
+      "$venv/bin/python" "$HERE/bundles/brain/skills/knowledge-pipeline/brain_doctor.py" | sed 's/^/   /' || true
+    fi
     echo "   run brain scripts with:  \"$venv/bin/python\" <script>   (BRAIN_PY)"
   done
   [ -z "$DRYRUN" ] && echo "(zero-install alt, no venv: uv run --with-requirements \"$REQ\" python <script>)"
