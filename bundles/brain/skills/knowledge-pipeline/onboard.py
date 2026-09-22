@@ -432,18 +432,22 @@ def cmd_verify(a):
     # silently degrading taxonomy-routed answers. Surface it here.
     total = count("chunks")
     unclassified = None
+    no_topic = None
     if total and "chunk_topics" in tables:
         try:
+            has_v = "chunk_verdicts" in tables
             unclassified = con.execute(
                 "SELECT COUNT(*) FROM chunks c "
                 "WHERE NOT EXISTS (SELECT 1 FROM chunk_topics t WHERE t.chunk_id = c.id)"
+                + (" AND NOT EXISTS (SELECT 1 FROM chunk_verdicts v WHERE v.chunk_id = c.id)" if has_v else "")
             ).fetchone()[0]
+            no_topic = con.execute("SELECT COUNT(*) FROM chunk_verdicts").fetchone()[0] if has_v else None
         except Exception:
             unclassified = None
     if unclassified is not None and total:
         pct = 100.0 * unclassified / total
         warn = " ⚠ high — review the classification pass" if pct > 10 else ""
-        print(f"  {'unclassified':18s} {unclassified}/{total} chunks ({pct:.1f}%){warn}")
+        print(f"  {'unclassified':18s} {unclassified}/{total} chunks ({pct:.1f}%)" + (f" · {no_topic} no-topic" if no_topic else "") + warn)
 
     # smoke retrieval
     if count("chunks"):
@@ -461,6 +465,12 @@ def cmd_verify(a):
     print("\n" + ("✅ all lanes populated." if not empty
                    else f"⚠ empty lane(s): {', '.join(empty)} — run the missing build step(s)."))
     con.close()
+
+    tdir = Path(a.taxonomy_dir).expanduser() if a.taxonomy_dir else db.parent.parent / "taxonomy"
+    if (tdir / "PROVISIONAL").exists():
+        print("\n  ⚠ PROVISIONAL taxonomy: the first-build review has not been applied — run the health review "
+              "(corpus-taxonomy-extraction → \"A. First-build review\")")
+        return 1
     return 0
 
 
@@ -498,6 +508,7 @@ def main():
 
     s = sub.add_parser("verify", help="report per-lane counts of a built knowledge.sqlite + smoke query")
     s.add_argument("--db", required=True)
+    s.add_argument("--taxonomy-dir", help="taxonomy directory (defaults to <db parent's parent>/taxonomy)")
     s.add_argument("--query", default="overview", help="smoke retrieval query")
     s.set_defaults(func=cmd_verify)
 
