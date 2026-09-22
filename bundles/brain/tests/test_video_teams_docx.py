@@ -62,6 +62,12 @@ class ReadTeamsDocxTests(unittest.TestCase):
                          ("Lee Park1", 65.0, "Budget is on slide four."))
         self.assertEqual(cues[2]["start"], 3611.0)
 
+    def test_speaker_split_across_runs(self):
+        turns = [(("Lee Park", "1 "), "0:13", ["Budget first.", "Then hiring."]), ("Dana Rivers", "0:40", "Agreed.")]
+        cues = V.read_teams_docx(self._docx(turns=turns))
+        self.assertEqual([(c["speaker"], c["start"], c["text"]) for c in cues], [
+            ("Lee Park1", 13.0, "Budget first. Then hiring."), ("Dana Rivers", 40.0, "Agreed.")])
+
     def test_read_cues_dispatches_docx(self):
         self.assertEqual(V.read_cues(self._docx()), V.read_teams_docx(self._docx()))
 
@@ -226,6 +232,64 @@ class ProbeDocxTests(unittest.TestCase):
         self.assertEqual((p["transcript"], p["sidecar"], p["sidecar_source"]),
                          ("sidecar", str(other), "elsewhere/notes.docx"))
 
+    def test_transcript_file_outside_the_source_root_is_used_but_not_consumable(self):
+        outside = Path(self.t.name) / "elsewhere" / "notes.docx"
+        _tools.make_teams_docx(outside, "Unrelated title", "1h 2m 3s", TURNS)
+        self.assertEqual(self._probe("--transcript-file", str(outside)), 0)
+        p = self._json()
+        self.assertEqual((p["transcript"], p["sidecar"], p["sidecar_source"]),
+                         ("sidecar", str(outside), None))
+        self.assertIn("transcript file is outside the source root — it will be used but not retired "
+                      "from the index", p["warnings"])
+
+    def test_transcript_file_without_rel_to_is_not_consumable(self):
+        other = self.rec / "notes.docx"
+        _tools.make_teams_docx(other, "Unrelated title", "1h 2m 3s", TURNS)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = V.main(["probe", "--video", str(self.video), "--work", str(self.work),
+                           "--transcript-file", str(other)])
+        self.assertEqual(code, 0)
+        p = json.loads((self.work / V.video_slug(f"{STEM}.mp4") / "probe.json").read_text())
+        self.assertIsNone(p["sidecar_source"])
+        self.assertTrue(any("outside the source root" in w for w in p["warnings"]))
+
+    def test_auto_sidecar_without_rel_to_stays_consumable_beside_the_video(self):
+        # No --rel-to: the video's own source is its basename, so a sibling sidecar's is too.
+        _tools.make_teams_docx(self.rec / "Acme_ Roadmap.docx", STEM, "1h 2m 3s", TURNS)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(V.main(["probe", "--video", str(self.video), "--work", str(self.work)]), 0)
+        p = json.loads((self.work / V.video_slug(f"{STEM}.mp4") / "probe.json").read_text())
+        self.assertEqual((p["source"], p["sidecar_source"]), (f"{STEM}.mp4", "Acme_ Roadmap.docx"))
+
+    def test_unreadable_neighbour_is_reported_even_when_a_sidecar_is_found(self):
+        _tools.make_teams_docx(self.rec / "Acme_ Roadmap.docx", STEM, "1h 2m 3s", TURNS)
+        _tools.truncate_file(_tools.make_teams_docx(self.rec / "Broken.docx", "x", "1m", TURNS))
+        self.assertEqual(self._probe(), 0)
+        p = self._json()
+        self.assertEqual(p["sidecar_source"], "rec/Acme_ Roadmap.docx")
+        self.assertEqual(p["warnings"], ["could not read Broken.docx (truncated download?) — "
+                                         "it was not considered as a transcript"])
+
+    def test_transcript_file_must_be_vtt_srt_or_docx(self):
+        bad = self.corpus / "notes.txt"; bad.write_text("hello")
+        self.assertEqual(self._probe("--transcript-file", str(bad)), 1)
+        self.assertIn(".vtt, .srt or .docx", self.err)
+
+    def test_unreadable_permissions_die_without_traceback(self):
+        import os
+        vtt = self.corpus / "x.vtt"
+        vtt.write_text("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v A>hi</v>\n")
+        vtt.chmod(0)
+        try:
+            if os.access(vtt, os.R_OK):
+                self.skipTest("running as a user that ignores file permissions")
+            self.assertEqual(self._probe("--transcript-file", str(vtt)), 1)
+            self.assertIn("cannot read", self.err)
+            self.assertNotIn("Traceback", self.err)
+        finally:
+            vtt.chmod(0o644)
+
     def test_transcript_file_vtt_and_missing_and_empty(self):
         vtt = self.corpus / "x.vtt"
         vtt.write_text("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v A>hi</v>\n")
@@ -282,6 +346,23 @@ class AssembleDocxTests(unittest.TestCase):
 
     def tearDown(self):
         self.t.cleanup()
+
+    def test_outside_transcript_file_consumes_and_deletes_nothing(self):
+        outside = Path(self.t.name) / "elsewhere" / "notes.docx"
+        _tools.make_teams_docx(outside, "Unrelated title", "1h 2m 3s", TURNS)
+        with patch.object(V, "ffprobe", return_value=(3800.0, True)), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(V.main(["probe", "--video", str(self.video), "--rel-to", str(self.corpus),
+                                     "--work", str(self.work), "--transcript-file", str(outside)]), 0)
+        root_doc = self.parsed / "notes.docx.md"; root_doc.write_text("# SOURCE: notes.docx\n")
+        self.assertEqual(V.main(["assemble", "--probe", str(self.work / self.slug / "probe.json"),
+                                 "--render-dir", str(self.rd), "--results", str(self.results),
+                                 "--parsed", str(self.parsed)]), 0)
+        self.assertTrue(root_doc.exists())
+        man = json.loads((self.parsed / "manifest.json").read_text())
+        self.assertEqual([e["source"] for e in man], [self.rel])
+        self.assertEqual(man[0]["inputs"], [self.rel])
+        self.assertIn("Wrapping up now.", (self.parsed / V.doc_name(self.rel)).read_text())
 
     def test_docx_doc_name_matches_parse_corpus(self):
         rel = "rec/Acme_ Roadmap.docx"

@@ -73,3 +73,81 @@ class TranscribeTests(unittest.TestCase):
     def test_missing_binary_exits_3(self):
         with patch.dict(os.environ, {"PATH": "/nonexistent"}):
             self.assertEqual(V.main(["transcribe", "--probe", str(self.probe), "--model", str(self.model)]), 3)
+
+
+NOISY_WHISPER = """#!{py}
+import sys, pathlib
+args = sys.argv[1:]
+for i in range(40):
+    print(f"ggml_metal_init: loaded kernel noise_{{i}}", file=sys.stderr)
+print("[00:00:01.000 --> 00:00:02.000]   hello from asr (echoed transcript)")
+if {fail}:
+    print("error: failed to load model 'broken.bin'", file=sys.stderr)
+    sys.exit(1)
+of = args[args.index("-of") + 1]
+pathlib.Path(of + ".vtt").write_text("WEBVTT\\n\\n00:00:01.000 --> 00:00:02.000\\nhello from asr\\n")
+"""
+
+SCRIPT = Path(V.__file__).resolve()
+
+
+@_tools.require_tool("ffmpeg", "ffprobe")
+class QuietSubprocessTests(unittest.TestCase):
+    """whisper-cli/ffmpeg chatter must not reach the agent's terminal; failures die cleanly."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory(); r = Path(self.t.name)
+        corpus = r / "c"; corpus.mkdir()
+        self.video = _tools.make_synthetic_video(corpus / "talk.mp4", audio=True)
+        self.work = r / "video"
+        self.assertEqual(V.main(["probe", "--video", str(self.video), "--rel-to", str(corpus),
+                                 "--work", str(self.work)]), 0)
+        self.probe = self.work / "talk--mp4" / "probe.json"
+        self.bin = r / "bin"; self.bin.mkdir()
+        self.model = r / "ggml-small.en.bin"; self.model.write_bytes(b"m")
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def _run(self, fail: bool):
+        import subprocess
+        exe = self.bin / "whisper-cli"
+        exe.write_text(NOISY_WHISPER.format(py=sys.executable, fail=fail))
+        exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
+        env = {**os.environ, "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}"}
+        return subprocess.run([sys.executable, str(SCRIPT), "transcribe", "--probe", str(self.probe),
+                               "--model", str(self.model)], capture_output=True, text=True, env=env)
+
+    def test_success_prints_only_the_summary(self):
+        r = self._run(fail=False)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("ggml_metal_init", r.stdout + r.stderr)
+        self.assertNotIn("echoed transcript", r.stdout + r.stderr)
+        self.assertEqual(len(r.stdout.strip().splitlines()), 1, r.stdout)
+        self.assertIn("1 cue(s) via whisper.cpp", r.stdout)
+
+    def test_failure_dies_with_the_stderr_tail(self):
+        r = self._run(fail=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("whisper-cli", r.stderr)
+        self.assertIn("failed to load model 'broken.bin'", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertNotIn("noise_0\n", r.stderr)  # only the tail, not all 40 init lines
+        self.assertLessEqual(len(r.stderr.strip().splitlines()), 22)
+
+
+@_tools.require_tool("ffmpeg")
+class FfmpegFailureTests(unittest.TestCase):
+    def test_read_low_frames_and_extract_frame_die_with_stderr(self):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as td:
+            bogus = Path(td) / "bogus.mp4"; bogus.write_bytes(b"not a video")
+            for call in (lambda: V.read_low_frames(str(bogus)),
+                         lambda: V.extract_frame(str(bogus), 1.0, str(Path(td) / "p.png"))):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:
+                    call()
+                self.assertEqual(cm.exception.code, 1)
+                self.assertIn("ffmpeg failed", err.getvalue())
+                self.assertIn("bogus.mp4", err.getvalue())

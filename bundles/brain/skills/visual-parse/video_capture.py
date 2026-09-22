@@ -165,12 +165,14 @@ def read_teams_docx(path) -> list[dict]:
     turns = []
     for runs in paras:
         joined = "".join(runs)
-        if joined.strip().lower().endswith(_DOCX_EVENTS) and not (
-                len(runs) > 1 and _DOCX_TS.match(runs[1].strip())):
+        # The timestamp is normally run[1]; Word may split the speaker over several runs,
+        # so take the first run (index >= 1) that is exactly a timestamp.
+        i = next((k for k in range(1, len(runs)) if _DOCX_TS.match(runs[k].strip())), None)
+        if joined.strip().lower().endswith(_DOCX_EVENTS) and i is None:
             continue
-        if len(runs) > 1 and _DOCX_TS.match(runs[1].strip()):
-            speaker, ts = runs[0].strip(), runs[1].strip()
-            text = " ".join(t.strip() for t in runs[2:] if t.strip())
+        if i is not None:
+            speaker, ts = "".join(runs[:i]).strip(), runs[i].strip()
+            text = " ".join(t.strip() for t in runs[i + 1:] if t.strip())
         else:
             m = _DOCX_TURN.match(joined.strip())
             if not m:
@@ -382,6 +384,18 @@ def die(msg: str, code: int = 1):
     raise SystemExit(code)
 
 
+def run_quiet(cmd: list, name: str, subject: str) -> bytes:
+    """Run a system tool with stdout/stderr captured, so its chatter (whisper-cli prints
+    ggml/Metal init and echoes the whole transcript) never floods the agent's terminal.
+    Returns stdout (bytes). A non-zero exit dies with the tool name, what it was working
+    on and the last 20 lines of its stderr — never a traceback."""
+    r = subprocess.run(cmd, capture_output=True)
+    if r.returncode:
+        tail = "\n".join(r.stderr.decode("utf-8", "replace").strip().splitlines()[-20:])
+        die(f"{name} failed (exit {r.returncode}) on {subject}" + (f":\n{tail}" if tail else ""))
+    return r.stdout
+
+
 def need_tool(name: str) -> str:
     path = shutil.which(name)
     if not path:
@@ -420,6 +434,18 @@ def _is_teams_transcript(path) -> bool:
         return bool(read_teams_docx(path))
     except (ValueError, OSError):
         return False
+
+
+def rel_under(path: str, root: str) -> str | None:
+    """`path` relative to `root` (``/``-separated) when it lies under it, else None —
+    never source_rel's basename fallback."""
+    try:
+        rp = os.path.relpath(os.path.abspath(path), os.path.abspath(root))
+    except ValueError:  # different drives (Windows)
+        return None
+    if rp == os.curdir or rp == os.pardir or rp.startswith(os.pardir + os.sep) or os.path.isabs(rp):
+        return None
+    return rp.replace(os.sep, "/")
 
 
 def find_sidecar(video: str) -> str | None:
@@ -483,15 +509,14 @@ def ffprobe(video: str) -> tuple[float, bool]:
 def read_low_frames(video: str):
     import numpy as np
     exe = need_tool("ffmpeg")
-    raw = subprocess.run([exe, "-v", "error", "-i", video, "-vf",
-                          f"fps=1,scale={LOW_W}:{LOW_H},format=gray", "-f", "rawvideo", "-"],
-                         capture_output=True, check=True).stdout
+    raw = run_quiet([exe, "-v", "error", "-i", video, "-vf",
+                     f"fps=1,scale={LOW_W}:{LOW_H},format=gray", "-f", "rawvideo", "-"], "ffmpeg", video)
     return np.frombuffer(raw, np.uint8).reshape(-1, LOW_H, LOW_W).astype(np.float32) / 255.0
 
 
 def extract_frame(video: str, t: float, png: str) -> None:
-    subprocess.run([need_tool("ffmpeg"), "-v", "error", "-y", "-ss", f"{t:.3f}", "-i", video,
-                    "-frames:v", "1", "-vf", "scale='min(1920,iw)':-2", png], check=True)
+    run_quiet([need_tool("ffmpeg"), "-v", "error", "-y", "-ss", f"{t:.3f}", "-i", video,
+               "-frames:v", "1", "-vf", "scale='min(1920,iw)':-2", png], "ffmpeg", video)
 
 
 def upsert_manifest(path, entries: list[dict]) -> None:
@@ -520,6 +545,8 @@ def cmd_probe(a) -> int:
             die(f"--transcript-file and --transcript {a.transcript} are mutually exclusive — "
                 "an explicit transcript file IS the transcript source")
         sidecar = os.path.abspath(a.transcript_file)
+        if os.path.splitext(sidecar)[1].lower() not in SIDECAR_EXT:
+            die(f"--transcript-file must be a .vtt, .srt or .docx transcript: {sidecar}")
         if not os.path.isfile(sidecar):
             die(f"--transcript-file not found: {sidecar}")
         transcript = "sidecar"
@@ -534,15 +561,25 @@ def cmd_probe(a) -> int:
             transcript = choose_transcript(has_audio, sidecar, a.transcript)
         except ValueError as e:
             die(str(e))
-        if sidecar is None:
-            warnings += [f"could not read {n} (truncated download?) — it was not considered as a "
-                         "transcript" for n in unreadable_docx(os.path.dirname(video))]
+    warnings += [f"could not read {n} (truncated download?) — it was not considered as a "
+                 "transcript" for n in unreadable_docx(os.path.dirname(video))]
+    sidecar_source = None
     if transcript == "sidecar":
         try:
             cues = read_cues(sidecar)
         except ValueError as e:
             die(f"{e} — fix or re-download it, or override with --transcript-file or "
                 "--transcript asr|none")
+        except OSError as e:
+            die(f"cannot read transcript {sidecar}: {e.strerror or e}")
+        # Only a transcript under the source root may be consumed (and its parsed doc
+        # retired): source_rel's basename fallback would name an unrelated root file.
+        root = (a.rel_to if a.transcript_file else
+                (a.rel_to if a.rel_to and rel_under(video, a.rel_to) else os.path.dirname(video)))
+        sidecar_source = rel_under(sidecar, root) if root else None
+        if sidecar_source is None:
+            warnings.append("transcript file is outside the source root — it will be used but not "
+                            "retired from the index")
         if not cues:
             die(f"sidecar-empty: {sidecar} has no cues — fix it, or override with "
                 "--transcript asr|none")
@@ -551,7 +588,7 @@ def cmd_probe(a) -> int:
                             f"{fmt_hms(duration)}) — likely a wrong pairing")
     probe = {"source": rel, "video": video, "slug": slug, "duration": duration, "has_audio": has_audio,
              "sidecar": sidecar if transcript == "sidecar" else None,
-             "sidecar_source": source_rel(sidecar, a.rel_to) if (sidecar and transcript == "sidecar") else None,
+             "sidecar_source": sidecar_source,
              "transcript": transcript, "warnings": warnings}
     out = os.path.join(a.work, slug, "probe.json")
     atomic_write(out, json.dumps(probe, indent=2) + "\n")
@@ -782,10 +819,11 @@ def cmd_transcribe(a) -> int:
         return 0
     with tempfile.TemporaryDirectory(dir=work, prefix=".asr-") as td:
         wav = os.path.join(td, "audio.wav")
-        subprocess.run([need_tool("ffmpeg"), "-v", "error", "-y", "-i", probe["video"], "-vn",
-                        "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav], check=True)
+        run_quiet([need_tool("ffmpeg"), "-v", "error", "-y", "-i", probe["video"], "-vn",
+                   "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav], "ffmpeg", probe["video"])
         out = os.path.join(td, "out")
-        subprocess.run([exe, "-m", model, "-f", wav, "-l", language, "-ovtt", "-of", out, "-np"], check=True)
+        run_quiet([exe, "-m", model, "-f", wav, "-l", language, "-ovtt", "-of", out, "-np"],
+                  "whisper-cli", probe["video"])
         os.replace(out + ".vtt", vtt)  # only a complete transcript ever lands
     atomic_write(asr_json, json.dumps(key, indent=2) + "\n")
     print(f"{probe['source']}: {len(read_cues(vtt))} cue(s) via whisper.cpp ({key['model']}) -> {vtt}")

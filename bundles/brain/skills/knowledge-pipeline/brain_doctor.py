@@ -127,11 +127,11 @@ def _docx_has_turns(path) -> bool:
             paras = paras[3:]
     for runs in paras:
         joined = "".join(runs)
-        split = len(runs) > 1 and _DOCX_TS.match(runs[1].strip())
-        if joined.strip().lower().endswith(_DOCX_EVENTS) and not split:
+        i = next((k for k in range(1, len(runs)) if _DOCX_TS.match(runs[k].strip())), None)
+        if joined.strip().lower().endswith(_DOCX_EVENTS) and i is None:
             continue
-        if split:
-            text = " ".join(t.strip() for t in runs[2:] if t.strip())
+        if i is not None:
+            text = " ".join(t.strip() for t in runs[i + 1:] if t.strip())
         else:
             m = _DOCX_TURN.match(joined.strip())
             if not m:

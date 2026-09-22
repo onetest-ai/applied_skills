@@ -172,6 +172,10 @@ class DoctorDocxTranscriptTests(unittest.TestCase):
         case("notes-then-title", lambda d: (mk(d / f"{self.STEM}.docx", "Agenda", "x", []),
                                             mk(d / "Acme_ Plan.docx", self.STEM, "5m", self.TURNS)),
              "Acme_ Plan.docx")
+        case("split-speaker", lambda d: mk(d / "Acme_ Plan.docx", self.STEM, "5m",
+                                           [(("Lee Park", "1 "), "0:13", "hi")]), "Acme_ Plan.docx")
+        case("split-speaker-stem", lambda d: mk(d / f"{self.STEM}.docx", "Agenda", "5m",
+                                                [(("Lee Park", "1 "), "0:13", "hi")]), f"{self.STEM}.docx")
         case("notes-alone", lambda d: mk(d / f"{self.STEM}.docx", "Agenda", "x", []), None)
         case("truncated-stem", lambda d: _tools.truncate_file(mk(d / f"{self.STEM}.docx", self.STEM, "5m",
                                                                  self.TURNS)), None)
@@ -231,3 +235,15 @@ class DoctorDocxTranscriptTests(unittest.TestCase):
             c = _by_name(D.run_checks(D.scan_corpus(config=str(cfg)), config=str(cfg)))
             self.assertTrue(c["soffice"]["required"])
             self.assertIn("1 Office file(s)", c["soffice"]["why"])
+
+
+class DocxParityPinsTests(unittest.TestCase):
+    def test_duplicated_constants_match_video_capture(self):
+        import video_capture as V
+        for name in ("_DOCX_TS", "_DOCX_TURN", "_DOCX_DURATION"):
+            self.assertEqual(getattr(D, name).pattern, getattr(V, name).pattern, name)
+            self.assertEqual(getattr(D, name).flags, getattr(V, name).flags, name)
+        self.assertEqual(D._DOCX_EVENTS, V._DOCX_EVENTS)
+        self.assertEqual(D._W_NS, V._W_NS)
+        self.assertEqual(D.SIDECAR_EXT, V.SIDECAR_EXT)
+        self.assertEqual(D.VIDEO_EXT, frozenset(V.VIDEO_EXT))

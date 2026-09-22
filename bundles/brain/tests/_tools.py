@@ -98,11 +98,12 @@ def make_teams_docx(path, title, duration_line, turns, events=("started",), avat
     Body: title, date line, duration line, a "<Name> started transcription" event, then
     one paragraph per turn — run[0] speaker (trailing space), run[1] timestamp, then text
     chunks separated by <w:br/> — each with an avatar <w:drawing> whose <wp:posOffset>
-    digits must never reach the transcript. `turns` = [(speaker, "M:SS", "text" | [chunks])].
+    digits must never reach the transcript. `turns` = [(speaker, "M:SS", "text" | [chunks])];
+    a tuple speaker is written as several runs (a name split by Word).
     split_runs=False writes each turn as ONE run ("Speaker  0:13  text") for the fallback.
     """
     import zipfile
-    host = turns[0][0] if turns else "Host"
+    host = ("".join(turns[0][0]) if isinstance(turns[0][0], (tuple, list)) else turns[0][0]) if turns else "Host"
     paras = [_run(title), _run("January 5, 2026, 3:04PM"), _run(duration_line)]
     body = [f"<w:p>{r}</w:p>" for r in paras]
     if "started" in events:
@@ -110,7 +111,10 @@ def make_teams_docx(path, title, duration_line, turns, events=("started",), avat
     for speaker, ts, text in turns:
         chunks = [text] if isinstance(text, str) else list(text)
         pic = _AVATAR if avatar else ""
-        if split_runs:
+        if isinstance(speaker, (tuple, list)):  # a speaker name split across several runs
+            runs = "".join(_run(x) for x in speaker) + pic + _run(ts) + \
+                '<w:r><w:br/></w:r>'.join(_run(c) for c in chunks)
+        elif split_runs:
             runs = _run(speaker + " ") + pic + _run(ts) + \
                 '<w:r><w:br/></w:r>'.join(_run(c) for c in chunks)
         else:
