@@ -14,7 +14,7 @@ You don't run the app yourself. Ask Claude in Claude Code, in the Brain project:
 
 | Ask for | You get |
 |---|---|
-| (nothing: the first build asks you) | the **draft review**: every category the agents induced, to keep or change |
+| (nothing: the first build asks you, once the corpus is classified) | the **first-build review**: real problems found in how the drafted categories actually fit the tagged sections |
 | "review the taxonomy", "check / clean up the taxonomy" | the **health review**: every problem Claude found, each with a proposed fix |
 | "propose new categories for the untagged sections" | a **refine review**: only proposals for new categories |
 | "open the taxonomy editor", "I want to change some categories" | **browse**: the whole taxonomy and metric inventory, no proposals, for your own edits |
@@ -27,6 +27,21 @@ Claude prepares the review (for a health review, low-cost agents first draft a f
 - It opens a browser tab by itself. If no tab opened, ask Claude for the review URL and paste it into your browser. The URL carries a token that is new every time the app starts, so use the one Claude gives you.
 - It closes when you click **Submit**, when you choose **Close the review without submitting**, or after an hour. Your decisions are saved as you make them, so if it closed before you were done, ask Claude to reopen the review and carry on.
 
+## The first-build review
+
+The very first review is not a review of the bare list of drafted categories — Claude classifies every section against the draft first, so the review reflects how the categories actually fit the corpus. Until you submit this review, the taxonomy is marked provisional and the Brain cannot be deployed.
+
+Six kinds of problem can show up, each its own grouped inbox entry. **Anything not listed here is kept as drafted** — a category with no problem needs no decision from you:
+
+- **Empty** — a category with no sections tagged to it at all. The default fix is to remove it, but you can keep a category you know will be used once more of the corpus is covered.
+- **Barely used** — a category with only one or two tagged sections. Claude proposes merging it into the sibling it overlaps with, or keeping it if it is a real, distinct topic the corpus just mentions rarely.
+- **Duplicates** — two or more category names that read as the same thing (compared by their description text, not just spelling). Claude proposes merging the cluster into one.
+- **Fits another category** — a sub-category (L2) whose tagged sections are actually about a different top-level category (L1) than the one it is drafted under. Claude proposes moving it.
+- **Overloaded** — a top-level category with far more tagged sections than a typical one, usually because it is really several topics bundled together. Claude proposes splitting out new sub-categories and moving some existing ones under them.
+- **Untagged content** — sections no category fits. Claude checks a sample of these by hand: some genuinely need a new category (see "propose new categories for the untagged sections" in the table above); many turn out to be filler with no topic at all (a chunk like "Okay." or "Yep."), which the classifier already marked `__no_topic__` rather than leaving unlabeled. Filler is not a taxonomy gap — you are not asked to add a category for it.
+
+For example, on a real ~2,700-chunk corpus, classifying the draft against the corpus first cut what would have been 463 individual per-category keep-or-change items down to 48 grouped inbox entries: 61 label-similar pairs across 34 duplicate clusters, 116 empty categories, 129 categories with only 1–2 sections, 3 overloaded top-level categories, and 14 categories that fit better elsewhere. A 50-section sample of the untagged content found 46 were no-topic filler — real gaps, not 46 categories to invent.
+
 ## The four views
 
 The app has four views; switch between them from the navigation. Keyboard shortcuts in the Inbox: **J**/**K** move, **A** accepts, **R** skips (or rejects), **U** undoes.
@@ -35,9 +50,8 @@ The app has four views; switch between them from the navigation. Keyboard shortc
 
 What is waiting for a decision. Each entry shows what Claude recommends, why, and what it would change (for example "moves 14 tagged sections").
 
-- In the draft review, each entry is one drafted category: **Keep** it, or rename, merge, move, remove it or edit its description.
+- In the first-build review (and any later health review), entries are problems, and similar problems are **grouped**. "12 categories have no description" is one entry with a row per category. See **The first-build review** below for what the groups mean the first time.
 - In a refine review, each entry is a proposed new category: **Approve**, **Rename…**, or reject it with a reason. A rejection sticks: the same proposal is not offered again.
-- In a health review, entries are problems, and similar problems are **grouped**. "12 categories have no description" is one entry with a row per category.
 
 **Grouped problems and Accept all.** In a group, you can accept or edit row by row, or click **Accept all remaining** to accept every row you haven't decided. Rows whose fix is only a safe default (no agent could propose a real fix, so the default is "leave it as is") are left out of Accept all for you to decide one at a time. So are rows that clash with another fix you accepted: describing a category you are merging away, for example. The app says how many it skipped and why.
 

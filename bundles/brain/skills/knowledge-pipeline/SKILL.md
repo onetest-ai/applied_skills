@@ -77,7 +77,7 @@ For a deliberately selected single file use `source adopt --root <key> <relative
 
 **4. Configure the numbers lane (only if there are workbooks).** The narrative/graph lanes need no config, but the marts do: walk the user through editing `schema/families.<corpus>.json` to describe their workbooks (glob, layout, sheets, measures). Use `tabular-semantic-layer` (its `profile_workbooks.py` inspects real files) — this is the one step that genuinely needs their input. If they have no workbooks, skip and note the numbers lane will be empty.
 
-**5. Walk the build.** For the complete orchestration contract, read the installed bundle's `AGENT_README.md` when available (source checkout: `bundles/brain/AGENT_README.md`). Create a todo per phase and run in order. Visual corpora have **three** agentic stages: VLM transcription of flagged pages, taxonomy induction, and per-section classification. The top-level coding agent launches those subagents; no script or MCP server launches them automatically. Between induction and the graph build sits the user's gate: the draft taxonomy review in the local app (`corpus-taxonomy-extraction` → "A. Draft review"). You run `serve` in the background and end your turn; the user reviews and submits in the browser; you apply it and continue. Assemble VLM-enriched Markdown before taxonomy/index/classification, checkpoint long phases, validate every batch result, and never silently continue past a failed step.
+**5. Walk the build.** For the complete orchestration contract, read the installed bundle's `AGENT_README.md` when available (source checkout: `bundles/brain/AGENT_README.md`). Create a todo per phase and run in order. Visual corpora have **three** agentic stages: VLM transcription of flagged pages, taxonomy induction, and per-section classification. The top-level coding agent launches those subagents; no script or MCP server launches them automatically. After the first classification sits the user's gate: the first-build review in the local app (`corpus-taxonomy-extraction` → "A. First-build review"), grounded in real per-section counts rather than the bare draft tree. You run `serve` in the background and end your turn; the user reviews and submits in the browser; you apply it and continue. Assemble VLM-enriched Markdown before taxonomy/index/classification, checkpoint long phases, validate every batch result, and never silently continue past a failed step.
 
 **6. Verify + first answer.**
 ```bash
@@ -131,21 +131,34 @@ PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-
 #     Run it BEFORE 1b when the corpus has recordings (see 1b):
 "$PY" .../visual-parse/video_capture.py probe --video <root>/<rel> --rel-to <root> --work <project>/video --manifest <project>/parsed/manifest.json
 # 2. (optional) induce taxonomy → taxonomy/taxonomy_v0.json  [map→reduce→judge→emit; see that skill]
-#    👤 then the user ratifies it in the review app: corpus-taxonomy-extraction → "A. Draft review"
-#    (plan --mode draft → serve in the background, end your turn → on submit, taxonomy_merge.py --review … --apply
-#    writes taxonomy/current.json, which steps 4–5 read)
+#    no human gate yet: adopt the draft as PROVISIONAL current.json so the graph and classifier can
+#    build/run against it — the first human review happens after classification, in step 5b
+"$PY" .../corpus-taxonomy-extraction/taxonomy_review.py adopt --taxonomy <project>/taxonomy/taxonomy_v0.json --db "$DB" --provisional
+#    → writes taxonomy/current.json + taxonomy/PROVISIONAL; onboard.py verify fails and nothing may be
+#    deployed while PROVISIONAL exists
 # 3. narrative index — heading-aware sections (shared chunker) → chunks+FTS+vector
 "$PY" .../knowledge-index/knowledge_index.py index --db "$DB" --corpus <project>/parsed --reset
-# 4. taxonomy graph (vertices = L1/L2) into the SAME db
+# 4. taxonomy graph (vertices = L1/L2) into the SAME db, from the provisional current.json
 "$PY" .../corpus-taxonomy-extraction/build_graph.py --taxonomy <project>/taxonomy/current.json --db "$DB"
-# 5. per-section taxonomy tags — LOW-TIER AGENTS (meaning is agentic), not a script:
+# 5. per-section taxonomy tags — LOW-TIER AGENTS (meaning is agentic), not a script. Classifying
+#    against the provisional taxonomy, agents may answer ["__no_topic__"] for a chunk with no topic
+#    at all (filler/boilerplate/off-goal) — a valid, complete verdict, stored in chunk_verdicts:
 "$PY" .../corpus-taxonomy-extraction/classify_prep.py --db "$DB" --taxonomy <project>/taxonomy/current.json --out <project>/classify --batches 25
 #    --batches controls chunks-per-agent: too few batches → agent hits context limit and writes nothing.
 #    Rule of thumb: ceil(total_chunks / 1000) batches. Default 25 handles corpora up to ~25k chunks safely.
 #    Agents write result_k.json into the SAME <project>/classify/ dir as the batch files (not a subdir).
 #    → dispatch N Haiku subagents: each reads classify/{instructions,vocab,batch_k}.md/json → writes classify/result_k.json
 "$PY" .../corpus-taxonomy-extraction/classify_write.py --db "$DB" --results <project>/classify   # -> chunk_topics + graph 'about' edges
-# 5b. semantic 'related' layer — cosine kNN over the vectors we already store (no re-embed, no API)
+# 5b. 👤 the first human review, grounded in counts (corpus-taxonomy-extraction → "A. First-build review"):
+#    taxonomy_signals.py → diagnose → 🤖 one fix subagent per task dir (describe, notags, structure,
+#    fit, untagged, metrics) → plan --mode health → serve in the background, end your turn → on submit,
+#    taxonomy_merge.py --review … --apply writes taxonomy_v1.json + current.json and deletes PROVISIONAL,
+#    then build_graph.py migrates tags; reclassify taxonomy/work/reclassify.json if present, then
+#    classify_write.py --merge for the approved-tags result directory the review printed
+"$PY" .../corpus-taxonomy-extraction/taxonomy_signals.py --taxonomy <project>/taxonomy/current.json --db "$DB" --out <project>/taxonomy/work/signals.json
+"$PY" .../corpus-taxonomy-extraction/taxonomy_review.py diagnose --taxonomy <project>/taxonomy/current.json --db "$DB" --out <project>/taxonomy/work/health
+"$PY" .../corpus-taxonomy-extraction/taxonomy_review.py plan --mode health --taxonomy <project>/taxonomy/current.json --db "$DB" --work <project>/taxonomy/work/health
+# 5c. semantic 'related' layer — cosine kNN over the vectors we already store (no re-embed, no API)
 "$PY" .../knowledge-index/knowledge_index.py related --db "$DB"                                   # -> related(chunk_id, related_id, score)
 # 6. numeric marts (Excel → facts) into the SAME db
 "$PY" .../tabular-semantic-layer/build_marts.py --root <reporting> --config <project>/schema/families.<corpus>.json --out-dir <project>/marts --db "$DB"

@@ -259,7 +259,7 @@ This produces one top-level `## pNN · title` page section with an image marker.
 
 Treat any “visual pages still need VLM transcription” message as incomplete unless the human explicitly authorizes a text-only fallback.
 
-### Phase 4 — taxonomy, human gate, and index
+### Phase 4 — taxonomy induction and provisional build (no human gate yet)
 
 Induce the taxonomy from the **final enriched `parsed/` corpus**, following `corpus-taxonomy-extraction`:
 
@@ -269,38 +269,32 @@ map agents per document
   → agents adjudicate ambiguous merges
   → judge coverage/coherence
   → emit versioned taxonomy JSON/Markdown
-  → human review and approval
 ```
 
 Prefer seed-guided induction when the corpus contains an authoritative taxonomy. Keep the approved taxonomy under `PROJECT/taxonomy/`.
 
-Write the reduce output to `taxonomy/work/consolidated.json` (the draft review reads its evidence there) and emit to `taxonomy/taxonomy_v0.json`.
-
-The human gate is runnable: plan the first-build review of the emitted draft, serve it in the background and end the turn (the user decides in the browser), then apply it once `serve` exits with `status: submitted`. `serve` binds `127.0.0.1` on a free port, prints `review app: <url>` on stderr and opens the browser; if no browser opened, give the user that URL from the background task's output. It exits on submit, on "close without submitting" (`cancelled`) or after `--timeout` seconds (default 3600); decisions are saved, so run `serve` again to continue. The review scripts are stdlib only. Applying creates `$TAX` (`taxonomy/current.json`), which every later step reads. Full procedure: `corpus-taxonomy-extraction` → "A. Draft review".
+Write the reduce output to `taxonomy/work/consolidated.json` and emit to `taxonomy/taxonomy_v0.json`. There is no review here: adopt the draft as a **provisional** `current.json` and build and classify against it, so the first human review can be grounded in real per-section counts instead of the bare draft tree.
 
 ```bash
 cd "$PROJECT"
-"$PY" "$SKILLS/corpus-taxonomy-extraction/taxonomy_review.py" plan --mode draft \
-  --taxonomy taxonomy/taxonomy_v0.json          # evidence from taxonomy/work/consolidated.json
-"$PY" "$SKILLS/corpus-taxonomy-extraction/taxonomy_review.py" serve \
-  --review <the "review" path it printed>       # run in the background; the user reviews
-"$PY" "$SKILLS/corpus-taxonomy-extraction/taxonomy_merge.py" \
-  --review <the same review path> --apply       # writes taxonomy_v1.json and current.json
+"$PY" "$SKILLS/corpus-taxonomy-extraction/build_graph.py" \
+  --taxonomy "$PROJECT/taxonomy/taxonomy_v0.json" --db "$DB"
+"$PY" "$SKILLS/corpus-taxonomy-extraction/taxonomy_review.py" adopt \
+  --taxonomy "$PROJECT/taxonomy/taxonomy_v0.json" --db "$DB" --provisional
 ```
+
+`adopt --provisional` copies the draft to `$TAX` (`taxonomy/current.json`) and writes `taxonomy/PROVISIONAL`. While that marker exists, `onboard.py verify` fails and the store must not be deployed — the provisional build exists only to get real classification counts in front of the human.
 
 The narrative index can run after final assembly; do it once:
 
 ```bash
 "$PY" "$SKILLS/knowledge-index/knowledge_index.py" index \
   --db "$DB" --corpus "$PROJECT/parsed" --reset
-
-"$PY" "$SKILLS/corpus-taxonomy-extraction/build_graph.py" \
-  --taxonomy "$TAX" --db "$DB"
 ```
 
-### Phase 5 — classify indexed chunks
+### Phase 5 — classify against the provisional taxonomy
 
-Prepare batches in a fresh run-specific directory. `classify_write.py` reads every matching result file and does not enforce completeness; with `--reset`, stale or partial results could erase valid classifications.
+Prepare batches in a fresh run-specific directory. `classify_write.py` reads every matching result file and does not enforce completeness; with `--reset`, stale or partial results could erase valid classifications. Classifying against a provisional taxonomy, agents may answer `["__no_topic__"]` for a chunk that carries no topic at all (filler, boilerplate, off-goal) — that is a valid verdict, not a missing one.
 
 ```bash
 CLASSIFY_RUN="$PROJECT/classify/$(date +%Y%m%d-%H%M%S)"
@@ -312,17 +306,41 @@ mkdir -p "$CLASSIFY_RUN"
 For each `classify/batch_K.json`, dispatch one low-cost text subagent. Its contract:
 
 1. read `instructions.md`, `vocab.md`, and its batch;
-2. assign 0–3 exact L1/L2 labels per chunk;
+2. assign 0–3 exact L1/L2 labels per chunk, or `["__no_topic__"]` when the chunk carries no topic at all;
 3. prefer a specific L2 when justified;
 4. use `[]` rather than force a weak match;
 5. write only `classify/result_K.json` as `{chunk_id: [exact labels]}`.
 
-Validate complete ID coverage, JSON shape, and exact-vocabulary membership. Then write a full-build classification:
+Validate complete ID coverage, JSON shape, and exact-vocabulary membership (`__no_topic__` is the one non-vocabulary value allowed, and only alone). Then write a full-build classification:
 
 ```bash
 "$PY" "$SKILLS/corpus-taxonomy-extraction/classify_write.py" \
   --db "$DB" --results "$CLASSIFY_RUN" --reset
 ```
+
+### Phase 5b — the first human review, grounded in counts
+
+This is the human gate: not the bare draft tree, but the draft **after** real classification, so every proposal cites how many sections are actually affected. It is runnable end to end. Compute signals, diagnose problems, dispatch one fix subagent per task dir, then plan, serve, and apply:
+
+```bash
+"$PY" "$SKILLS/corpus-taxonomy-extraction/taxonomy_signals.py" \
+  --taxonomy "$TAX" --db "$DB" --out "$PROJECT/taxonomy/work/signals.json"
+"$PY" "$SKILLS/corpus-taxonomy-extraction/taxonomy_review.py" diagnose \
+  --taxonomy "$TAX" --db "$DB" --out "$PROJECT/taxonomy/work/health"
+#   → dispatch one fix subagent per task dir (describe, notags, structure, fit, untagged, metrics)
+"$PY" "$SKILLS/corpus-taxonomy-extraction/taxonomy_review.py" plan --mode health \
+  --taxonomy "$TAX" --db "$DB" --work "$PROJECT/taxonomy/work/health"
+"$PY" "$SKILLS/corpus-taxonomy-extraction/taxonomy_review.py" serve \
+  --review <the "review" path it printed>       # run in the background; the user reviews "First-build review"
+"$PY" "$SKILLS/corpus-taxonomy-extraction/taxonomy_merge.py" \
+  --review <the same review path> --apply       # writes taxonomy_v1.json and current.json; deletes PROVISIONAL
+"$PY" "$SKILLS/corpus-taxonomy-extraction/build_graph.py" \
+  --taxonomy "$TAX" --db "$DB"                  # tags migrate
+```
+
+`serve` binds `127.0.0.1` on a free port, prints `review app: <url>` on stderr and opens the browser; if no browser opened, give the user that URL from the background task's output. It exits on submit, on "close without submitting" (`cancelled`) or after `--timeout` seconds (default 3600); decisions are saved, so run `serve` again to continue. The review scripts are stdlib only. Applying deletes `taxonomy/PROVISIONAL`, so `onboard.py verify` can pass and the store can be deployed. If `taxonomy/work/reclassify.json` exists after `build_graph`, reclassify those chunk ids before writing any approved tags, then run `classify_write.py --merge` for the approved-tags result directory the review printed. Full procedure: `corpus-taxonomy-extraction` → "A. First-build review".
+
+**Until this review is applied, `taxonomy/PROVISIONAL` exists and `onboard.py verify` fails; do not deploy.** The old draft-only review (plan/serve/apply on the bare `taxonomy_v0.json`, no classification) remains documented as a fallback for the case where the corpus is not indexed yet — see `corpus-taxonomy-extraction` → "A′. Draft review without an index (fallback)".
 
 ### Phase 6 — deterministic derived layers
 

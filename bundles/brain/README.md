@@ -275,7 +275,7 @@ flowchart TD
     P --> VP["vision_prep.py: flagged AND uncached pages only"]
     VP --> VA["Vision subagents → result_k.json"]
     VA --> AS["vision_assemble.py → final parsed/*.md + page_render cache"]
-    AS --> TX["Taxonomy agents: map → reduce → judge → draft review → taxonomy/current.json"]
+    AS --> TX["Taxonomy agents: map → reduce → judge → adopt --provisional → classify → first-build review → taxonomy/current.json"]
     AS --> IX["knowledge_index.py --reset"]
     TX --> GR["build_graph.py"]
     IX --> CP["classify_prep.py"]
@@ -411,27 +411,31 @@ Taxonomy induction is the **first agentic step, right after parsing** — and ev
 
 ```mermaid
 flowchart TD
-    P["1 · parse (+ visual-parse)<br/>docs → parsed/*.md"] --> TX["2 · 🤖 TAXONOMY induction<br/>parsed/ + goal → taxonomy_v0.json → 👤 draft review → current.json<br/><i>map → reduce → judge → emit · human-gated</i>"]
+    P["1 · parse (+ visual-parse)<br/>docs → parsed/*.md"] --> TX["2 · 🤖 TAXONOMY induction<br/>parsed/ + goal → taxonomy_v0.json<br/><i>map → reduce → judge → emit</i>"]
+    TX --> AD["adopt --provisional<br/>current.json (PROVISIONAL)"]
     P --> IDX["3 · index<br/>chunks + FTS + vector"]
-    TX --> G["4 · build_graph<br/>taxonomy → graph_nodes / edges (L1/L2)"]
-    TX --> CL["5 · 🤖 classify<br/>chunk × taxonomy-vocab → chunk_topics + about-edges"]
+    AD --> G["4 · build_graph<br/>taxonomy → graph_nodes / edges (L1/L2)"]
+    AD --> CL["5 · 🤖 classify<br/>chunk × taxonomy-vocab → chunk_topics/chunk_verdicts + about-edges"]
     IDX --> CL
     G --> CL
-    CL --> R["5b · related · 6 · marts · 7 · vault(opt) · 8 · seed"]
+    CL --> FR["5b · 👤 first-build review<br/>grounded in counts → v1 current.json (PROVISIONAL removed)"]
+    FR --> G2["build_graph (tags migrate)"]
+    G2 --> R["related · marts · vault(opt) · seed"]
 
     classDef ag fill:#fff3e0,stroke:#e65100,color:#bf360c;
     class TX,CL ag
 ```
 
-- **`index` (3) does NOT depend on the taxonomy** — it can run in parallel; but **`build_graph` (4) and `classify` (5) do**: the graph *is* the taxonomy as vertices, and the classifier tags each chunk *against the taxonomy vocabulary*. So the taxonomy must exist before them.
+- **`index` (3) does NOT depend on the taxonomy** — it can run in parallel; but **`build_graph` (4) and `classify` (5) do**: the graph *is* the taxonomy as vertices, and the classifier tags each chunk *against the taxonomy vocabulary*. So the taxonomy must exist before them — here, the provisional one.
 - Induction reads the **document text** (`parsed/`), not the chunks/store.
+- There is no human gate between induction and `build_graph`/`classify`: the draft is adopted as a **provisional** `current.json` (`taxonomy_review.py adopt --provisional`) precisely so the first human review can be grounded in real per-section counts instead of the bare draft tree. `onboard.py verify` fails and the store must not be deployed while `taxonomy/PROVISIONAL` exists.
 
 ### How it's made (`map → reduce → judge → emit`)
 1. **map** — low-tier (Haiku) subagents, per document, extract candidate terms (intent classes, entities, metrics) each with an evidence quote, source, and confidence → one JSON per doc. The bulk context lives and dies inside each subagent.
 2. **reduce** — `consolidate.py` deterministically clusters near-duplicates (stdlib difflib); a low-tier agent adjudicates **only the ambiguous** merges ("Chicago" vs "CHI").
 3. **judge** — an LLM-as-judge scores coverage/coherence and flags low-confidence/unmapped terms.
 4. **emit** — `taxonomy_v0.json` (+ `.md`): the draft, with a *demoted* list.
-5. **draft review** — the user ratifies the draft in the local review app; `taxonomy_merge.py` then writes `taxonomy_v1.json` and `taxonomy/current.json`.
+5. **first-build review** — after the draft is adopted provisionally, indexed, graphed and classified, the user ratifies it — now grounded in real counts — in the local review app; `taxonomy_merge.py` then writes `taxonomy_v1.json` and `taxonomy/current.json`, and removes `taxonomy/PROVISIONAL`.
 
 The **goal string is a noise filter** — extraction is scoped to the analytical goal. Prefer **seed-guided over schema-free**: anchor on any existing taxonomy doc (a "Taxonomy Compendium") and extend it.
 
