@@ -444,6 +444,10 @@ def main(argv=None):
                 if vid:
                     manifest.append({"source": rel, "skipped": True, "method": "consumed-by-video",
                                      "consumed_by": os.path.relpath(os.path.join(root, vid), a.corpus)})
+                    # Remove stale parsed doc from a previous parse run
+                    stale = os.path.join(a.out, rel.replace(os.sep, "__") + ".md")
+                    if os.path.exists(stale):
+                        os.remove(stale)
                     continue
             try:
                 md, method = parse_one(src, a.xlsx_max_mb, a.sample_rows, merge_cues=a.merge_cues)

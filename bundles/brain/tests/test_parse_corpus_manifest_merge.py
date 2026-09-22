@@ -53,3 +53,16 @@ class ManifestMergeTests(unittest.TestCase):
         man = self._run("--formats", "vtt,srt", "--merge-cues", "10")
         self.assertEqual(man["talk.vtt"]["md"], "talk.vtt.md")
         self.assertTrue((self.out / "talk.vtt.md").exists())
+
+    def test_consume_flag_removes_stale_parsed_doc(self):
+        # First pass: parse talk.vtt without the flag
+        self._run("--formats", "vtt,srt", "--merge-cues", "10")
+        self.assertTrue((self.out / "talk.vtt.md").exists())
+        # Add the video and re-run with consume flag
+        (self.corpus / "talk.mp4").write_bytes(b"v")
+        man = self._run("--formats", "vtt,srt", "--merge-cues", "10", "--consume-video-sidecars")
+        # The parsed doc should be gone
+        self.assertFalse((self.out / "talk.vtt.md").exists())
+        # And the manifest should have the consumed-by-video entry
+        self.assertEqual(man["talk.vtt"], {"source": "talk.vtt", "skipped": True,
+                                           "method": "consumed-by-video", "consumed_by": "talk.mp4"})
