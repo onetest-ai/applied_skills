@@ -414,9 +414,19 @@ def source_rel(video: str, rel_to: str | None) -> str:
     return os.path.basename(video)
 
 
+def _is_teams_transcript(path) -> bool:
+    """A readable .docx that yields at least one transcript turn."""
+    try:
+        return bool(read_teams_docx(path))
+    except (ValueError, OSError):
+        return False
+
+
 def find_sidecar(video: str) -> str | None:
     """The recording's transcript, by the first rule that matches:
     1. same stem, extension case-insensitive, priority .vtt, .srt, .docx (real spelling);
+       a same-stem .docx counts only if it reads as a Teams transcript (>= 1 turn) — a
+       same-name agenda or an unreadable file is skipped (probe warns about the latter);
     2. a .docx in the same directory whose first paragraph (docx_title) is exactly the
        video's stem — Teams names the transcript after the meeting, not the recording.
     More than one .docx claiming the video by title -> ValueError (no guessing)."""
@@ -426,6 +436,8 @@ def find_sidecar(video: str) -> str | None:
     for ext in SIDECAR_EXT:
         for n in names:
             if os.path.splitext(n)[0] == stem and os.path.splitext(n)[1].lower() == ext:
+                if ext == ".docx" and not _is_teams_transcript(os.path.join(d, n)):
+                    continue  # same-name notes/agenda, or unreadable: not a transcript
                 return os.path.join(d, n)
     claims = [n for n in names if os.path.splitext(n)[1].lower() == ".docx"
               and not n.startswith((".", "~$")) and docx_title(os.path.join(d, n)) == stem]

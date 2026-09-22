@@ -73,12 +73,17 @@ def install_hint(tool: str) -> str:
 
 
 _W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+# Copies of video_capture's Teams-transcript patterns — skills cannot import across skill
+# dirs — pinned by the parity test in test_brain_doctor.py.
+_DOCX_TS = re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?$")
+_DOCX_TURN = re.compile(r"^(.+?)\s{2,}(\d{1,2}:\d{2}(?::\d{2})?)(.*)$", re.S)
+_DOCX_EVENTS = ("started transcription", "stopped transcription")
+_DOCX_DURATION = re.compile(r"^\s*(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+)s)?\s*$")
 
 
-def _docx_title(path) -> str | None:
-    """First non-empty paragraph of a .docx (text of <w:t> directly inside runs), stripped;
-    None when unreadable. A copy of video_capture.docx_title — skills cannot import across
-    skill dirs — pinned by a parity test."""
+def _docx_paragraphs(path) -> list[list[str]] | None:
+    """Per body paragraph, the text of each run with <w:t> (only <w:t> directly inside
+    <w:r>; <w:br/>/<w:tab/> -> " "); None when the file is not a readable Word file."""
     import xml.etree.ElementTree as ET
     import zipfile
     import zlib
@@ -87,26 +92,71 @@ def _docx_title(path) -> str | None:
             root = ET.fromstring(z.read("word/document.xml"))
     except (OSError, zipfile.BadZipFile, KeyError, ET.ParseError, EOFError, zlib.error):
         return None
+    paras = []
     for p in root.iter(_W_NS + "p"):
-        text = []
+        runs = []
         for r in p.findall(_W_NS + "r"):
             if r.find(_W_NS + "t") is None:
                 continue
+            parts = []
             for child in r:
                 if child.tag == _W_NS + "t":
-                    text.append(child.text or "")
+                    parts.append(child.text or "")
                 elif child.tag in (_W_NS + "br", _W_NS + "tab"):
-                    text.append(" ")
-        t = "".join(text).strip()
+                    parts.append(" ")
+            runs.append("".join(parts))
+        paras.append(runs)
+    return paras
+
+
+def _docx_title(path) -> str | None:
+    """First non-empty paragraph, stripped; None when unreadable (= video_capture.docx_title)."""
+    for runs in _docx_paragraphs(path) or []:
+        t = "".join(runs).strip()
         if t:
             return t
     return None
 
 
+def _docx_has_turns(path) -> bool:
+    """True when video_capture.read_teams_docx would yield at least one turn."""
+    paras = [r for r in (_docx_paragraphs(path) or []) if "".join(r).strip()]
+    if len(paras) >= 3:
+        m = _DOCX_DURATION.match("".join(paras[2]))
+        if m and any(m.groups()):
+            paras = paras[3:]
+    for runs in paras:
+        joined = "".join(runs)
+        split = len(runs) > 1 and _DOCX_TS.match(runs[1].strip())
+        if joined.strip().lower().endswith(_DOCX_EVENTS) and not split:
+            continue
+        if split:
+            text = " ".join(t.strip() for t in runs[2:] if t.strip())
+        else:
+            m = _DOCX_TURN.match(joined.strip())
+            if not m:
+                continue
+            text = m.group(3)
+        if text.strip():
+            return True
+    return False
+
+
+def title_claims(video: Path) -> list[str]:
+    """Names of the .docx files next to the video whose first paragraph is its stem."""
+    try:
+        names = sorted(os.listdir(video.parent))
+    except OSError:
+        return []
+    return [n for n in names if os.path.splitext(n)[1].lower() == ".docx"
+            and not n.startswith((".", "~$")) and _docx_title(video.parent / n) == video.stem]
+
+
 def sidecar_of(video: Path) -> Path | None:
     """The transcript video_capture.find_sidecar would pick: a same-stem .vtt/.srt/.docx
-    (in that priority, extension case-insensitive), else the ONE .docx whose first
-    paragraph is the video's stem (Teams). Two title claims -> None (probe refuses)."""
+    (in that priority, extension case-insensitive; a .docx only if it reads as a Teams
+    transcript), else the ONE .docx whose first paragraph is the video's stem. Two title
+    claims -> None (probe refuses; run_checks names the conflict)."""
     try:
         names = sorted(os.listdir(video.parent))
     except OSError:
@@ -114,9 +164,10 @@ def sidecar_of(video: Path) -> Path | None:
     for ext in SIDECAR_EXT:
         for n in names:
             if os.path.splitext(n)[0] == video.stem and os.path.splitext(n)[1].lower() == ext:
+                if ext == ".docx" and not _docx_has_turns(video.parent / n):
+                    continue
                 return video.parent / n
-    claims = [n for n in names if os.path.splitext(n)[1].lower() == ".docx"
-              and not n.startswith((".", "~$")) and _docx_title(video.parent / n) == video.stem]
+    claims = title_claims(video)
     return video.parent / claims[0] if len(claims) == 1 else None
 
 
@@ -232,6 +283,10 @@ def run_checks(scan: dict, *, config: str | None = None, need: tuple[str, ...] =
     w_detail = f"binary: {wb or 'missing'}; model: {model or 'not configured'}"
     if model and not model_ok:
         w_detail += " (file not found)"
+    conflicts = [(v, c) for v in bare if len(c := title_claims(v)) > 1]
+    for v, c in conflicts:
+        w_detail += (f"; transcript conflict: {v.name} is claimed by {', '.join(c)} — pick one with "
+                     "video_capture.py probe --transcript-file")
     w_install = (install_hint("whisper-cli") + "; " if not wb else "") + \
         ("" if model_ok else "choose a model: brain_doctor.py whisper-models, then set-whisper-model")
     add("whisper-cli", wb and model_ok, bool(bare),

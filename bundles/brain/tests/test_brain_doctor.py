@@ -169,6 +169,12 @@ class DoctorDocxTranscriptTests(unittest.TestCase):
         case("ambiguous", lambda d: (mk(d / "A.docx", self.STEM, "5m", self.TURNS),
                                      mk(d / "B.docx", self.STEM, "5m", self.TURNS)), "ambiguous")
         case("nothing", lambda d: None, None)
+        case("notes-then-title", lambda d: (mk(d / f"{self.STEM}.docx", "Agenda", "x", []),
+                                            mk(d / "Acme_ Plan.docx", self.STEM, "5m", self.TURNS)),
+             "Acme_ Plan.docx")
+        case("notes-alone", lambda d: mk(d / f"{self.STEM}.docx", "Agenda", "x", []), None)
+        case("truncated-stem", lambda d: _tools.truncate_file(mk(d / f"{self.STEM}.docx", self.STEM, "5m",
+                                                                 self.TURNS)), None)
         return out
 
     def test_parity_with_video_capture(self):
@@ -186,6 +192,26 @@ class DoctorDocxTranscriptTests(unittest.TestCase):
             self.assertEqual(D.has_sidecar(video), expect not in (None, "ambiguous"), video.parent.name)
             for f in video.parent.glob("*.[dD][oO][cC][xX]"):
                 self.assertEqual(D._docx_title(f), V.docx_title(f), f)
+                try:
+                    n = len(V.read_teams_docx(f))
+                except ValueError:
+                    n = 0
+                self.assertEqual(D._docx_has_turns(f), n > 0, f)
+
+    def test_two_title_claims_are_reported_in_the_transcript_check(self):
+        import _tools
+        docs = self.root / "docs"; (docs / "rec").mkdir(parents=True)
+        (docs / "rec" / f"{self.STEM}.mp4").write_bytes(b"v")
+        for n in ("A.docx", "B.docx"):
+            _tools.make_teams_docx(docs / "rec" / n, self.STEM, "5m", self.TURNS)
+        cfg = _config(self.root, ["**/*.mp4", "**/*.docx"])
+        with patch.object(D, "which", return_value=None), patch.object(D, "soffice_path", return_value=None):
+            c = _by_name(D.run_checks(D.scan_corpus(config=str(cfg)), config=str(cfg)))
+        self.assertTrue(c["whisper-cli"]["required"])
+        detail = c["whisper-cli"]["detail"]
+        self.assertIn("A.docx", detail); self.assertIn("B.docx", detail)
+        self.assertIn("--transcript-file", detail)
+        self.assertIn(f"{self.STEM}.mp4", detail)
 
     def test_transcript_docx_does_not_require_soffice(self):
         import _tools

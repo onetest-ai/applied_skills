@@ -143,7 +143,8 @@ time, each frame carrying its image marker and every interval it was on screen.
 
 **Transcript source.** `probe` picks, in order:
 1. a same-stem `.vtt`, `.srt` or `.docx` next to the video (`standup.mp4` + `standup.vtt`),
-   in that priority;
+   in that priority — a same-stem `.docx` only if it reads as a Teams transcript (at least one
+   timestamped turn); same-name notes or an agenda are skipped;
 2. a Microsoft Teams transcript `.docx` in the same folder whose **first line is the
    recording's file name without extension** — Teams names the transcript after the
    meeting (`Acme_ Billing.docx`), not after the recording, so it is paired by its title.

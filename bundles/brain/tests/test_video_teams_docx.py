@@ -123,6 +123,16 @@ class FindSidecarDocxTests(unittest.TestCase):
             V.find_sidecar(str(self.video))
         self.assertIn("A.docx", str(cm.exception)); self.assertIn("B.docx", str(cm.exception))
 
+    def test_same_stem_docx_without_turns_is_skipped(self):
+        _tools.make_teams_docx(self.d / f"{STEM}.docx", "Agenda", "x", [])
+        self.assertIsNone(V.find_sidecar(str(self.video)))
+        _tools.make_teams_docx(self.d / "Acme_ Roadmap.docx", STEM, "1h 2m 3s", TURNS)
+        self.assertEqual(Path(V.find_sidecar(str(self.video))).name, "Acme_ Roadmap.docx")
+
+    def test_unreadable_same_stem_docx_is_skipped(self):
+        _tools.truncate_file(_tools.make_teams_docx(self.d / f"{STEM}.docx", STEM, "1m", TURNS))
+        self.assertIsNone(V.find_sidecar(str(self.video)))
+
     def test_unreadable_docx_is_not_a_candidate(self):
         _tools.truncate_file(_tools.make_teams_docx(self.d / "A.docx", STEM, "1m", TURNS))
         self.assertIsNone(V.find_sidecar(str(self.video)))
@@ -157,11 +167,37 @@ class ProbeDocxTests(unittest.TestCase):
         self.assertEqual((p["transcript"], p["sidecar_source"]), ("sidecar", "rec/Acme_ Roadmap.docx"))
         self.assertEqual(p["warnings"], [])
 
-    def test_truncated_same_stem_docx_fails_cleanly(self):
+    def test_truncated_same_stem_docx_is_skipped_with_a_warning(self):
         _tools.truncate_file(_tools.make_teams_docx(self.rec / f"{STEM}.docx", STEM, "1m", TURNS))
-        self.assertEqual(self._probe(), 1)
+        self.assertEqual(self._probe(), 0)
+        p = self._json()
+        self.assertEqual((p["transcript"], p["sidecar"]), ("asr", None))
+        self.assertEqual(p["warnings"], [f"could not read {STEM}.docx (truncated download?) — "
+                                         "it was not considered as a transcript"])
+
+    def test_truncated_transcript_file_fails_cleanly(self):
+        bad = _tools.truncate_file(_tools.make_teams_docx(self.corpus / "x.docx", STEM, "1m", TURNS))
+        self.assertEqual(self._probe("--transcript-file", str(bad)), 1)
         self.assertIn("not a readable Word file (truncated download?)", self.err)
         self.assertNotIn("Traceback", self.err)
+
+    def test_same_stem_notes_docx_is_not_a_transcript(self):
+        _tools.make_teams_docx(self.rec / f"{STEM}.docx", "Agenda", "not a duration", [])
+        self.assertEqual(self._probe(), 0)
+        p = self._json()
+        self.assertEqual((p["transcript"], p["sidecar"], p["warnings"]), ("asr", None, []))
+
+    def test_same_stem_notes_docx_gives_way_to_the_title_paired_transcript(self):
+        _tools.make_teams_docx(self.rec / f"{STEM}.docx", "Agenda", "not a duration", [])
+        _tools.make_teams_docx(self.rec / "Acme_ Roadmap.docx", STEM, "1h 2m 3s", TURNS)
+        self.assertEqual(self._probe(), 0)
+        self.assertEqual(self._json()["sidecar_source"], "rec/Acme_ Roadmap.docx")
+
+    def test_empty_same_stem_vtt_still_dies_sidecar_empty(self):
+        (self.rec / f"{STEM}.vtt").write_text("WEBVTT\n\n")
+        _tools.make_teams_docx(self.rec / "Acme_ Roadmap.docx", STEM, "1h 2m 3s", TURNS)
+        self.assertEqual(self._probe(), 1)
+        self.assertIn("sidecar-empty", self.err)
 
     def test_truncated_neighbour_docx_is_a_warning(self):
         _tools.truncate_file(_tools.make_teams_docx(self.rec / "Acme_ Roadmap.docx", STEM, "1m", TURNS))
