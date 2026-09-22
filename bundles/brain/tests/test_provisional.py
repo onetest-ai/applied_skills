@@ -35,6 +35,38 @@ class ProvisionalTests(unittest.TestCase):
         marker = json.load(open(taxo_io.provisional_path(self.tdir)))
         self.assertEqual(marker["version"], 0)
 
+    def _adopt_failing_at(self, target, exc):
+        """Run adopt --provisional in-process with `target` (a taxonomy_review attribute path) raising."""
+        from unittest import mock
+        with mock.patch(target, side_effect=exc):
+            with self.assertRaises(type(exc)):
+                R.main(["adopt", "--taxonomy", self.v0, "--db", self.db, "--provisional"])
+
+    def test_marker_survives_a_failure_writing_current_json(self):
+        self._adopt_failing_at("taxonomy_review.atomic_write_bytes", OSError("disk full"))
+        self.assertTrue(taxo_io.is_provisional(self.tdir))                       # blocked, not deployable
+        self.assertFalse(os.path.exists(os.path.join(self.tdir, "current.json")))
+
+    def test_marker_survives_a_failure_committing_the_store(self):
+        import sqlite3
+        self._adopt_failing_at("taxonomy_review.GM.write_version", sqlite3.OperationalError("database is locked"))
+        self.assertTrue(taxo_io.is_provisional(self.tdir))
+        # current.json was already written: an adopted draft is never left without its marker
+        self.assertTrue(os.path.exists(os.path.join(self.tdir, "current.json")))
+
+    def test_rerunning_adopt_after_a_failure_completes_it(self):
+        self._adopt_failing_at("taxonomy_review.atomic_write_bytes", OSError("disk full"))
+        r = cli("adopt", "--taxonomy", self.v0, "--db", self.db, "--provisional")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(open(os.path.join(self.tdir, "current.json"), "rb").read(), open(self.v0, "rb").read())
+        self.assertTrue(taxo_io.is_provisional(self.tdir))
+
+    def test_refused_adopt_writes_no_marker(self):
+        write_json(os.path.join(self.tdir, "current.json"), taxonomy(version=3))   # a ratified, different current
+        r = cli("adopt", "--taxonomy", self.v0, "--db", self.db, "--provisional")
+        self.assertEqual(r.returncode, 2)
+        self.assertFalse(taxo_io.is_provisional(self.tdir))
+
     def test_health_context_is_titled_first_build_while_provisional(self):
         cli("adopt", "--taxonomy", self.v0, "--db", self.db, "--provisional")
         ctx = R._context("health", taxonomy(), [], {}, 0, {}, provisional=True)

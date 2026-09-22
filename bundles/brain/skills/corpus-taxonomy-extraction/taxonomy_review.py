@@ -473,12 +473,16 @@ def cmd_adopt(a):
         _out({"status": "refused", "reason": f"{cur} exists and differs; pass --meta-only to record only the "
                                              f"store's version, or --force (only if the user asked) to replace it"})
         return 2
+    # The marker goes down BEFORE current.json and the store change: a failure after it leaves the
+    # project blocked (re-running adopt --provisional completes it), never an unmarked draft that
+    # verify and the maintenance planner would take as ratified.
+    if a.provisional:
+        write_provisional(os.path.dirname(cur), tax.get("version") or 0, sha256_bytes(raw))
     atomic_write_bytes(cur, raw)
     GM.write_version(c, tax.get("version") or 0, sha256_bytes(raw))
     c.commit()
     out = {"status": "adopted", "current": cur, "version": tax.get("version") or 0, "nodes": len(file_ids)}
     if a.provisional:
-        write_provisional(os.path.dirname(cur), tax.get("version") or 0, sha256_bytes(raw))
         out["provisional"] = True
     c.close()
     _out(out)
