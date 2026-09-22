@@ -11,7 +11,9 @@ table is skipped (never re-transcribed) — this is what makes updates cheap.
 
 Reads <render-dir>/pages.json (+ p*.tables.md). Writes:
   <out>/instructions.md
-  <out>/batch_<k>.json   [{img_sha, image, page, n_tables, tables_md, hint}]
+  <out>/batch_<k>.json   [{img_sha, image, page, n_tables, tables_md, hint, medium}]
+  (`medium` is the render dir's pages.json medium — "video" for meeting-recording frames,
+   else "document"; the no-content gate in instructions.md applies per item, by medium)
 
 Usage:
   vision_prep.py --render-dir <assets>/<slug> [--render-dir ...] --out <dir>
@@ -34,10 +36,13 @@ INSTRUCTIONS = (
 
 VIDEO_GATE = (
     "\n## Meeting-recording frames (`medium: video`)\n"
-    "These pages are key frames from a meeting recording. If a frame shows ONLY people, a "
-    "speaker grid, a webcam view, a blank screen or a transition, output exactly "
-    "`<!-- no-content -->` for it and nothing else. Otherwise transcribe only what is on "
-    "screen, never what might have been said.\n"
+    "This section applies ONLY to items whose `medium` is `video` (key frames from a meeting "
+    "recording). For such an item, if the frame shows ONLY people, a speaker grid, a webcam "
+    "view, a blank screen or a transition, output exactly `<!-- no-content -->` for it and "
+    "nothing else. Otherwise transcribe only what is on screen, never what might have been "
+    "said.\n"
+    "Never answer `<!-- no-content -->` for an item whose `medium` is `document` (a slide or "
+    "page): transcribe it as above, even when it shows only photos of people.\n"
 )
 
 def cached_shas(db):
@@ -70,7 +75,8 @@ def main():
                           "image": os.path.join(assets_root, p["image"]),
                           "page": p["page"], "n_tables": p.get("n_tables", 0),
                           "tables_md": open(tb).read() if os.path.exists(tb) else "",
-                          "hint": f"{pages.get('doc','')} p{p['page']}"})
+                          "hint": f"{pages.get('doc','')} p{p['page']}",
+                          "medium": pages.get("medium", "document")})
 
     open(os.path.join(a.out, "instructions.md"), "w").write(INSTRUCTIONS + (VIDEO_GATE if has_video else ""))
     n = max(1, a.batches)

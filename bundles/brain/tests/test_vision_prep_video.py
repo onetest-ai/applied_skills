@@ -58,3 +58,25 @@ class VisionPrepVideoTests(unittest.TestCase):
             root = Path(td)
             _, items = _prep(_render_dir(root, "rec__standup", "video", dropped_page=1), out=root / "v")
         self.assertEqual([i["page"] for i in items], [2])
+
+    def test_every_item_carries_its_medium(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _, items = _prep(_render_dir(root, "deck", None), out=root / "v")
+        self.assertEqual({i["medium"] for i in items}, {"document"})
+
+    def test_mixed_deck_and_video_gate_is_scoped_to_video_items(self):
+        # A deck slide of team photos must never be answered <!-- no-content --> (that
+        # answer is cached forever in page_render and emitted empty by vision_assemble).
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            instr, items = _prep(_render_dir(root, "m__standup", None),
+                                 _render_dir(root, "m__standup--mp4", "video"), out=root / "v")
+        by_medium = {}
+        for it in items:
+            by_medium.setdefault(it["medium"], []).append(it["img_sha"])
+        self.assertEqual(sorted(by_medium["document"]), ["m__standup-1", "m__standup-2"])
+        self.assertEqual(sorted(by_medium["video"]), ["m__standup--mp4-1", "m__standup--mp4-2"])
+        self.assertIn("<!-- no-content -->", instr)
+        self.assertIn("ONLY to items whose `medium` is `video`", instr)
+        self.assertIn("Never answer `<!-- no-content -->` for an item whose `medium` is `document`", instr)
