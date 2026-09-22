@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import _tools
+import parse_corpus
 import video_capture as V
 
 STEM = "Planning Sync wAcme  Roadmap-20260105_150400-Meeting Recording"
@@ -270,3 +271,8 @@ class AssembleDocxTests(unittest.TestCase):
         self.assertEqual(man[self.rel]["inputs"], [self.rel, "rec/Acme_ Roadmap.docx"])
         self.assertEqual(man["rec/Acme_ Roadmap.docx"], {"source": "rec/Acme_ Roadmap.docx", "skipped": True,
                                                          "method": "consumed-by-video", "consumed_by": self.rel})
+        # and a later parse_corpus pass keeps it consumed (never re-parses it via soffice)
+        parse_corpus.main(["--corpus", str(self.corpus), "--out", str(self.parsed), "--formats", "docx"])
+        man = {e["source"]: e for e in json.loads((self.parsed / "manifest.json").read_text())}
+        self.assertEqual(man["rec/Acme_ Roadmap.docx"]["method"], "consumed-by-video")
+        self.assertFalse(stale.exists())

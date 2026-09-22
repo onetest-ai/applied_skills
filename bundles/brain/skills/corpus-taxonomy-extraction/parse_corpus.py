@@ -332,35 +332,34 @@ def _parse_text(path):
         return f.read().strip()
 
 
-VIDEO_EXT = (".mp4", ".mov", ".mkv", ".webm", ".m4v")
+def _video_lane_consumed(out):
+    """``{input_rel: video_rel}`` (``/``-separated) for the transcripts the video lane has
+    consumed into THIS out dir.
 
-
-def video_sibling(fn, files):
-    """The on-disk name of a same-stem video next to transcript `fn`, else None."""
-    stem = os.path.splitext(fn)[0]
-    for f in sorted(files):
-        if os.path.splitext(f)[0] == stem and os.path.splitext(f)[1].lower() in VIDEO_EXT:
-            return f
-    return None
-
-
-def _video_lane_docs(out):
-    """Sources (``/``-separated) the video lane has assembled into THIS out dir.
-
-    Read from the out dir's manifest as it stands BEFORE this run's merge: an entry with
-    ``method == "video-lane"`` whose ``md`` exists. A .vtt/.srt is consumed (skipped as
-    ``consumed-by-video``) only when its same-stem sibling video is in this set, so a
-    corpus that never ran the video lane parses its transcripts exactly as before, and a
-    video doc that has since been removed gives its transcript back.
+    Read from the out dir's manifest as it stands BEFORE this run's merge: every entry
+    with ``method == "video-lane"`` whose ``md`` exists contributes its ``inputs`` other
+    than the video itself. Consumption is keyed on what the video lane actually used, not
+    on file names — a Teams ``.docx`` transcript is named after the meeting, not the
+    recording — so a video assembled with ``--transcript asr`` (no sidecar in ``inputs``)
+    consumes nothing, a corpus that never ran the video lane parses exactly as before,
+    and a video doc that has since been removed gives its transcript back.
     """
     path = os.path.join(out, "manifest.json")
     if not os.path.exists(path):
-        return set()
+        return {}
     with open(path) as f:
         data = json.load(f)
-    return {e["source"].replace(os.sep, "/") for e in data
-            if isinstance(e, dict) and e.get("method") == "video-lane" and e.get("source")
-            and e.get("md") and os.path.isfile(os.path.join(out, e["md"]))}
+    consumed = {}
+    for e in data if isinstance(data, list) else []:
+        if not (isinstance(e, dict) and e.get("method") == "video-lane" and e.get("source")
+                and e.get("md") and os.path.isfile(os.path.join(out, e["md"]))):
+            continue
+        video = e["source"].replace(os.sep, "/")
+        for inp in e.get("inputs") or []:
+            inp = str(inp).replace(os.sep, "/")
+            if inp != video:
+                consumed[inp] = video
+    return consumed
 
 
 def _merge_manifest(path, fresh, allow):
@@ -447,7 +446,7 @@ def main(argv=None):
     allow = {"." + e.strip().lower().lstrip(".") for e in a.formats.split(",") if e.strip()}
     os.makedirs(a.out, exist_ok=True)
     manifest = []
-    video_docs = _video_lane_docs(a.out)
+    consumed = _video_lane_consumed(a.out)
     for root, _, files in os.walk(a.corpus):
         for fn in sorted(files):
             if fn.startswith(".") or fn.startswith("~$"):
@@ -457,18 +456,15 @@ def main(argv=None):
             ext = os.path.splitext(fn)[1].lower()
             if ext not in allow:
                 continue
-            if ext in (".vtt", ".srt"):
-                vid = video_sibling(fn, files)
-                vid_rel = os.path.relpath(os.path.join(root, vid), a.corpus) if vid else None
-                if vid_rel and vid_rel.replace(os.sep, "/") in video_docs:
-                    # The video lane already owns this transcript (see _video_lane_docs).
-                    manifest.append({"source": rel, "skipped": True, "method": "consumed-by-video",
-                                     "consumed_by": vid_rel})
-                    # Remove stale parsed doc from a previous parse run
-                    stale = os.path.join(a.out, rel.replace(os.sep, "__") + ".md")
-                    if os.path.exists(stale):
-                        os.remove(stale)
-                    continue
+            if rel.replace(os.sep, "/") in consumed:
+                # The video lane already owns this transcript (see _video_lane_consumed).
+                manifest.append({"source": rel, "skipped": True, "method": "consumed-by-video",
+                                 "consumed_by": consumed[rel.replace(os.sep, "/")]})
+                # Remove stale parsed doc from a previous parse run
+                stale = os.path.join(a.out, rel.replace(os.sep, "__") + ".md")
+                if os.path.exists(stale):
+                    os.remove(stale)
+                continue
             try:
                 md, method = parse_one(src, a.xlsx_max_mb, a.sample_rows, merge_cues=a.merge_cues)
                 if not md:

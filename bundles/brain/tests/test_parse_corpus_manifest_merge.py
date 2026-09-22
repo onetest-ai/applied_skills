@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import _tools
 import parse_corpus
 
 VTT = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v A>hello</v>\n"
@@ -41,14 +42,18 @@ class ManifestMergeTests(unittest.TestCase):
         man = self._run("--formats", "vtt,srt,md")
         self.assertEqual(sorted(man), ["talk.vtt"])
 
-    def _video_lane(self, source, md_present=True):
-        """Seed the out dir as `video_capture assemble` would leave it for `source`."""
+    def _video_lane(self, source, md_present=True, sidecar="same-stem"):
+        """Seed the out dir as `video_capture assemble` would leave it for `source`.
+        sidecar: "same-stem" (the .vtt next to it), a source-relative path, or None (asr)."""
         self.out.mkdir(exist_ok=True)
         md = source.replace("/", "__") + ".md"
         if md_present:
             (self.out / md).write_text("# SOURCE: x\n# method: video-lane (transcript: sidecar)\n")
+        if sidecar == "same-stem":
+            sidecar = source.rsplit(".", 1)[0] + ".vtt"
         (self.out / "manifest.json").write_text(json.dumps(
-            [{"source": source, "md": md, "method": "video-lane"}]))
+            [{"source": source, "md": md, "method": "video-lane",
+              "inputs": [source] + ([sidecar] if sidecar else [])}]))
 
     def test_no_video_lane_entry_parses_sidecar_normally_byte_identical(self):
         # Zoom-style mp4+vtt pair in a corpus that does not ingest video: unchanged output.
@@ -75,7 +80,8 @@ class ManifestMergeTests(unittest.TestCase):
         man0 = json.loads((self.out / "manifest.json").read_text())
         (self.out / "talk.mp4.md").write_text("# SOURCE: talk.mp4\n")
         (self.out / "manifest.json").write_text(json.dumps(
-            man0 + [{"source": "talk.mp4", "md": "talk.mp4.md", "method": "video-lane"}]))
+            man0 + [{"source": "talk.mp4", "md": "talk.mp4.md", "method": "video-lane",
+                     "inputs": ["talk.mp4", "talk.vtt"]}]))
         man = self._run("--formats", "vtt,srt", "--merge-cues", "10")
         self.assertFalse((self.out / "talk.vtt.md").exists())
         self.assertEqual(man["talk.vtt"], {"source": "talk.vtt", "skipped": True,
@@ -92,6 +98,44 @@ class ManifestMergeTests(unittest.TestCase):
     def test_video_lane_entry_whose_md_is_missing_does_not_consume(self):
         (self.corpus / "talk.mp4").write_bytes(b"v")
         self._video_lane("talk.mp4", md_present=False)
+        man = self._run("--formats", "vtt,srt", "--merge-cues", "10")
+        self.assertEqual(man["talk.vtt"]["md"], "talk.vtt.md")
+        self.assertTrue((self.out / "talk.vtt.md").exists())
+
+    def test_consumption_follows_inputs_not_the_file_name(self):
+        # A transcript with a different name than the recording, consumed because the
+        # video's manifest entry lists it in `inputs`.
+        (self.corpus / "Weekly-20260105-Meeting Recording.mp4").write_bytes(b"v")
+        self._video_lane("Weekly-20260105-Meeting Recording.mp4", sidecar="talk.vtt")
+        stale = self.out / "talk.vtt.md"; stale.write_text("# SOURCE: talk.vtt\n")
+        man = self._run("--formats", "vtt,srt", "--merge-cues", "10")
+        self.assertEqual(man["talk.vtt"], {"source": "talk.vtt", "skipped": True, "method": "consumed-by-video",
+                                           "consumed_by": "Weekly-20260105-Meeting Recording.mp4"})
+        self.assertFalse(stale.exists())
+
+    def test_teams_docx_in_inputs_is_consumed_without_parsing(self):
+        sub = self.corpus / "rec"; sub.mkdir()
+        (sub / "Sync-20260105-Meeting Recording.mp4").write_bytes(b"v")
+        _tools.make_teams_docx(sub / "Acme_ Sync.docx", "Sync-20260105-Meeting Recording", "5m",
+                               [("Dana Rivers", "0:05", "hello")])
+        self._video_lane("rec/Sync-20260105-Meeting Recording.mp4", sidecar="rec/Acme_ Sync.docx")
+        stale = self.out / "rec__Acme_ Sync.docx.md"; stale.write_text("# SOURCE: rec/Acme_ Sync.docx\n")
+        # parse_one would need soffice for a .docx; consumption must not get that far
+        orig = parse_corpus.parse_one
+        parse_corpus.parse_one = lambda *a, **k: (_ for _ in ()).throw(AssertionError("parsed"))
+        try:
+            man = self._run("--formats", "docx")
+        finally:
+            parse_corpus.parse_one = orig
+        self.assertEqual(man["rec/Acme_ Sync.docx"], {
+            "source": "rec/Acme_ Sync.docx", "skipped": True, "method": "consumed-by-video",
+            "consumed_by": "rec/Sync-20260105-Meeting Recording.mp4"})
+        self.assertFalse(stale.exists())
+
+    def test_asr_assembled_video_does_not_consume_its_same_stem_transcript(self):
+        # `--transcript asr` put only the video in inputs: the .vtt next to it is its own doc.
+        (self.corpus / "talk.mp4").write_bytes(b"v")
+        self._video_lane("talk.mp4", sidecar=None)
         man = self._run("--formats", "vtt,srt", "--merge-cues", "10")
         self.assertEqual(man["talk.vtt"]["md"], "talk.vtt.md")
         self.assertTrue((self.out / "talk.vtt.md").exists())
