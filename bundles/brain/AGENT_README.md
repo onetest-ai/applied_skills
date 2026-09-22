@@ -275,6 +275,13 @@ Prefer seed-guided induction when the corpus contains an authoritative taxonomy.
 
 Write the reduce output to `taxonomy/work/consolidated.json` and emit to `taxonomy/taxonomy_v0.json`. There is no review here: adopt the draft as a **provisional** `current.json` and build and classify against it, so the first human review can be grounded in real per-section counts instead of the bare draft tree.
 
+The narrative index can run after final assembly; do it once, before the graph:
+
+```bash
+"$PY" "$SKILLS/knowledge-index/knowledge_index.py" index \
+  --db "$DB" --corpus "$PROJECT/parsed" --reset
+```
+
 ```bash
 cd "$PROJECT"
 "$PY" "$SKILLS/corpus-taxonomy-extraction/build_graph.py" \
@@ -284,13 +291,6 @@ cd "$PROJECT"
 ```
 
 `adopt --provisional` copies the draft to `$TAX` (`taxonomy/current.json`) and writes `taxonomy/PROVISIONAL`. While that marker exists, `onboard.py verify` fails and the store must not be deployed — the provisional build exists only to get real classification counts in front of the human.
-
-The narrative index can run after final assembly; do it once:
-
-```bash
-"$PY" "$SKILLS/knowledge-index/knowledge_index.py" index \
-  --db "$DB" --corpus "$PROJECT/parsed" --reset
-```
 
 ### Phase 5 — classify against the provisional taxonomy
 

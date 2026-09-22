@@ -468,6 +468,17 @@ class BigChunkIdTests(unittest.TestCase):
         with open(self.dec, encoding="utf-8") as f:
             self.assertIn(f"[{BIG}]", f.read())                       # plain JSON ints on disk
 
+    def test_pre_fix_int_chunk_ids_in_decisions_log_serve_as_strings(self):
+        """A decision recorded before the string-id fix would have int chunk_ids on disk (as
+        `decisions.append` writes them); `ids_out` must still turn them into strings for the
+        browser when serving state."""
+        op = {"type": "tag", "node": "Payment Plans", "chunk_ids": [BIG]}
+        D.append(self.dec, {"action": "amend", "item_id": self.item["id"], "op": op,
+                             "review_id": self.app.review["review_id"], "reviewer": "Pat", "surface": "browser"})
+        code, st = self.req("GET", "/api/state")
+        self.assertEqual(code, 200, st)
+        self.assertEqual(st["decisions"][self.item["id"]]["op"]["chunk_ids"], [str(BIG)])
+
     def test_rounded_id_is_refused_by_the_candidate_check(self):
         op = {"type": "tag", "node": "Payment Plans", "chunk_ids": [str(BIG - 408)]}
         code, out = self.req("POST", "/api/decision", {"action": "amend", "item_id": self.item["id"], "op": op})
@@ -489,3 +500,15 @@ class BigChunkIdTests(unittest.TestCase):
         op = {"type": "tag", "node": "Payment Plans", "chunk_ids": [str(BIG)]}
         code, out = self.req("POST", "/api/impact", {"op": op})
         self.assertEqual(code, 200, out)
+
+    def test_overlong_digit_string_in_post_body_is_400(self):
+        op = {"type": "tag", "node": "Payment Plans", "chunk_ids": ["1" * 21]}
+        code, out = self.req("POST", "/api/decision", {"action": "amend", "item_id": self.item["id"], "op": op})
+        self.assertEqual(code, 400, out)
+        self.assertTrue(out["errors"], out)
+        self.assertFalse(os.path.exists(self.dec))
+
+    def test_out_of_range_id_on_chunk_endpoint_is_400_not_500(self):
+        code, out = self.req("GET", f"/api/chunk/{2 ** 63}")
+        self.assertEqual(code, 400, out)
+        self.assertTrue(out["errors"], out)

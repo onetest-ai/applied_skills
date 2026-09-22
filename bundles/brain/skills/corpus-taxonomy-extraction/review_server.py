@@ -57,12 +57,23 @@ def ids_out(v, key=None):
 
 
 def parse_chunk_id(v):
-    """An exact int from an int or a plain decimal string ("-?[0-9]+"); None otherwise."""
+    """An exact int, within signed-64-bit range, from an int or a plain decimal string
+    ("-?[0-9]+", at most 20 digits); None if `v` isn't recognizable as a chunk id at all.
+    Raises ValueError if it IS recognizable but out of range (an over-long digit string, or
+    an int/parsed value outside [-2**63, 2**63)) — that's the caller's cue for a 400, not a
+    silent None that reads as "not a chunk id"."""
     if _is_int(v):
-        return v
-    if isinstance(v, str) and _INT_RE.fullmatch(v):
-        return int(v)
-    return None
+        n = v
+    elif isinstance(v, str) and _INT_RE.fullmatch(v):
+        digits = v[1:] if v.startswith("-") else v
+        if len(digits) > 20:
+            raise ValueError(f"{v!r} is out of range for a chunk id")
+        n = int(v)
+    else:
+        return None
+    if not (-(2 ** 63) <= n < 2 ** 63):
+        raise ValueError(f"{n} is out of range for a chunk id")
+    return n
 
 
 def ids_in(v, key=None, errors=None):
@@ -74,7 +85,12 @@ def ids_in(v, key=None, errors=None):
     if isinstance(v, list):
         return [ids_in(x, key, errors) for x in v]
     if key in CHUNK_ID_KEYS and isinstance(v, str):
-        n = parse_chunk_id(v)
+        try:
+            n = parse_chunk_id(v)
+        except ValueError as e:
+            if errors is not None:
+                errors.append(f"{key}: {e}")
+            return v
         if n is None:
             if errors is not None:
                 errors.append(f"{key}: {v!r} is not a section id (a whole number)")
@@ -240,7 +256,10 @@ class ReviewApp:
         return out
 
     def chunk(self, cid):
-        cid = parse_chunk_id(cid)
+        try:
+            cid = parse_chunk_id(cid)
+        except ValueError as e:
+            return 400, {"errors": [str(e)]}
         if cid is None:
             return 400, {"errors": ["a section id is a whole number"]}
         if not self._has("chunks"):
@@ -451,7 +470,10 @@ def make_handler(app):
             except json.JSONDecodeError:
                 return self._send(400, {"errors": ["request body is not JSON"]})
             bad_ids = []
-            body = ids_in(body, errors=bad_ids)   # string chunk ids back to exact ints before anything validates
+            try:
+                body = ids_in(body, errors=bad_ids)   # string chunk ids back to exact ints before anything validates
+            except ValueError as e:
+                return self._send(400, {"errors": [str(e)]})
             if bad_ids:
                 return self._send(400, {"errors": bad_ids})
             routes = {"/api/impact": app.impact_of, "/api/decision": app.decide,
