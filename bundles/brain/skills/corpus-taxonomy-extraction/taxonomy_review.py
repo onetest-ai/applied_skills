@@ -538,7 +538,10 @@ def cmd_describe_prep(a):
 
 def cmd_diagnose(a):
     import health as H
-    _out(H.diagnose(a.taxonomy, a.db, a.out, metrics_path=a.metrics, batches=a.batches))
+    signals = a.signals or os.path.join(os.path.dirname(os.path.abspath(a.taxonomy)), "work", "signals.json")
+    _out(H.diagnose(a.taxonomy, a.db, a.out, metrics_path=a.metrics, batches=a.batches,
+                    signals_path=signals if os.path.exists(signals) else None,
+                    sparse_max=a.sparse_max, overload_factor=a.overload_factor))
     return 0
 
 
@@ -726,6 +729,9 @@ def main(argv=None):
     p.add_argument("--out", default=os.path.join("taxonomy", "work", "health"))
     p.add_argument("--metrics")
     p.add_argument("--batches", type=int, default=4)
+    p.add_argument("--signals", help="taxonomy_signals.py output (default: <taxonomy dir>/work/signals.json if present)")
+    p.add_argument("--sparse-max", type=int, default=2)
+    p.add_argument("--overload-factor", type=float, default=2.0)
     p.set_defaults(fn=cmd_diagnose)
     p = sub.add_parser("respond", help="record a revised proposal for a health item's redo request")
     p.add_argument("--review", required=True)
