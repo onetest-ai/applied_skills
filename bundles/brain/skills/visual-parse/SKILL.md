@@ -29,7 +29,7 @@ doc (pdf / pptx via soffice→pdf)
 Writes `<assets>/<slug>/p<NN>.png`, `p<NN>.txt` (PyMuPDF text layer), `p<NN>.tables.md` (extracted grids), and `pages.json` (per-page `img_sha`, `text_len`, `n_drawings`, `n_tables`, `flagged`, `why`). The `<slug>` is derived from the **full source-relative `--doc` path** (each path component kebab-cased, joined by `__`), so same-named files in different folders no longer collide; a bare filename slugs exactly as before. **Migration:** a brain whose assets were rendered under the old basename-only slugs will not match the new slugs — re-render the affected documents (the `page_render` VLM cache is keyed by `img_sha`, so unchanged pages are not re-transcribed) or keep the old asset dirs until the next rebuild. A page is flagged visual (→ VLM) when the text layer likely misses the meaning: **thin text with no extracted table** (`why=thin-text`), **many drawings** (`why=dense-draw`, a timeline/diagram even with fragmented labels), or a **lighter diagram with modest text** (`why=diagram`). Image-area `cover` is NOT used (full-bleed backgrounds make it meaningless); a pure data table we already extracted is NOT flagged (we have the grid). Thresholds are tunable per corpus; `--all` forces every page. PPTX/DOCX → PDF via LibreOffice `soffice` first. On a representative sample this flags ~15–25% of deck pages (vs ~80% before tuning).
 
 ### 2. Transcribe — Sonnet VISION subagents
-Instantiate `vision_prep.py` to batch the **flagged, uncached** pages (image path + any extracted table + page context) with instructions, then dispatch vision subagents (model: sonnet) that read each page image and emit faithful structured Markdown → `result_<k>.json` keyed by `img_sha`. Cache by `img_sha` (a page whose rendered image is unchanged is never re-transcribed).
+Instantiate `vision_prep.py` to batch the **flagged, uncached** pages (image path + any extracted table + page context) with instructions, then dispatch vision subagents (model: sonnet) that read each page image and emit faithful structured Markdown → `result_<k>.json` keyed by `img_sha`. Cache by `img_sha` and prompt version (a page whose rendered image is unchanged is not re-transcribed unless its medium's prompt changed).
 
 ### 3. Assemble — `vision_assemble.py`
 `vision_assemble.py --render-dir <assets>/<slug> --out <parsed>/<doc>.md [--results <dir>] [--db <db>]`
@@ -165,7 +165,9 @@ a frames-only document (`transcript: none`).
 ```bash
 "$PY" <skills>/knowledge-pipeline/brain_doctor.py --config brain.toml
 ```
-If it reports `whisper-cli` REQUIRED, tell the user which videos lack a transcript, show
+Without a project yet, use `--corpus <root>` instead of `--config`. A REQUIRED item only
+blocks the step that needs it: `sqlite-vec` is needed for indexing, not for this lane;
+`ffmpeg`/`ffprobe` are needed here. If it reports `whisper-cli` REQUIRED, tell the user which videos lack a transcript, show
 `brain_doctor.py whisper-models`, ask which model to use (recommend `small.en`, or `small`
 for non-English meetings), and — only after they approve — run the printed `curl` download,
 then `brain_doctor.py set-whisper-model --config brain.toml --model <path> [--language en]`.
@@ -182,10 +184,23 @@ VC=<skills>/visual-parse/video_capture.py
 "$PY" $VC frames --video <root>/<rel> --rel-to <root> --assets-root <project>/assets
 "$PY" <skills>/visual-parse/vision_prep.py --render-dir <project>/assets/<slug> --out <run>/vision --db <db>
 # 🤖 dispatch vision subagents on <run>/vision/batch_k.json → result_k.json (same as decks;
-#    the instructions tell them to answer <!-- no-content --> for people-only frames)
+#    the instructions carry the video rules — see "Frame transcription rules" below)
+"$PY" $VC review-prep --render-dir <project>/assets/<slug> --results <run>/vision --db <db> --out <run>/review
+# 🤖 dispatch ONE blind reader subagent PER ITEM in <run>/review/review_batch.json (it reads
+#    review_instructions.md and ONLY its item_pNN.json, opens that item's image(s), writes
+#    review_result_pNN.json; give it its page number, never the whole batch)
+#    (skip when review-prep prints "nothing to review")
 "$PY" $VC assemble --probe <project>/video/<slug>/probe.json --render-dir <project>/assets/<slug> \
-    --results <run>/vision --parsed <project>/parsed --db <db>
+    --results <run>/vision --review <run>/review --parsed <project>/parsed --db <db>
 ```
+`<run>` is any empty working directory for this pass (e.g. `<project>/runs/<date>-<slug>`);
+use a fresh one per pass: stale `batch_*.json`/`result_*.json` files are loaded too. Each vision
+subagent writes its `result_<k>.json` next to its `batch_<k>.json` and must answer every
+`img_sha` in its batch — `review-prep` and `assemble` refuse on a missing, malformed or mis-filed
+answer and name it; re-run that batch. `--db <db>` is optional: with it, transcriptions and review
+verdicts are cached in `page_render` and a later `assemble --db <db>` needs no `--results`;
+without it (no store yet), every rerun must pass `--results` again.
+
 `<slug>` is printed by `probe` and `frames` (`slug=…`): the source path components
 kebab-cased and joined by `__`, then `--<ext>` — `m/standup.mp4` → `m__standup--mp4`. The
 extension suffix keeps a recording out of a same-stem deck's asset dir (`m/standup.pptx` →
@@ -203,6 +218,65 @@ assembled with `--transcript asr` consumes nothing. No flag: a corpus that never
 lane parses exactly as before, and a recording's transcript is indexed as its own document
 until the recording is assembled.
 
+### Frame transcription rules and dedup
+
+For `medium: video` items the instructions add, on top of the deck rules: copy identifiers,
+codes, file names, numbers and names **character for character** (never normalise two
+similar strings into one); write `[illegible]` rather than guess text too small to read;
+ignore the meeting application itself (participant tiles and panel, call toolbar, timer,
+taskbar, **burned-in live captions** — the transcript already has the speech — and do not
+mention or quote what was ignored); describe
+each frame on its own, **never referring to other frames**; title an application screen
+`<app> — <window or document title>`.
+
+Transcriptions are cached in `page_render` with the prompt version of their medium
+(`vision_prep.PROMPT_VERSION`). When a medium's prompt changes its version is bumped, so
+`vision_prep` re-batches that medium's cached pages and `assemble` refuses to use a stale
+transcription; deck pages cached under an unchanged prompt stay cached. Upgrading to 0.9.2
+therefore re-transcribes every already-cached recording frame once (video prompt version 2):
+until `vision_prep` + the subagents have run again, `assemble` refuses on those recordings
+with its "no VLM result" message.
+
+Frames are deduplicated twice. `frames` drops repeats by pixels (a slide shown again is
+stored once, every showing in `shown_at`). `assemble` then drops frames whose
+**transcription** repeats an earlier kept frame's — a scrolled email, the same slide at a
+different zoom, which the 96×54 pixel round cannot tell from a new slide:
+`--content-dup` (share of words in common, default `0.8`; `0` disables). A duplicate is
+marked `dropped: "duplicate"`, `duplicate_of: N` in `pages.json`, keeps its PNG, and its
+on-screen windows are shown on the surviving frame. The round is recomputed on every
+`assemble`, so changing the threshold restores frames. Inside a frame, VLM headings are
+rendered as bold lines so one frame stays one retrieval chunk.
+
+**Second round — a blind review, so no on-screen information is lost.** `review-prep` lists
+the frames the text dedup would drop (each with the frame that would absorb it) and kept frames
+whose transcription still refers to another frame. The items carry only images — never the
+first-pass text, because a checker that sees the draft tends to confirm it. One isolated blind
+reader subagent per item answers it from the image(s) alone (a single reader holding many
+images confused one with another in testing): a duplicate pair `{"same": true}` or
+`{"same": false, "md": …}` (B transcribed on its own, never compared with A); a frame that
+referred to another `{"md": …}` (read on its own). `assemble --review` decides in code: a
+confirmed duplicate stays dropped; a differing one is kept with the blind transcription and
+pinned against later dedup; a blind transcription replaces a leaning one. Identifiers are not
+re-read: the first pass's verbatim and `[illegible]` rules carry them. Verdicts are stored on
+their pages in `pages.json`, so a rerun with unchanged frame text needs no new review.
+
+**A follow-up round is normal.** When the review's own text creates new work — a re-read frame
+now duplicates another, or a reader's text still leans on the other image — `assemble` refuses
+and names it: run `review-prep --review <run>/review --out <run>/review2`, answer it, and pass
+every dir: `assemble --review <run>/review --review <run>/review2`. `assemble` without
+`--review` refuses while any frame needs the round (`--no-review` skips it deliberately).
+
+**Frame echo.** Each video transcription starts with `<!-- frame: pNN -->`. `assemble` and
+`review-prep` refuse when a result names another frame than the one it is filed under (a
+vision agent can shift its answers by one frame within a batch) and strip the echo otherwise.
+
+**Measuring a run.** `video_quality.py --doc <parsed>/<doc>.md --pages <assets>/<slug>/pages.json
+[--sidecar <transcript>] [--golden golden.json] [--results <run>/vision] --out metrics.json`
+reports frame/page parity, transcript coverage, redundant frame pairs, caption leaks,
+references to other frames, meeting-UI leaks, marker-only chunks, golden exact-string
+checks (kept outside the repo — they hold client strings) and duplicate retention. Exit 1 on
+a parity or golden failure. VLM output varies run to run: compare several runs per side.
+
 **Tuning.** `frames --min-hold` (seconds a frame must stay, default 3), `--diff` (cut
 threshold, 0.08), `--still` (stillness, 0.015 — raise it if slides with a live cursor are
 missed), `--max-per-min` (6), `--max-frames` (300).
@@ -210,8 +284,10 @@ missed), `--max-per-min` (6), `--max-frames` (300).
 ### Privacy position — partially mitigated
 
 Frames the VLM marks no-content (faces, speaker grids) have their PNGs deleted by
-`assemble`. Kept frames can still show chat panels, notifications or other windows that were
-on screen; this lane does not detect or redact them. Do not ingest a recording whose screen
+`assemble`. The video rules tell the VLM not to transcribe participant tiles, the
+participants panel or captions, but kept frames can still show chat panels, notifications,
+e-mail recipients or other windows that were on screen; this lane does not detect or
+redact them. Do not ingest a recording whose screen
 content you would not index as a document.
 
 ## How the classifier / retrieval change

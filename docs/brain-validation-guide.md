@@ -1292,6 +1292,21 @@ assembled doc has time-ordered `HH:MM:SS` speaker turns and `(frame pNN)` sectio
 `on-screen` intervals; the later `parse_corpus` pass produces no separate doc for the `.docx`;
 `brain_sync plan` reports it under `superseded_by_video`.
 
+**Quality check.** Score the assembled doc (keep any golden file with exact on-screen strings
+outside the repo):
+
+```bash
+$VENV $SKILLS/visual-parse/video_quality.py --doc "$PROJECT/parsed/<doc>.md" \
+  --pages "$PROJECT/assets/<slug>/pages.json" --sidecar "<transcript>" --out /tmp/quality.json
+```
+
+Expect `frame_parity: true`, full `cue_coverage` and `marker_only_chunks: 0`. The other
+metrics are signals to read, not gates: `redundant_pairs` is reported from 0.75 word overlap
+while `assemble` drops duplicates from 0.8, so near-repeats in between remain by design;
+`caption_leaks` compares a frame only with speech from while it was on screen (± 30 s), so
+a slide read aloud at that moment is still reported; `cross_frame_refs` and meeting-UI lines
+should be rare — open each one reported and check it against the frame image.
+
 ### TC-8b — Recording with no transcript (whisper.cpp fallback)
 
 **What it tests:** a recording with no sidecar and no paired Teams `.docx` falls back to a

@@ -10,6 +10,7 @@ html_capture.py):
   frames      stable-span detection + dedup -> <assets>/<slug>/pNN.png, pNN.txt, pages.json
   (vision_prep.py -> vision subagents -> result_<k>.json, exactly as for decks; the VLM
    answers "<!-- no-content -->" for people-only frames)
+  review-prep frames the text dedup would drop + frames that refer to another frame -> one blind reader per item
   assemble    transcript turns + kept frames, time-ordered -> <parsed>/<doc>.md + manifest
   forget      remove a deleted recording's parsed doc, manifest entries and assets
 
@@ -23,6 +24,7 @@ variables: the whisper model comes from --model or brain.toml [video].whisper_mo
 from __future__ import annotations
 
 import argparse
+import glob
 import hashlib
 import json
 import os
@@ -35,7 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from render_pages import doc_slug  # noqa: E402  (same skill directory)
-from vision_assemble import demote, load_cache, load_results, persist_page_render, title_of  # noqa: E402
+from vision_assemble import load_cache, persist_page_render, title_of  # noqa: E402
 
 VIDEO_EXT = (".mp4", ".mov", ".mkv", ".webm", ".m4v")
 SIDECAR_EXT = (".vtt", ".srt", ".docx")  # priority order for the same-stem rule
@@ -678,6 +680,28 @@ def method_for(probe: dict, work_dir: str) -> str:
     return f"video-lane (transcript: {t})"
 
 
+def flatten_headings(md: str) -> str:
+    """No line of a frame may open a new chunk: `chunking.section_records` treats every
+    column-0 `#` line as a heading (it is not fence-aware), which would leave the
+    `(frame pNN)` chunk with only its markers, or — for a `# comment` in screen-shared code —
+    open a live H1 that re-roots the breadcrumb of every later section. VLM headings become
+    bold lines; `#` lines inside a ``` or ~~~ fence (or an unclosed one) are indented by one
+    space, which keeps the code readable and stops them matching as headings."""
+    out, fence = [], None
+    for ln in md.splitlines():
+        marker = ln.lstrip()[:3]
+        if marker in ("```", "~~~") and (fence is None or marker == fence):
+            fence = None if fence else marker
+            out.append(ln)
+            continue
+        if re.match(r"^#{1,6}(\s|$)", ln):
+            m = re.match(r"^#{1,6}\s+(.*\S)\s*$", ln)
+            out.append(" " + ln if fence else (f"**{m.group(1)}**" if m else ""))
+            continue
+        out.append(ln)
+    return "\n".join(out)
+
+
 def render_doc(source: str, method: str, slug: str, turns: list[dict], frames: list[tuple]) -> str:
     items = [(t["start"], 0, t) for t in turns] + [(p["t_start"], 1, (p, md)) for p, md in frames]
     items.sort(key=lambda x: (x[0], x[1]))
@@ -696,8 +720,347 @@ def render_doc(source: str, method: str, slug: str, turns: list[dict], frames: l
             shown = ", ".join(f"{fmt_hms(s)}–{fmt_hms(e)}" for s, e in p["shown_at"])
             out.append(f"## {fmt_hms(p['t_start'])} · {title_of(md, n)} (frame p{n:02d})\n\n"
                        f"<!-- image: {slug}/p{n:02d}.png -->\n<!-- on-screen: {shown} -->\n\n"
-                       f"{demote(md.strip())}\n")
+                       f"{flatten_headings(md.strip())}\n")
     return "\n".join(out)
+
+
+def content_tokens(md: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]{3,}", md.lower()))
+
+
+def dedup_content(kept, jaccard=0.8, min_tokens=15):
+    """Second dedup round, on meaning: a frame whose transcription shares >= `jaccard` of its
+    words with an EARLIER kept frame is a duplicate of it (a scrolled email, a slide shown
+    again with a different zoom — cases the 96x54 pixel round cannot tell from a new slide).
+    Marks each duplicate's page dict `dropped: "duplicate"`, `duplicate_of: N` and returns
+    (kept_without_duplicates, duplicate_pages). Transcriptions under `min_tokens` words are
+    never merged; `jaccard <= 0` disables the round."""
+    if jaccard <= 0:
+        return list(kept), []
+    live, dups, seen = [], [], []
+    for p, md in kept:
+        t = content_tokens(md)
+        match = None
+        if len(t) >= min_tokens and not p.get("keep"):  # a reviewer confirmed it adds information
+            for q, u in seen:
+                if len(t | u) and len(t & u) / len(t | u) >= jaccard:
+                    match = q
+                    break
+        if match is None:
+            live.append((p, md))
+            if len(t) >= min_tokens:
+                seen.append((p, t))
+        else:
+            p["dropped"], p["duplicate_of"] = "duplicate", match["page"]
+            dups.append(p)
+    return live, dups
+
+
+# A transcription that leans on another frame: "same as the previous frame", or — from a
+# duplicate reader shown images A and B — a comparison with them ("Unlike A", "not present in A",
+# "shown in B", "image A"). Only comparative phrasing counts, so spreadsheet text ("in B column",
+# "from A to Z") and "A/R", "Plan A:", "B2" do not.
+_AB = r"(?-i:[AB])(?![\w/&:-]|\.\w)"
+_XREF = re.compile(r"\b(previous|prior|earlier|preceding)\s+(frame|slide|screen)s?\b"
+                   r"|\bsame\s+as\s+(the\s+)?(previous|prior|earlier|above|before)\b"
+                   r"|\b(unlike|than)\s+" + _AB +
+                   r"|\b(present|shown|visible|seen|absent)\s+(in|from)\s+" + _AB +
+                   r"|\b(image|frame|screenshot)\s+(?-i:[AB])\b", re.I)
+
+REVIEW_INSTRUCTIONS = """# Read meeting-recording frames — a blind check
+
+You have not seen any earlier transcription of these frames, and you do not need one: answer
+from the images only. Do not open any other file — no result files, parsed documents or
+pages.json; the check only works if the answers come from the images alone. Your item is in
+`item_pNN.json` (NN = your page, two digits; `review_batch.json` lists every item for the
+dispatcher); answer it by the `img_sha` written there.
+
+- kind `duplicate`: open `kept_image` (A) and `image` (B). Ignoring the cursor, live captions and
+  the meeting application, does B show exactly the same information as A? Answer
+  `{"same": true}`, or `{"same": false, "md": "<full transcription of B>"}` — transcribe B on its
+  own, as if A did not exist: never write "A" or "B" and never compare the two.
+- kind `standalone`: open `image` and transcribe it: `{"md": "<full transcription>"}`.
+
+Rules for every `md`: start with a `# <title>` line (the slide title, or `<app> — <window or
+document title>`); copy identifiers, codes, file names, numbers and names shown in the shared
+content character for character — never normalise or "correct" them; write `[illegible]` for
+text you cannot read with certainty; ignore the meeting application (participant tiles and
+names, toolbar, taskbar, live captions) and do not mention it; never refer to other frames.
+
+One reader per item: you are given one item (its `page`) — open only `item_pNN.json`, answer
+only the item in it, and write only `review_result_pNN.json` (same NN) containing
+`{img_sha: {...}}` with the `img_sha` copied from `item_pNN.json`. (A single reader answering every item may instead write
+`review_result.json` with every item exactly once, but one isolated reader per item avoids
+confusing one image with another.)
+"""
+
+
+_FRAME_ECHO = re.compile(r"\A\s*<!--\s*frame:\s*p(\d+)\s*-->[ \t]*\n?")
+
+
+def load_results_strict(results_dir: str) -> dict:
+    """{img_sha: md} from a vision run dir — refusing, with the file names, when any result_*.json is
+    not a JSON object. A skipped file silently removes its frames from the review round."""
+    md, bad = {}, []
+    for rf in sorted(glob.glob(os.path.join(results_dir, "result_*.json"))):
+        try:
+            part = json.loads(Path(rf).read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            bad.append(f"{os.path.basename(rf)} ({e})")
+            continue
+        if not isinstance(part, dict):
+            bad.append(f"{os.path.basename(rf)} (not an object)")
+            continue
+        md.update(part)
+    if bad:
+        die("refusing: malformed vision result file(s): " + "; ".join(bad) +
+            " — re-run the vision batch(es) that wrote them")
+    return md
+
+
+def check_frame_echo(pages_doc: dict, vlm: dict) -> dict:
+    """Each video transcription starts with `<!-- frame: pNN -->` naming the batch item it
+    answers. Refuse when a result is filed under another frame's hash (a vision agent that
+    shifted its answers by one frame); return the transcriptions with the echo removed.
+    Results without an echo (written before the rule) are accepted with a warning."""
+    out, wrong, untagged = dict(vlm), [], 0
+    for p in pages_doc["pages"]:
+        md = vlm.get(p["img_sha"])
+        if md is None:
+            continue
+        m = _FRAME_ECHO.match(md)
+        if not m:
+            untagged += 0 if is_no_content(md) else 1   # the gate demands a bare sentinel there
+        elif int(m.group(1)) != p["page"]:
+            wrong.append(f"p{p['page']:02d} holds the answer for p{int(m.group(1)):02d}")
+        else:
+            out[p["img_sha"]] = md[m.end():]
+    if wrong:
+        die("refusing: vision results are filed under the wrong frames (" + "; ".join(wrong) +
+            ") — re-run the vision batch(es) that hold these frames")
+    if untagged:
+        print(f"warning: {untagged} frame transcription(s) have no frame echo (<!-- frame: pNN -->); "
+              "a result filed under the wrong frame cannot be detected for them", file=sys.stderr)
+    return out
+
+
+def _text_sha(md: str) -> str:
+    return hashlib.sha256((md or "").strip().encode()).hexdigest()[:16]
+
+
+def _records(p: dict) -> list[dict]:
+    """The review verdicts stored on a page (pages.json), oldest first. A page can hold one
+    per kind — e.g. a rewrite from one round and a duplicate confirmation from the next."""
+    recs = p.get("review")
+    recs = [recs] if isinstance(recs, dict) else recs if isinstance(recs, list) else []
+    # `verify` verdicts came from an identifier vote that no longer exists; they are dropped
+    return [r for r in recs if isinstance(r, dict) and r.get("verdict") and r.get("kind") != "verify"]
+
+
+def _record_matches(rec: dict, *texts: str) -> bool:
+    """A stored verdict still applies while the frame's text is the text it judged, or the
+    reviewer's own text (which the cache holds after a reviewed run)."""
+    keys = {rec.get("judged_sha")} | ({_text_sha(rec["md"])} if rec.get("md") else set())
+    return any(t is not None and _text_sha(t) in keys for t in texts)
+
+
+def _chain(p: dict, vlm: dict) -> list[dict]:
+    """The text-producing verdicts (`rewrite`/`adds`) that apply to the frame's current text, in
+    the order they were recorded. A verdict applies when it judged, or produced, a text in the
+    chain: the first-pass text (--results), a later round's re-read of an earlier verdict's text,
+    or the reviewed text the cache holds after a reviewed run — so every entry point sees the
+    same chain. Verdicts judged on a different first pass stay out."""
+    t = vlm.get(p["img_sha"])
+    if t is None:
+        return []
+    recs = [r for r in _records(p) if r["verdict"] in ("rewrite", "adds") and r.get("md")]
+    seen, chain, grew = {_text_sha(t)}, [], True
+    while grew:
+        grew = False
+        for r in recs:
+            keys = {r.get("judged_sha"), _text_sha(r["md"])}
+            if not any(r is c for c in chain) and keys & seen:
+                chain.append(r); seen |= keys; grew = True
+    return sorted(chain, key=lambda r: next(i for i, x in enumerate(recs) if x is r))
+
+
+def effective_md(p: dict, vlm: dict) -> str | None:
+    """The frame's transcription after review: the last verdict in its chain wins over the
+    first-pass VLM text, however that text was supplied (--results or cache)."""
+    chain = _chain(p, vlm)
+    return chain[-1]["md"] if chain else vlm.get(p["img_sha"])
+
+
+def _pinned(p: dict, vlm: dict) -> bool:
+    """A blind reader said this frame differs from the one the text dedup matched it with."""
+    return any(r["verdict"] == "adds" for r in _chain(p, vlm))
+
+
+def _resolved(item: dict, p: dict, vlm: dict) -> bool:
+    for rec in _records(p):
+        if not _record_matches(rec, vlm.get(p["img_sha"]), item["_md"]):
+            continue
+        if item["kind"] == "duplicate":
+            # only a comparison with THIS kept frame confirms the drop
+            if rec["kind"] == "duplicate" and rec.get("kept_img_sha") == item["kept_img_sha"]:
+                return True
+        elif rec["kind"] != "duplicate":
+            return True       # a blind re-read; an `adds` text that leans on A is read again on its own
+    return False
+
+
+def review_items(pages_doc: dict, vlm: dict, render_dir: str, jaccard: float = 0.8) -> list[dict]:
+    """What the second round must still look at, on the post-review state: frames the text
+    dedup would drop (with the frame that would absorb them) and kept frames whose transcription
+    refers to another frame. Items already answered by a
+    verdict stored in pages.json (for the same text) are left out. Each item keeps the text it
+    was computed from under `_md` — for code only; review-prep never writes it out."""
+    img = lambda p: os.path.abspath(os.path.join(render_dir, f"p{p['page']:02d}.png"))
+    by_sha = {p["img_sha"]: p for p in pages_doc["pages"]}
+    cand = []
+    for p in pages_doc["pages"]:
+        if p.get("dropped") not in (None, "duplicate"):
+            continue
+        md = effective_md(p, vlm)
+        if md is None or is_no_content(md.strip()):
+            continue
+        keep = _pinned(p, vlm)
+        cand.append(({**{k: v for k, v in p.items() if k not in ("dropped", "duplicate_of", "keep")},
+                      **({"keep": True} if keep else {})}, md.strip()))
+    live, dups = dedup_content(cand, jaccard)  # on copies: pages.json is not touched
+    by_page = {p["page"]: (p, md) for p, md in cand}
+    items = []
+    for d in dups:
+        kp, _kmd = by_page[d["duplicate_of"]]
+        items.append({"kind": "duplicate", "img_sha": d["img_sha"], "page": d["page"], "image": img(d),
+                      "kept_page": kp["page"], "kept_image": img(kp), "kept_img_sha": kp["img_sha"],
+                      "_md": by_page[d["page"]][1]})
+    for p, md in live:
+        if _XREF.search(md):
+            items.append({"kind": "standalone", "img_sha": p["img_sha"], "page": p["page"], "image": img(p), "_md": md})
+    items = [i for i in items if not _resolved(i, by_sha[i["img_sha"]], vlm)]
+    return sorted(items, key=lambda i: i["page"])
+
+
+def _answer_ok(kind, ans) -> bool:
+    if not isinstance(ans, dict):
+        return False
+    md_ok = isinstance(ans.get("md"), str) and ans["md"].strip() != ""
+    if kind == "duplicate":
+        return ans.get("same") is True or (ans.get("same") is False and md_ok)
+    if kind == "standalone":
+        return md_ok
+    return False
+
+
+def load_review(review_dir: str) -> dict:
+    """{img_sha: (kind, answer, item)} from a review dir — refuses unless every item in its batch has
+    a well-formed answer for its kind. An empty batch needs no answer file."""
+    try:
+        items = json.loads(Path(review_dir, "review_batch.json").read_text())
+        if not items:
+            return {}
+        files = sorted(glob.glob(os.path.join(review_dir, "review_result*.json")))
+        parts = [(f, json.loads(Path(f).read_text())) for f in files]
+    except FileNotFoundError as e:
+        die(f"refusing to assemble: {e.filename} missing (run review-prep, then one blind reader per "
+            "review item)")
+    except json.JSONDecodeError as e:
+        die(f"refusing to assemble: malformed review file: {e}")
+    if not isinstance(items, list) or not parts or not all(isinstance(a, dict) for _f, a in parts):
+        die(f"refusing to assemble: no review_result*.json answers in {review_dir} (each must be an object)")
+    # one isolated reader per item writes review_result_pNN.json; merge them, refusing
+    # contradictions and answers to items this batch did not ask about
+    listed = {it.get("img_sha") for it in items}
+    page_of = {it.get("img_sha"): it.get("page") for it in items}
+    answers: dict = {}
+    for f, part in parts:
+        own = re.fullmatch(r"review_result_p(\d+)\.json", os.path.basename(f))
+        for sha, ans in part.items():
+            if own and sha in page_of and page_of[sha] != int(own.group(1)):
+                die(f"refusing to assemble: {os.path.basename(f)} answers the item of p{page_of[sha]:02d} "
+                    "— a per-item reader must answer only its own page")
+            if sha not in listed:
+                die(f"refusing to assemble: {os.path.basename(f)} answers {sha[:12]}…, which this review "
+                    "batch does not list — a reader answered the wrong item")
+            if sha in answers and answers[sha] != ans:
+                die(f"refusing to assemble: two review files answer {sha[:12]}… differently")
+            answers[sha] = ans
+    legacy = sorted({str(it.get("kind")) for it in items} - {"duplicate", "standalone"})
+    if legacy:
+        die(f"refusing to assemble: {review_dir} was written by an older review-prep (item kind "
+            f"{', '.join(legacy)}, no longer used) — run review-prep again with a new --out dir and "
+            "answer that batch")
+    out, bad = {}, []
+    for it in items:
+        ans = answers.get(it.get("img_sha"))
+        if not _answer_ok(it.get("kind"), ans):
+            bad.append(f"p{it.get('page', 0):02d} ({it.get('kind')})")
+            continue
+        out[it["img_sha"]] = (it["kind"], ans, it)
+    if bad:
+        die(f"refusing to assemble: review answers missing or malformed for {', '.join(bad)}")
+    return out
+
+
+def apply_reviews(pages_doc: dict, review_dirs: list[str], vlm: dict) -> None:
+    """Decide each review dir's blind answers against the current text and store the verdicts
+    on their pages, in order; a later verdict of the same kind replaces the earlier one. Idempotent: a
+    verdict stored by an earlier run is re-derived from the dirs given now — unless its output
+    is the text now current (a rerun from the cache), which it already produced."""
+    by_sha = {p["img_sha"]: p for p in pages_doc["pages"]}
+    loaded = [load_review(d) for d in review_dirs]
+    settled = set()
+    for answers in loaded:
+        for sha, (kind, _ans, _it) in answers.items():
+            p, txt = by_sha.get(sha), vlm.get(sha)
+            if p is None:
+                continue
+            if txt is not None and any(r["kind"] == kind for r in _chain(p, vlm)):
+                settled.add((sha, kind))
+            else:
+                p["review"] = [r for r in _records(p) if r["kind"] != kind]
+    for answers in loaded:
+        for sha, (kind, ans, it) in answers.items():
+            p = by_sha.get(sha)
+            if p is None or sha not in vlm or (sha, kind) in settled:
+                continue
+            cur = (effective_md(p, vlm) or "").strip()
+            base = {"kind": kind, "judged_sha": _text_sha(cur)}
+            md = _FRAME_ECHO.sub("", ans.get("md") or "", count=1).strip()
+            if kind == "duplicate":
+                base["kept_img_sha"] = it.get("kept_img_sha") or next(
+                    (q["img_sha"] for q in pages_doc["pages"] if q["page"] == it.get("kept_page")), None)
+                rec = {**base, "verdict": "same"} if ans["same"] else {**base, "verdict": "adds", "md": md}
+            else:
+                rec = {**base, "verdict": "rewrite", "md": md}
+            p["review"] = [r for r in _records(p) if r["kind"] != kind] + [rec]
+
+
+def cmd_review_prep(a) -> int:
+    pj = os.path.join(a.render_dir, "pages.json")
+    pages_doc = json.loads(Path(pj).read_text())
+    if pages_doc.get("medium") != "video":
+        die(f"{pj} is not a video render dir (medium != video)")
+    vlm = {**load_cache(a.db, "video"),
+           **check_frame_echo(pages_doc, load_results_strict(a.results) if a.results else {})}
+    apply_reviews(pages_doc, a.review, vlm)  # in memory only: pages.json is written by assemble
+    items = review_items(pages_doc, vlm, a.render_dir, a.content_dup)
+    os.makedirs(a.out, exist_ok=True)
+    blind = [{k: v for k, v in i.items() if not k.startswith("_")} for i in items]   # no first-pass text
+    atomic_write(os.path.join(a.out, "review_batch.json"), json.dumps(blind, indent=1) + "\n")
+    # one file per reader holding only its item: a reader shown every item's img_sha can copy
+    # a neighbour's key
+    for f in glob.glob(os.path.join(a.out, "item_p*.json")):
+        os.remove(f)
+    for it in blind:
+        atomic_write(os.path.join(a.out, f"item_p{it['page']:02d}.json"), json.dumps(it, indent=1) + "\n")
+    atomic_write(os.path.join(a.out, "review_instructions.md"), REVIEW_INSTRUCTIONS)
+    kinds = {k: sum(1 for i in items if i["kind"] == k) for k in ("duplicate", "standalone")}
+    print(f"{pages_doc.get('doc', '')}: {kinds['duplicate']} duplicate(s) to confirm, "
+          f"{kinds['standalone']} frame(s) to re-read -> {a.out}"
+          + ("" if items else "  (nothing to review)"))
+    return 0
 
 
 def cmd_assemble(a) -> int:
@@ -707,13 +1070,45 @@ def cmd_assemble(a) -> int:
     pages_doc = json.loads(Path(pj).read_text())
     if pages_doc.get("medium") != "video":
         die(f"{pj} is not a video render dir (medium != video)")
-    results = load_results(a.results) if a.results else {}  # never glob the CWD
-    vlm = {**load_cache(a.db), **results}
+    # new results are checked for mis-filing; the cache holds text already checked
+    results = check_frame_echo(pages_doc, load_results_strict(a.results) if a.results else {})  # never glob the CWD
+    vlm = {**load_cache(a.db, "video"), **results}
+    # Duplicate status is recomputed on every run, so a changed or disabled --content-dup
+    # restores frames. A duplicate whose current transcription is unavailable stays dropped.
+    for p in pages_doc["pages"]:
+        if p.get("dropped") == "duplicate" and p["img_sha"] in vlm:
+            p.pop("dropped"); p.pop("duplicate_of", None)
     live = [p for p in pages_doc["pages"] if not p.get("dropped")]
     missing = [p["img_sha"] for p in live if p["img_sha"] not in vlm]
     if missing:
         die(f"refusing to assemble: {len(missing)} frame(s) have no VLM result "
             f"(run vision_prep + vision subagents first): {', '.join(missing[:10])}")
+    # Review verdicts: new answers (--review) are stored on their pages; stored verdicts are
+    # kept while the frame's text is unchanged. The round must be complete before anything
+    # is written — a stale, empty or foreign review dir leaves items pending and refuses.
+    apply_reviews(pages_doc, a.review, vlm)
+    pending = review_items(pages_doc, vlm, a.render_dir, a.content_dup)
+    if pending and not a.no_review:
+        kinds = ", ".join(f"{sum(1 for i in pending if i['kind'] == k)} {k}"
+                          for k in ("duplicate", "standalone")
+                          if any(i["kind"] == k for i in pending))
+        if a.review:
+            die(f"refusing to assemble: the review in {', '.join(a.review)} does not answer {len(pending)} "
+                f"pending item(s) ({kinds}) — it is stale, for other frames, or its rewrites created new "
+                "review work; run `video_capture.py review-prep` with the same --review dir(s) and "
+                "--out <new dir>, answer it, then pass every --review dir to assemble")
+        die(f"refusing to assemble: {len(pending)} frame(s) need the review round ({kinds}) — "
+            "run `video_capture.py review-prep`, one blind reader per review item (each writes "
+            "review_result_pNN.json), then pass --review <dir>; or pass --no-review to skip it deliberately")
+    for p in pages_doc["pages"]:  # "adds" pins a frame against the text dedup while it applies
+        if _pinned(p, vlm):
+            p["keep"] = True
+        else:
+            p.pop("keep", None)
+    eff = {p["img_sha"]: effective_md(p, vlm) for p in pages_doc["pages"] if p["img_sha"] in vlm}
+    # the reviewed text is what the cache must hold for this document's pages
+    reviewed = {p["img_sha"] for p in pages_doc["pages"] if _records(p)}
+    results = {sha: eff[sha] for sha in eff if sha in results or sha in reviewed}
     # Resolve everything that can fail BEFORE any write/delete, so a bad sidecar
     # path or missing/malformed asr.json leaves pages.json/PNGs/manifest untouched.
     try:
@@ -740,7 +1135,7 @@ def cmd_assemble(a) -> int:
     for p in pages_doc["pages"]:
         if p.get("dropped"):
             continue
-        md = vlm[p["img_sha"]].strip()
+        md = eff[p["img_sha"]].strip()
         if is_no_content(md):
             png = os.path.join(a.render_dir, f"p{p['page']:02d}.png")
             if os.path.exists(png):
@@ -748,8 +1143,26 @@ def cmd_assemble(a) -> int:
             p["dropped"] = "no-content"
             continue
         kept.append((p, md))
+    kept, _dups = dedup_content(kept, a.content_dup)
+    # A survivor is rendered as on screen for its duplicates' windows too; its own
+    # shown_at on disk is left as selected, which keeps the round reversible.
+    extra: dict[int, list] = {}
+    live_pages = {p["page"] for p, _ in kept}
+    for p in pages_doc["pages"]:
+        if p.get("dropped") == "duplicate":
+            target = p.get("duplicate_of")
+            if target not in live_pages:
+                # a duplicate kept only because its transcription is unavailable, whose
+                # survivor is no longer rendered: say so instead of losing it silently
+                print(f"warning: p{p['page']:02d} is a duplicate of "
+                      f"{'p%02d' % target if isinstance(target, int) else 'an unknown page'}, which is not "
+                      f"in the doc; re-run vision_prep + subagents to re-decide it", file=sys.stderr)
+                continue
+            extra.setdefault(target, []).extend(p["shown_at"])
+    kept = [({**p, "shown_at": sorted(p["shown_at"] + extra.get(p["page"], []))}, md) for p, md in kept]
     atomic_write(pj, json.dumps(pages_doc, indent=2) + "\n")
     dropped = sum(1 for p in pages_doc["pages"] if p.get("dropped") == "no-content")
+    duplicates = sum(1 for p in pages_doc["pages"] if p.get("dropped") == "duplicate")
     rel = probe["source"]
     text = render_doc(rel, method, pages_doc["slug"],
                       merge_turns(cues, a.merge_cues), kept)
@@ -757,6 +1170,7 @@ def cmd_assemble(a) -> int:
     inputs = [rel] + ([probe["sidecar_source"]] if probe.get("sidecar_source") else [])
     entries = [{"source": rel, "md": doc_name(rel), "method": "video-lane", "transcript": probe["transcript"],
                 "inputs": inputs, "frames_kept": len(kept), "frames_dropped_no_content": dropped,
+                "frames_dropped_duplicate": duplicates,
                 "frames_capped": bool(pages_doc.get("frames_capped")), "warnings": probe.get("warnings", [])}]
     if probe.get("sidecar_source"):
         entries.append({"source": probe["sidecar_source"], "skipped": True,
@@ -769,7 +1183,7 @@ def cmd_assemble(a) -> int:
         stale = os.path.join(a.parsed, doc_name(probe["sidecar_source"]))
         if os.path.exists(stale):
             os.remove(stale)
-    print(f"{rel}: {len(cues)} cue(s), {len(kept)} frame(s) kept, {dropped} dropped -> "
+    print(f"{rel}: {len(cues)} cue(s), {len(kept)} frame(s) kept, {dropped} dropped, {duplicates} duplicate(s) -> "
           f"{os.path.join(a.parsed, doc_name(rel))}")
     return 0
 
@@ -881,7 +1295,26 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--manifest", help="default: <parsed>/manifest.json")
     s.add_argument("--db", help="knowledge.sqlite — read/write the page_render cache")
     s.add_argument("--merge-cues", type=int, default=10)
+    s.add_argument("--content-dup", type=float, default=0.8,
+                   help="drop a frame whose transcription shares >= this share of its words with an "
+                        "earlier kept frame (0 disables; recomputed on every run)")
+    rg = s.add_mutually_exclusive_group()
+    rg.add_argument("--review", action="append", default=[], help="review dir from review-prep, answered by one blind reader per item "
+                                    "(review_result_pNN.json): confirms duplicates, rewrites frames that "
+                                    "refer to other frames; repeat for follow-up rounds")
     s.set_defaults(func=cmd_assemble)
+    rg.add_argument("--no-review", action="store_true",
+                   help="assemble without the review round even when frames need it (not recommended)")
+    rv = sub.add_parser("review-prep", help="list frames the text dedup would drop and frames that "
+                                            "refer to another frame, for one blind reader per item")
+    rv.add_argument("--render-dir", required=True)
+    rv.add_argument("--results", help="dir with the vision subagents' result_*.json")
+    rv.add_argument("--db", help="knowledge.sqlite — read the page_render cache")
+    rv.add_argument("--out", required=True, help="review dir (review_batch.json, review_instructions.md)")
+    rv.add_argument("--review", action="append", default=[],
+                    help="earlier review dir(s) already answered — list only what is still pending")
+    rv.add_argument("--content-dup", type=float, default=0.8, help="same threshold assemble will use")
+    rv.set_defaults(func=cmd_review_prep)
     g = sub.add_parser("forget", help="remove a deleted recording's parsed doc, manifest entries, assets")
     g.add_argument("--source", required=True, help="source-relative path of the video")
     g.add_argument("--parsed", required=True); g.add_argument("--manifest")
