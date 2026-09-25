@@ -43,3 +43,8 @@ class OnboardDoctorTests(unittest.TestCase):
             # sidecar consumption is automatic (manifest-gated) — the plan names no flag for it
             self.assertNotIn("consume-video", plan)
             self.assertIn("video-lane doc in parsed/", plan)
+            # the second-round review is part of the recording sequence the orchestrator prints —
+            # an agent following the plan must not skip it (live e2e 2026-09-24 did)
+            self.assertIn("review-prep", plan)
+            self.assertIn("assemble --review", plan)
+            self.assertLess(plan.index("review-prep"), plan.index("assemble --review"))

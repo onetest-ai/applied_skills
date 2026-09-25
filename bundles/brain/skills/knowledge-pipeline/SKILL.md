@@ -127,7 +127,13 @@ PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-
 #    → 🤖 dispatch VISION subagents (cheap) → vision/result_k.json {img_sha: faithful markdown}
 "$PY" .../visual-parse/vision_assemble.py --render-dir <project>/assets/<slug> --out <project>/parsed/<doc>.md --results <project>/vision --db "$DB"
 # 1m. MEETING RECORDINGS (video) — the visual-parse skill's "Meeting recordings" section has the
-#     full per-recording sequence (probe → transcribe → frames → vision_prep → 🤖 → assemble).
+#     full per-recording sequence (probe → transcribe → frames → vision_prep → 🤖 VLM →
+#     review-prep → 🤖 one blind reader per review item → assemble --review). Do not skip the review round: it
+#     confirms each frame the text dedup drops and rewrites frames that refer to another frame;
+#     `assemble` refuses unless `--review <dir>` (a complete review) or `--no-review` (deliberate
+#     skip) is given. A follow-up round (`review-prep --review <dir> --out <dir2>`) is normal when
+#     the refusal asks for one. Verdicts are stored in pages.json, so a rerun with unchanged frame
+#     text needs no new review.
 #     Run it BEFORE 1b when the corpus has recordings (see 1b):
 "$PY" .../visual-parse/video_capture.py probe --video <root>/<rel> --rel-to <root> --work <project>/video --manifest <project>/parsed/manifest.json
 # 2. (optional) induce taxonomy → taxonomy/taxonomy_v0.json  [map→reduce→judge→emit; see that skill]

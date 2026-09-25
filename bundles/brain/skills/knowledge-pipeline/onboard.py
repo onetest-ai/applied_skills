@@ -317,8 +317,11 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     # 1m · meeting recordings (.mp4/.mov/…) — the visual-parse "Meeting recordings" lane
     #      (run it BEFORE 1b when the corpus has recordings):
     #      probe → (transcribe, only when no transcript: same-stem .vtt/.srt/.docx, or a Teams
-    #      .docx whose first line is the recording name) → frames → vision_prep → 🤖 VLM → assemble
+    #      .docx whose first line is the recording name) → frames → vision_prep → 🤖 VLM
+    #      → review-prep → 🤖 one blind reader per review item → assemble --review
     #      "$PY" "{VP/'video_capture.py'}" probe --video <rel> --rel-to "{docs_s}" --work "{proj/'video'}"
+    #      The review round is not optional: it confirms each frame the text dedup drops and
+    #      rewrites frames that refer to another frame (a follow-up round is normal).
     #      (full sequence: visual-parse/SKILL.md → Meeting recordings)
     #      assemble retires the recording's transcript doc; later step-1a/1b runs skip that
     #      .vtt/.srt/.docx on their own (only while the recording has a video-lane doc in parsed/

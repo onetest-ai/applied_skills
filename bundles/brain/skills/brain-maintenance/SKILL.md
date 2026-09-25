@@ -138,12 +138,13 @@ a permanent state.
 **Meeting recordings.** A recording has no single "changed" signal — the video, its sidecar
 transcript, or both can change independently — so what to re-run depends on which changed.
 See `visual-parse` → "Meeting recordings" for the full per-recording command sequence
-(`probe` / `transcribe` / `frames` / `vision_prep` → 🤖 → `assemble` / `forget`).
+(`probe` / `transcribe` / `frames` / `vision_prep` → 🤖 → `review-prep` → 🤖 one blind reader per review item →
+`assemble --review` / `forget`).
 
 | What changed | Re-run |
 |---|---|
-| Video content | `probe`, `transcribe` (only if `probe.json` says `asr`), `frames`, VLM pass, `assemble` |
-| Sidecar `.vtt`/`.srt`/`.docx` (incl. a Teams `.docx` paired by its title) changed or added | `probe`, `assemble` |
+| Video content | `probe`, `transcribe` (only if `probe.json` says `asr`), `frames`, VLM pass, `review-prep` + one blind reader per item, `assemble --review` |
+| Sidecar `.vtt`/`.srt`/`.docx` (incl. a Teams `.docx` paired by its title) changed or added | `probe`, `assemble --db <db>` (frames unchanged: the stored review verdicts still apply). First update of a recording assembled before 0.9.2 (no stored verdicts): `review-prep --db <db>`, one blind reader per item, then `assemble --review` |
 | Sidecar removed | `probe`, `transcribe`, `assemble` |
 | Video removed | `./brain source remove <source-id> --yes` (tombstone), then `video_capture.py forget` |
 

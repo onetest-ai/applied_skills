@@ -7,7 +7,9 @@ instructions. Vision subagents read each page image and emit faithful structured
 Markdown; vision_assemble.py merges the results back in.
 
 Cache: a page whose rendered image sha is already in the store's `page_render`
-table is skipped (never re-transcribed) — this is what makes updates cheap.
+table, transcribed under the current PROMPT_VERSION for its medium, is skipped (never
+re-transcribed) — this is what makes updates cheap. A prompt change bumps its medium's
+version so cached pages of that medium are transcribed again.
 
 Reads <render-dir>/pages.json (+ p*.tables.md). Writes:
   <out>/instructions.md
@@ -40,18 +42,43 @@ VIDEO_GATE = (
     "recording). For such an item, if the frame shows ONLY people, a speaker grid, a webcam "
     "view, a blank screen or a transition, output exactly `<!-- no-content -->` for it and "
     "nothing else. Otherwise transcribe only what is on screen, never what might have been "
-    "said.\n"
-    "Never answer `<!-- no-content -->` for an item whose `medium` is `document` (a slide or "
+    "said, and follow these rules:\n"
+    "- Copy identifiers, codes, IDs, hashes, file names, URLs, numbers and names shown in the shared content "
+    "character for character. Never normalise, complete or \"correct\" them: two similar "
+    "strings on screen are two different strings, even when one looks like a typo of the other.\n"
+    "- If text is too small or blurred to read with certainty, write `[illegible]` in its place. "
+    "Never guess a character, a name or a number.\n"
+    "- Ignore the meeting application itself: participant tiles and names, the participants "
+    "panel, the call toolbar and its buttons, the meeting timer, \"is presenting\" banners, the "
+    "OS taskbar, and live-caption or subtitle overlays (burned-in captions repeat what was said; "
+    "the transcript already has it). Transcribe only the shared content. Do not mention, "
+    "describe or quote anything you ignore — no notes about the meeting window, and never the "
+    "caption text itself.\n"
+    "- Describe each frame on its own, as if it were the only one. Never refer to other frames "
+    "(no \"same as previous\", \"continued\", \"as before\").\n"
+    "- Start each transcription with the line `<!-- frame: pNN -->`, where NN is the item's `page` "
+    "as two digits (e.g. `<!-- frame: p07 -->`), so each answer stays tied to its image.\n"
+    "- Title: the slide title; for an application screen use `<app> — <window or document title>`.\n"
+    "\nNever answer `<!-- no-content -->` for an item whose `medium` is `document` (a slide or "
     "page): transcribe it as above, even when it shows only photos of people.\n"
 )
 
-def cached_shas(db):
+# Bump a medium's version whenever its prompt changes: page_render rows written under an
+# older version are stale for that medium and get re-transcribed. Rows written before
+# versioning existed (prompt_v NULL) count as version 1.
+PROMPT_VERSION = {"document": 1, "video": 2}
+
+
+def cached_versions(db):
+    """{img_sha: prompt version it was transcribed under} from the page_render cache."""
     if not db or not os.path.exists(db):
-        return set()
+        return {}
     c = sqlite3.connect(db)
     if not c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='page_render'").fetchone():
-        return set()
-    return {r[0] for r in c.execute("SELECT img_sha FROM page_render")}
+        return {}
+    cols = {r[1] for r in c.execute("PRAGMA table_info(page_render)")}
+    v = "COALESCE(prompt_v, 1)" if "prompt_v" in cols else "1"
+    return {sha: ver for sha, ver in c.execute(f"SELECT img_sha, {v} FROM page_render")}
 
 def main():
     ap = argparse.ArgumentParser()
@@ -60,15 +87,21 @@ def main():
     ap.add_argument("--batches", type=int, default=4)
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
-    done = cached_shas(a.db)
+    done = cached_versions(a.db)
 
-    items, has_video = [], False
+    items, has_video, skipped = [], False, 0
     for rd in a.render_dir:
         pages = json.load(open(os.path.join(rd, "pages.json")))
         has_video = has_video or pages.get("medium") == "video"
+        medium = pages.get("medium", "document")
         assets_root = os.path.dirname(rd.rstrip("/"))
         for p in pages["pages"]:
-            if not p["flagged"] or p.get("dropped") or p["img_sha"] in done:
+            # duplicates are re-decided on every assemble, so they still need a transcription
+            gone = p.get("dropped") and p.get("dropped") != "duplicate"
+            if not p["flagged"] or gone:
+                continue
+            if done.get(p["img_sha"]) == PROMPT_VERSION[medium]:
+                skipped += 1
                 continue
             tb = os.path.join(rd, f"p{p['page']:02d}.tables.md")
             items.append({"img_sha": p["img_sha"],
@@ -76,7 +109,7 @@ def main():
                           "page": p["page"], "n_tables": p.get("n_tables", 0),
                           "tables_md": open(tb).read() if os.path.exists(tb) else "",
                           "hint": f"{pages.get('doc','')} p{p['page']}",
-                          "medium": pages.get("medium", "document")})
+                          "medium": medium})
 
     open(os.path.join(a.out, "instructions.md"), "w").write(INSTRUCTIONS + (VIDEO_GATE if has_video else ""))
     n = max(1, a.batches)
@@ -89,7 +122,7 @@ def main():
         if not b: break
         json.dump(b, open(os.path.join(a.out, f"batch_{k}.json"), "w"), indent=1); made += 1
     print(f"prepared {len(items)} visual pages into {made} batch(es) -> {a.out} "
-          f"({len(done)} already cached, skipped)")
+          f"({skipped} already cached, skipped)")
 
 if __name__ == "__main__":
     main()

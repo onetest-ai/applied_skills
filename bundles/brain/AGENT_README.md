@@ -165,9 +165,13 @@ mkdir -p "$VIDEO_VISION_RUN"
   --render-dir "$PROJECT/assets/<slug>" --out "$VIDEO_VISION_RUN" --db "$DB"
 # dispatch vision subagents on <VIDEO_VISION_RUN>/batch_k.json → result_k.json — same contract
 # as Phase 2 below, plus: answer <!-- no-content --> for people-only frames.
+"$PY" "$VC" review-prep --render-dir "$PROJECT/assets/<slug>" --results "$VIDEO_VISION_RUN" \
+  --db "$DB" --out "$VIDEO_VISION_RUN/review"
+# dispatch one isolated blind reader per item in review/review_batch.json → review_result_pNN.json
+# (skip when review-prep prints "nothing to review"; see the blind review round below)
 "$PY" "$VC" assemble --probe "$PROJECT/video/<slug>/probe.json" \
   --render-dir "$PROJECT/assets/<slug>" --results "$VIDEO_VISION_RUN" \
-  --parsed "$PROJECT/parsed" --db "$DB"
+  --review "$VIDEO_VISION_RUN/review" --parsed "$PROJECT/parsed" --db "$DB"
 ```
 
 `<slug>` is printed by `probe` and `frames` (`slug=…`). `assemble` **refuses while any kept
@@ -221,7 +225,7 @@ mkdir -p "$VISION_RUN"
   --out "$VISION_RUN" --db "$DB" --batches 8
 ```
 
-The script emits only **flagged and uncached** pages. It skips any `img_sha` already in SQLite `page_render`.
+The script emits only **flagged and uncached** pages. It skips an `img_sha` already in SQLite `page_render` only when it was transcribed under the current prompt version for its medium (`vision_prep.PROMPT_VERSION`); a prompt change re-batches that medium's pages. Frames dropped as `duplicate` are batched too — `assemble` re-decides them on every run.
 
 For every `vision/batch_K.json`, dispatch one vision-capable Sonnet subagent. Its contract:
 
@@ -231,6 +235,24 @@ For every `vision/batch_K.json`, dispatch one vision-capable Sonnet subagent. It
 4. preserve labels, ordering, arrows, containment, dates, and qualifiers;
 5. trust `tables_md` for numeric cells;
 6. write only `vision/result_K.json` as `{img_sha: markdown}`.
+
+For `medium: video` items the instructions add the meeting-recording rules — verbatim
+identifiers, `[illegible]` instead of guesses, no meeting-app chrome or burned-in captions,
+no references to other frames. Do not paraphrase those rules in the dispatch prompt; the
+subagent reads them from `instructions.md`.
+
+For a recording, `video_capture.py review-prep` then writes `review/review_batch.json` and
+`review_instructions.md`. The items carry images only (no first-pass text): dispatch one
+isolated subagent per item, telling it its page; each reads only its `review/item_pNN.json`
+(not the whole batch — a reader shown every item's `img_sha` copied a neighbour's), opens only
+that item's image(s) and writes
+`review/review_result_pNN.json` exactly as the instructions say
+(`same`/`md` for duplicates, `md` for frames that referred to another) and pass
+`--review <run>/review` to `assemble`. If `assemble` refuses because items are still pending (a
+re-read frame now duplicates another, or a reader's text still leans on the other image — a
+follow-up round is normal), run `review-prep` again with `--review <run>/review --out <run>/review2`, answer that
+batch, and pass every `--review` dir. Video transcriptions start with `<!-- frame: pNN -->`;
+`assemble` refuses results filed under the wrong frame — re-run that vision batch.
 
 Before continuing, validate:
 

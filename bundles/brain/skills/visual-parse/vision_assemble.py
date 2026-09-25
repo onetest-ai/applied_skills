@@ -15,7 +15,10 @@ Usage:
                      [--results <vlm results dir>] [--db K.sqlite]  # cache source(s)
                      [--assets-rel <slug>]   # prefix used in the image marker
 """
-import argparse, glob, json, os, re, sqlite3
+import argparse, glob, json, os, re, sqlite3, sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from vision_prep import PROMPT_VERSION  # noqa: E402  (same skill directory)
 
 def load_results(results_dir):
     md = {}
@@ -26,25 +29,35 @@ def load_results(results_dir):
             print("skip", rf, e)
     return md   # {img_sha: markdown}
 
-def load_cache(db):
+def load_cache(db, medium=None):
+    """{img_sha: md} from page_render; with `medium`, only rows at that medium's current
+    PROMPT_VERSION (a stale transcription must not be assembled as if current)."""
     if not db or not os.path.exists(db):
         return {}
     c = sqlite3.connect(db)
     if not c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='page_render'").fetchone():
         return {}
-    return {sha: md for sha, md in c.execute("SELECT img_sha, md FROM page_render")}
+    cols = {r[1] for r in c.execute("PRAGMA table_info(page_render)")}
+    v = "COALESCE(prompt_v, 1)" if "prompt_v" in cols else "1"
+    return {sha: md for sha, md, ver in c.execute(f"SELECT img_sha, md, {v} FROM page_render")
+            if medium is None or ver == PROMPT_VERSION[medium]}
 
 def persist_page_render(db, pages_doc, results):
-    """Persist fresh VLM transcriptions into the page_render cache, keyed by img_sha,
+    """Persist fresh VLM transcriptions of THIS document's pages into the page_render cache, keyed by img_sha,
     so unchanged pages (same sha) are never re-transcribed on the next build/update."""
     if not (db and results and os.path.exists(db)):
         return
     c = sqlite3.connect(db)
-    c.execute("CREATE TABLE IF NOT EXISTS page_render(img_sha TEXT PRIMARY KEY, doc TEXT, page INT, md TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS page_render(img_sha TEXT PRIMARY KEY, doc TEXT, page INT, md TEXT, prompt_v INT)")
+    if "prompt_v" not in {r[1] for r in c.execute("PRAGMA table_info(page_render)")}:
+        c.execute("ALTER TABLE page_render ADD COLUMN prompt_v INT")
+    ver = PROMPT_VERSION[pages_doc.get("medium", "document")]
     by_sha = {p["img_sha"]: p["page"] for p in pages_doc["pages"]}
-    for sha, md in results.items():
-        c.execute("INSERT OR REPLACE INTO page_render VALUES(?,?,?,?)",
-                  (sha, pages_doc.get("doc", ""), by_sha.get(sha), md))
+    # Only this document's pages: a shared run dir can hold other documents' (or older)
+    # results, and stamping them with this medium's version would mislabel their cache state.
+    for sha, md in ((s, m) for s, m in results.items() if s in by_sha):
+        c.execute("INSERT OR REPLACE INTO page_render(img_sha, doc, page, md, prompt_v) VALUES(?,?,?,?,?)",
+                  (sha, pages_doc.get("doc", ""), by_sha.get(sha), md, ver))
     c.commit(); c.close()
 
 def demote(md):
@@ -87,7 +100,7 @@ def main():
     pages = json.load(open(os.path.join(a.render_dir, "pages.json")))
     assets_rel = a.assets_rel or pages.get("slug") or os.path.basename(a.render_dir.rstrip("/"))
     results = load_results(a.results)
-    vlm = {**load_cache(a.db), **results}                   # results override cache
+    vlm = {**load_cache(a.db, pages.get("medium", "document")), **results}  # results override cache
     persist_page_render(a.db, pages, results)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
 
