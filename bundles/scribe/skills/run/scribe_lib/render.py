@@ -28,9 +28,16 @@ Three passes over the Document Markdown source, in this order:
    is kept as a plain code block and the failure is recorded (never raises —
    `accept`'s `diagrams_render` check is what should catch this).
 
-Then `pandoc <processed>.md -o render/<title>.docx --reference-doc=<template's
-reference.docx> -M scribe-task=<task id> -M title=<title> --resource-path=<render
-dir>` (confirmed empirically: `-M scribe-task=...` lands as a genuine custom
+Then `pandoc <processed>.md -f markdown-smart -o render/<title>.docx
+--reference-doc=<template's reference.docx> -M scribe-task=<task id> -M
+title=<title> --resource-path=<render dir>` — `-f markdown-smart` turns off
+pandoc's smart-typography reader extension (on by default for `.md`), so the
+published docx keeps the source's straight quotes/hyphens/`...` verbatim
+instead of pandoc silently curling `Bain's` into `Bain’s`, which is
+otherwise recovered from the docx and read as a human edit by `base`
+(`claims.normalize_text` folds curly-vs-straight anyway, belt-and-suspenders,
+but the docx should not diverge from the source in the first place)
+(confirmed empirically: `-M scribe-task=...` lands as a genuine custom
 property in `docProps/custom.xml`, `-M title=...` as `dc:title` in
 `docProps/core.xml` — pandoc 3.11), then `soffice --headless --convert-to pdf
 --outdir render <title>.docx`.
@@ -329,6 +336,7 @@ def render_task(
     reference_docx = _reference_docx(config)
     pandoc_cmd = [
         "pandoc", str(tmp_md),
+        "-f", "markdown-smart",
         "-o", str(docx_path),
         f"--reference-doc={reference_docx}",
         "-M", f"scribe-task={task_id}",

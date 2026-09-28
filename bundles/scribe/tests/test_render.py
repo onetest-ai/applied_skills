@@ -286,6 +286,52 @@ def test_custom_property_lands_in_docx(tmp_path, monkeypatch):
     assert "<vt:lpwstr>t1</vt:lpwstr>" in custom_xml
 
 
+@pytest.mark.skipif(not pandoc_available, reason="pandoc not installed")
+def test_docx_keeps_straight_punctuation_for_a_straight_source(tmp_path, monkeypatch):
+    """Fix A1's render side: pandoc's Markdown reader has smart typography ON
+    by default, which silently turns `Bain's`/quotes/`--`/`...` into curly
+    equivalents in the published docx. render now reads with `markdown-smart`
+    (smart OFF) so the docx keeps exactly the source's punctuation."""
+    config = _config(tmp_path)
+    monkeypatch.setattr(brain_mod, "evidence", _fake_evidence)
+
+    import scribe_lib.render as render_mod
+
+    monkeypatch.setattr(render_mod, "_run_mermaid", lambda mmd, png: (False, "skip diagram in this test"))
+    text = textwrap.dedent(
+        """\
+        <!-- scribe: task=t1 version=1 built_at=2026-01-15T00:00:00 template=mini@1 base=none -->
+        # Demo Title
+
+        ## Overview {#overview}
+
+        Bain's plan uses "quoted" language, a -- b growth, and rollout continues... slowly. [RAG:3508352047104733571] <!-- c:1a2b3c4d -->
+
+        ## Changes in this version {#changes}
+
+        - initial
+        """
+    )
+    _write_next(config, "t1", text)
+    instances = {"t1": {"title": "Demo Title"}}
+
+    render_task(config, "t1", instances["t1"], instances)
+
+    docx_path = config.work_dir / "t1" / "render" / "Demo Title.docx"
+    assert docx_path.is_file()
+    plain = subprocess.run(["pandoc", "-t", "plain", str(docx_path)], capture_output=True, text=True).stdout
+    claim = next(" ".join(block.split()) for block in plain.split("\n\n") if block.startswith("Bain's"))
+    assert claim == (
+        'Bain\'s plan uses "quoted" language, a -- b growth, and rollout '
+        "continues... slowly. [1]"
+    )
+    # The em dash in the footnote LABEL (" — CX Compendium, p.19") is a
+    # literal character scribe writes itself (render._footnote_label),
+    # never claim text run through pandoc's reader — out of scope here.
+    for curly in ("’", "‘", "“", "”", "–", "…"):
+        assert curly not in claim
+
+
 # --------------------------------------------------------------- round trip --
 
 @pytest.mark.skipif(not pandoc_available, reason="pandoc not installed")

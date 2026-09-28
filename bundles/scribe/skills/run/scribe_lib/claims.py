@@ -54,7 +54,22 @@ SUPERSEDED_RE = re.compile(r"^\*\*Superseded \(([^)]+)\):\*\*\s*")
 # Any HTML comment, anywhere (claim-id comments, origin markers, ...): never
 # part of what a reader sees, so never part of what counts as a "visible change".
 _COMMENT_ANY_RE = re.compile(r"<!--.*?-->", re.DOTALL)
-_QUOTES = str.maketrans({"“": '"', "”": '"', "„": '"', "‘": "'", "’": "'"})
+# Typographic characters pandoc's Markdown-smart writer substitutes for their
+# plain ASCII originals (curly quotes, guillemet-style low quotes, en/em
+# dashes, the ellipsis glyph, non-breaking space) — folded away wherever text
+# is compared to a human, or hashed for a claim id, so a smart-typography
+# round trip through a docx is never mistaken for a human edit (defect: a
+# rendered docx turns `Bain's` into `Bain’s`, and a pre-fold `normalize_text`
+# read every such claim as `human_modified`). `visible_text` and
+# `normalize_text` both call `fold_typography` so they cannot drift apart.
+_TYPOGRAPHY = str.maketrans({
+    "‘": "'", "’": "'", "‚": "'",   # ' ' ,
+    "“": '"', "”": '"', "„": '"',   # " " „
+    "–": "-", "—": "-",                   # – —
+    "…": "...",                                 # …
+    " ": " ",                                   # nbsp
+})
+_QUOTES = _TYPOGRAPHY  # back-compat alias; prefer fold_typography
 NOT_MODELED_RE = re.compile(r"^Not modeled:", re.IGNORECASE)
 FENCE_RE = re.compile(r"^```(\S*)\s*$")
 # A draft claim matches an unmatched base claim at this normalized-text similarity.
@@ -98,6 +113,19 @@ def base_claim_origin(block: dict[str, Any]) -> str | None:
     return None
 
 
+def fold_typography(text: str) -> str:
+    """Fold curly quotes, en/em dashes, the ellipsis glyph and nbsp to the
+    plain ASCII a person would not notice the difference from. Shared by
+    `visible_text` and `normalize_text` so they cannot drift apart.
+
+    Runs of two or three ASCII hyphens (`--`/`---`, the literal source
+    spelling of an en/em dash that pandoc's smart typography would render as
+    a single dash glyph) collapse to one `-` too, so a claim written either
+    way compares equal to its rendered-and-recovered self."""
+    text = re.sub(r"-{2,3}", "-", text)
+    return text.translate(_TYPOGRAPHY)
+
+
 def visible_text(md: str) -> str:
     """What a human actually sees, for the noop test (spec A9): strip every
     HTML comment (claim-id/origin comments included — a re-minted id or a
@@ -107,15 +135,20 @@ def visible_text(md: str) -> str:
     identically to a person; only that equality may back a "nothing changed"
     verdict."""
     text = _COMMENT_ANY_RE.sub("", md)
-    text = _MD_ESCAPE_RE.sub(r"\1", text).translate(_QUOTES)
+    text = fold_typography(_MD_ESCAPE_RE.sub(r"\1", text))
     return re.sub(r"\s+", " ", text).strip()
 
 
 def normalize_text(content: str) -> str:
-    """Strip tags + collapse whitespace + lowercase. `content` should already
-    have any trailing claim-id comment and leading bullet marker removed."""
+    """Strip tags + unescape Markdown backslash escapes + fold typography
+    (curly quotes/dashes/ellipsis/nbsp -> plain ASCII, same fold as
+    `visible_text` — a smart-typography docx round trip must never register
+    as a human edit) + collapse whitespace + lowercase. `content` should
+    already have any trailing claim-id comment and leading bullet marker
+    removed."""
     stripped = TAG_RE.sub("", content)
     stripped = SUPERSEDED_RE.sub("", stripped.strip())
+    stripped = fold_typography(_MD_ESCAPE_RE.sub(r"\1", stripped))
     return re.sub(r"\s+", " ", stripped).strip().lower()
 
 

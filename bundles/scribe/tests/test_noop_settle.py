@@ -57,6 +57,27 @@ def test_visible_text_ignores_comments_escapes_quotes_and_spacing():
     assert claims.visible_text(a) == claims.visible_text(b)
 
 
+def test_normalize_text_folds_typography_like_visible_text(tmp_path):
+    """Fix A1: a docx round trip turns `Bain's` into `Bain’s`, straight
+    quotes into curly ones, `--`/`---` into en/em dash glyphs, `...` into a
+    single ellipsis character, and a plain space next to it into an nbsp —
+    none of that is a human edit, so `normalize_text` must fold it away the
+    same as `visible_text` (they share `claims.fold_typography`)."""
+    pairs = [
+        ("Bain's plan.", "Bain’s plan."),                       # curly apostrophe
+        ('The "Alpha" plan.', "The “Alpha” plan."),         # curly double quotes
+        ('The "Alpha" plan.', "The „Alpha“ plan."),          # German-style low/high quotes
+        ("Region a - b grew.", "Region a – b grew."),            # en dash
+        ("Region a - b grew.", "Region a — b grew."),            # em dash
+        ("Region a - b grew.", "Region a -- b grew."),                # literal double hyphen
+        ("Region a - b grew.", "Region a --- b grew."),               # literal triple hyphen
+        ("Rollout continues... slowly.", "Rollout continues… slowly."),  # ellipsis glyph
+        ("A B", "A B"),                                          # nbsp vs plain space
+    ]
+    for straight, curly in pairs:
+        assert claims.normalize_text(straight) == claims.normalize_text(curly), (straight, curly)
+
+
 def _project(tmp_path):
     proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"))
     config, data = load(proj)

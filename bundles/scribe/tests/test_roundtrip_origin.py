@@ -375,3 +375,91 @@ def test_check_file_quote_path_accepts_an_escaped_tag_in_draft_and_evidence(tmp_
         result = check_file_task(config, "m1", inst)
         assert result["failed"] == [], (tag, result)
         assert (result["checked"], result["passed"]) == (1, 1)
+
+
+# ==================================================== Defect: typography ==
+# Fix A1: `render` used to pass Markdown through pandoc with smart
+# typography ON, so a published docx read `Bain's` back as `Bain’s`;
+# `claims.normalize_text` didn't fold that, so `base` read every claim with
+# an apostrophe/quote/dash/ellipsis as `human_modified` on a night a person
+# touched exactly one claim. Fixed two ways: render now disables pandoc's
+# `markdown-smart` reader extension (docx keeps straight punctuation), and
+# `normalize_text` now folds typography anyway (belt-and-suspenders — a
+# real human edit made in Word can still reintroduce curly quotes document-
+# wide via autocorrect on save, which this test's "human edit" simulates by
+# NOT disabling smart typography when re-rendering the edited docx).
+
+TYPO_OVERVIEW = "\n\n".join([
+    "- Bain's strategy improved margins this year. [RAG:1] <!-- c:aaaa0001 -->",
+    '- The team called it "the big push" internally. [RAG:1] <!-- c:aaaa0002 -->',
+    "- Adoption moved from region a -- b this quarter. [RAG:1] <!-- c:aaaa0003 -->",
+    "- Rollout continues... slowly across sites. [RAG:1] <!-- c:aaaa0004 -->",
+    "- Revenue grew 12 percent this quarter. [RAG:1] <!-- c:aaaa0005 -->",
+])
+
+
+@pytest.mark.skipif(not pandoc_available, reason="pandoc not installed")
+def test_one_edited_claim_in_a_published_docx_does_not_mark_typography_claims_human_modified(tmp_path, monkeypatch):
+    import scribe_lib.render as render_mod
+
+    monkeypatch.setattr(brain_mod, "evidence", fake_evidence)
+    monkeypatch.setattr(render_mod, "_run_mermaid", lambda mmd, png: (False, "skip"))
+    proj = setup_mini_project(tmp_path, title="Mini Typo")
+    config, data = load(proj)
+    inst = data["instances"]["m1"]
+    template = data["templates"]["mini-profile"]
+
+    v1 = doc("m1", 1, "Mini Typo", {
+        "overview": TYPO_OVERVIEW,
+        "details": "Detail one. [RAG:2] <!-- c:bbbb0001 -->",
+    })
+    render_md = tmp_path / "v1.md"
+    render_md.write_text(v1, encoding="utf-8")
+    render_mod.render_task(config, "m1", inst, data["instances"], md_path=render_md)
+    docx_path = config.work_dir / "m1" / "render" / "Mini Typo.docx"
+    assert docx_path.is_file()
+
+    # The fix's render side: the published docx keeps straight punctuation.
+    plain = subprocess.run(["pandoc", "-t", "plain", str(docx_path)], capture_output=True, text=True).stdout
+    assert "Bain's" in plain and "’" not in plain
+    assert '"the big push"' in plain and "“" not in plain and "”" not in plain
+
+    out_dir = config.out_root / "m1"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Simulate a human editing ONE claim (a number) and saving from Word,
+    # which reapplies smart typography to the WHOLE document on save —
+    # this is the scenario `normalize_text`'s typographic fold must survive
+    # even though render itself no longer introduces the curliness.
+    edited_v1 = TYPO_OVERVIEW.replace(
+        "Revenue grew 12 percent this quarter.",
+        "Revenue grew 45 percent this quarter.",
+    )
+    edited_doc = doc("m1", 1, "Mini Typo", {
+        "overview": edited_v1,
+        "details": "Detail one. [RAG:2] <!-- c:bbbb0001 -->",
+    })
+    edited_md = tmp_path / "edited.md"
+    edited_md.write_text(edited_doc, encoding="utf-8")
+    edited_render_dir = tmp_path / "edited-render"
+    edited_render_dir.mkdir()
+    processed, _diagrams, _errors = render_mod._process_markdown(
+        edited_doc, config, data["instances"], edited_render_dir
+    )
+    processed_md = edited_render_dir / "_render.md"
+    processed_md.write_text(processed, encoding="utf-8")
+    human_docx = out_dir / "Mini Typo.docx"
+    # No -f markdown-smart: this is the "Word resave" simulation.
+    subprocess.run(["pandoc", str(processed_md), "-o", str(human_docx)], check=True)
+
+    published_sha = sha256_file(docx_path)  # the sha recorded at the ORIGINAL publish, not the edited file's
+    publish_seed(config, inst, v1, 1, docx_sha=published_sha)
+
+    result = base_task(config, "m1", inst, template)
+    assert result["base_edited"] is True
+
+    base_json = json.loads((config.work_dir / "m1" / "base.json").read_text(encoding="utf-8"))
+    modified_ids = {m["claim_id"] for m in base_json["human_modified"]}
+    assert modified_ids == {"aaaa0005"}
+    assert base_json["human_added"] == []
+    assert base_json["human_deleted"] == []
