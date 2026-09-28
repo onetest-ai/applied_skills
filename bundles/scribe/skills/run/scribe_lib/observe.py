@@ -113,11 +113,16 @@ def observe_task(
         up: (read_state(config, instances[up]).get("version") or 0) for up in edges.get(task_id, [])
     }
 
+    # `raw_snapshot` returns `None` (not `{}`) when the synced raw folder is
+    # offline (m2) — keep the prior snapshot rather than recording an
+    # apparent mass deletion.
+    fresh_raw_snapshot = raw_snapshot(config, raw_inputs)
+
     new_state = {
         **state,
         "sections": sections_state,
         "brain_snapshot": read_synced_files(config.brain_db),
-        "raw_snapshot": raw_snapshot(config, raw_inputs),
+        "raw_snapshot": fresh_raw_snapshot if fresh_raw_snapshot is not None else state.get("raw_snapshot"),
         "upstream_versions": upstream_versions,
         "upstream_claims_snapshot": live_upstream_claims(config, instances, edges.get(task_id, [])),
         "last_checked": _observed_at(config),

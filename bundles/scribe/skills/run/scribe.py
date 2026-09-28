@@ -172,7 +172,11 @@ def _due_reasons(
 
         raw_inputs = resolve_instance_inputs(instance, template).get("raw") or {}
         raw_delta = compute_raw_delta(config, raw_inputs, state)
-        if raw_delta["new"] or raw_delta["changed"] or raw_delta["removed"]:
+        # m2: the synced raw folder can be offline. `compute_raw_delta` marks
+        # that with `unavailable: True` and reports no new/changed/removed —
+        # never flag `raw_changed` from an outage, which would look
+        # (wrongly) like every raw file had just been deleted.
+        if not raw_delta.get("unavailable") and (raw_delta["new"] or raw_delta["changed"] or raw_delta["removed"]):
             reasons.append("raw_changed")
 
         recorded_upstream: dict[str, int] = state.get("upstream_versions") or {}
@@ -187,8 +191,16 @@ def _due_reasons(
             reasons.append("base_edited")
 
         if cadence == "daily":
+            # Due when the last time this task was touched at all — either
+            # published (`built_at`) or merely checked on a noop
+            # (`last_checked`, written by `observe`) — falls on an earlier
+            # calendar day than `now`. Using `built_at` alone would re-run a
+            # daily task every night forever once it stops finding anything
+            # new to draft (a noop never advances `built_at`).
             built_at = state.get("built_at") or ""
-            if built_at[:10] != config.now[:10]:
+            last_checked = state.get("last_checked") or ""
+            latest = max(built_at, last_checked)
+            if latest[:10] != config.now[:10]:
                 reasons.append("cadence")
 
     due = bool(reasons)
@@ -199,8 +211,13 @@ def _due_reasons(
     return due, reasons, cadence
 
 
-def cmd_plan(config: Config, args: argparse.Namespace) -> int:
-    data = validate_all(config)
+def compute_plan(
+    config: Config, data: dict[str, Any], *, task: str | None = None, due_only: bool = False
+) -> dict[str, Any]:
+    """Pure core of the `plan` subcommand: topological task order + which
+    tasks are due, given already-`validate_all`'d `data`. Exposed under this
+    name (rather than kept private to `cmd_plan`) because later tasks (11,
+    14) call it directly rather than going through argparse."""
     instances, templates, edges, order = (
         data["instances"],
         data["templates"],
@@ -208,8 +225,8 @@ def cmd_plan(config: Config, args: argparse.Namespace) -> int:
         data["order"],
     )
 
-    if args.task and args.task not in instances:
-        raise ScribeError(f"unknown task '{args.task}'")
+    if task and task not in instances:
+        raise ScribeError(f"unknown task '{task}'")
 
     entries: dict[str, dict[str, Any]] = {}
     for tid in order:
@@ -220,7 +237,7 @@ def cmd_plan(config: Config, args: argparse.Namespace) -> int:
         upstream_versions = {
             up: (read_state(config, instances[up]).get("version") or 0) for up in edges[tid]
         }
-        explicit = args.task == tid
+        explicit = task == tid
         due, reasons, cadence = _due_reasons(
             config, inst, template, state, upstream_versions, explicit=explicit
         )
@@ -247,20 +264,24 @@ def cmd_plan(config: Config, args: argparse.Namespace) -> int:
         }
 
     tasks_out = [entries[tid] for tid in order]
-    if args.task:
-        tasks_out = [t for t in tasks_out if t["id"] == args.task]
-    if args.due:
+    if task:
+        tasks_out = [t for t in tasks_out if t["id"] == task]
+    if due_only:
         tasks_out = [t for t in tasks_out if t["due"]]
 
-    _print(
-        {
-            "status": "ok",
-            "now": config.now,
-            "run_report": str(run_report_path(config)),
-            "order": order,
-            "tasks": tasks_out,
-        }
-    )
+    return {
+        "status": "ok",
+        "now": config.now,
+        "run_report": str(run_report_path(config)),
+        "order": order,
+        "tasks": tasks_out,
+    }
+
+
+def cmd_plan(config: Config, args: argparse.Namespace) -> int:
+    data = validate_all(config)
+    result = compute_plan(config, data, task=args.task, due_only=args.due)
+    _print(result)
     return 0
 
 

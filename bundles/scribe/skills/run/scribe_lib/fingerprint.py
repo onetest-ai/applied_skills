@@ -87,6 +87,7 @@ Writes `work/<task>/fingerprint.json`:
 
     {
       "task": <id>,
+      "notes": [...],  # e.g. "raw_root_unavailable" when the synced raw folder is offline (m2)
       "sections": {
         <section id>: {
           "queries": [...],
@@ -124,6 +125,7 @@ from scribe_lib.checktask import _upstream_claims, live_upstream_claims
 from scribe_lib.config import (
     Config,
     parse_template_ref,
+    raw_root_available,
     read_state,
     read_synced_files,
     resolve_instance_inputs,
@@ -231,6 +233,15 @@ def fingerprint_task(
     prior_upstream_snapshot = state.get("upstream_claims_snapshot") or {}
     upstream_snapshot_changed = current_upstream_snapshot != prior_upstream_snapshot
 
+    # m2: the synced raw folder can be offline. `False` here must never be
+    # read as "every cited raw file was deleted" — the per-`cited_raw` check
+    # below is skipped entirely, and the outage is surfaced as a top-level
+    # note instead of a per-section stale reason.
+    raw_available = raw_root_available(config)
+    notes: list[str] = []
+    if not raw_available:
+        notes.append("raw_root_unavailable")
+
     out_sections: dict[str, Any] = {}
     for sec in sections_spec:
         sid = sec["id"]
@@ -311,18 +322,20 @@ def fingerprint_task(
             if "gone" in cited_chunk_status.values():
                 stale_reasons.append("cited_chunk_gone")
 
-            for path, prior_sha in (prior.get("cited_raw") or {}).items():
-                full = config.raw_root / path
-                if not full.is_file():
-                    cited_raw_status[path] = "removed"
-                elif sha256_file(full) != prior_sha:
-                    cited_raw_status[path] = "changed"
-                else:
-                    cited_raw_status[path] = "same"
-            if "changed" in cited_raw_status.values():
-                stale_reasons.append("raw_file_changed")
-            if "removed" in cited_raw_status.values():
-                stale_reasons.append("raw_file_removed")
+            if raw_available:
+                for path, prior_sha in (prior.get("cited_raw") or {}).items():
+                    full = config.raw_root / path
+                    if not full.is_file():
+                        cited_raw_status[path] = "removed"
+                    elif sha256_file(full) != prior_sha:
+                        cited_raw_status[path] = "changed"
+                    else:
+                        cited_raw_status[path] = "same"
+                if "changed" in cited_raw_status.values():
+                    stale_reasons.append("raw_file_changed")
+                if "removed" in cited_raw_status.values():
+                    stale_reasons.append("raw_file_removed")
+            # else: raw root offline — never treat "can't check" as "gone" (m2).
 
             for key, prior_hash in (prior.get("cited_task_claims") or {}).items():
                 up, _, cid = key.partition("#")
@@ -424,7 +437,7 @@ def fingerprint_task(
             "stale_reasons": stale_reasons,
         }
 
-    result = {"task": task_id, "sections": out_sections}
+    result = {"task": task_id, "sections": out_sections, "notes": notes}
     fp_path = config.work_dir / task_id / "fingerprint.json"
     fp_path.parent.mkdir(parents=True, exist_ok=True)
     fp_path.write_text(json.dumps(result, indent=2), encoding="utf-8")

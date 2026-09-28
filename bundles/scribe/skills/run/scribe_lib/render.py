@@ -8,14 +8,18 @@ Three passes over the Document Markdown source, in this order:
    Mermaid's `-->` arrow syntax never matches, since it lacks the leading
    `<!--`), so a per-line, non-fenced-only regex strip is enough; no DOTALL
    scan that could eat a mermaid block.
-2. **Tags -> pandoc footnotes.** Each `[RAG:...]`/`[MART:...]`/`[GRAPH:...]`/
+2. **Escape `<`/`>` outside tags.** A literal angle-bracketed word in claim
+   text (e.g. `<Customer Name>`) is backslash-escaped so pandoc's Markdown
+   reader treats it as literal text instead of dropping it as raw inline
+   HTML (m3) — see `_escape_angles_outside_tags`.
+3. **Tags -> pandoc footnotes.** Each `[RAG:...]`/`[MART:...]`/`[GRAPH:...]`/
    `[FILE:...]`/`[TASK:...]` becomes `^[<TAG BODY> — <source label>]`, where
    `<TAG BODY>` is `KIND:value` verbatim (no brackets) — this is the exact
    inverse of `basedoc._extract_footnotes`/`_reinsert_tags`, which
    splits a recovered footnote's text on the same `" — "` (em dash) and
    reinserts everything before it, wrapped in `[]`, as the tag. Several tags
    on one claim -> several footnotes, one per tag, in order.
-3. **Mermaid fences -> images.** A ` ```mermaid ` fence is written to
+4. **Mermaid fences -> images.** A ` ```mermaid ` fence is written to
    `render/diagrams/<section>-<n>.mmd` (n = 1-based, per section id seen so
    far this render; the doc's own H1 before any `## Title {#id}` heading
    counts as section "doc"), rendered to a same-named `.png` via
@@ -117,6 +121,37 @@ _PANDOC_SPECIAL_RE = re.compile(r"([\\*_\[\]<>$^~`])")
 
 def _md_literal(text: str) -> str:
     return _PANDOC_SPECIAL_RE.sub(r"\\\1", text)
+
+
+_ANGLE_RE = re.compile(r"[<>]")
+
+
+def _escape_angles_outside_tags(line: str) -> str:
+    """Backslash-escape a literal `<`/`>` in claim text, everywhere EXCEPT
+    inside a `[RAG:...]`/`[MART:...]`/`[GRAPH:...]`/`[FILE:...]`/`[TASK:...]`
+    tag (converted separately by `_tags_to_footnotes`, which already escapes
+    its own tag body/label).
+
+    A word like `<Customer Name>` is a literal token in the claim, not
+    Markdown — left unescaped, pandoc's Markdown reader treats it as raw
+    inline HTML and drops it from the rendered docx/pdf entirely (m3): the
+    word silently disappears rather than surviving as text. Applied per line,
+    before `_tags_to_footnotes`, so it never touches a tag's own brackets
+    (`TAG_RE` matches `[`/`]`, not `<`/`>`) or the footnote text
+    `_tags_to_footnotes`/`_md_literal` go on to produce.
+    """
+
+    def _escape(s: str) -> str:
+        return _ANGLE_RE.sub(lambda m: "\\" + m.group(0), s)
+
+    out: list[str] = []
+    pos = 0
+    for m in claims.TAG_RE.finditer(line):
+        out.append(_escape(line[pos : m.start()]))
+        out.append(m.group(0))
+        pos = m.end()
+    out.append(_escape(line[pos:]))
+    return "".join(out)
 
 
 def _tags_to_footnotes(text: str, config: Config, instances: dict[str, Any]) -> str:
@@ -228,6 +263,7 @@ def _process_markdown(
             current_section = heading_m.group(1)
 
         line = _strip_line_comments(raw_line)
+        line = _escape_angles_outside_tags(line)
         line = _tags_to_footnotes(line, config, instances)
         out_lines.append(line)
         i += 1

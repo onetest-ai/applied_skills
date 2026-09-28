@@ -434,10 +434,24 @@ def _glob_path_match(rel: str, pattern: str) -> bool:
     return _match(0, 0)
 
 
-def select_raw_files(config: Config, raw_inputs: dict[str, Any]) -> list[Path]:
+def raw_root_available(config: Config) -> bool:
+    """Whether the synced raw-replay folder (OneDrive/SharePoint) is mounted
+    right now. `False` — offline, not "empty" — must never be read as "every
+    raw file was deleted": callers use this to distinguish an unreachable
+    root from a root that genuinely has nothing matching."""
+    return config.raw_root.is_dir()
+
+
+def select_raw_files(config: Config, raw_inputs: dict[str, Any]) -> list[Path] | None:
     """Files under raw_root matching globs (default "**/*"), minus exclude globs,
     whose path OR PARSED text contains any `match` term, case-insensitively.
     Empty `match` selects every file the globs/exclude allow.
+
+    Returns `None` — "unknown", not "empty" — when `raw_root` is not
+    currently a directory (e.g. the synced folder is offline): a caller that
+    naively treated `[]` as "nothing selected" would then read a temporary
+    outage as every raw file having been deleted (m2). Callers must check for
+    `None` before comparing against a prior snapshot.
 
     Both `globs` and `exclude` are matched with `_glob_path_match`, not
     `Path.glob()`/`fnmatch.fnmatch` directly: stdlib `Path.glob()` treats a
@@ -464,8 +478,8 @@ def select_raw_files(config: Config, raw_inputs: dict[str, Any]) -> list[Path]:
     match_terms = [str(m).lower() for m in (raw_inputs.get("match") or [])]
 
     root = config.raw_root
-    if not root.is_dir():
-        return []
+    if not raw_root_available(config):
+        return None
 
     candidates: set[Path] = set()
     for p in root.rglob("*"):
@@ -494,17 +508,26 @@ def select_raw_files(config: Config, raw_inputs: dict[str, Any]) -> list[Path]:
     return selected
 
 
-def raw_snapshot(config: Config, raw_inputs: dict[str, Any]) -> dict[str, str]:
-    return {
-        p.relative_to(config.raw_root).as_posix(): sha256_file(p)
-        for p in select_raw_files(config, raw_inputs)
-    }
+def raw_snapshot(config: Config, raw_inputs: dict[str, Any]) -> dict[str, str] | None:
+    """`None` — never `{}` — when `raw_root_available(config)` is `False`, so a
+    caller writing this into `state.json` can tell "raw is offline" apart
+    from "raw is online and genuinely empty" and keep the prior snapshot
+    instead of overwriting it with an apparent mass deletion (m2)."""
+    files = select_raw_files(config, raw_inputs)
+    if files is None:
+        return None
+    return {p.relative_to(config.raw_root).as_posix(): sha256_file(p) for p in files}
 
 
 def compute_raw_delta(config: Config, raw_inputs: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
-    current = raw_snapshot(config, raw_inputs)
     prior: dict[str, str] = state.get("raw_snapshot") or {}
+    current = raw_snapshot(config, raw_inputs)
+    if current is None:
+        # Offline: never compare against the prior snapshot (every prior
+        # path would look "removed"). Report it as unavailable so `plan`
+        # can note it instead of flagging `raw_changed`.
+        return {"new": [], "changed": [], "removed": [], "current": prior, "unavailable": True}
     new = sorted(current.keys() - prior.keys())
     changed = sorted(p for p in (current.keys() & prior.keys()) if current[p] != prior[p])
     removed = sorted(prior.keys() - current.keys())
-    return {"new": new, "changed": changed, "removed": removed, "current": current}
+    return {"new": new, "changed": changed, "removed": removed, "current": current, "unavailable": False}

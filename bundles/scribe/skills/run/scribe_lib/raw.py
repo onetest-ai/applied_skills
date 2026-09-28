@@ -55,7 +55,7 @@ def gather_raw_task(config: Config, task_id: str, instance: dict[str, Any], raw_
     """
     chunking = parsing.load_chunking(config)
 
-    files = select_raw_files(config, raw_inputs)
+    files = select_raw_files(config, raw_inputs) or []
 
     raw_dir = config.work_dir / task_id / "raw"
     if raw_dir.exists():

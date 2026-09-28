@@ -39,6 +39,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -57,6 +58,17 @@ from scribe_lib.config import (
     sha256_file,
 )
 from scribe_lib.merge import parse_header
+
+# Journal step order (A10 — journaled atomic publish, PoC m1). `publish_task`
+# ("auto" mode) records each finished step to `journal.json` before starting
+# the next, and on entry finishes any journal left by a prior crashed run
+# before considering whether a NEW publish is due. This is what lets a
+# publish that dies partway (process kill, `_write_state` raising, a locked
+# file) resume exactly where it stopped, rather than re-doing already-applied
+# moves (which would double-archive) or leaving the stable docx/pdf missing
+# (which would leave the synced folder with neither the old nor the new
+# version — the failure mode this task exists to close).
+_JOURNAL_STEPS = ("stage", "archive_previous", "place_new", "write_src", "write_state")
 
 
 def run_report_path(config: Config) -> Path:
@@ -161,6 +173,54 @@ def _human_deleted(state: dict[str, Any], work_dir: Path, next_sections: dict[st
     return out
 
 
+def _move(src: Path, dst: Path) -> None:
+    """Wraps `os.replace` — an atomic rename on the same filesystem (which
+    `out_root`'s `_versions`/stable files and `_src`/`.pending` always are,
+    both under the task's `out_dir`). A locked destination or source (Word
+    has the docx open) raises `PermissionError`, which `publish_task` catches
+    to report `"locked: <path>"` and leave the journal for a retry — never
+    caught here, so a test (or a caller) can monkeypatch this one function to
+    simulate a lock without touching the real filesystem calls elsewhere in
+    this module."""
+    os.replace(src, dst)
+
+
+def _write_state(path: Path, state: dict[str, Any]) -> None:
+    """Atomic temp-file + `os.replace` — `state.json` is never observed
+    half-written, whether by a concurrent reader or by a crash between the
+    `write` and the `close`."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    _move(tmp, path)
+
+
+def _journal_path(pending_dir: Path) -> Path:
+    return pending_dir / "journal.json"
+
+
+def _read_journal(pending_dir: Path) -> dict[str, Any] | None:
+    path = _journal_path(pending_dir)
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+
+def _write_journal(pending_dir: Path, journal: dict[str, Any]) -> None:
+    pending_dir.mkdir(parents=True, exist_ok=True)
+    path = _journal_path(pending_dir)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(journal, indent=2), encoding="utf-8")
+    _move(tmp, path)
+
+
+def _mark_step(pending_dir: Path, journal: dict[str, Any], step: str) -> None:
+    journal["steps_done"].append(step)
+    _write_journal(pending_dir, journal)
+
+
 def publish_task(
     config: Config,
     task_id: str,
@@ -246,72 +306,131 @@ def publish_task(
         _append_run(config, {"task": task_id, "version": new_version, "status": "pending", "reasons": []})
         return {"status": "ok", "task": task_id, "published": False, "pending_version": new_version}
 
-    # -- auto --
+    # -- auto: journaled atomic publish (A10; PoC m1) --
+    #
+    # `out_dir/_src/.pending/` holds this run's staged output plus
+    # `journal.json`. On entry, an existing journal (left by a run that died
+    # mid-publish) is resumed — its already-`steps_done` are skipped, never
+    # redone — before falling through to whichever steps remain. Every step
+    # that finishes is recorded to the journal BEFORE the next one starts, so
+    # a crash at any point leaves the journal naming exactly what is safe to
+    # skip on retry. `.pending/` (journal included) is removed only once
+    # every step has completed.
     stable_docx = out_dir / f"{instance['title']}.docx"
     stable_pdf = out_dir / f"{instance['title']}.pdf"
-    docx_sha = pdf_sha = None
-    if not no_render:
-        # Only move the current stable files aside once we have new ones to
-        # replace them with — --no-render must never leave out_dir with
-        # neither a stable file nor a fresh one.
-        if prev_version and (stable_docx.is_file() or stable_pdf.is_file()):
-            versions_dir = out_dir / "_versions"
-            versions_dir.mkdir(parents=True, exist_ok=True)
-            if stable_docx.is_file():
-                shutil.move(str(stable_docx), str(versions_dir / f"v{prev_version:03d}_{config.now[:10]}.docx"))
-            if stable_pdf.is_file():
-                shutil.move(str(stable_pdf), str(versions_dir / f"v{prev_version:03d}_{config.now[:10]}.pdf"))
+    pending_dir = src_dir / ".pending"
+    staged_docx = pending_dir / f"v{new_version:03d}.docx"
+    staged_pdf = pending_dir / f"v{new_version:03d}.pdf"
+    staged_md = pending_dir / f"v{new_version:03d}.md"
+    versions_dir = out_dir / "_versions"
+    dst_versions_docx = versions_dir / f"v{prev_version:03d}_{config.now[:10]}.docx"
+    dst_versions_pdf = versions_dir / f"v{prev_version:03d}_{config.now[:10]}.pdf"
 
-        out_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(docx_src, stable_docx)
-        shutil.copy2(pdf_src, stable_pdf)
-        docx_sha = sha256_file(stable_docx)
-        pdf_sha = sha256_file(stable_pdf)
+    journal = _read_journal(pending_dir)
+    if journal is None:
+        journal = {"version": new_version, "steps_done": []}
+    else:
+        # Trust the journal's own version over a fresh (re-)parse of
+        # next.md — the staged files under `.pending/` were captured for
+        # THIS version; next.md is not consulted again once staged.
+        new_version = journal["version"]
+    steps_done = set(journal.get("steps_done") or [])
 
-    (src_dir / f"v{new_version:03d}.md").write_text(next_text, encoding="utf-8")
-    md_sha = hashlib.sha256(next_text.encode("utf-8")).hexdigest()
+    try:
+        if "stage" not in steps_done:
+            pending_dir.mkdir(parents=True, exist_ok=True)
+            if not no_render:
+                shutil.copy2(docx_src, staged_docx)
+                shutil.copy2(pdf_src, staged_pdf)
+            staged_md.write_text(next_text, encoding="utf-8")
+            _mark_step(pending_dir, journal, "stage")
 
-    fp_path = work_dir / "fingerprint.json"
-    fp_sections = json.loads(fp_path.read_text(encoding="utf-8")).get("sections", {}) if fp_path.is_file() else {}
+        if "archive_previous" not in steps_done:
+            # Only archive the current stable files once new ones are staged
+            # to replace them — --no-render must never leave out_dir with
+            # neither a stable file nor a fresh one.
+            if not no_render and prev_version and (stable_docx.is_file() or stable_pdf.is_file()):
+                versions_dir.mkdir(parents=True, exist_ok=True)
+                if stable_docx.is_file() and not dst_versions_docx.exists():
+                    _move(stable_docx, dst_versions_docx)
+                if stable_pdf.is_file() and not dst_versions_pdf.exists():
+                    _move(stable_pdf, dst_versions_pdf)
+            _mark_step(pending_dir, journal, "archive_previous")
 
-    next_sections = split_by_section_id(next_text)
-    sections_state: dict[str, Any] = {}
-    all_cited_chunks: dict[str, str] = {}
-    all_cited_raw: dict[str, str] = {}
-    for sid, body in next_sections.items():
-        cited = cited_from_section(config, body, instances)
-        cited_chunks, cited_raw, cited_task_claims = (
-            cited["cited_chunks"], cited["cited_raw"], cited["cited_task_claims"]
-        )
-        sections_state[sid] = {
-            "fingerprint": fp_sections.get(sid, {}).get("fingerprint"),
-            "cited_chunks": cited_chunks,
-            "cited_raw": cited_raw,
-            "cited_task_claims": cited_task_claims,
-        }
-        all_cited_chunks.update(cited_chunks)
-        all_cited_raw.update(cited_raw)
+        if "place_new" not in steps_done:
+            if not no_render:
+                out_dir.mkdir(parents=True, exist_ok=True)
+                _move(staged_docx, stable_docx)
+                _move(staged_pdf, stable_pdf)
+            _mark_step(pending_dir, journal, "place_new")
 
-    raw_inputs = resolve_instance_inputs(instance, template).get("raw") or {}
-    upstream_versions = {
-        up: (read_state(config, instances[up]).get("version") or 0) for up in edges.get(task_id, [])
-    }
+        if "write_src" not in steps_done:
+            _move(staged_md, src_dir / f"v{new_version:03d}.md")
+            _mark_step(pending_dir, journal, "write_src")
 
-    new_state = {
-        **state,
-        "human_deleted": _human_deleted(state, work_dir, next_sections),
-        "version": new_version,
-        "built_at": header["built_at"],
-        "published": {"docx_sha256": docx_sha, "pdf_sha256": pdf_sha, "md_sha256": md_sha},
-        "sections": sections_state,
-        "cited_chunks": all_cited_chunks,
-        "cited_raw": all_cited_raw,
-        "brain_snapshot": read_synced_files(config.brain_db),
-        "raw_snapshot": raw_snapshot(config, raw_inputs),
-        "upstream_versions": upstream_versions,
-        "upstream_claims_snapshot": live_upstream_claims(config, instances, edges.get(task_id, [])),
-    }
-    (src_dir / "state.json").write_text(json.dumps(new_state, indent=2), encoding="utf-8")
+        docx_sha = sha256_file(stable_docx) if not no_render and stable_docx.is_file() else None
+        pdf_sha = sha256_file(stable_pdf) if not no_render and stable_pdf.is_file() else None
+        md_sha = hashlib.sha256(next_text.encode("utf-8")).hexdigest()
+
+        if "write_state" not in steps_done:
+            fp_path = work_dir / "fingerprint.json"
+            fp_sections = (
+                json.loads(fp_path.read_text(encoding="utf-8")).get("sections", {}) if fp_path.is_file() else {}
+            )
+
+            next_sections = split_by_section_id(next_text)
+            sections_state: dict[str, Any] = {}
+            all_cited_chunks: dict[str, str] = {}
+            all_cited_raw: dict[str, str] = {}
+            for sid, body in next_sections.items():
+                cited = cited_from_section(config, body, instances)
+                cited_chunks, cited_raw, cited_task_claims = (
+                    cited["cited_chunks"], cited["cited_raw"], cited["cited_task_claims"]
+                )
+                sections_state[sid] = {
+                    "fingerprint": fp_sections.get(sid, {}).get("fingerprint"),
+                    "cited_chunks": cited_chunks,
+                    "cited_raw": cited_raw,
+                    "cited_task_claims": cited_task_claims,
+                }
+                all_cited_chunks.update(cited_chunks)
+                all_cited_raw.update(cited_raw)
+
+            raw_inputs = resolve_instance_inputs(instance, template).get("raw") or {}
+            upstream_versions = {
+                up: (read_state(config, instances[up]).get("version") or 0) for up in edges.get(task_id, [])
+            }
+            # `raw_snapshot` returns `None` — not `{}` — when the synced raw
+            # folder is offline (m2); keep the previous snapshot rather than
+            # recording what would look like every raw file having vanished.
+            fresh_raw_snapshot = raw_snapshot(config, raw_inputs)
+
+            new_state = {
+                **state,
+                "human_deleted": _human_deleted(state, work_dir, next_sections),
+                "version": new_version,
+                "built_at": header["built_at"],
+                "published": {"docx_sha256": docx_sha, "pdf_sha256": pdf_sha, "md_sha256": md_sha},
+                "sections": sections_state,
+                "cited_chunks": all_cited_chunks,
+                "cited_raw": all_cited_raw,
+                "brain_snapshot": read_synced_files(config.brain_db),
+                "raw_snapshot": fresh_raw_snapshot if fresh_raw_snapshot is not None else state.get("raw_snapshot"),
+                "upstream_versions": upstream_versions,
+                "upstream_claims_snapshot": live_upstream_claims(config, instances, edges.get(task_id, [])),
+            }
+            _write_state(src_dir / "state.json", new_state)
+            _mark_step(pending_dir, journal, "write_state")
+    except PermissionError as exc:
+        # `os.replace` sets `.filename` on a real lock (Word has the docx
+        # open); a synthetic `PermissionError("locked: ...")` from a test
+        # does not, so fall back to the exception's own message — either way
+        # the journal is left exactly as far as it got, for a retry.
+        detail = str(exc.filename) if exc.filename else str(exc)
+        reason = detail if detail.startswith("locked:") else f"locked: {detail}"
+        return {"status": "failed", "task": task_id, "reason": reason}
+
+    shutil.rmtree(pending_dir, ignore_errors=True)
 
     _append_run(config, {"task": task_id, "version": new_version, "status": "published", "reasons": []})
     return {
