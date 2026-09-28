@@ -33,7 +33,26 @@ Writes, under `work/<task>/raw/`:
                      non-empty, else `§<ordinal>` (1-based, per file).
 
 Re-running is idempotent: `work/<task>/raw/` is deleted and rebuilt from
-scratch on every call — nothing here is incremental.
+scratch on every call — nothing here is incremental, UNLESS the raw root is
+offline (see below), in which case it is left untouched.
+
+**m2 / review fix round 1: an offline raw root freezes the raw lane, it
+never empties it.** `select_raw_files` returns `None` — "unknown", not
+"empty" — when `config.raw_root` is not currently a directory (the synced
+folder is offline). Treating that as `[]` here would delete
+`work/<task>/raw/` (this module's own `rmtree`) and replace it with an empty
+manifest and no `raw.sqlite` — which then reads, downstream, as every raw
+file having vanished: `fingerprint._raw_hits` (which only ever looks at this
+LOCAL `raw.sqlite`, never at `raw_root` directly) would find nothing where it
+used to, marking every section `fingerprint_changed`; `check-file` would fail
+every carried `[FILE:]` claim's manifest/parsed-text lookup. So when raw is
+offline, `gather_raw_task` does none of that: it returns
+`{"status": "skipped", "reason": "raw_root_unavailable", ...}` with whatever
+`manifest.json` already has on disk (from the last successful run), and
+leaves `work/<task>/raw/` byte-for-byte as it is — `raw.sqlite` in
+particular, so `fingerprint`'s raw-hit queries keep returning exactly what
+they returned last time the root was reachable, and the fingerprint hash
+does not drift from raw becoming unreachable alone.
 """
 from __future__ import annotations
 
@@ -52,12 +71,36 @@ def gather_raw_task(config: Config, task_id: str, instance: dict[str, Any], raw_
     `raw_inputs` is the task's resolved (template deep-merged with instance,
     `{{param}}`-substituted) `inputs.raw` dict, e.g. from
     `resolve_instance_inputs(instance, template).get("raw") or {}`.
+
+    Returns `{"status": "skipped", "reason": "raw_root_unavailable", "task",
+    "raw_dir", "files", "counts"}` — `files`/`counts` read from whatever
+    `manifest.json` already has (the frozen state), never `{}`/zeros
+    pretending nothing was ever gathered — when the raw root is offline,
+    without touching `work/<task>/raw/` at all (module docstring, m2).
     """
+    raw_dir = config.work_dir / task_id / "raw"
+
+    files = select_raw_files(config, raw_inputs)
+    if files is None:
+        manifest_path = raw_dir / "manifest.json"
+        manifest: list[dict[str, Any]] = (
+            json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else []
+        )
+        return {
+            "task": task_id,
+            "raw_dir": str(raw_dir),
+            "status": "skipped",
+            "reason": "raw_root_unavailable",
+            "files": manifest,
+            "counts": {
+                "ok": sum(1 for m in manifest if m.get("status") == "ok"),
+                "skipped": sum(1 for m in manifest if m.get("status") == "skipped"),
+                "error": sum(1 for m in manifest if m.get("status") == "error"),
+            },
+        }
+
     chunking = parsing.load_chunking(config)
 
-    files = select_raw_files(config, raw_inputs) or []
-
-    raw_dir = config.work_dir / task_id / "raw"
     if raw_dir.exists():
         shutil.rmtree(raw_dir)
     raw_dir.mkdir(parents=True)

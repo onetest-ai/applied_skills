@@ -35,6 +35,7 @@ from scribe_lib.config import (  # noqa: E402
     compute_brain_delta,
     compute_raw_delta,
     parse_template_ref,
+    raw_root_available,
     read_brain_identity,
     read_state,
     resolve_instance_inputs,
@@ -159,10 +160,18 @@ def _due_reasons(
     upstream_versions: dict[str, int],
     *,
     explicit: bool,
-) -> tuple[bool, list[str], str]:
-    """Returns (due, reasons, cadence). `explicit` = this task was named via --task."""
+) -> tuple[bool, list[str], str, list[str]]:
+    """Returns (due, reasons, cadence, notes). `explicit` = this task was
+    named via --task. `notes` (review fix round 1, Important #4) carries
+    `"raw_root_unavailable"` whenever the synced raw folder is offline right
+    now — independent of `state`/`due`, so a first-run task or one with no
+    other reason to be due still surfaces the outage rather than a quiet,
+    misleadingly-normal `plan`."""
     reasons: list[str] = []
+    notes: list[str] = []
     cadence = instance.get("cadence", "on-brain-update")
+    if not raw_root_available(config):
+        notes.append("raw_root_unavailable")
     if not state:
         reasons.append("first_run")
     else:
@@ -208,7 +217,7 @@ def _due_reasons(
         due = False
     if not instance.get("enabled", True) and not explicit:
         due = False
-    return due, reasons, cadence
+    return due, reasons, cadence, notes
 
 
 def compute_plan(
@@ -238,7 +247,7 @@ def compute_plan(
             up: (read_state(config, instances[up]).get("version") or 0) for up in edges[tid]
         }
         explicit = task == tid
-        due, reasons, cadence = _due_reasons(
+        due, reasons, cadence, notes = _due_reasons(
             config, inst, template, state, upstream_versions, explicit=explicit
         )
         depends_on_due = any(entries[up]["due"] for up in edges[tid])
@@ -261,7 +270,14 @@ def compute_plan(
             "depends_on_due": depends_on_due,
             "cadence": cadence,
             "upstream": edges[tid],
+            "notes": notes,
         }
+
+    # Top-level notes (review fix round 1, Important #4): computed over
+    # EVERY task, before `--task`/`--due` filtering, so an offline raw root
+    # stays visible even when the filtered `tasks` list would otherwise hide
+    # every task that has it.
+    top_notes = sorted({n for entry in entries.values() for n in entry["notes"]})
 
     tasks_out = [entries[tid] for tid in order]
     if task:
@@ -275,6 +291,7 @@ def compute_plan(
         "run_report": str(run_report_path(config)),
         "order": order,
         "tasks": tasks_out,
+        "notes": top_notes,
     }
 
 

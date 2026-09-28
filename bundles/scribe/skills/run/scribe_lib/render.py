@@ -123,14 +123,42 @@ def _md_literal(text: str) -> str:
     return _PANDOC_SPECIAL_RE.sub(r"\\\1", text)
 
 
-_ANGLE_RE = re.compile(r"[<>]")
+def _escape_unescaped_angles(s: str) -> str:
+    """Backslash-escape a literal `<`/`>` in `s`, but leave one that is
+    ALREADY escaped (immediately preceded by a backslash) exactly alone.
+
+    Review fix round 1, Important #3: a published claim round-trips through
+    `base_task`'s docx recovery (`pandoc -f docx -t gfm`), whose gfm WRITER
+    itself backslash-escapes a literal `<`/`>` it finds in the docx's plain
+    text — that is a correct, ordinary part of turning visible text back
+    into Markdown source, not something this function put there. The first
+    cut of this function escaped indiscriminately, so a SECOND render pass
+    over that already-escaped text (`\\<Customer Name\\>`) turned `\\<` into
+    `\\\\<` — an escaped backslash followed by a bare, unescaped `<` — and
+    every further round trip grew another backslash. Scanning left to right
+    and copying a backslash together with whatever it escapes, verbatim and
+    unmodified, makes this function idempotent: it escapes a `<`/`>` exactly
+    once, the first time it sees an unescaped one, and never touches one
+    that already carries an escape (from this function, from `_md_literal`,
+    or from pandoc's own gfm writer)."""
+    out: list[str] = []
+    i, n = 0, len(s)
+    while i < n:
+        ch = s[i]
+        if ch == "\\" and i + 1 < n:
+            out.append(s[i : i + 2])
+            i += 2
+            continue
+        out.append("\\" + ch if ch in "<>" else ch)
+        i += 1
+    return "".join(out)
 
 
 def _escape_angles_outside_tags(line: str) -> str:
-    """Backslash-escape a literal `<`/`>` in claim text, everywhere EXCEPT
-    inside a `[RAG:...]`/`[MART:...]`/`[GRAPH:...]`/`[FILE:...]`/`[TASK:...]`
-    tag (converted separately by `_tags_to_footnotes`, which already escapes
-    its own tag body/label).
+    """Backslash-escape a literal, unescaped `<`/`>` in claim text,
+    everywhere EXCEPT inside a `[RAG:...]`/`[MART:...]`/`[GRAPH:...]`/
+    `[FILE:...]`/`[TASK:...]` tag (converted separately by
+    `_tags_to_footnotes`, which already escapes its own tag body/label).
 
     A word like `<Customer Name>` is a literal token in the claim, not
     Markdown — left unescaped, pandoc's Markdown reader treats it as raw
@@ -138,19 +166,17 @@ def _escape_angles_outside_tags(line: str) -> str:
     word silently disappears rather than surviving as text. Applied per line,
     before `_tags_to_footnotes`, so it never touches a tag's own brackets
     (`TAG_RE` matches `[`/`]`, not `<`/`>`) or the footnote text
-    `_tags_to_footnotes`/`_md_literal` go on to produce.
+    `_tags_to_footnotes`/`_md_literal` go on to produce. See
+    `_escape_unescaped_angles` for why an ALREADY-escaped `<`/`>` (e.g. from
+    a prior render -> base docx round trip) must be left alone.
     """
-
-    def _escape(s: str) -> str:
-        return _ANGLE_RE.sub(lambda m: "\\" + m.group(0), s)
-
     out: list[str] = []
     pos = 0
     for m in claims.TAG_RE.finditer(line):
-        out.append(_escape(line[pos : m.start()]))
+        out.append(_escape_unescaped_angles(line[pos : m.start()]))
         out.append(m.group(0))
         pos = m.end()
-    out.append(_escape(line[pos:]))
+    out.append(_escape_unescaped_angles(line[pos:]))
     return "".join(out)
 
 

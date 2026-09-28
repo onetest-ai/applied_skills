@@ -165,8 +165,16 @@ def _render_pack_section(
     upstream_claims: dict[str, str],
     removed: list[str] | None = None,
     cited_raw: dict[str, str] | None = None,
+    raw_offline: bool = False,
 ) -> str:
     lines: list[str] = [f"# Section: {sec.get('title', sec['id'])} ({sec['id']})", ""]
+    if raw_offline:
+        # m2 controller ruling: the raw lane is frozen for the whole run, not
+        # evidence of deletion — but a NEW [FILE:] claim still can't be
+        # verified against it tonight (`check-file` would have nothing fresh
+        # to check a new quote against beyond the frozen parse), so tell the
+        # drafting agent not to add one.
+        lines += ["**Raw folder offline — do not add new [FILE:] claims this run.**", ""]
     if sec.get("intent"):
         lines += ["## Intent", "", sec["intent"], ""]
     if sec.get("kind"):
@@ -360,6 +368,7 @@ def prepare_task(config: Config, task_id: str) -> dict[str, Any]:
 
     state_sections = state.get("sections") or {}
     sections_by_id = {s["id"]: s for s in sections_spec}
+    raw_offline = "raw_root_unavailable" in (fp_result.get("notes") or [])
     for entry in stale_entries:
         sid = entry["section"]
         sec = sections_by_id[sid]
@@ -367,7 +376,7 @@ def prepare_task(config: Config, task_id: str) -> dict[str, Any]:
         cited_raw = (state_sections.get(sid) or {}).get("cited_raw") or {}
         content = _render_pack_section(
             config, sec, template, base_sections.get(sid, ""), info, upstream_claims,
-            removed_by_section.get(sid), cited_raw,
+            removed_by_section.get(sid), cited_raw, raw_offline,
         )
         (pack_dir / f"{sid}.pack.md").write_text(content, encoding="utf-8")
 
@@ -381,4 +390,5 @@ def prepare_task(config: Config, task_id: str) -> dict[str, Any]:
         },
         "base": {k: v for k, v in base_result.items()},
         "raw_counts": raw_result["counts"],
+        "notes": fp_result.get("notes") or [],
     }

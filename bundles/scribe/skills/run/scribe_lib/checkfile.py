@@ -47,10 +47,27 @@ claim) and recorded in `work/<task>/check-file.json`:
 
     {"checked": <int>, "passed": <int>, "human_origin_skipped": <int>,
      "failed": [{"section", "claim_ref", "tag", "reason"}],
-     "needs_quote": [{"section", "claim", "tag"}]}
+     "needs_quote": [{"section", "claim", "tag"}],
+     "raw_offline_notes": [{"section", "claim_ref", "tag"}]}
 
 `checked`/`passed` count *claims* (not tags): a claim with two failing
 `[FILE:]` tags is one failure, not two.
+
+**m2 / review fix round 1 — an offline raw root never fails a carried
+`[FILE:]` claim.** A carried tag is normally re-verified against
+`config.raw_root / path` directly (`_carried_raw_reason`); when
+`raw_root_available(config)` is `False` (the synced folder is offline) that
+check cannot mean anything — every path would read as missing, which is
+exactly the "offline reads as mass deletion" bug this task closes. So a
+carried tag is left exactly as drafted and counted `passed` (not `failed`,
+not `needs_quote` — it WAS verified once, at publish time, and that
+evidence is simply unreachable to re-check right now, not gone), with an
+entry appended to `raw_offline_notes` so the run is auditable. A brand-new
+or reworded `[FILE:]` tag is unaffected by this — it is checked against
+`work/<task>/raw/manifest.json`/the parsed `.md`, which `gather_raw_task`
+now freezes rather than empties when offline (see `raw.py`'s module
+docstring), so a genuinely new claim still needs a real quote from whatever
+was parsed the last time the root was reachable.
 
 **A7/I4 — never silently rewrite a carried `[FILE:]` claim for want of a
 quote.** A claim that is carried forward byte-for-byte from base (same
@@ -89,7 +106,7 @@ from typing import Any
 
 from scribe_lib import claims
 from scribe_lib.basedoc import split_by_section_id
-from scribe_lib.config import Config, read_state, sha256_file
+from scribe_lib.config import Config, raw_root_available, read_state, sha256_file
 
 _CF_MARKER_RE = re.compile(r"<!--\s*cf:(\d+)\s*-->\s*$")
 
@@ -169,12 +186,14 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
     manifest = _load_manifest(raw_dir)
     base_claims_by_section = _base_claims_by_section(work_dir)
     state_sections = (read_state(config, instance).get("sections") or {}) if instance else {}
+    raw_available = raw_root_available(config)
 
     checked = 0
     passed = 0
     human_skipped = 0
     failed: list[dict[str, Any]] = []
     needs_quote: list[dict[str, Any]] = []
+    raw_offline_notes: list[dict[str, Any]] = []
 
     if not sections_dir.is_dir():
         result = {
@@ -184,6 +203,7 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
             "human_origin_skipped": 0,
             "failed": [],
             "needs_quote": [],
+            "raw_offline_notes": [],
         }
         (work_dir / "check-file.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
         return result
@@ -249,6 +269,13 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
                     and path in cited_raw
                 )
                 if carried:
+                    if not raw_available:
+                        # The synced folder is offline — every path would
+                        # read as missing, which is not evidence the file is
+                        # gone. Leave the claim as drafted, count it passed,
+                        # and note it for the run report (m2).
+                        raw_offline_notes.append({"section": sid, "claim_ref": claim_idx, "tag": tag})
+                        continue
                     reason = _carried_raw_reason(config, path, cited_raw[path])
                     if reason is not None:
                         failing_tag = tag
@@ -312,6 +339,7 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
         "human_origin_skipped": human_skipped,
         "failed": failed,
         "needs_quote": needs_quote,
+        "raw_offline_notes": raw_offline_notes,
     }
     work_dir.mkdir(parents=True, exist_ok=True)
     (work_dir / "check-file.json").write_text(json.dumps(result, indent=2), encoding="utf-8")

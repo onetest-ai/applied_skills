@@ -13,10 +13,15 @@ renaming the real field and breaking every other plan test.
 import json
 import shutil
 import pytest
-from scribe_fixtures import (fixture_brain_db, setup_mini_project, load, doc, publish_seed, fake_evidence)
+from scribe_fixtures import (
+    fixture_brain_db, setup_mini_project, load, doc, publish_seed, fake_evidence, write_json, write_text,
+)
 from scribe_lib import brain as brain_mod, publish as publish_mod
-from scribe_lib.config import sha256_file, read_state
+from scribe_lib.checkfile import check_file_task
+from scribe_lib.config import sha256_file, read_state, raw_snapshot, resolve_instance_inputs
 from scribe_lib.fingerprint import fingerprint_task
+from scribe_lib.merge import merge_task
+from scribe_lib.pack import prepare_task
 from scribe_lib.render import render_task
 
 DETAILS = "D. [RAG:2] <!-- c:bbbb0001 -->"
@@ -120,3 +125,220 @@ def test_daily_cadence_uses_last_checked(tmp_path, monkeypatch):
                  1, docx_sha=None, extra_state={"built_at": "2026-01-01T00:00:00", "last_checked": "2026-01-05T06:00:00"})
     plan = scribe.compute_plan(config, data)
     assert next(t for t in plan["tasks"] if t["id"] == "m1")["due"] is False
+
+
+# ----------------------------------------------------------- fix round 1 --
+
+def test_offline_raw_root_freezes_the_raw_lane_end_to_end(tmp_path, monkeypatch):
+    """Review fix round 1, Important #1: an offline raw root must FREEZE the
+    raw lane for the whole run, never empty it. End to end: prepare -> draft
+    a [FILE:] claim -> check-file -> merge -> publish (raw available), then
+    raw_root removed -> prepare -> the claim survives check-file, fingerprint
+    reports no `fingerprint_changed` from raw (plus the top-level note), and
+    the published state's `raw_snapshot` is the ACTUAL prior value, not a
+    tautological re-read."""
+    from scribe_lib.basedoc import split_by_section_id
+
+    monkeypatch.setattr(brain_mod, "evidence", fake_evidence)
+    monkeypatch.setattr(brain_mod, "search", lambda cfg, q, limit, tag: [])
+    proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"))
+    # Matches the mini-profile template's "{{name}} overview" query (name =
+    # "Widget") so round 1 actually gets a raw hit that contributes to
+    # `considered.raw` — otherwise the freeze fix would be untested by
+    # coincidence (an empty `considered.raw` on both sides proves nothing).
+    write_text(proj / "raw-replay" / "a.md", "Widget overview: alpha note recorded for the record.\n")
+    config, data = load(proj)
+    inst, tpl = data["instances"]["m1"], data["templates"]["mini-profile"]
+
+    # -- round 1: raw available --
+    prepare_task(config, "m1")
+    write_text(
+        config.work_dir / "m1" / "sections" / "overview.md",
+        "Widget overview note. [FILE:a.md#p1]\n",
+    )
+    write_json(
+        config.work_dir / "m1" / "sections" / "overview.evidence.json",
+        [{"claim_ref": 0, "tag": "[FILE:a.md#p1]", "quote": "alpha note recorded"}],
+    )
+    write_text(config.work_dir / "m1" / "sections" / "details.md", DETAILS + "\n")
+    cf1 = check_file_task(config, "m1", inst)
+    assert cf1["failed"] == [], cf1
+    merged = merge_task(config, "m1", data["instances"], data["templates"])
+    assert merged["noop"] is False
+    published = publish_mod.publish_task(config, "m1", inst, tpl, data["instances"], data["edges"], no_render=True)
+    assert published["status"] == "ok", published
+
+    # The real published text, id merge assigned included — never a
+    # hand-picked id, so round 2's "carried" match is exercised honestly.
+    published_overview = split_by_section_id(
+        (config.out_root / "m1" / "_src" / "v001.md").read_text(encoding="utf-8")
+    )["overview"]
+    assert "[FILE:a.md#p1]" in published_overview
+
+    raw_inputs = resolve_instance_inputs(inst, tpl).get("raw") or {}
+    snapshot_before = raw_snapshot(config, raw_inputs)
+    assert snapshot_before, "sanity: round 1 must have actually snapshotted a.md"
+    assert read_state(config, inst)["raw_snapshot"] == snapshot_before
+
+    # -- round 2: raw root offline --
+    shutil.rmtree(config.raw_root)
+    prepare_task(config, "m1")
+
+    manifest = json.loads((config.work_dir / "m1" / "raw" / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest and manifest[0]["status"] == "ok"  # frozen from round 1, not wiped
+
+    fp = json.loads((config.work_dir / "m1" / "fingerprint.json").read_text(encoding="utf-8"))
+    assert "fingerprint_changed" not in fp["sections"]["overview"]["stale_reasons"]
+    assert "raw_root_unavailable" in fp["notes"]
+
+    # A carried [FILE:] claim (as `base_task` would carry it forward, byte
+    # for byte) must survive check-file, not be rewritten to `Not modeled:`.
+    write_text(config.work_dir / "m1" / "sections" / "overview.md", published_overview)
+    cf2 = check_file_task(config, "m1", inst)
+    assert cf2["failed"] == [], cf2
+    assert cf2["raw_offline_notes"], cf2
+    section_text = (config.work_dir / "m1" / "sections" / "overview.md").read_text(encoding="utf-8")
+    assert "[FILE:a.md#p1]" in section_text
+
+    # The published state's raw_snapshot is untouched — the ACTUAL value,
+    # not merely "still a dict" (Important #1's third failure mode).
+    assert read_state(config, inst)["raw_snapshot"] == snapshot_before
+
+
+def test_journal_crash_after_write_state_before_mark_then_publishes_next_version(tmp_path, monkeypatch):
+    """Review fix round 1, Important #2: a crash AFTER `_write_state`
+    succeeds (state.json already says vN) but BEFORE the journal records
+    `write_state` must never corrupt a later version's publish. The retry
+    must discard the (already-applied) journal rather than complete it with
+    whatever `next.md` currently holds, and a subsequent real vN+1 publish
+    must succeed normally, from vN+1's own content."""
+    config, data, inst, tpl, out = _ready(tmp_path, monkeypatch)
+    real_mark_step = publish_mod._mark_step
+
+    def crash_on_write_state_mark(pending_dir, journal, step):
+        if step == "write_state":
+            raise RuntimeError("crash after write_state, before journal mark")
+        return real_mark_step(pending_dir, journal, step)
+
+    monkeypatch.setattr(publish_mod, "_mark_step", crash_on_write_state_mark)
+    with pytest.raises(RuntimeError):
+        publish_mod.publish_task(config, "m1", inst, tpl, data["instances"], data["edges"], no_render=False)
+    monkeypatch.setattr(publish_mod, "_mark_step", real_mark_step)
+
+    # state.json already advanced to v2 (the real `_write_state` ran); the
+    # journal is still on disk, missing only the `write_state` mark.
+    assert read_state(config, inst)["version"] == 2
+    assert (out / "_src" / ".pending" / "journal.json").is_file()
+    v2_src_before = (out / "_src" / "v002.md").read_text(encoding="utf-8")
+
+    # A stray retry against the STILL-v2 next.md must refuse (stale next.md)
+    # and discard the now-redundant journal, never re-run write_state against
+    # some other content.
+    stale_retry = publish_mod.publish_task(config, "m1", inst, tpl, data["instances"], data["edges"], no_render=False)
+    assert stale_retry["status"] == "error"
+    assert not (out / "_src" / ".pending").exists()
+    assert read_state(config, inst)["version"] == 2
+    assert (out / "_src" / "v002.md").read_text(encoding="utf-8") == v2_src_before
+
+    # A genuinely NEW draft (v3) must publish cleanly from ITS OWN content,
+    # not from whatever the crashed v2 journal last staged.
+    (out / "Mini m1.docx").write_bytes(b"v2-docx-stable")
+    (out / "Mini m1.pdf").write_bytes(b"v2-pdf-stable")
+    render = config.work_dir / "m1" / "render"
+    (render / "Mini m1.docx").write_bytes(b"v3-docx")
+    (render / "Mini m1.pdf").write_bytes(b"v3-pdf")
+    (config.work_dir / "m1" / "next.md").write_text(
+        doc("m1", 3, "Mini m1", {"overview": "Third draft. [RAG:3] <!-- c:cccc0001 -->", "details": DETAILS})
+    )
+    r3 = publish_mod.publish_task(config, "m1", inst, tpl, data["instances"], data["edges"], no_render=False)
+    assert r3["status"] == "ok" and r3["version"] == 3
+    assert read_state(config, inst)["version"] == 3
+    assert (out / "Mini m1.docx").read_bytes() == b"v3-docx"
+    assert "Third draft" in (out / "_src" / "v003.md").read_text(encoding="utf-8")
+    assert "New text" not in (out / "_src" / "v003.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(not (shutil.which("pandoc") and shutil.which("soffice")), reason="pandoc/soffice missing")
+def test_angle_brackets_do_not_double_escape_across_a_render_base_render_roundtrip(tmp_path, monkeypatch):
+    """Review fix round 1, Important #3: `<word>` escaping must not pile up
+    backslashes across repeated render -> base (docx recovery) -> render
+    cycles. Render twice from the SAME source text and assert the visible
+    plain text is identical both times (no growing backslashes)."""
+    from scribe_lib.basedoc import base_task
+    from scribe_lib.config import sha256_file as _sha
+
+    monkeypatch.setattr(brain_mod, "evidence", fake_evidence)
+    proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"))
+    config, data = load(proj)
+    inst, tpl = data["instances"]["m1"], data["templates"]["mini-profile"]
+    work_dir = config.work_dir / "m1"
+    out_dir = config.out_root / "m1"
+
+    text_v1 = doc("m1", 1, "Mini m1", {
+        "overview": "Agents greet <Customer Name> first. [RAG:1] <!-- c:aaaa0001 -->", "details": DETAILS,
+    })
+    (work_dir).mkdir(parents=True)
+    (work_dir / "next.md").write_text(text_v1)
+    r1 = render_task(config, "m1", inst, data["instances"], md_path=str(work_dir / "next.md"))
+    assert r1["ok"], r1
+
+    import subprocess
+    docx1 = work_dir / "render" / r1["docx"]
+    plain1 = subprocess.run(["pandoc", str(docx1), "-t", "plain"], capture_output=True, text=True).stdout
+    assert "<Customer Name>" in plain1
+    assert "\\<" not in plain1 and "\\\\" not in plain1
+
+    # Publish v1 (no_render, so we control the docx placement ourselves) then
+    # drop the SAME rendered docx in as the "stable" file, so `base_task`
+    # recovers it via the real pandoc docx->gfm round trip (the edited path).
+    out_dir.mkdir(parents=True, exist_ok=True)
+    publish_seed(config, inst, text_v1, 1, docx_sha="mismatch-so-base-treats-it-as-edited")
+    (out_dir / "Mini m1.docx").write_bytes(docx1.read_bytes())
+
+    base_result = base_task(config, "m1", inst, tpl)
+    assert base_result.get("status") != "failed", base_result
+    base_text = (work_dir / "base.md").read_text(encoding="utf-8")
+    assert "<Customer Name>" in base_text
+    # The recovered base must hold the UNESCAPED word — no leftover
+    # backslash from the docx round trip — or round 2's render would
+    # re-escape an already-escaped `<`/`>` and grow backslashes forever.
+    assert "\\<Customer Name\\>" not in base_text
+    assert "\\\\" not in base_text
+
+    # Render again from the recovered base (simulating v2 carrying the same
+    # claim forward unchanged) and confirm the visible text is IDENTICAL,
+    # not `\<Customer Name\>` or worse.
+    text_v2 = doc("m1", 2, "Mini m1", {
+        "overview": base_text.split("{#overview}", 1)[1].split("## Details", 1)[0].strip(),
+        "details": DETAILS,
+    })
+    (work_dir / "next.md").write_text(text_v2)
+    r2 = render_task(config, "m1", inst, data["instances"], md_path=str(work_dir / "next.md"))
+    assert r2["ok"], r2
+    docx2 = work_dir / "render" / r2["docx"]
+    plain2 = subprocess.run(["pandoc", str(docx2), "-t", "plain"], capture_output=True, text=True).stdout
+    assert plain1.strip() == plain2.strip(), (plain1, plain2)
+    assert "\\<" not in plain2 and "\\\\" not in plain2
+
+
+def test_plan_reports_raw_root_unavailable_note(tmp_path, monkeypatch):
+    """Review fix round 1, Important #4: an offline raw root must be visible
+    in `plan` output — per task and at the top level — not a quiet night."""
+    import scribe
+
+    monkeypatch.setattr(brain_mod, "search", lambda cfg, q, limit, tag: [])
+    proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"))
+    config, data = load(proj)
+    inst = data["instances"]["m1"]
+    publish_seed(
+        config, inst,
+        doc("m1", 1, "Mini m1", {"overview": "A. [FILE:a.md#p1] <!-- c:aaaa0001 -->", "details": DETAILS}),
+        1, docx_sha=None, cited_raw={"a.md": "sha"}, extra_state={"raw_snapshot": {"a.md": "sha"}},
+    )
+    shutil.rmtree(config.raw_root)
+
+    plan = scribe.compute_plan(config, data)
+    assert "raw_root_unavailable" in plan.get("notes", [])
+    m1_entry = next(t for t in plan["tasks"] if t["id"] == "m1")
+    assert "raw_root_unavailable" in m1_entry.get("notes", [])
+    assert "raw_changed" not in m1_entry["reasons"]

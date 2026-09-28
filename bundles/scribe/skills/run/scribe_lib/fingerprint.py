@@ -242,6 +242,24 @@ def fingerprint_task(
     if not raw_available:
         notes.append("raw_root_unavailable")
 
+    # Defense in depth alongside `raw.py`'s freeze of `work/<task>/raw/`
+    # (which already keeps `raw.sqlite` — and so `_raw_hits`' query results —
+    # byte-identical while offline): read THIS task's own last-computed
+    # `considered.raw` per section from the fingerprint.json this function
+    # itself wrote last run, and reuse it verbatim when offline, rather than
+    # trusting `_raw_hits` against whatever `raw.sqlite` happens to hold
+    # (empty on a task that has never had a successful gather-raw, or a test
+    # that calls `fingerprint_task` directly without going through
+    # `gather_raw_task` first). This is what guarantees "raw absence never
+    # changes a fingerprint" regardless of how `raw.sqlite` got here.
+    prev_fp_path = config.work_dir / task_id / "fingerprint.json"
+    prev_fp_sections: dict[str, Any] = {}
+    if prev_fp_path.is_file():
+        try:
+            prev_fp_sections = json.loads(prev_fp_path.read_text(encoding="utf-8")).get("sections", {}) or {}
+        except json.JSONDecodeError:
+            prev_fp_sections = {}
+
     out_sections: dict[str, Any] = {}
     for sec in sections_spec:
         sid = sec["id"]
@@ -273,17 +291,26 @@ def fingerprint_task(
                     brain_via_map.setdefault(cid, set()).add(via)
 
         raw_hit_map: dict[tuple[str, str], dict[str, Any]] = {}
-        for q in queries:
-            for h in _raw_hits(raw_db, q, config.top_k):
-                raw_hit_map[(h["path"], h["locator"])] = h
+        if raw_available:
+            for q in queries:
+                for h in _raw_hits(raw_db, q, config.top_k):
+                    raw_hit_map[(h["path"], h["locator"])] = h
 
         considered_brain = sorted(
             (cid, brain_mod.text_hash(h.get("text", ""))) for cid, h in brain_hit_map.items()
         )
-        considered_raw = sorted(
-            (f"{p}#{loc}", brain_mod.text_hash(h.get("text", "")))
-            for (p, loc), h in raw_hit_map.items()
-        )
+        if raw_available:
+            considered_raw = sorted(
+                (f"{p}#{loc}", brain_mod.text_hash(h.get("text", "")))
+                for (p, loc), h in raw_hit_map.items()
+            )
+        else:
+            # m2 — frozen: reuse this section's own last-computed raw
+            # component verbatim (see the `prev_fp_sections` note above), so
+            # the offline root contributes nothing new to the hash.
+            considered_raw = [
+                tuple(x) for x in (prev_fp_sections.get(sid, {}).get("considered", {}).get("raw") or [])
+            ]
         # Only an upstream-consuming section's hash depends on what upstream
         # tasks currently hold live — a non-consuming section's fingerprint
         # is untouched by any upstream publish (A6 intent preserved).
