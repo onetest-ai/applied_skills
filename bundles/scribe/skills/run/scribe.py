@@ -320,13 +320,13 @@ def cmd_base(config: Config, args: argparse.Namespace) -> int:
     template = templates[template_id]
     result = base_task(config, args.task, inst, template)
     _print({"status": "ok", "task": args.task, **result})
-    return 0
+    return 1 if result.get("status") == "failed" else 0
 
 
 def cmd_prepare(config: Config, args: argparse.Namespace) -> int:
     result = prepare_task(config, args.task)
     _print(result)
-    return 0
+    return 0 if result.get("status") == "ok" else 1
 
 
 def cmd_check_file(config: Config, args: argparse.Namespace) -> int:

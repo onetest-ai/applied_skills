@@ -251,7 +251,7 @@ def claim_key(block: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
     return (block["normalized"], tuple(sorted(block["tags"])))
 
 
-def _mint(task_id: str, section_id: str, normalized: str, used: set[str]) -> str:
+def mint_claim_id(task_id: str, section_id: str, normalized: str, used: set[str]) -> str:
     """`assign_claim_id`, re-hashed as `normalized#2`, `#3`, ... while the id is
     already taken in this section (two claims never share an id)."""
     cid, n = assign_claim_id(task_id, section_id, normalized), 1
@@ -276,7 +276,7 @@ def match_claims(
       2. else the unmatched base claim with the highest `SequenceMatcher` ratio
          over `normalized`, ties broken by base claim id ascending, accepted at
          `>= MATCH_RATIO`;
-      3. else no base: a fresh id (`_mint`, never one already used in this section).
+      3. else no base: a fresh id (`mint_claim_id`, never one already used in this section).
     A matched base claim with no id (a legacy human addition, before ids were
     persisted) gets a fresh id too. Category: `superseded` (the block became
     superseded this version), `kept` (equal `claim_key`), `recited` (equal text,
@@ -300,7 +300,7 @@ def match_claims(
             key = ranked[0][1] if ranked and ranked[0][0] >= MATCH_RATIO else None
         match = unmatched.pop(key) if key else None
         if match is not None:
-            cid = match["claim_id"] or _mint(task_id, section_id, blk["normalized"], used)
+            cid = match["claim_id"] or mint_claim_id(task_id, section_id, blk["normalized"], used)
             if blk["superseded"] and not match["superseded"]:
                 cat = "superseded"
             elif claim_key(blk) == claim_key(match):
@@ -310,7 +310,7 @@ def match_claims(
             else:
                 cat = "reworded"
         else:
-            cid = _mint(task_id, section_id, blk["normalized"], used)
+            cid = mint_claim_id(task_id, section_id, blk["normalized"], used)
             cat = "added"
         used.add(cid)
         out.append({"block": blk, "claim_id": cid, "category": cat, "base": match})

@@ -105,6 +105,11 @@ Run `scribe.py prepare <id>`. It clears the previous run's `work/<id>/` outputs 
 writes `work/<id>/pack/`. Read `work/<id>/pack/plan.json`:
 `{"stale": [{"section", "reasons"}], "carried": [...], "noop": bool}`.
 
+If `prepare` exits 1 with `"reason": "section_heading_changed"`, someone renamed (`headings`)
+or deleted (`missing`) a section heading in the published docx. This is a failure (see above):
+put those heading names in the `--reason` so the person who edited the docx knows which
+headings to restore. Never edit the docx yourself.
+
 - `noop: true` → run `scribe.py observe <id>` (records tonight's raw/Brain snapshot and section
   fingerprints so the same unchanged input does not make this task due again tomorrow for the
   same reason — a noop must never leave `state.json`'s observation fields frozen), then
@@ -135,6 +140,8 @@ Write the section body — no `## ` heading — to `work/<id>/sections/<section>
   reword, supersede, re-cite or delete one, and never turn one into `Not modeled: …`. It
   needs no `evidence.json` entry (`check-file` skips it). Never write `origin=` into a
   comment yourself — `merge` sets origin only from the prior text and ignores yours.
+- **Never re-add a claim listed under *Removed by a person* in the pack; the scripts will
+  drop it.** A person deleted it from the published document.
 - **Supersede, don't delete.** When new evidence overtakes a prior claim, keep that claim,
   prefix it with `**Superseded (<now>):** ` (the `now` date from `plan`), keep its id
   comment, and add the replacing claim right after it with both sources cited. Never drop
@@ -181,7 +188,9 @@ a genuinely new claim, or one whose wording or citation changed, needs a quote e
 
 Run `scribe.py check-file <id>`. It rewrites every `[FILE:]` claim whose quote it cannot
 find into `Not modeled: <reason>. <!-- cf:<n> -->` and writes `work/<id>/check-file.json`.
-Human-authored claims are skipped (counted in `human_origin_skipped`). Do not re-draft
+Human-authored claims are skipped (counted in `human_origin_skipped`), but only while their
+text and tags are unchanged from the base; a human claim whose wording or citation changed
+is checked like any other. Do not re-draft
 the rewritten claims.
 
 ### 6. Verify Brain claims (you dispatch `kb:verifier` once)

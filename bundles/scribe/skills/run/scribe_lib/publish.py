@@ -15,7 +15,8 @@ end without a render pass).
   `sections` (per-section `fingerprint`/`cited_chunks`/`cited_raw`, per
   `fingerprint.py`'s documented contract), `brain_snapshot`, `raw_snapshot`,
   `upstream_versions`; `cited_chunks`/`cited_raw` are ALSO written at the top
-  level as a whole-document union — an addition, not a rename).
+  level as a whole-document union — an addition, not a rename; `human_deleted`
+  is every tombstone so far, `_human_deleted`).
 - **propose**: writes `_pending/vNNN.md[.docx/.pdf]` + `vNNN.diff.md` (a
   unified diff of the Markdown against the previous published version); state
   is not advanced.
@@ -103,6 +104,28 @@ def cited_from_section(config: Config, body: str) -> dict[str, Any]:
                 full = config.raw_root / path
                 cited_raw[path] = sha256_file(full) if full.is_file() else None
     return {"cited_chunks": cited_chunks, "cited_raw": cited_raw, "cited_task_claims": {}}
+
+
+def _human_deleted(state: dict[str, Any], work_dir: Path, next_sections: dict[str, str]) -> list[dict[str, Any]]:
+    """Every tombstone so far (spec A8): the previous `state.human_deleted`
+    plus this run's `base.json.human_deleted`, de-duplicated, minus any whose
+    text the published section holds again (a person re-added it; merge only
+    lets that through from the base)."""
+    base_json_path = work_dir / "base.json"
+    base_json = json.loads(base_json_path.read_text(encoding="utf-8")) if base_json_path.is_file() else {}
+    live = {
+        sid: {b["normalized"] for b in claims.parse_blocks(body) if claims.is_claim(b)}
+        for sid, body in next_sections.items()
+    }
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for t in (state.get("human_deleted") or []) + (base_json.get("human_deleted") or []):
+        key = (t.get("section", ""), t.get("normalized", ""))
+        if key in seen or key[1] in live.get(key[0], set()):
+            continue
+        seen.add(key)
+        out.append(t)
+    return out
 
 
 def publish_task(
@@ -240,6 +263,7 @@ def publish_task(
 
     new_state = {
         **state,
+        "human_deleted": _human_deleted(state, work_dir, next_sections),
         "version": new_version,
         "built_at": header["built_at"],
         "published": {"docx_sha256": docx_sha, "pdf_sha256": pdf_sha, "md_sha256": md_sha},

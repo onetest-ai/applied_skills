@@ -437,7 +437,9 @@ def test_base_with_no_published_version(tmp_path):
     template = data["templates"]["domain-profile"]
 
     result = base_task(config, "t1", inst, template)
-    assert result == {"base_version": None, "base_edited": False, "human_added": [], "human_modified": []}
+    assert result == {
+        "base_version": None, "base_edited": False, "human_added": [], "human_modified": [], "human_deleted": []
+    }
     assert (config.work_dir / "t1" / "base.md").read_text(encoding="utf-8") == ""
 
 
@@ -476,7 +478,7 @@ Alpha is owned by the ops team. [RAG:12345] <!-- c:aaaa1111 -->
 
             Alpha is owned by the ops team.[^1]
 
-            - Invoicing runs monthly.[^2]
+            - Invoicing runs monthly and is reconciled weekly.[^2]
 
             This is a brand new sentence added by a human with no prior claim.[^3]
 

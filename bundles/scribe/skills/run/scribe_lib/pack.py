@@ -25,7 +25,15 @@
                           `origin=human|human_modified`, or no id at all),
                           they are also listed under "Human-authored claims"
                           so the agent copies them verbatim and never sends
-                          them to the verifier.
+                          them to the verifier. Claims a person deleted from
+                          the published docx (`base.json.human_deleted` ∪
+                          `state.json.human_deleted`, as normalized text) are
+                          listed under "Removed by a person — do not re-add:"
+                          (merge drops them anyway).
+
+If `base` refuses (a section heading renamed or deleted in the docx), prepare
+returns base's `{"status": "failed", "reason": "section_heading_changed", ...}`
+and writes no pack.
 
 `noop` = no stale sections AND base.json's `base_edited` is False — nothing
 for the agent to do this run.
@@ -92,6 +100,7 @@ def _render_pack_section(
     prior_text: str,
     info: dict[str, Any],
     upstream_claims: dict[str, str],
+    removed: list[str] | None = None,
 ) -> str:
     lines: list[str] = [f"# Section: {sec.get('title', sec['id'])} ({sec['id']})", ""]
     if sec.get("intent"):
@@ -118,6 +127,11 @@ def _render_pack_section(
         for b in human:
             ident = f"c:{b['claim_id']}" if b["claim_id"] else "no id"
             lines.append(f"- {ident} origin={claim_parser.base_claim_origin(b)}: {_truncate(b['content'], 160)}")
+        lines.append("")
+
+    if removed:
+        lines += ["## Removed by a person — do not re-add:", ""]
+        lines += [f"- {_truncate(text, 160)}" for text in removed]
         lines.append("")
 
     lines += ["## Evidence", ""]
@@ -192,6 +206,10 @@ def prepare_task(config: Config, task_id: str) -> dict[str, Any]:
     raw_delta = compute_raw_delta(config, raw_inputs, state)
 
     base_result = base_task(config, task_id, instance, template)
+    if base_result.get("status") == "failed":
+        # No pack at all, not even last run's: nothing downstream may run on it.
+        shutil.rmtree(config.work_dir / task_id / "pack", ignore_errors=True)
+        return {"task": task_id, **base_result}
     raw_result = gather_raw_task(config, task_id, instance, raw_inputs)
     fp_result = fingerprint_task(config, task_id, instances, templates, edges)
 
@@ -227,12 +245,22 @@ def prepare_task(config: Config, task_id: str) -> dict[str, Any]:
     upstream_tasks = resolve_instance_inputs(instance, template).get("tasks") or []
     upstream_claims = _collect_upstream_claims(config, instances, upstream_tasks) if upstream_tasks else {}
 
+    base_json_path = work_dir / "base.json"
+    base_json = json.loads(base_json_path.read_text(encoding="utf-8")) if base_json_path.is_file() else {}
+    removed_by_section: dict[str, list[str]] = {}
+    for t in (state.get("human_deleted") or []) + (base_json.get("human_deleted") or []):
+        texts = removed_by_section.setdefault(t.get("section", ""), [])
+        if t.get("normalized") and t["normalized"] not in texts:
+            texts.append(t["normalized"])
+
     sections_by_id = {s["id"]: s for s in sections_spec}
     for entry in stale_entries:
         sid = entry["section"]
         sec = sections_by_id[sid]
         info = fp_result["sections"].get(sid, {})
-        content = _render_pack_section(sec, template, base_sections.get(sid, ""), info, upstream_claims)
+        content = _render_pack_section(
+            sec, template, base_sections.get(sid, ""), info, upstream_claims, removed_by_section.get(sid)
+        )
         (pack_dir / f"{sid}.pack.md").write_text(content, encoding="utf-8")
 
     return {

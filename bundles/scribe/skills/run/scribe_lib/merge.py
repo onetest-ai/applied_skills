@@ -32,7 +32,14 @@ by `check-file`) for every stale section — refusing if one is missing.
   claim sets per section (script-owned; the agent never drafts it).
 - `work/<task>/merge.json`: `{task, version, noop, sections: {sid: {status:
   "carried"|"drafted", claims_before, claims_after, kept, reworded, recited,
-  dropped, added, superseded}}}`. `dropped` = base claims no draft claim matched.
+  dropped, added, superseded, suppressed_tombstone}}}`. `dropped` = base claims
+  no draft claim matched.
+- Tombstones (spec A8): a drafted claim whose `normalized` text equals a claim
+  a person deleted from the published docx in this section
+  (`base.json.human_deleted` ∪ `state.json.human_deleted`) is dropped before
+  matching and counted in `suppressed_tombstone` — the agent may not bring
+  back what a person removed. A tombstoned text the base holds again (a person
+  re-added it) is not dropped.
 - Noop (A9): if `next.md`'s content — ignoring the header comment, the Changes
   section, and anything a reader would never see (claim-id/origin comments,
   Markdown backslash escapes, curly vs straight quotes, whitespace runs; see
@@ -83,9 +90,29 @@ def _base_field(base_version: int | None, base_edited: bool) -> str:
     return f"v{base_version:03d}" + (" (human-edited)" if base_edited else "")
 
 
-def _merge_drafted_section(task_id: str, sid: str, base_body: str, draft_text: str) -> dict[str, Any]:
+def tombstones(base_json: dict[str, Any], state: dict[str, Any]) -> dict[str, set[str]]:
+    """{section: {normalized text}} of every claim a person deleted from the
+    published docx (spec A8): this run's `base.json.human_deleted` plus every
+    earlier one `publish` kept in `state.json.human_deleted`."""
+    out: dict[str, set[str]] = {}
+    for t in (base_json.get("human_deleted") or []) + (state.get("human_deleted") or []):
+        if t.get("section") and t.get("normalized"):
+            out.setdefault(t["section"], set()).add(t["normalized"])
+    return out
+
+
+def _merge_drafted_section(
+    task_id: str, sid: str, base_body: str, draft_text: str, tombstoned: set[str] | frozenset[str] = frozenset()
+) -> dict[str, Any]:
     base_blocks = [b for b in claims.parse_blocks(base_body) if claims.is_claim(b)]
-    draft_blocks = claims.parse_blocks(draft_text)
+    # A drafted claim a person deleted is dropped before matching — unless the
+    # base itself holds that text again (a person re-added it after deleting it).
+    live = {b["normalized"] for b in base_blocks}
+    all_draft = claims.parse_blocks(draft_text)
+    draft_blocks = [
+        b for b in all_draft if not (claims.is_claim(b) and b["normalized"] in tombstoned and b["normalized"] not in live)
+    ]
+    suppressed = len(all_draft) - len(draft_blocks)
     results = {id(r["block"]): r for r in claims.match_claims(base_blocks, draft_blocks, task_id, sid)}
 
     counts = dict.fromkeys(("kept", "reworded", "recited", "added", "superseded"), 0)
@@ -119,6 +146,7 @@ def _merge_drafted_section(task_id: str, sid: str, base_body: str, draft_text: s
         "claims_after": sum(counts.values()),
         **counts,
         "dropped": len(dropped_blocks),
+        "suppressed_tombstone": suppressed,
         "examples": examples,
     }
 
@@ -207,6 +235,9 @@ def merge_task(
     base_json_path = work_dir / "base.json"
     base_json = json.loads(base_json_path.read_text(encoding="utf-8")) if base_json_path.is_file() else {}
 
+    state = read_state(config, instance)
+    tombstoned = tombstones(base_json, state)
+
     sections_dir = work_dir / "sections"
     for sid in sorted(stale_ids):
         draft_path = sections_dir / f"{sid}.md"
@@ -223,7 +254,9 @@ def merge_task(
         sid = sec["id"]
         if sid in stale_ids:
             draft_text = (sections_dir / f"{sid}.md").read_text(encoding="utf-8")
-            report = _merge_drafted_section(task_id, sid, base_sections.get(sid, ""), draft_text)
+            report = _merge_drafted_section(
+                task_id, sid, base_sections.get(sid, ""), draft_text, tombstoned.get(sid, frozenset())
+            )
             next_bodies[sid] = report["body"]
             examples_by_section[sid] = report.pop("examples")
             report.pop("body")
@@ -242,9 +275,9 @@ def merge_task(
                 "dropped": 0,
                 "added": 0,
                 "superseded": 0,
+                "suppressed_tombstone": 0,
             }
 
-    state = read_state(config, instance)
     prev_version = state.get("version") or 0
     new_version = prev_version + 1
     base_version = base_json.get("base_version")

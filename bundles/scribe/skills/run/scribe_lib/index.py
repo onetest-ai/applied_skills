@@ -40,8 +40,11 @@ def _direct_targets(
 ) -> tuple[dict[ClaimRef, dict[str, Any]], dict[ClaimRef, str]]:
     """(task, claim_id) -> {doc_ids, paths, task_refs} for the CURRENT version's
     claims only, plus (task, claim_id) -> section. A claim id is unique within a
-    document (`merge` re-mints duplicates and ignores ids not in the base), so
-    the key names exactly one claim."""
+    section: `base` (docx recovery) and `merge` both mint with
+    `claims.mint_claim_id`, which re-hashes on a clash, and `merge` ignores
+    ids not in the base. Across sections the section id is part of the hash,
+    so two sections share an id only on a 32-bit prefix collision; the key
+    names exactly one claim short of that."""
     version = lineage["header"]["version"]
     nodes_by_id = {n["id"]: n for n in lineage["nodes"]}
     current = [n for n in lineage["nodes"] if n["type"] == "claim" and n.get("version") == version]
