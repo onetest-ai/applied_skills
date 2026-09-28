@@ -16,7 +16,10 @@ NOT on it and the scheduled run fails — silently, since nothing is watching st
 either. `render()` therefore captures `os.environ["PATH"]` from the process running
 `scribe.py schedule` (the interactive shell the operator already has `claude` etc.
 working in) and bakes it into the generated command/plist, and points stdout+stderr at a
-log file under `<scribe project>/logs/` so a silent failure leaves evidence.
+log file under `<scribe project>/logs/` so a silent failure leaves evidence. Final-review
+C2: the command creates that directory itself (`mkdir -p` first) and wraps the WHOLE chain
+in one `{ ...; } >> log 2>&1` group, so a fresh project still runs Scribe and both halves
+are logged (see `_wrapped_command`).
 """
 from __future__ import annotations
 
@@ -42,6 +45,23 @@ def _chained_command(scribe_project: Path, brain_project: Path | None) -> str:
         parts.append(_brain_command(brain_project))
     parts.append(_scribe_command(scribe_project))
     return "; ".join(parts)
+
+
+def _dq(value: str) -> str:
+    """Double-quote `value` for /bin/sh, escaping the four characters that stay special
+    inside double quotes. (Double rather than single quotes so a caller can append a
+    `$(date ...)` substitution inside the same quoted word.)"""
+    for ch in ("\\", '"', "$", "`"):
+        value = value.replace(ch, "\\" + ch)
+    return f'"{value}"'
+
+
+def _wrapped_command(command: str, log_dir: Path, log_word: str) -> str:
+    """Final-review C2: `mkdir -p` the logs dir FIRST (a redirect into a missing directory
+    makes /bin/sh skip the command, so on a fresh project Scribe never ran), then run the
+    whole chain inside one `{ ...; }` group so the redirect captures BOTH halves (a trailing
+    redirect binds only to the last simple command, which left the Brain half unlogged)."""
+    return f"mkdir -p {_dq(str(log_dir))}; {{ {command}; }} >> {log_word} 2>&1"
 
 
 def _cron_time_fields(time: str) -> tuple[str, str]:
@@ -78,14 +98,19 @@ def render(
         # command before the first `&&`/`;`). The log file name is date-stamped via a
         # `date` command substitution — crontab requires a literal `%` to be
         # backslash-escaped (an unescaped `%` means "newline" to cron), hence `\%`.
-        log_path = f'"{log_dir}/schedule-$(date +\\%Y-\\%m-\\%d).log"'
-        return f'{minute} {hour} * * * export PATH="{path_value}"; {command} >> {log_path} 2>&1\n'
+        log_word = _dq(f"{log_dir}/schedule-")[:-1] + '$(date +\\%Y-\\%m-\\%d).log"'
+        body = _wrapped_command(command, log_dir, log_word)
+        return f"{minute} {hour} * * * export PATH={_dq(path_value)}; {body}\n"
     if kind == "launchd":
         hh, _, mm = time.partition(":")
         # A plist path string is never shell-expanded, so it cannot itself carry a
         # `date`-substituted name the way the cron line does; launchd (over)writes this
         # single file on every run instead of rotating it per day.
         log_path = str(log_dir / "schedule.log")
+        # StandardOutPath/StandardErrorPath catch what launchd itself reports; the -c
+        # string creates the logs dir and logs both halves of the chain the same way the
+        # cron line does.
+        command = _wrapped_command(command, log_dir, _dq(log_path))
         return (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '

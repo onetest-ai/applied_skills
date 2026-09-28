@@ -159,3 +159,52 @@ def test_schedule_sets_path_and_log_redirection(tmp_path, monkeypatch):
     log_path = str(scribe_dir / "logs" / "schedule.log")
     assert data["StandardOutPath"] == log_path
     assert data["StandardErrorPath"] == log_path
+
+
+def _stub_claude(tmp_path):
+    bin_dir = tmp_path / "stub bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "claude"
+    stub.write_text('#!/bin/sh\necho "stub-out $2 in $(pwd)"\necho "stub-err $2" >&2\n')
+    stub.chmod(0o755)
+    return bin_dir
+
+
+def test_cron_command_runs_on_a_fresh_project_and_logs_both_halves(tmp_path, monkeypatch):
+    """Final-review C2: no code creates <project>/logs/, and /bin/sh skips a command whose
+    redirect target directory is missing — so the scribe half never ran on a fresh
+    project; and a trailing redirect bound only the last command, leaving the Brain half
+    unlogged. Execute the rendered cron body (as cron would, `\\%` -> `%`) with `claude`
+    stubbed on PATH."""
+    monkeypatch.setenv("PATH", f"{_stub_claude(tmp_path)}:/usr/bin:/bin")
+    scribe_dir, brain_dir = tmp_path / "My scribe", tmp_path / "brain"
+    scribe_dir.mkdir()
+    brain_dir.mkdir()
+    assert not (scribe_dir / "logs").exists()
+    line = schedule.render(scribe_dir, brain_dir, time="02:30", kind="cron")
+    body = line[len("30 2 * * * "):].rstrip("\n").replace("\\%", "%")
+    proc = subprocess.run(["/bin/sh", "-c", body], capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+    assert proc.returncode == 0, proc.stderr
+    logs = list((scribe_dir / "logs").glob("schedule-*.log"))
+    assert len(logs) == 1
+    text = logs[0].read_text()
+    assert "stub-out /brain:brain-maintenance handoff" in text and "stub-err /brain:brain-maintenance handoff" in text
+    assert "stub-out /scribe:run --due" in text and "stub-err /scribe:run --due" in text
+    assert text.index("brain-maintenance") < text.index("scribe:run")
+
+
+def test_launchd_command_creates_logs_and_logs_both_halves(tmp_path, monkeypatch):
+    stub_path = f"{_stub_claude(tmp_path)}:/usr/bin:/bin"
+    monkeypatch.setenv("PATH", stub_path)
+    scribe_dir, brain_dir = tmp_path / "scribe", tmp_path / "brain"
+    scribe_dir.mkdir()
+    brain_dir.mkdir()
+    data = plistlib.loads(schedule.render(scribe_dir, brain_dir, kind="launchd").encode("utf-8"))
+    assert data["ProgramArguments"][:2] == ["/bin/sh", "-c"]
+    proc = subprocess.run(data["ProgramArguments"], capture_output=True, text=True,
+                          env=data["EnvironmentVariables"])
+    assert proc.returncode == 0, proc.stderr
+    log = Path(data["StandardOutPath"])
+    assert log.parent == scribe_dir / "logs" and log.is_file()
+    text = log.read_text()
+    assert "stub-out /brain:brain-maintenance handoff" in text and "stub-err /scribe:run --due" in text
