@@ -29,7 +29,10 @@ by `check-file`) for every stale section — refusing if one is missing.
   `dropped`; its content is gone from the document either way, even though it
   was not "live" content).
 - `## Changes in this version {#changes}` is generated from the base-vs-next
-  claim sets per section (script-owned; the agent never drafts it).
+  claim sets per section (script-owned; the agent never drafts it), plus a
+  leading `stale_brain_line` note (spec A1) when the latest unattended Brain
+  hand-off run aborted — written here, not at publish time, so `render`
+  (which builds the docx/pdf straight from `next.md`) includes it too.
 - `work/<task>/merge.json`: `{task, version, noop, sections: {sid: {status:
   "carried"|"drafted", claims_before, claims_after, kept, reworded, recited,
   added, superseded, dropped_by_check, dropped_by_model, suppressed_tombstone,
@@ -65,6 +68,7 @@ from typing import Any
 from scribe_lib import claims
 from scribe_lib.basedoc import split_by_section_id
 from scribe_lib.config import Config, ScribeError, parse_template_ref, read_state, substitute_params
+from scribe_lib.doctor import handoff_status
 
 _CHANGES_RE = re.compile(r"## Changes in this version \{#changes\}.*?(?=\n## |\Z)", re.DOTALL)
 _HEADER_RE = re.compile(
@@ -245,13 +249,40 @@ def _merge_drafted_section(
     }
 
 
+def stale_brain_line(config: Config) -> str | None:
+    """Spec A1: when the latest unattended Brain hand-off run aborted (nothing
+    applied), the Changes section carries `"Brain was not refreshed on <date>:
+    <reasons>"` so a reader of the published docx/pdf — not just next.md — sees
+    why nothing new made it into this version. Computed here (merge), not at
+    publish time: `render` builds the docx/pdf from `work/<task>/next.md`
+    BEFORE `publish` ever runs, so a note added after render never reaches the
+    rendered deliverable. `None` when the Brain is fresh (or hand-off mode
+    isn't configured for this project) — the line disappears on the next
+    version once the Brain recovers, since each merge re-renders the whole
+    Changes block from scratch rather than accumulating past notes.
+    `Path(latest).stem` is the hand-off report's own `<YYYY-MM-DD>.json` name
+    (brain-maintenance's `handoff --out`), i.e. the date of the run that
+    aborted, not today's merge/publish date.
+    """
+    status = handoff_status(config)
+    if not status.get("stale_brain"):
+        return None
+    latest = status.get("latest")
+    date = Path(latest).stem if latest else "unknown"
+    reasons = "; ".join(status.get("reasons") or []) or "no reason recorded"
+    return f"Brain was not refreshed on {date}: {reasons}"
+
+
 def _render_changes(
     sections_spec: list[dict[str, Any]],
     section_reports: dict[str, dict[str, Any]],
     examples_by_section: dict[str, dict[str, list[str]]],
     base_json: dict[str, Any],
+    stale_note: str | None = None,
 ) -> str:
     lines: list[str] = []
+    if stale_note:
+        lines.append(f"- {stale_note}")
     for sec in sections_spec:
         sid = sec["id"]
         rep = section_reports[sid]
@@ -386,7 +417,10 @@ def merge_task(
         f"<!-- scribe: task={task_id} version={new_version} built_at={_built_at(config)} "
         f"template={template_id}@{template_version} base={_base_field(base_version, base_edited)} -->"
     )
-    changes_text = _render_changes(sections_spec, section_reports, examples_by_section, base_json)
+    changes_text = _render_changes(
+        sections_spec, section_reports, examples_by_section, base_json,
+        stale_note=stale_brain_line(config),
+    )
 
     lines = [header, "", f"# {instance['title']}", "", "## Changes in this version {#changes}", "", changes_text, ""]
     for sec in sections_spec:

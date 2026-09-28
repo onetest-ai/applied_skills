@@ -12,17 +12,19 @@ progress against the last good Brain when the brain half aborted.
 """
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
 
 _LABEL = "ai.applied.scribe"
 
 
 def _brain_command(brain_project: Path) -> str:
-    return f'cd {brain_project} && claude -p "/brain:brain-maintenance handoff" --permission-mode bypassPermissions'
+    return f'cd {shlex.quote(str(brain_project))} && claude -p "/brain:brain-maintenance handoff" --permission-mode bypassPermissions'
 
 
 def _scribe_command(scribe_project: Path) -> str:
-    return f'cd {scribe_project} && claude -p "/scribe:run --due" --permission-mode bypassPermissions'
+    return f'cd {shlex.quote(str(scribe_project))} && claude -p "/scribe:run --due" --permission-mode bypassPermissions'
 
 
 def _chained_command(scribe_project: Path, brain_project: Path | None) -> str:
@@ -68,7 +70,7 @@ def render(
             "    <array>\n"
             "        <string>/bin/sh</string>\n"
             "        <string>-c</string>\n"
-            f"        <string>{command}</string>\n"
+            f"        <string>{xml_escape(command)}</string>\n"
             "    </array>\n"
             "    <key>StartCalendarInterval</key>\n"
             "    <dict>\n"

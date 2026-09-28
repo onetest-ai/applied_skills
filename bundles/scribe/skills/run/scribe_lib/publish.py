@@ -40,7 +40,6 @@ import difflib
 import hashlib
 import json
 import os
-import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -59,34 +58,13 @@ from scribe_lib.config import (
     resolve_instance_inputs,
     sha256_file,
 )
-from scribe_lib.doctor import handoff_status
 from scribe_lib.merge import parse_header
 
-# Spec A1: a Changes-section note publish adds (never merge — merge already
-# wrote the rest of the Changes block from the claim deltas) when the last
-# unattended Brain hand-off run aborted, so a reader of the published docx
-# sees why nothing new made it in this version rather than reading silence as
-# "nothing changed". `Path(latest).stem` is the hand-off report's own
-# `<YYYY-MM-DD>.json` name (brain-maintenance's `handoff --out`), so the note
-# names the date of the run that aborted, not today's publish date.
-_CHANGES_HEADING_RE = re.compile(r"(## Changes in this version \{#changes\}\n\n)")
-
-
-def _stale_brain_note(config: Config) -> str | None:
-    status = handoff_status(config)
-    if not status.get("stale_brain"):
-        return None
-    latest = status.get("latest")
-    date = Path(latest).stem if latest else "unknown"
-    reasons = "; ".join(status.get("reasons") or []) or "no reason recorded"
-    return f"Brain was not refreshed on {date}: {reasons}"
-
-
-def _apply_stale_brain_note(next_text: str, config: Config) -> str:
-    note = _stale_brain_note(config)
-    if not note:
-        return next_text
-    return _CHANGES_HEADING_RE.sub(lambda m: m.group(1) + f"- {note}\n", next_text, count=1)
+# Spec A1: the stale-Brain Changes-section note ("Brain was not refreshed on
+# <date>: <reasons>") is written by `merge` (`merge._render_changes`), not
+# here — render runs on `work/<task>/next.md` BEFORE publish ever sees it, so
+# a note injected at publish time would never reach the docx/pdf. See
+# `merge.py`'s module docstring.
 
 # Journal step order (A10 — journaled atomic publish, PoC m1). `publish_task`
 # ("auto" mode) records each finished step to `journal.json` before starting
@@ -705,7 +683,6 @@ def publish_task(
     next_text = next_path.read_text(encoding="utf-8")
     header = parse_header(next_text)
     new_version = header["version"]
-    next_text = _apply_stale_brain_note(next_text, config)
 
     # A stale next.md (e.g. left over from a run whose merge was a noop, or
     # from a version that already got published through some other path)

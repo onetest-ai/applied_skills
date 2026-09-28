@@ -150,6 +150,75 @@ def test_merge_carries_non_stale_section_byte_for_byte(tmp_path):
     assert merge_json["sections"]["details"]["kept"] == 1
 
 
+def _configure_brain_handoff(proj, hand_dir):
+    (proj / "scribe.toml").write_text(
+        (proj / "scribe.toml").read_text().replace(
+            "[project]", f'[project]\nbrain_handoff_dir = "{hand_dir.as_posix()}"', 1
+        )
+    )
+
+
+def test_merge_puts_stale_brain_note_in_changes_section_so_render_sees_it(tmp_path):
+    """Task 14 review fix round 1, Important #6: the stale-Brain Changes line must be
+    written by `merge` (into `next.md`'s Changes section), not injected later at
+    `publish` time — `render` builds the docx/pdf straight from `work/<task>/next.md`
+    BEFORE `publish` ever runs, so a note added at publish would never reach the
+    rendered deliverable a reader actually opens."""
+    hand_dir = tmp_path / "brain" / "ops" / "handoff"
+    write_json(hand_dir / "2026-01-04.json", {"decision": "apply", "abort_reasons": []})
+    write_json(hand_dir / "2026-01-05.json", {"decision": "abort", "abort_reasons": ["root_unavailable: docs"]})
+
+    proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"))
+    _configure_brain_handoff(proj, hand_dir)
+    config, data = load(proj)
+
+    details_body = "Widget details, unchanged. [RAG:555] <!-- c:dddd4444 -->"
+    _seed_published_v1(config, "m1", {"overview": "placeholder", "details": details_body}, title="Mini m1")
+
+    work_dir = config.work_dir / "m1"
+    base_text = (config.out_root / "m1" / "_src" / "v001.md").read_text(encoding="utf-8")
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (work_dir / "base.md").write_text(base_text, encoding="utf-8")
+    write_json(work_dir / "base.json", {"base_version": 1, "base_edited": False, "human_added": [], "human_modified": []})
+    write_json(
+        work_dir / "pack" / "plan.json",
+        {"task": "m1", "stale": [{"section": "overview", "reasons": ["fingerprint_changed"]}], "carried": ["details"], "noop": False},
+    )
+    write_text(work_dir / "sections" / "overview.md", "Widget is a tool. [RAG:111] <!-- c:aaaa1111 -->\n")
+
+    merge_task(config, "m1", data["instances"], data["templates"])
+    next_text = (work_dir / "next.md").read_text(encoding="utf-8")
+    changes = next_text.split("## Changes in this version {#changes}", 1)[1].split("## ", 1)[0]
+    assert "Brain was not refreshed on 2026-01-05: root_unavailable: docs" in changes
+
+
+def test_merge_omits_stale_brain_note_when_brain_is_fresh(tmp_path):
+    hand_dir = tmp_path / "brain" / "ops" / "handoff"
+    write_json(hand_dir / "2026-01-05.json", {"decision": "apply", "abort_reasons": []})
+
+    proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"))
+    _configure_brain_handoff(proj, hand_dir)
+    config, data = load(proj)
+
+    details_body = "Widget details, unchanged. [RAG:555] <!-- c:dddd4444 -->"
+    _seed_published_v1(config, "m1", {"overview": "placeholder", "details": details_body}, title="Mini m1")
+
+    work_dir = config.work_dir / "m1"
+    base_text = (config.out_root / "m1" / "_src" / "v001.md").read_text(encoding="utf-8")
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (work_dir / "base.md").write_text(base_text, encoding="utf-8")
+    write_json(work_dir / "base.json", {"base_version": 1, "base_edited": False, "human_added": [], "human_modified": []})
+    write_json(
+        work_dir / "pack" / "plan.json",
+        {"task": "m1", "stale": [{"section": "overview", "reasons": ["fingerprint_changed"]}], "carried": ["details"], "noop": False},
+    )
+    write_text(work_dir / "sections" / "overview.md", "Widget is a tool. [RAG:111] <!-- c:aaaa1111 -->\n")
+
+    merge_task(config, "m1", data["instances"], data["templates"])
+    next_text = (work_dir / "next.md").read_text(encoding="utf-8")
+    assert "Brain was not refreshed" not in next_text
+
+
 def test_merge_carries_claim_id_on_reword_and_assigns_new_id_for_new_text(tmp_path):
     proj = setup_mini_project(tmp_path)
     config, data = load(proj)

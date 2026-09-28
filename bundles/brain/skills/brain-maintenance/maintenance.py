@@ -238,6 +238,18 @@ def classify_handoff(status: dict[str, Any], profile: dict[str, Any]) -> dict[st
     strict_error = status.get("strict_source_error")
     if strict_error:
         abort_reasons.append(f"strict_source_error: {strict_error}")
+    # build_status's other safety blockers (deletion policy, an invalid manifest, parsed
+    # documents with no registered source, an empty required retrieval lane, ...) have no
+    # human to stop for in hand-off mode, so any of them must abort too — the only
+    # blockers hand-off explicitly resolves itself are the two it defers below
+    # (`remove_candidate`/`missing` actions and ambiguous moves).
+    deferred_blockers = {"source_actions_need_human_resolution", "ambiguous_source_move"}
+    for blocker in status.get("blockers") or []:
+        if blocker in deferred_blockers:
+            continue
+        reason = f"blocker: {blocker}"
+        if reason not in abort_reasons:
+            abort_reasons.append(reason)
 
     if abort_reasons:
         return {
@@ -245,12 +257,28 @@ def classify_handoff(status: dict[str, Any], profile: dict[str, Any]) -> dict[st
             "marts": "none", "deploy": "disabled",
         }
 
+    # An `add` that shares its sha256 with an ambiguous-move pair (a same-hash
+    # add+missing `build_status` could not collapse into a single unambiguous `move`)
+    # or with a duplicate-content group must never be applied just because "add" is
+    # itself a structurally safe action — it is already reported under `defer`, and
+    # applying it anyway would mint the duplicate source identity `build_status`'s own
+    # comment says maintenance must stop to prevent.
+    excluded_shas = {h for h in (status.get("ambiguous_move_hashes") or []) if h}
+    for d in source_plan.get("duplicate_content") or []:
+        if d.get("sha256"):
+            excluded_shas.add(d["sha256"])
+
+    def _apply_candidate(item: dict[str, Any]) -> str | None:
+        if item.get("action") == "add" and item.get("sha256") in excluded_shas:
+            return None
+        return item.get("relative_path")
+
     apply: list[str] = []
     defer: list[dict[str, Any]] = []
     for action in source_plan.get("actions") or []:
         kind = action.get("action")
         if kind in ("add", "content_change", "move"):
-            rel = action.get("relative_path")
+            rel = _apply_candidate(action)
             if rel is not None and rel not in apply:
                 apply.append(rel)
         elif kind == "remove_candidate":
@@ -265,7 +293,9 @@ def classify_handoff(status: dict[str, Any], profile: dict[str, Any]) -> dict[st
         defer.append({"kind": "duplicate_content", "detail": d})
 
     for item in status.get("narrative_work") or []:
-        rel = item.get("relative_path") if isinstance(item, dict) else None
+        if not isinstance(item, dict):
+            continue
+        rel = _apply_candidate(item)
         if rel is not None and rel not in apply:
             apply.append(rel)
 
@@ -278,6 +308,39 @@ def classify_handoff(status: dict[str, Any], profile: dict[str, Any]) -> dict[st
     return {
         "decision": "apply", "apply": apply, "defer": defer, "abort_reasons": [],
         "marts": marts, "deploy": deploy,
+    }
+
+
+def build_apply_plan(status: dict[str, Any], classification: dict[str, Any]) -> dict[str, Any]:
+    """A `source_registry` plan (same header shape `source_registry.build_plan`/`cmd_plan`
+    write: `version`, `created_at`, `config_sha256`, `roots`, `actions`,
+    `duplicate_content`, `skipped_generated`) filtered to exactly the actions
+    `classify_handoff` put in `apply` — never the deferred ones.
+
+    `source_registry.cmd_apply` treats every `add`/`content_change`/`move` action in
+    whatever plan file it is given as structurally safe and applies it; it has no
+    subset flag and cannot itself tell an unambiguous add from the add-half of an
+    ambiguous-move or duplicate-content group `classify_handoff` deferred. Handing it a
+    freshly regenerated plan (or the raw `status.source_plan`) would silently re-include
+    those deferred adds. This function is what makes `./brain source apply --plan
+    <this file>` apply only what hand-off actually decided to apply — never a mutation
+    itself, just a filtered copy of the read-only plan `status` already carried.
+    """
+    source_plan = status.get("source_plan") or {}
+    apply_paths = set(classification.get("apply") or [])
+    actions = [
+        dict(item)
+        for item in (source_plan.get("actions") or [])
+        if item.get("action") in ("add", "content_change", "move") and item.get("relative_path") in apply_paths
+    ]
+    return {
+        "version": source_plan.get("version", 1),
+        "created_at": source_plan.get("created_at"),
+        "config_sha256": source_plan.get("config_sha256"),
+        "roots": source_plan.get("roots", []),
+        "actions": actions,
+        "duplicate_content": source_plan.get("duplicate_content", []),
+        "skipped_generated": source_plan.get("skipped_generated", []),
     }
 
 
@@ -448,6 +511,11 @@ def main(argv: list[str] | None = None) -> int:
     p_handoff.add_argument("--profile", required=True)
     p_handoff.add_argument("--status", required=True)
     p_handoff.add_argument("--out", required=True)
+    p_handoff.add_argument(
+        "--apply-plan",
+        help="also write a source_registry plan filtered to exactly the apply-classified "
+        "actions, for `./brain source apply --plan <this file>`",
+    )
     args = ap.parse_args(argv)
     try:
         profile = load_profile(Path(args.profile).expanduser().resolve())
@@ -460,6 +528,9 @@ def main(argv: list[str] | None = None) -> int:
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
             atomic_json(Path(args.out), result, profile["project"])
+            if args.apply_plan:
+                apply_plan = build_apply_plan(status_data, classification)
+                atomic_json(Path(args.apply_plan), apply_plan, profile["project"])
             print(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True))
             return 0 if result["decision"] == "apply" else 3
         if args.command == "validate-profile":
