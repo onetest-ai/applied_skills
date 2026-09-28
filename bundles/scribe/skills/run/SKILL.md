@@ -132,7 +132,8 @@ For every `section` in `plan.json.stale`, read `work/<id>/pack/<section>.pack.md
 the section's intent, `must` rules and lanes, the template's drafting guidance, the
 **prior text** (with each claim's `<!-- c:xxxxxxxx -->` id), the **evidence** (each item
 preceded by the exact tag to cite), notes on cited chunks that changed or disappeared,
-and upstream tasks' claims tagged `[TASK:<task>#c:<claim id>]`.
+a "Now in the Brain" list for any `[FILE:]` claim whose raw file has since been synced
+into the Brain (spec A7), and upstream tasks' claims tagged `[TASK:<task>#c:<claim id>]`.
 
 Write the section body — no `## ` heading — to `work/<id>/sections/<section>.md`:
 
@@ -149,6 +150,12 @@ Write the section body — no `## ` heading — to `work/<id>/sections/<section>
   comment yourself — `merge` sets origin only from the prior text and ignores yours.
 - **Never re-add a claim listed under *Removed by a person* in the pack; the scripts will
   drop it.** A person deleted it from the published document.
+- **For every claim listed under *Now in the Brain*, replace its `[FILE:]` tag with the
+  matching `[RAG:]` tag from the pack and keep the claim id comment.** The claim's raw
+  file has been synced into the Brain since it was last published, so the citation
+  upgrades from a raw-file quote to a Brain chunk; pick the candidate chunk that actually
+  supports the claim's text, don't just take the first one. Keep the claim's wording and
+  `<!-- c:xxxxxxxx -->` id unchanged — this is a re-cite, not a rewrite.
 - **Supersede, don't delete.** When new evidence overtakes a prior claim, keep that claim,
   prefix it with `**Superseded (<now>):** ` (the `now` date from `plan`), keep its id
   comment, and add the replacing claim right after it with both sources cited. Never drop
@@ -199,6 +206,13 @@ Human-authored claims are skipped (counted in `human_origin_skipped`), but only 
 text and tags are unchanged from the base; a human claim whose wording or citation changed
 is checked like any other. Do not re-draft
 the rewritten claims.
+
+For every claim in `check-file.json.needs_quote`, add its quote to `<sid>.evidence.json` and
+re-run `$SCRIBE check-file <task>` once; if the quote cannot be found, re-cite it or mark it
+`Not modeled:` yourself. This is a carried `[FILE:]` claim with no state record to verify it
+against (never published, or published under a different section) — `check-file` leaves it
+as drafted rather than guessing, so it is on you to supply the quote (or decide it no longer
+holds) before this task can be accepted.
 
 Run `$SCRIBE check-task <task>`. It rewrites every `[TASK:up#c:id]` claim whose
 upstream claim is gone or superseded into `Not modeled: upstream claim <up>#c:<id> is

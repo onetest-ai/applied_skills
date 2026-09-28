@@ -29,7 +29,16 @@
                           the published docx (`base.json.human_deleted` ∪
                           `state.json.human_deleted`, as normalized text) are
                           listed under "Removed by a person — do not re-add:"
-                          (merge drops them anyway).
+                          (merge drops them anyway). When `fingerprint.json`
+                          marks a claim `ingested` (its `[FILE:]` claim's raw
+                          file has since been synced into the Brain, spec
+                          A7), it is also listed under "Now in the Brain — re-
+                          cite as [RAG:] and keep the claim id:", one line per
+                          claim (`c:<id>: <text>`) followed by candidate
+                          `[RAG:<chunk_id>]` hits from `brain.chunks_for_doc`
+                          for that doc — the agent re-cites rather than the
+                          claim being silently dropped or left on a stale
+                          `[FILE:]` tag (PoC finding I4).
 
 If `base` refuses (a section heading renamed or deleted in the docx), prepare
 returns base's `{"status": "failed", "reason": "section_heading_changed", ...}`
@@ -49,6 +58,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from scribe_lib import brain as brain_mod
 from scribe_lib import claims as claim_parser
 from scribe_lib.basedoc import base_task, split_by_section_id
 from scribe_lib.checktask import _upstream_claims
@@ -92,6 +102,7 @@ def _collect_upstream_claims(config: Config, instances: dict[str, Any], upstream
 
 
 def _render_pack_section(
+    config: Config,
     sec: dict[str, Any],
     template: dict[str, Any],
     prior_text: str,
@@ -161,6 +172,25 @@ def _render_pack_section(
     changed_notes += [f"- {path}: {status}" for path, status in info.get("cited_raw_status", {}).items() if status != "same"]
     lines += ["## Changed/gone cited chunks", ""]
     lines += (changed_notes or ["(none)"]) + [""]
+
+    ingested = info.get("ingested") or []
+    if ingested:
+        prior_claims_by_id = {
+            b["claim_id"]: b
+            for b in claim_parser.parse_blocks(prior_text)
+            if claim_parser.is_claim(b) and b.get("claim_id")
+        }
+        lines += ["## Now in the Brain — re-cite as [RAG:] and keep the claim id:", ""]
+        for entry in ingested:
+            doc_id = entry["doc_id"]
+            for cid in entry["claims"]:
+                block = prior_claims_by_id.get(cid)
+                claim_text = block["content"] if block else ""
+                lines.append(f"- c:{cid}: {_truncate(claim_text, 160)}")
+                for h in brain_mod.chunks_for_doc(config, doc_id, claim_text):
+                    tag = f"[RAG:{h['chunk_id']}]"
+                    lines.append(f"  - {tag} {_truncate(h.get('text', ''), EVIDENCE_TRUNCATE)}")
+        lines.append("")
 
     if upstream_claims:
         lines += ["## Upstream claims", ""]
@@ -256,7 +286,7 @@ def prepare_task(config: Config, task_id: str) -> dict[str, Any]:
         sec = sections_by_id[sid]
         info = fp_result["sections"].get(sid, {})
         content = _render_pack_section(
-            sec, template, base_sections.get(sid, ""), info, upstream_claims, removed_by_section.get(sid)
+            config, sec, template, base_sections.get(sid, ""), info, upstream_claims, removed_by_section.get(sid)
         )
         (pack_dir / f"{sid}.pack.md").write_text(content, encoding="utf-8")
 

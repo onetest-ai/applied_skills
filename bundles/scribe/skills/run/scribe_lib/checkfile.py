@@ -46,10 +46,24 @@ paragraph shape, dropping its tags and any claim id — it is no longer a
 claim) and recorded in `work/<task>/check-file.json`:
 
     {"checked": <int>, "passed": <int>, "human_origin_skipped": <int>,
-     "failed": [{"section", "claim_ref", "tag", "reason"}]}
+     "failed": [{"section", "claim_ref", "tag", "reason"}],
+     "needs_quote": [{"section", "claim", "tag"}]}
 
 `checked`/`passed` count *claims* (not tags): a claim with two failing
 `[FILE:]` tags is one failure, not two.
+
+**A7/I4 — never silently rewrite a carried `[FILE:]` claim for want of a
+quote.** A claim that is carried forward byte-for-byte from base (same
+`claims.claim_key`: text AND tags unchanged) but whose `[FILE:]` tag has no
+usable `cited_raw` state record (never published, or published under a
+different section) and no fresh quote in the evidence sidecar is neither
+checked nor failed: it is left exactly as drafted and its
+`{"section", "claim", "tag"}` is appended to `needs_quote` instead. This is
+the fix for PoC finding I4, where two such claims were dropped (rewritten to
+`Not modeled:`) instead of being handed back to the agent/human to supply a
+quote for. A claim that is NOT fully carried (new or reworded) still needs a
+quote outright and fails as before — `needs_quote` only covers the "this was
+fine before, we just have nothing to re-verify it against" case.
 
 **Idempotency.** `evidence.json`'s `claim_ref` is a positional index into the
 ORIGINAL drafted file (assigned once, by the agent, before any check-file
@@ -160,9 +174,17 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
     passed = 0
     human_skipped = 0
     failed: list[dict[str, Any]] = []
+    needs_quote: list[dict[str, Any]] = []
 
     if not sections_dir.is_dir():
-        result = {"task": task_id, "checked": 0, "passed": 0, "human_origin_skipped": 0, "failed": []}
+        result = {
+            "task": task_id,
+            "checked": 0,
+            "passed": 0,
+            "human_origin_skipped": 0,
+            "failed": [],
+            "needs_quote": [],
+        }
         (work_dir / "check-file.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
         return result
 
@@ -202,10 +224,21 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
             ):
                 human_skipped += 1
                 continue
-            checked += 1
+
+            # A7/I4 — a claim that is carried forward byte-for-byte (same
+            # `claim_key`: text AND tags unchanged) but has no usable
+            # `cited_raw` state record for a `[FILE:]` tag (never published,
+            # or published under a different section) and no fresh quote is
+            # reported under `needs_quote`, not silently rewritten to
+            # `Not modeled:` — the PoC (I4) dropped exactly this case instead
+            # of asking for a quote.
+            claim_fully_carried = (
+                base_match is not None and claims.claim_key(base_match) == claims.claim_key(block)
+            )
 
             reason: str | None = None
             failing_tag: str | None = None
+            pending_quote_tag: str | None = None
             for tag in file_tags:
                 _, value = claims.parse_tag(tag)
                 path = value.split("#", 1)[0]
@@ -224,6 +257,9 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
 
                 entry = evidence_by_key.get((claim_idx, tag))
                 if entry is None:
+                    if claim_fully_carried:
+                        pending_quote_tag = tag
+                        break
                     reason = "missing evidence quote"
                     failing_tag = tag
                     break
@@ -245,6 +281,11 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
                     failing_tag = tag
                     break
 
+            if pending_quote_tag is not None:
+                needs_quote.append({"section": sid, "claim": block["claim_id"], "tag": pending_quote_tag})
+                continue
+
+            checked += 1
             if reason is None:
                 passed += 1
                 continue
@@ -270,6 +311,7 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
         "passed": passed,
         "human_origin_skipped": human_skipped,
         "failed": failed,
+        "needs_quote": needs_quote,
     }
     work_dir.mkdir(parents=True, exist_ok=True)
     (work_dir / "check-file.json").write_text(json.dumps(result, indent=2), encoding="utf-8")

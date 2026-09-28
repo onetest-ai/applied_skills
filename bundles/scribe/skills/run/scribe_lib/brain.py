@@ -77,6 +77,23 @@ def evidence(config: Config, chunk_id: str) -> dict[str, Any]:
     return out
 
 
+def doc_id_for_raw(rel_path: str) -> str:
+    """The Brain's `doc_id` for a raw file, once it is synced — the
+    `parse_corpus` slug rule (verified on a real Brain): `/` -> `__`, `.md`
+    appended. `rel_path` is the same path a `[FILE:<path>#...]` tag carries."""
+    return rel_path.replace("/", "__") + ".md"
+
+
+def chunks_for_doc(config: Config, doc_id: str, query: str, limit: int = 3) -> list[dict[str, Any]]:
+    """Chunks of one already-synced doc, ranked by relevance to `query` —
+    `search_knowledge(query, limit=limit, source_contains=doc_id)["hits"]`.
+    Used to offer `[RAG:]` candidates for a `[FILE:]` claim whose raw file
+    just entered the Brain (spec A7)."""
+    sc = _module(config)
+    result = sc.search_knowledge(query, limit=limit, source_contains=doc_id)
+    return result.get("hits", [])
+
+
 def text_hash(text: str) -> str:
     """sha256(text, utf-8) hex[:16] — the fingerprint of a chunk/section's text."""
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()[:16]

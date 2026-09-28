@@ -130,7 +130,7 @@ def test_tombstone_survives_publish_and_suppresses_later_redrafts(tmp_path, monk
 
 def test_pack_lists_claims_removed_by_a_person():
     from scribe_lib.pack import _render_pack_section
-    text = _render_pack_section({"id": "overview", "title": "Overview"}, {}, "", {}, {},
+    text = _render_pack_section(None, {"id": "overview", "title": "Overview"}, {}, "", {}, {},
                                 ["routes are planned weekly."])
     assert "Removed by a person — do not re-add:\n\n- routes are planned weekly." in text
 

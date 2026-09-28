@@ -70,6 +70,16 @@ section's `fingerprint` hash. A non-consuming section's `considered.tasks` is
 always `[]`, so its hash — and its staleness — is untouched by any upstream
 publish, preserving the A6 intent above.
 
+**A7/I4 — a `[FILE:]` claim upgrades when its file enters the Brain.** For
+each claim in the task's own last published section that still carries a
+`[FILE:<path>#...>]` tag, if `brain.doc_id_for_raw(path)` is now a
+`synced_files` doc, the claim is listed in that section's `ingested` and the
+section is marked stale with `cited_raw_ingested` — `pack` then offers
+`[RAG:]` candidates from that doc for the drafting agent to re-cite with
+(spec A7). This never runs against the Brain unless some published section
+actually has a `[FILE:]` claim to check, so a task whose brain_db is a dummy
+path in tests is unaffected.
+
 Writes `work/<task>/fingerprint.json`:
 
     {
@@ -85,6 +95,7 @@ Writes `work/<task>/fingerprint.json`:
           "cited_chunk_status": {"<chunk_id>": "same"|"changed"|"gone"},
           "cited_raw_status": {"<path>": "same"|"changed"|"removed"},
           "cited_task_claim_status": {"<up>#<claim_id>": "same"|"changed"|"gone"|"superseded"},
+          "ingested": [{"path", "doc_id", "claims": [claim_id, ...]}, ...],  # A7/I4
           "stale": bool,
           "stale_reasons": [...]
         }
@@ -105,11 +116,13 @@ from typing import Any
 
 from scribe_lib import brain as brain_mod
 from scribe_lib import claims
+from scribe_lib.basedoc import split_by_section_id
 from scribe_lib.checktask import _upstream_claims, live_upstream_claims
 from scribe_lib.config import (
     Config,
     parse_template_ref,
     read_state,
+    read_synced_files,
     resolve_instance_inputs,
     sha256_file,
     substitute_params,
@@ -180,6 +193,26 @@ def fingerprint_task(
     state = read_state(config, instance)
     prior_sections = state.get("sections") or {}
     upstream_claims_cache: dict[str, dict[str, dict]] = {}
+
+    # A7 — a `[FILE:]` claim in THIS task's own previously published section
+    # upgrades to `[RAG:]` once its raw file enters the Brain. Read from the
+    # task's own last published `_src/vNNN.md` (never the draft being built
+    # now), section by section; `_synced_docs` is fetched from the Brain only
+    # if some published section actually carries a `[FILE:]` claim — most
+    # tasks/tests never do, and `read_synced_files` requires a real brain_db.
+    published_sections: dict[str, str] = {}
+    if state.get("version"):
+        src_path = config.out_root / instance["out"] / "_src" / f"v{state['version']:03d}.md"
+        if src_path.is_file():
+            published_sections = split_by_section_id(src_path.read_text(encoding="utf-8"))
+
+    _synced_docs_cache: dict[str, str] | None = None
+
+    def _synced_docs() -> dict[str, str]:
+        nonlocal _synced_docs_cache
+        if _synced_docs_cache is None:
+            _synced_docs_cache = read_synced_files(config.brain_db)
+        return _synced_docs_cache
 
     # Task-wide (not per-section) "what could be cited right now" snapshot —
     # controller ruling on the reviewer's open question: a `tasks`-lane
@@ -318,6 +351,35 @@ def fingerprint_task(
             if is_consuming and task_upstream_ids and upstream_snapshot_changed:
                 stale_reasons.append("upstream_claims_changed")
 
+        # A7/I4 — a `[FILE:]` claim in this task's own last published section
+        # whose raw file has since been synced into the Brain: group by
+        # (path, doc_id) so a section citing the same file more than once
+        # gets one entry listing every claim to upgrade.
+        ingested_by_doc: dict[tuple[str, str], list[str]] = {}
+        published_body = published_sections.get(sid, "") if state else ""
+        if published_body:
+            for b in claims.parse_blocks(published_body):
+                if not claims.is_claim(b) or not b.get("claim_id"):
+                    continue
+                for tag in b["tags"]:
+                    if not tag.startswith("[FILE:"):
+                        continue
+                    _, value = claims.parse_tag(tag)
+                    path = value.split("#", 1)[0]
+                    doc_id = brain_mod.doc_id_for_raw(path)
+                    if doc_id not in _synced_docs():
+                        continue
+                    key = (path, doc_id)
+                    ids = ingested_by_doc.setdefault(key, [])
+                    if b["claim_id"] not in ids:
+                        ids.append(b["claim_id"])
+        ingested = [
+            {"path": path, "doc_id": doc_id, "claims": claim_ids}
+            for (path, doc_id), claim_ids in sorted(ingested_by_doc.items())
+        ]
+        if ingested:
+            stale_reasons.append("cited_raw_ingested")
+
         out_sections[sid] = {
             "queries": queries,
             "brain_hits": [
@@ -346,6 +408,7 @@ def fingerprint_task(
             "cited_chunk_status": cited_chunk_status,
             "cited_raw_status": cited_raw_status,
             "cited_task_claim_status": cited_task_claim_status,
+            "ingested": ingested,
             "stale": bool(stale_reasons),
             "stale_reasons": stale_reasons,
         }
