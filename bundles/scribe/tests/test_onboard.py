@@ -90,7 +90,7 @@ def test_guard_brain_multiline_exclude_is_left_untouched_with_manual_hint(tmp_pa
     toml.write_text(original)
     r = onboard.guard_brain(toml, drive / "_ai-docs")
     assert r["changed"] is False
-    assert r["manual"] == '    "_ai-docs/**",'
+    assert r["manual"] == {"docs": '    "_ai-docs/**",'}
     assert toml.read_text() == original  # byte-for-byte untouched
 
 
@@ -184,6 +184,129 @@ def test_guard_brain_verifies_with_real_source_registry_when_brain_skills_given(
     r = onboard.guard_brain(toml, drive / "_ai-docs", brain_skills=brain_skills)
     assert r["changed"] is True
     assert tomllib.loads(toml.read_text())["sources"]["roots"]["docs"]["exclude"] == ["_ai-docs/**"]
+
+
+# ------------------------------------------- fix round 2: guard_brain table lookup --
+
+
+def test_guard_brain_handles_an_indented_header(tmp_path):
+    """The header regex used to require `[` at column 0 — an indented
+    `[sources.roots.docs]` (still valid TOML) was silently unlocatable."""
+    drive = tmp_path / "drive"; (drive / "_ai-docs").mkdir(parents=True)
+    toml = tmp_path / "brain.toml"
+    toml.write_text('  [sources.roots.docs]\n  path = "drive"\n  include = ["**/*"]\n')
+    r = onboard.guard_brain(toml, drive / "_ai-docs")
+    assert r == {"changed": True, "roots": ["docs"], "glob": "_ai-docs/**"}
+    assert tomllib.loads(toml.read_text())["sources"]["roots"]["docs"]["exclude"] == ["_ai-docs/**"]
+
+
+def test_guard_brain_handles_a_spaced_header(tmp_path):
+    drive = tmp_path / "drive"; (drive / "_ai-docs").mkdir(parents=True)
+    toml = tmp_path / "brain.toml"
+    toml.write_text('[ sources.roots.docs ]\npath = "drive"\ninclude = ["**/*"]\n')
+    r = onboard.guard_brain(toml, drive / "_ai-docs")
+    assert r == {"changed": True, "roots": ["docs"], "glob": "_ai-docs/**"}
+    assert tomllib.loads(toml.read_text())["sources"]["roots"]["docs"]["exclude"] == ["_ai-docs/**"]
+
+
+def test_guard_brain_inline_table_root_returns_manual_not_silent_noop(tmp_path):
+    """A root declared as `docs = { ... }` (a key of `[sources.roots]`, not
+    its own `[sources.roots.docs]` header) is valid TOML `source_registry`
+    reads fine, but `_find_root_table` can never locate a `[...]` header for
+    it. The old behaviour was a silent `changed: false` that read as
+    "already guarded" — it must instead carry a `manual` hint."""
+    drive = tmp_path / "drive"; (drive / "_ai-docs").mkdir(parents=True)
+    toml = tmp_path / "brain.toml"
+    original = '[sources.roots]\ndocs = { path = "drive", mode = "import", include = ["**/*"] }\n'
+    toml.write_text(original)
+    r = onboard.guard_brain(toml, drive / "_ai-docs")
+    assert r["changed"] is False
+    assert r["roots"] == ["docs"]
+    assert "docs" in r["manual"]
+    assert "_ai-docs/**" in r["manual"]["docs"]
+    assert toml.read_text() == original  # never touched
+
+
+def test_guard_brain_mixed_editable_and_manual_roots_surfaces_both(tmp_path):
+    """Task 13 review, Minor: two roots both matching `out_root` (both
+    configured against the SAME path — an unusual but valid brain.toml),
+    one editable and one needing `manual`. The edit must still land for the
+    editable root, and the manual hint must surface alongside it rather
+    than disappearing or turning the whole call into a hard error."""
+    drive = tmp_path / "drive"; (drive / "_ai-docs").mkdir(parents=True)
+    toml = tmp_path / "brain.toml"
+    toml.write_text(
+        '[sources.roots.docs]\npath = "drive"\ninclude = ["**/*"]\n\n'
+        '[sources.roots.legacy]\npath = "drive"\n'
+        'exclude = [\n  "tmp/**",\n]\n'
+    )
+    r = onboard.guard_brain(toml, drive / "_ai-docs")
+    assert r["changed"] is True
+    assert r["roots"] == ["docs", "legacy"]
+    assert r["manual"] == {"legacy": '    "_ai-docs/**",'}
+    parsed = tomllib.loads(toml.read_text())
+    assert parsed["sources"]["roots"]["docs"]["exclude"] == ["_ai-docs/**"]
+    assert parsed["sources"]["roots"]["legacy"]["exclude"] == ["tmp/**"]  # untouched
+
+
+def test_guard_brain_no_trailing_newline(tmp_path):
+    """Task 13 review, Important: a file with no trailing newline used to
+    have the inserted line glued onto the last one, producing text tomllib
+    (and the verification step) refuses."""
+    drive = tmp_path / "drive"; (drive / "_ai-docs").mkdir(parents=True)
+    toml = tmp_path / "brain.toml"
+    toml.write_text('[sources.roots.docs]\npath = "drive"\ninclude = ["**/*"]')  # no trailing \n
+    r = onboard.guard_brain(toml, drive / "_ai-docs")
+    assert r == {"changed": True, "roots": ["docs"], "glob": "_ai-docs/**"}
+    text = toml.read_text()
+    assert 'include = ["**/*"]\nexclude = ["_ai-docs/**"]' in text
+    parsed = tomllib.loads(text)
+    assert parsed["sources"]["roots"]["docs"]["exclude"] == ["_ai-docs/**"]
+
+
+def test_guard_brain_source_registry_valueerror_becomes_scribeerror(tmp_path):
+    """Task 13 review, Minor: a plain `ValueError` from
+    `source_registry.load_config` (e.g. an unrelated invalid root key
+    elsewhere in the file) must surface as a clean `ScribeError`, not a bare
+    traceback."""
+    from conftest import REPO_ROOT
+
+    drive = tmp_path / "drive"; (drive / "_ai-docs").mkdir(parents=True)
+    toml = tmp_path / "brain.toml"
+    # "bad key!" is not a valid [A-Za-z0-9_-]+ root key per source_registry's
+    # ROOT_KEY regex, so load_config raises a plain ValueError on it.
+    toml.write_text(
+        '[sources.roots.docs]\npath = "drive"\ninclude = ["**/*"]\n\n'
+        '[sources.roots."bad key!"]\npath = "elsewhere"\ninclude = ["**/*"]\n'
+    )
+    brain_skills = REPO_ROOT / "bundles" / "brain" / "skills"
+    with pytest.raises(ScribeError, match="source_registry"):
+        onboard.guard_brain(toml, drive / "_ai-docs", brain_skills=brain_skills)
+    # nothing was written
+    assert 'exclude' not in toml.read_text()
+
+
+@pytest.mark.skipif(not shutil.which("soffice"), reason="soffice missing")
+@pytest.mark.skipif(not shutil.which("pandoc"), reason="pandoc missing")
+def test_sections_from_example_legacy_doc_is_converted_then_read(tmp_path):
+    """Task 13 review, Minor: `.doc` (legacy binary format) can't be read by
+    `pandoc -f docx` at all — it must be soffice-converted to `.docx` first."""
+    proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"))
+    config, _ = load(proj)
+    md = tmp_path / "legacy.md"
+    md.write_text("## Current State\n\nbody text one\n\n## Pain Points\n\nbody text two\n")
+    docx = tmp_path / "legacy.docx"
+    subprocess.run(["pandoc", str(md), "-o", str(docx)], check=True)
+    doc = tmp_path / "legacy.doc"
+    subprocess.run(
+        ["soffice", "--headless", "--convert-to", "doc", "--outdir", str(tmp_path), str(docx)],
+        check=True, capture_output=True,
+    )
+    assert doc.is_file()
+    assert onboard.sections_from_example(config, doc) == [
+        {"id": "current-state", "title": "Current State"},
+        {"id": "pain-points", "title": "Pain Points"},
+    ]
 
 
 # --------------------------------------------------------- fix round 1: coverage --

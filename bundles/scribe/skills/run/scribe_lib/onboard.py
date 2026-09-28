@@ -240,25 +240,95 @@ def _pdf_headings(pdf_path: Path) -> list[tuple[int, str]]:
     return out
 
 
+_SOFFICE_CANDIDATES = (
+    "soffice",
+    "libreoffice",
+    "/opt/homebrew/bin/soffice",
+    "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+)
+
+
+def _soffice() -> str | None:
+    """One-line `shutil.which` lookup, duplicated from
+    `parse_corpus.py`'s own (private) `_soffice()` rather than reached into
+    — brain's plugin internals are not scribe's to depend on (task 13
+    review, Important). Only used for the legacy `.doc`/`.ppt` binary
+    formats `pandoc` cannot read at all; `.docx`/`.pptx` never touch
+    soffice."""
+    for candidate in _SOFFICE_CANDIDATES:
+        if shutil.which(candidate) or os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _convert_legacy_office(example: Path, target_ext: str) -> Path:
+    """`.doc`/`.ppt` -> `.docx`/`.pptx` via soffice — `pandoc` can only read
+    the modern zip-based Office formats, not the legacy binary ones, so a
+    `.doc`/`.ppt` example needs this conversion first (the same tool the
+    scribe render path already shells out to). Returns the converted file,
+    inside its own fresh temp dir the caller must remove."""
+    soffice = _soffice()
+    if not soffice:
+        raise ScribeError(
+            f"need LibreOffice (soffice) on PATH to read a legacy {example.suffix} example "
+            f"(pandoc can only read modern .{target_ext} files)"
+        )
+    tmp = Path(tempfile.mkdtemp(prefix="scribe_onboard_legacy_"))
+    profile = Path(tempfile.mkdtemp(prefix="scribe_onboard_soffice_"))
+    try:
+        result = subprocess.run(
+            [
+                soffice,
+                f"-env:UserInstallation={profile.as_uri()}",
+                "--headless",
+                "--convert-to",
+                target_ext,
+                "--outdir",
+                str(tmp),
+                str(example),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            errors="replace",
+        )
+        converted = tmp / f"{example.stem}.{target_ext}"
+        if result.returncode != 0 or not converted.is_file():
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise ScribeError(f"soffice could not convert {example.name} to .{target_ext}")
+        return converted
+    finally:
+        shutil.rmtree(profile, ignore_errors=True)
+
+
 def sections_from_example(config: Config, example: Path) -> list[dict[str, str]]:
     """`[{"id", "title"}, ...]` — one per H2 heading in `example`'s own
     structure, falling back to H1s when it has no H2s. `.docx`/`.pptx` go
-    through `pandoc` (heading styles / slide titles); `.pdf` through its own
-    outline or, lacking one, a font-size heuristic; everything else
-    (`.md`/`.txt`/...) through `parsing.extract` (`parse_one`'s passthrough
-    for those formats preserves literal Markdown headings verbatim, and
-    never emits the `# SOURCE:`/`# method:` preamble itself — that's
-    `parse_corpus.main`'s CLI-output convention, not `parse_one`'s — so
-    there is no preamble H1 to strip here)."""
+    through `pandoc` (heading styles / slide titles); `.doc`/`.ppt` (legacy
+    binary formats pandoc can't read at all) are converted to `.docx`/
+    `.pptx` via soffice first, then the same pandoc path. `.pdf` goes
+    through its own outline or, lacking one, a font-size heuristic;
+    everything else (`.md`/`.txt`/...) through `parsing.extract` (`parse_one`'s
+    passthrough for those formats preserves literal Markdown headings
+    verbatim, and never emits the `# SOURCE:`/`# method:` preamble itself —
+    that's `parse_corpus.main`'s CLI-output convention, not `parse_one`'s —
+    so there is no preamble H1 to strip here)."""
     example = Path(example)
     if not example.is_file():
         raise ScribeError(f"example document not found: {example}")
 
     ext = example.suffix.lower()
-    if ext in (".docx", ".doc"):
+    if ext == ".docx":
         headings = _pandoc_headings(example, "docx")
-    elif ext in (".pptx", ".ppt"):
+    elif ext == ".pptx":
         headings = _pandoc_headings(example, "pptx")
+    elif ext in (".doc", ".ppt"):
+        target_ext = "docx" if ext == ".doc" else "pptx"
+        converted = _convert_legacy_office(example, target_ext)
+        try:
+            headings = _pandoc_headings(converted, target_ext)
+        finally:
+            shutil.rmtree(converted.parent, ignore_errors=True)
     elif ext == ".pdf":
         headings = _pdf_headings(example)
     else:
@@ -287,16 +357,18 @@ def sections_from_example(config: Config, example: Path) -> list[dict[str, str]]
 # --------------------------------------------------------------------- guard_brain --
 
 _ROOT_HEADER_RE = re.compile(
-    r'^\[sources\.roots\.(?:"(?P<dq>(?:[^"\\]|\\.)*)"|\'(?P<sq>[^\']*)\'|(?P<bare>[A-Za-z0-9_-]+))\]\s*(#.*)?$'
+    r'^\s*\[\s*sources\s*\.\s*roots\s*\.\s*'
+    r'(?:"(?P<dq>(?:[^"\\]|\\.)*)"|\'(?P<sq>[^\']*)\'|(?P<bare>[A-Za-z0-9_-]+))\s*\]\s*(#.*)?$'
 )
 
 
 def _find_root_table(lines: list[str], key: str) -> tuple[int, int] | None:
     """`(start, end)` line-index range of `[sources.roots.<key>]`'s table
     body — `end` is the index of the next `[`-starting header line, or EOF.
-    The header itself may be bare, single- or double-quoted, and may carry a
-    trailing `# comment` (task 13 review: an exact-string header match
-    silently skipped both of those)."""
+    The header itself may be indented, bare/single/double-quoted, may carry
+    extra whitespace inside the brackets/around the dots
+    (`[ sources.roots.docs ]`), and may carry a trailing `# comment` (task 13
+    review: an exact-string header match silently skipped all of these)."""
     for i, line in enumerate(lines):
         m = _ROOT_HEADER_RE.match(line.rstrip("\n"))
         if not m:
@@ -309,6 +381,23 @@ def _find_root_table(lines: list[str], key: str) -> tuple[int, int] | None:
                     end = j
                     break
             return i, end
+    return None
+
+
+def _inline_table_line(lines: list[str], key: str) -> int | None:
+    """Line index of `<key> = { ... }` — the alternate, single-line way a
+    root can be declared (a key of `[sources.roots]` whose value is an
+    inline table) rather than its own `[sources.roots.<key>]` header.
+    `guard_brain` never auto-edits this form — reliably inserting a key into
+    a `{ ... }` needs a real TOML writer — it always returns a manual hint
+    for it instead (task 13 review, Important: silently returning
+    `changed: false` here read as "already guarded")."""
+    key_re = re.compile(
+        rf'^\s*(?:"{re.escape(key)}"|\'{re.escape(key)}\'|{re.escape(key)})\s*=\s*\{{.*\}}\s*(#.*)?$'
+    )
+    for i, line in enumerate(lines):
+        if key_re.match(line.rstrip("\n")):
+            return i
     return None
 
 
@@ -392,28 +481,43 @@ def guard_brain(
     `"<out_root relative to that root>/**"` exists. Conservative and
     self-verifying (task 13 review, Critical/Important — controller ruling):
 
-    - locates a root's table by its header, tolerant of quoted keys and a
-      trailing comment (`_find_root_table`); the table ends at the next `[`
-      header or EOF.
+    - locates a root's table by its header, tolerant of leading whitespace
+      (an indented header), extra spacing inside the brackets/around the
+      dots (`[ sources.roots.docs ]`), quoted keys, and a trailing comment
+      (`_find_root_table`); the table ends at the next `[` header or EOF.
+    - a root declared as a single-line inline table (`docs = { path = ...
+      }`, a key of `[sources.roots]` rather than its own
+      `[sources.roots.docs]` header) is never auto-edited — inserting into a
+      `{ ... }` reliably needs a real TOML writer — nor is a root whose
+      table genuinely can't be located at all; both get a `manual` entry
+      instead of a silent `changed: false`.
     - a root with NO `exclude` key gets a brand-new `exclude = [...]` line
       inserted at the END of its table body — never inside another key's
-      value, however many lines that value spans.
+      value, however many lines that value spans, and never glued onto a
+      final line that has no trailing newline.
     - a root whose `exclude` already contains the glob (per `tomllib`) is
-      left alone (`changed: false`).
+      left alone (`changed: false` for that root, no `manual` entry).
     - a root whose `exclude` exists but lacks the glob is only edited when
       that array is a SINGLE line with no inline comment after it;
-      otherwise nothing is written and the result carries
-      `{"changed": false, "manual": "<line to add>"}` instead of guessing.
+      otherwise nothing is written for that root and it gets a `manual`
+      entry instead of guessing.
+    - the result's `"manual"` key (present only when at least one matched
+      root needed one) is `{root_key: "<what to add/where>", ...}` — this
+      surfaces alongside a successful edit of OTHER roots (`changed: true`),
+      never silently dropped and never turned into a hard error just
+      because one root among several needs a human's hand.
     - before writing anything, the FULL edited text is re-parsed with
       `tomllib` (refusing, file untouched, if it doesn't parse), checked
-      that every matched root's `exclude` now contains its glob, and
-      checked that every other key/value (every other root in full, and
-      every OTHER key of a matched root) is unchanged versus the ORIGINAL
-      parse (`_unchanged_except_excludes`). Only then is the file replaced.
-      When `brain_skills` is given (the real Brain plugin's skills dir — the
-      CLI always passes `config.brain_skills`), the same edited text is also
+      that every EDITED root's `exclude` now contains its glob, and checked
+      that every other key/value (every other root in full, and every OTHER
+      key of an edited root) is unchanged versus the ORIGINAL parse
+      (`_unchanged_except_excludes`). Only then is the file replaced. When
+      `brain_skills` is given (the real Brain plugin's skills dir — the CLI
+      always passes `config.brain_skills`), the same edited text is also
       re-parsed with brain's own `source_registry.load_config` on a temp
-      copy, as an extra check with the actual consumer of this file.
+      copy, as an extra check with the actual consumer of this file — a
+      plain `ValueError` from that call (e.g. an unrelated invalid root key
+      elsewhere in the file) is caught and turned into a `ScribeError`.
 
     `require=True` raises `ScribeError` (a `ValueError`) when `out_root`
     matches no configured root at all — "nothing to guard" is a normal,
@@ -460,8 +564,8 @@ def guard_brain(
     primary_glob = matches[0][1]
 
     lines = original_text.splitlines(keepends=True)
-    edited = False
-    manual: str | None = None
+    edited_keys: set[str] = set()
+    manual: dict[str, str] = {}
     for key, glob, spec in matches:
         existing = list(spec.get("exclude") or [])
         if glob in existing:
@@ -469,6 +573,21 @@ def guard_brain(
 
         table = _find_root_table(lines, key)
         if table is None:
+            # Task 13 review, Important: never a silent no-op here — either
+            # this root is declared as a single-line inline table (a
+            # structurally different, still-valid form we don't auto-edit),
+            # or its table genuinely can't be located in the text.
+            inline_idx = _inline_table_line(lines, key)
+            if inline_idx is not None:
+                manual[key] = (
+                    f'add exclude = ["{glob}"] to the inline table on line {inline_idx + 1} '
+                    f'({lines[inline_idx].strip()!r})'
+                )
+            else:
+                manual[key] = (
+                    f'add [sources.roots.{key}]\\nexclude = ["{glob}"] '
+                    f"(could not locate this root's table in the file)"
+                )
             continue
         start, end = table
 
@@ -477,33 +596,37 @@ def guard_brain(
             for j in range(start + 1, end):
                 if lines[j].strip():
                     last_content = j
+            # A file with no trailing newline glues the inserted line onto
+            # the last one otherwise (task 13 review, Important).
+            if not lines[last_content].endswith("\n"):
+                lines[last_content] = lines[last_content] + "\n"
             lines.insert(last_content + 1, f'exclude = ["{glob}"]\n')
-            edited = True
+            edited_keys.add(key)
             continue
 
         span = _find_key_span(lines, start, end, "exclude")
         if span is None:
-            manual = f'    "{glob}",'
+            manual[key] = f'    "{glob}",'
             continue
         line_start, line_end = span
         if line_start != line_end:
-            manual = f'    "{glob}",'
+            manual[key] = f'    "{glob}",'
             continue
         line = lines[line_start]
         had_nl = line.endswith("\n")
         body = line[:-1] if had_nl else line
         close_idx = body.rfind("]")
         if close_idx == -1 or body[close_idx + 1 :].strip():
-            manual = f'    "{glob}",'
+            manual[key] = f'    "{glob}",'
             continue
         if existing:
             new_body = re.sub(r"\]\s*$", f', "{glob}"]', body, count=1)
         else:
             new_body = re.sub(r"\[\s*\]\s*$", f'["{glob}"]', body, count=1)
         lines[line_start] = new_body + ("\n" if had_nl else "")
-        edited = True
+        edited_keys.add(key)
 
-    if not edited:
+    if not edited_keys:
         result: dict[str, Any] = {"changed": False, "roots": roots_matched, "glob": primary_glob}
         if manual:
             result["manual"] = manual
@@ -517,14 +640,15 @@ def guard_brain(
         raise ScribeError(f"guard-brain: edited brain.toml would not parse ({exc}); nothing written") from exc
 
     after_roots = ((after.get("sources") or {}).get("roots")) or {}
-    touched_keys = {k for k, _, _ in matches}
-    for key, glob, _spec in matches:
+    glob_by_key = {k: g for k, g, _ in matches}
+    for key in edited_keys:
         after_exclude = (after_roots.get(key) or {}).get("exclude") or []
-        if glob not in after_exclude:
+        if glob_by_key[key] not in after_exclude:
             raise ScribeError(
-                f"guard-brain: verification failed — {glob!r} missing from [sources.roots.{key}] after edit; nothing written"
+                f"guard-brain: verification failed — {glob_by_key[key]!r} missing from "
+                f"[sources.roots.{key}] after edit; nothing written"
             )
-    if not _unchanged_except_excludes(before, after, touched_keys):
+    if not _unchanged_except_excludes(before, after, edited_keys):
         raise ScribeError(
             "guard-brain: verification failed — the edit changed more than the guarded roots' exclude lists; nothing written"
         )
@@ -537,10 +661,20 @@ def guard_brain(
             try:
                 with os.fdopen(tmp_fd, "w", encoding="utf-8") as tf:
                     tf.write(new_text)
-                sr_cfg = source_registry.load_config(tmp_path)
-                for key, glob, _spec in matches:
+                try:
+                    sr_cfg = source_registry.load_config(tmp_path)
+                except ValueError as exc:
+                    # e.g. an invalid root key elsewhere in the file — a
+                    # real defect in the SOURCE file, not something this
+                    # edit caused, but still a clean refusal rather than a
+                    # bare traceback (task 13 review, Minor).
+                    raise ScribeError(
+                        f"guard-brain: brain's source_registry.load_config could not read the "
+                        f"edited brain.toml ({exc}); nothing written"
+                    ) from exc
+                for key in edited_keys:
                     sr_exclude = (sr_cfg.get("roots", {}).get(key) or {}).get("exclude") or []
-                    if glob not in sr_exclude:
+                    if glob_by_key[key] not in sr_exclude:
                         raise ScribeError(
                             f"guard-brain: source_registry.load_config verification failed for "
                             f"[sources.roots.{key}]; nothing written"
@@ -549,7 +683,13 @@ def guard_brain(
                 tmp_path.unlink(missing_ok=True)
 
     brain_toml.write_text(new_text, encoding="utf-8")
-    return {"changed": True, "roots": roots_matched, "glob": primary_glob}
+    result = {"changed": True, "roots": roots_matched, "glob": primary_glob}
+    if manual:
+        # Some matched roots were edited; others (in `manual`) need a
+        # human's hand — task 13 review, Minor: this must surface alongside
+        # the successful edit, not disappear or masquerade as a hard error.
+        result["manual"] = manual
+    return result
 
 
 __all__ = ["coverage", "sections_from_example", "guard_brain"]
