@@ -14,8 +14,10 @@ Usage:
 Implemented: validate, plan, delta, gather-raw, fingerprint, base, prepare,
 check-file, check-task, merge, accept, publish, lineage, index, render,
 doctor, report, observe, list, status, enable, disable, promote, review,
-coverage, sections-from-example, guard-brain.
-`publish --no-render` still works without a render.
+coverage, sections-from-example, guard-brain, schedule.
+`publish --no-render` still works without a render. `schedule` prints a cron
+line or launchd plist to stdout and never installs it (it is not JSON, unlike
+every other command).
 """
 from __future__ import annotations
 
@@ -46,7 +48,7 @@ from scribe_lib.config import (  # noqa: E402
     sha256_file,
     validate_all,
 )
-from scribe_lib.doctor import run_doctor  # noqa: E402
+from scribe_lib.doctor import handoff_status, run_doctor  # noqa: E402
 from scribe_lib.fingerprint import fingerprint_task  # noqa: E402
 from scribe_lib.index import build_index, query_index  # noqa: E402
 from scribe_lib.lineage import lineage_task  # noqa: E402
@@ -54,6 +56,7 @@ from scribe_lib.merge import merge_task  # noqa: E402
 from scribe_lib import onboard  # noqa: E402
 from scribe_lib.observe import observe_task  # noqa: E402
 from scribe_lib.pack import prepare_task  # noqa: E402
+from scribe_lib import schedule  # noqa: E402
 from scribe_lib.publish import publish_task  # noqa: E402
 from scribe_lib.raw import gather_raw_task  # noqa: E402
 from scribe_lib import registry  # noqa: E402
@@ -180,6 +183,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_guard.add_argument(
         "--require", action="store_true", help="Refuse (exit 1) if out_root is not inside any configured root"
     )
+
+    p_schedule = sub.add_parser(
+        "schedule",
+        help="Print a cron line or launchd plist for headless brain-maintenance handoff + scribe:run --due (A1); never installs it",
+    )
+    p_schedule.add_argument("--brain-project", help="Path to a Brain project to hand off before this run; omit if this project has no Brain to maintain")
+    p_schedule.add_argument("--time", default="02:00", help="Local HH:MM to run at (default 02:00)")
+    p_schedule.add_argument("--launchd", action="store_true", help="Print a launchd plist instead of a crontab line")
 
     p_review = sub.add_parser(
         "review", help="Propose-mode review queue: list pending proposals, approve or reject one"
@@ -441,6 +452,7 @@ def compute_plan(
         "tasks": tasks_out,
         "notes": top_notes,
         "new_fanout_children": data.get("new_fanout_children") or [],
+        "stale_brain": handoff_status(config)["stale_brain"],
     }
 
 
@@ -587,6 +599,14 @@ def cmd_render(config: Config, args: argparse.Namespace) -> int:
     return 0 if result["ok"] else 1
 
 
+def cmd_schedule(config: Config, args: argparse.Namespace) -> int:
+    brain_project = Path(args.brain_project).expanduser().resolve() if args.brain_project else None
+    kind = "launchd" if args.launchd else "cron"
+    text = schedule.render(config.project_dir, brain_project, time=args.time, kind=kind)
+    sys.stdout.write(text)
+    return 0
+
+
 def cmd_doctor(config: Config) -> int:
     result = run_doctor()
     # The Brain the scripts read (scribe.toml brain_db, or SCRIBE_BRAIN_DB).
@@ -603,6 +623,7 @@ def cmd_doctor(config: Config) -> int:
     # normal, non-fatal state elsewhere in this codebase (m2 doctrine), so
     # it is reported here but never flips `status`/the exit code.
     result["raw_root"] = {"path": str(config.raw_root), "available": raw_root_available(config)}
+    result["brain_handoff"] = handoff_status(config)
     _print(result)
     return 0 if result["all_found"] and brain_ok else 1
 
@@ -790,6 +811,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_render(config, args)
         if args.command == "doctor":
             return cmd_doctor(config)
+        if args.command == "schedule":
+            return cmd_schedule(config, args)
         if args.command == "report":
             return cmd_report(config, args)
         if args.command == "list":

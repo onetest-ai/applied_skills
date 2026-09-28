@@ -74,6 +74,8 @@ so do not also call `report` for that failure.
    and stop.
 5. Remember `BRAIN` = the resolved server name plus `health.about.name` — you pass both
    to the verifier. Read `health.about.audience`: it sets tone and depth, never content.
+6. If `doctor` reports `stale_brain`, continue against the last good Brain; the Changes
+   block will say so.
 
 ### 2. Plan (script)
 

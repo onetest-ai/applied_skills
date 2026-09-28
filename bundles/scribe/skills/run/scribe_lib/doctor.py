@@ -17,11 +17,15 @@ exits 1 if any is missing (checked by `scribe.py`, via `all_found`).
 """
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from scribe_lib.render import MERMAID_CLI
+
+if TYPE_CHECKING:
+    from scribe_lib.config import Config
 
 _TIMEOUT = 30
 _MERMAID_TIMEOUT = 60
@@ -73,3 +77,36 @@ def run_doctor() -> dict[str, Any]:
     checks = [pandoc, soffice, mermaid]
     all_found = all(c["found"] for c in checks)
     return {"status": "ok" if all_found else "error", "checks": checks, "all_found": all_found}
+
+
+def handoff_status(config: "Config") -> dict[str, Any]:
+    """Brain hand-off preflight (spec A1): the newest `*.json` report brain-maintenance's
+    `handoff` subcommand wrote under `config.brain_handoff_dir`, by file name — the
+    directory is dated `<YYYY-MM-DD>.json` per file, so a lexical sort is a chronological
+    one. `stale_brain` is true exactly when the latest hand-off run aborted (nothing was
+    applied): scribe continues against the last good Brain rather than refusing to run,
+    and the caller (`compute_plan`/`publish`) surfaces that instead of hiding it.
+
+    No `brain_handoff_dir` configured, or the directory has no reports yet, is not an
+    error — it just means this project isn't using hand-off mode (or hasn't yet):
+    `{"latest": None, "decision": None, "stale_brain": False, "reasons": []}`.
+    """
+    empty = {"latest": None, "decision": None, "stale_brain": False, "reasons": []}
+    handoff_dir = config.brain_handoff_dir
+    if not handoff_dir or not handoff_dir.is_dir():
+        return empty
+    reports = sorted(handoff_dir.glob("*.json"))
+    if not reports:
+        return empty
+    latest = reports[-1]
+    try:
+        data = json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {**empty, "latest": str(latest)}
+    decision = data.get("decision")
+    return {
+        "latest": str(latest),
+        "decision": decision,
+        "stale_brain": decision == "abort",
+        "reasons": data.get("abort_reasons") or [],
+    }

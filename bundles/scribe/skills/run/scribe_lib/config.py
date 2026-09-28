@@ -59,6 +59,7 @@ class Config:
     work_dir: Path
     top_k: int
     now: str
+    brain_handoff_dir: Path | None = None
     groups: dict[str, dict[str, Any]] = field(default_factory=dict)
     max_tasks_per_run: int = 20
     budget_minutes: int = 90
@@ -97,6 +98,9 @@ def load_config(project_dir: str | Path) -> Config:
 
     now = os.environ.get("SCRIBE_NOW") or date.today().isoformat()
 
+    handoff_dir_value = proj.get("brain_handoff_dir")
+    brain_handoff_dir = _resolve_path(project_dir, handoff_dir_value) if handoff_dir_value else None
+
     groups_raw = raw.get("groups") or {}
     groups = {
         name: {"enabled": bool(g.get("enabled", True)), "tasks": list(g.get("tasks") or [])}
@@ -116,6 +120,7 @@ def load_config(project_dir: str | Path) -> Config:
         work_dir=_resolve_path(project_dir, required("work_dir", "work")),
         top_k=int(run.get("top_k", 8)),
         now=now,
+        brain_handoff_dir=brain_handoff_dir,
         groups=groups,
         max_tasks_per_run=int(run.get("max_tasks_per_run", 20)),
         budget_minutes=int(run.get("budget_minutes", 90)),

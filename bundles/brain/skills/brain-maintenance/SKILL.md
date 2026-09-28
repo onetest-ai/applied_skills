@@ -270,6 +270,54 @@ Persist reports under the profile's configured `paths.runs` directory (default e
 
 After interruption, inspect these artifacts and current source/store state. Re-plan instead of assuming the last command completed.
 
+## Unattended hand-off mode
+
+A headless run (`claude -p "/brain:brain-maintenance handoff" --permission-mode bypassPermissions`,
+e.g. from `scribe.py schedule`) has no human to ask, so every judgment call the interactive
+workflow above makes by asking the user is instead made once, deterministically, by
+`maintenance.py handoff` — a pure classification over the `status` report, never a mutation.
+**In hand-off mode every human stop becomes apply, defer or abort exactly as `handoff`
+classified it; the agent does not re-decide.**
+
+1. Run the doctor (as in "0. Run the doctor" above). Exit 1 → stop; nothing applied.
+2. Produce a fresh status report:
+
+   ```bash
+   "$PY" "$SKILLS/brain-maintenance/maintenance.py" status \
+     --profile "$PROJECT/brain-maintenance.toml" \
+     --out "$PROJECT/.brain-maintenance/runs/status.json"
+   ```
+
+3. Classify it:
+
+   ```bash
+   "$PY" "$SKILLS/brain-maintenance/maintenance.py" handoff \
+     --profile "$PROJECT/brain-maintenance.toml" \
+     --status "$PROJECT/.brain-maintenance/runs/status.json" \
+     --out "$PROJECT/ops/handoff/$(date +%Y-%m-%d).json"
+   ```
+
+   Exit 3 → `decision: "abort"`: stop here. Nothing was applied. `scribe:run`'s stale-Brain
+   preflight reads this file next.
+4. Exit 0 → apply only the actions listed in `handoff.json.apply` (by relative path):
+   source registry apply (step 2 above), render/visual-parse and parsed-store `update`
+   (steps 3–4), then `./brain update parsed ... --out "$PROJECT"`, which is what writes
+   `meta.built_at` via `brain_sync apply`.
+5. Classify the resulting new chunks against the **current** taxonomy only — no taxonomy
+   changes in hand-off mode. Health items (untagged chunks, missing descriptions, …) stay
+   queued for the human review app; do not run the review workbench unattended.
+6. When `handoff.json.marts == "rebuild_strict"`, rebuild marts with `--strict`. On
+   failure, keep the old marts and record the error in the report; do not fall back to a
+   non-strict rebuild.
+7. Never tombstone a source and never answer a question in this mode. Every item in
+   `handoff.json.defer` (`remove_candidate`, `missing`, `ambiguous_move`,
+   `duplicate_content`) stays exactly as classified, in the report, for a human to resolve
+   later — it is not applied, not discarded, not re-decided.
+8. Deploy only when `handoff.json.deploy == "auto"` (`[handoff].deploy` in the profile,
+   default `"hold"`); `"hold"` never redeploys a hosted MCP revision on its own, even after
+   a clean apply — follow "8. Plan and deploy through the project profile" above, still
+   gated on local verification.
+
 ## Non-negotiable safety rules
 
 - No source deletion without explicit human approval.

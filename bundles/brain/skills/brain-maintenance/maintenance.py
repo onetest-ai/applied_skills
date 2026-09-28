@@ -17,6 +17,7 @@ import sqlite3
 import sys
 from collections import Counter
 from contextlib import closing
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -68,7 +69,7 @@ def load_profile(path: Path) -> dict[str, Any]:
         raw = tomllib.load(handle)
     if not isinstance(raw, dict):
         raise ValueError("maintenance profile must be a TOML table")
-    allowed = {"version", "project", "paths", "runtime", "update", "classification", "marts", "verification", "safety", "deployment"}
+    allowed = {"version", "project", "paths", "runtime", "update", "classification", "marts", "verification", "safety", "deployment", "handoff"}
     unknown = set(raw) - allowed
     if unknown:
         raise ValueError("unknown profile section(s): " + ", ".join(sorted(unknown)))
@@ -133,10 +134,13 @@ def load_profile(path: Path) -> dict[str, Any]:
         secrets = deployment.get("secret_env", [])
         if not isinstance(secrets, list) or not all(isinstance(x, str) and re.fullmatch(r"[A-Z_][A-Z0-9_]*", x) for x in secrets):
             raise ValueError("deployment.secret_env must contain environment-variable names")
+    handoff = _section(raw, "handoff", {"deploy"})
+    if "deploy" in handoff and handoff["deploy"] not in ("hold", "auto"):
+        raise ValueError("handoff.deploy must be 'hold' or 'auto'")
     return {"raw": raw, "profile": path.resolve(), "project": project, "paths": resolved,
             "root_key": root_key, "safety": safety, "deployment": deployment,
             "deployment_paths": deployment_paths, "classification": classification,
-            "marts": marts, "verification": verification}
+            "marts": marts, "verification": verification, "handoff": handoff}
 
 
 def _load_module(name: str, path: Path):
@@ -208,6 +212,85 @@ def taxonomy_review_status(taxonomy_path: Path) -> dict[str, Any]:
     return {"current_json": (tax_dir / "current.json").is_file(), "latest_review": latest,
             "submitted_unapplied": [r for r in submitted if r not in applied], "pending_reclassify": pending,
             "provisional": (tax_dir / "PROVISIONAL").is_file()}
+
+
+def classify_handoff(status: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+    """Pure classification of a `status` JSON (as `build_status`/`maintenance.py status`
+    produces) into apply / defer / abort for unattended hand-off mode. Never touches disk
+    or mutates anything — the agent in the SKILL executes the actual apply/defer/abort.
+
+    `profile` here is the raw TOML-shaped dict (`load_profile(...)["raw"]`): top-level
+    `deployment`/`handoff` tables, exactly as a profile file declares them.
+    """
+    abort_reasons: list[str] = []
+    source_plan = status.get("source_plan") or {}
+    for root in source_plan.get("roots") or []:
+        if root.get("status") == "root_unavailable":
+            abort_reasons.append(f"root_unavailable: {root.get('root_key', '?')}")
+    counts = status.get("source_action_counts") or {}
+    if counts.get("corrupt"):
+        abort_reasons.append(f"corrupt: {counts['corrupt']}")
+    blocked = (status.get("parsed_delta") or {}).get("blocked_missing_parsed") or []
+    if blocked:
+        abort_reasons.append(f"blocked_missing_parsed: {len(blocked)}")
+    if (status.get("taxonomy_review") or {}).get("provisional"):
+        abort_reasons.append("taxonomy_provisional")
+    strict_error = status.get("strict_source_error")
+    if strict_error:
+        abort_reasons.append(f"strict_source_error: {strict_error}")
+
+    if abort_reasons:
+        return {
+            "decision": "abort", "apply": [], "defer": [], "abort_reasons": abort_reasons,
+            "marts": "none", "deploy": "disabled",
+        }
+
+    apply: list[str] = []
+    defer: list[dict[str, Any]] = []
+    for action in source_plan.get("actions") or []:
+        kind = action.get("action")
+        if kind in ("add", "content_change", "move"):
+            rel = action.get("relative_path")
+            if rel is not None and rel not in apply:
+                apply.append(rel)
+        elif kind == "remove_candidate":
+            defer.append({"kind": "remove_candidate", "detail": action})
+        elif kind == "missing":
+            defer.append({"kind": "missing", "detail": action})
+
+    for h in status.get("ambiguous_move_hashes") or []:
+        defer.append({"kind": "ambiguous_move", "detail": h})
+
+    for d in source_plan.get("duplicate_content") or []:
+        defer.append({"kind": "duplicate_content", "detail": d})
+
+    for item in status.get("narrative_work") or []:
+        rel = item.get("relative_path") if isinstance(item, dict) else None
+        if rel is not None and rel not in apply:
+            apply.append(rel)
+
+    marts = "rebuild_strict" if status.get("reporting_rebuild_required") else "none"
+
+    deployment_enabled = bool((profile.get("deployment") or {}).get("enabled", False))
+    deploy_setting = (profile.get("handoff") or {}).get("deploy", "hold")
+    deploy = deploy_setting if deployment_enabled else "disabled"
+
+    return {
+        "decision": "apply", "apply": apply, "defer": defer, "abort_reasons": [],
+        "marts": marts, "deploy": deploy,
+    }
+
+
+def _read_built_at(db_path: Path) -> str | None:
+    """`meta.built_at`, read-only, or `None` when the db or the key is absent."""
+    if not db_path.is_file():
+        return None
+    with closing(sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)) as con:
+        try:
+            row = con.execute("SELECT value FROM meta WHERE key = 'built_at'").fetchone()
+        except sqlite3.OperationalError:
+            return None
+    return row[0] if row else None
 
 
 def build_status(profile: dict[str, Any]) -> dict[str, Any]:
@@ -361,9 +444,24 @@ def main(argv: list[str] | None = None) -> int:
         p = sub.add_parser(name)
         p.add_argument("--profile", required=True)
         p.add_argument("--out")
+    p_handoff = sub.add_parser("handoff")
+    p_handoff.add_argument("--profile", required=True)
+    p_handoff.add_argument("--status", required=True)
+    p_handoff.add_argument("--out", required=True)
     args = ap.parse_args(argv)
     try:
         profile = load_profile(Path(args.profile).expanduser().resolve())
+        if args.command == "handoff":
+            status_data = json.loads(Path(args.status).expanduser().resolve().read_text(encoding="utf-8"))
+            classification = classify_handoff(status_data, profile["raw"])
+            result = {
+                **classification,
+                "built_at": _read_built_at(profile["paths"]["db"]),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            atomic_json(Path(args.out), result, profile["project"])
+            print(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True))
+            return 0 if result["decision"] == "apply" else 3
         if args.command == "validate-profile":
             result = {"status": "ok", "version": VERSION, "project": str(profile["project"]), "root_key": profile["root_key"]}
         else:
