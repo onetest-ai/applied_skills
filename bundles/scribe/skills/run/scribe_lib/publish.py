@@ -346,10 +346,21 @@ def _resume_journal(
     crash). The caller (`publish_task`) has already confirmed
     `state.version < journal["version"]`, so this journal genuinely still
     needs finishing; a journal already covered by `state.version` is
-    discarded by the caller before this is ever called."""
+    discarded by the caller before this is ever called.
+
+    Task 12: `no_render` is read from the journal itself
+    (`journal["no_render"]`, written by `commit_fresh` when the journal was
+    first created) when present, overriding whatever the CALLER of this
+    resume passed — a resumed `review.approve` has no way to know whether
+    the leftover journal's ORIGINAL commit (which might have been an `auto`
+    publish, or an earlier `approve`) was rendered or not, so the journal
+    must carry its own truth rather than trust a possibly-mismatched
+    caller-supplied flag. A pre-task-12 journal (no `no_render` key) keeps
+    using the caller's value, unchanged."""
     version = journal["version"]
     prev_version = version - 1
     steps_done = set(journal.get("steps_done") or [])
+    no_render = journal.get("no_render", no_render)
 
     stable_docx = out_dir / f"{instance['title']}.docx"
     stable_pdf = out_dir / f"{instance['title']}.pdf"
@@ -513,7 +524,11 @@ def commit_fresh(
     dst_versions_docx = versions_dir / f"v{prev_version:03d}_{config.now[:10]}.docx"
     dst_versions_pdf = versions_dir / f"v{prev_version:03d}_{config.now[:10]}.pdf"
 
-    journal = {"version": new_version, "steps_done": []}
+    # `no_render` rides on the journal itself (task 12) so a resume — by
+    # `publish_task`'s own retry OR `review.approve` — reads the ORIGINAL
+    # commit's rendered-ness back, rather than trusting whatever the resume
+    # caller happens to pass (see `_resume_journal`'s docstring).
+    journal = {"version": new_version, "steps_done": [], "no_render": no_render}
 
     try:
         pending_dir.mkdir(parents=True, exist_ok=True)

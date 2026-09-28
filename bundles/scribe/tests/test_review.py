@@ -91,6 +91,67 @@ def test_approve_refuses_stale_proposal(tmp_path, monkeypatch):
     assert read_state(config, inst)["version"] == 2
 
 
+def test_resumed_journal_uses_its_own_recorded_no_render(tmp_path, monkeypatch):
+    """A journal must carry its own `no_render` (task 12) — a resume call
+    that passes a DIFFERENT `no_render` than the journal's original commit
+    used (exactly what `review.approve` does, since it cannot know in
+    advance what a leftover journal was originally rendered with) must
+    still behave as the ORIGINAL commit intended, not try to move a
+    docx/pdf that was never staged."""
+    from scribe_lib.merge import parse_header
+
+    monkeypatch.setattr(brain_mod, "evidence", fake_evidence)
+    proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"))
+    config, data = load(proj)
+    inst, tpl = data["instances"]["m1"], data["templates"]["mini-profile"]
+    publish_seed(
+        config, inst,
+        doc("m1", 1, "Mini m1", {"overview": "Old. [RAG:1] <!-- c:aaaa0001 -->", "details": DETAILS}),
+        1, docx_sha=None,
+    )
+
+    out_dir = config.out_root / inst["out"]
+    src_dir = out_dir / "_src"
+    state = read_state(config, inst)
+    next_text = doc("m1", 2, "Mini m1", {"overview": "New. [RAG:1] <!-- c:aaaa0001 -->", "details": DETAILS})
+    header = parse_header(next_text)
+
+    real_mark_step = publish_mod._mark_step
+
+    def crash_before_place_new(pending_dir, journal, step):
+        if step == "place_new":
+            raise RuntimeError("crash before place_new mark")
+        return real_mark_step(pending_dir, journal, step)
+
+    monkeypatch.setattr(publish_mod, "_mark_step", crash_before_place_new)
+    try:
+        publish_mod.commit_fresh(
+            config, "m1", inst, tpl, data["instances"], data["edges"], out_dir, src_dir, state, 2,
+            next_text, header, out_dir / "nonexistent.docx", out_dir / "nonexistent.pdf",
+            True,  # this commit's own no_render — never staged a docx/pdf
+        )
+        assert False, "expected the monkeypatched crash to propagate"
+    except RuntimeError:
+        pass
+    monkeypatch.setattr(publish_mod, "_mark_step", real_mark_step)
+
+    journal = json.loads((src_dir / ".pending" / "journal.json").read_text(encoding="utf-8"))
+    assert journal["no_render"] is True and "place_new" not in journal["steps_done"]
+
+    # Resume with a MISMATCHED no_render=False (what `review.approve`
+    # always passes to `resume_leftover_journal`, since it cannot know the
+    # leftover journal's own history) — the journal's recorded True must
+    # win, so `place_new` never tries to move a docx/pdf that was never
+    # staged.
+    result = publish_mod.resume_leftover_journal(
+        config, "m1", inst, tpl, data["instances"], data["edges"], out_dir, src_dir, state, no_render=False
+    )
+    assert result is not None and result["status"] == "ok"
+    assert read_state(config, inst)["version"] == 2
+    assert not (out_dir / "Mini m1.docx").exists()
+    assert not (src_dir / ".pending").exists()
+
+
 def test_approve_resumes_after_crash(tmp_path, monkeypatch):
     """A crash inside `commit_fresh` (the same journaled path `auto`
     publish uses) during `approve` leaves a resumable journal — a retried
