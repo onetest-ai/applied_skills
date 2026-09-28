@@ -14,6 +14,7 @@ from scribe_lib import brain as brain_mod
 from scribe_lib import claims
 from scribe_lib.checktask import check_task_task
 from scribe_lib.pack import prepare_task
+from scribe_lib import publish as publish_mod
 import scribe
 
 
@@ -238,6 +239,56 @@ def test_stale_started_at_from_a_previous_run_yields_no_minutes(tmp_path, monkey
     report_mod.record(config, task="m1", status="noop", reason="test")
     row = next(r for r in report_mod.rows(config) if r["task"] == "m1")
     assert "minutes" not in row
+
+
+def test_propose_mode_publish_row_carries_minutes(tmp_path, monkeypatch):
+    """Fix round 3, Important #1: `_MINUTES_STATUSES` omitted `pending`, but
+    `publish_task` writes a `pending` row (propose mode) AFTER the full
+    prepare/draft/render pipeline — same timing as `published` — so a
+    propose task's `minutes` must be recorded too, not left at
+    `default_task_minutes` forever."""
+    monkeypatch.setenv("SCRIBE_NOW", "2026-01-05T09:00:00")
+    monkeypatch.setattr(brain_mod, "search", lambda cfg, q, limit, tag: [])
+    proj = _proj(tmp_path)
+    mini_task(proj, "m1", publish="propose")
+    config, data = load(proj)
+    inst, tpl = data["instances"]["m1"], data["templates"]["mini-profile"]
+
+    prepare_task(config, "m1")  # stamps a fresh started_at
+    # Hand-build a ready-to-publish next.md (mirrors test_publish_safety.py's
+    # `_ready` pattern) — bypasses merge/accept so this test isn't coupled
+    # to evidence/citation checks that are out of scope here.
+    (config.work_dir / "m1" / "next.md").write_text(
+        doc("m1", 1, "Mini m1", {"overview": "New text.", "details": "D."}), encoding="utf-8"
+    )
+    r = publish_mod.publish_task(config, "m1", inst, tpl, data["instances"], data["edges"], no_render=True)
+    assert r["status"] == "ok" and r["published"] is False
+
+    row = next(row for row in report_mod.rows(config) if row["task"] == "m1" and row["status"] == "pending")
+    assert row["minutes"] is not None
+
+
+def test_skipped_row_does_not_consume_budget_minutes(tmp_path, monkeypatch):
+    """Fix round 3, Minor: a `skipped` row (never actually ran) must not
+    seed `compute_plan`'s running-minutes total — `a` here is `cadence:
+    manual` (never due in a `--due` plan) and already has a `skipped` row
+    from earlier this run; its phantom `default_task_minutes` must not push
+    `b` over budget."""
+    monkeypatch.setenv("SCRIBE_NOW", "2026-01-05T09:00:00")
+    proj = _proj(tmp_path)
+    mini_task(proj, "a", cadence="manual")
+    mini_task(proj, "b"); mini_task(proj, "c")
+    (proj / "scribe.toml").write_text((proj / "scribe.toml").read_text().replace(
+        "top_k = 8", "top_k = 8\nbudget_minutes = 15\ndefault_task_minutes = 10"))
+    config, _ = load(proj)
+    report_mod.record(config, task="a", status="skipped", reason="not due: cadence manual", stage="plan")
+
+    config, data = load(proj)
+    plan = scribe.compute_plan(config, data)
+    rows = {t["task"]: t for t in plan["tasks"]}
+    assert rows["a"]["due"] is False
+    assert rows["b"]["deferred"] is False  # a's skipped row must not phantom-consume budget
+    assert rows["c"]["deferred"] is True   # genuinely over budget once b is counted
 
 
 def test_budget_seeds_from_minutes_used_today_and_defers_rather_than_starving(tmp_path, monkeypatch):

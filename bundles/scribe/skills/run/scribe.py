@@ -329,11 +329,20 @@ def compute_plan(
     # ran this run — it is never re-admitted or deferred here, regardless
     # of whether it is still `due` (e.g. daily cadence still shows `due`
     # after a noop `observe`).
+    #
+    # `skipped` rows are excluded (fix round 3, Minor): a task skipped at
+    # the PLAN stage — "not due" or "upstream_failed" — never actually ran
+    # (`prepare` was never called for it this cycle, per `report.py`'s
+    # `_MINUTES_STATUSES`), so it must not consume budget minutes, a
+    # `max_tasks_per_run` slot, or turn off the run's first-task
+    # no-starvation bypass. It stays eligible to be picked up as a normal
+    # not-yet-run due task by a later `plan --due` this same run (e.g. once
+    # its upstream unblocks).
     today_rows = report.rows(config)
     ran_today: dict[str, float] = {}
     for row in today_rows:
         row_task = row.get("task")
-        if not row_task or row_task == "_run":
+        if not row_task or row_task == "_run" or row.get("status") == "skipped":
             continue
         ran_today[row_task] = row.get("minutes") if row.get("minutes") is not None else config.default_task_minutes
 
@@ -352,8 +361,12 @@ def compute_plan(
             entry["deferred"] = False
             continue
         if tid in ran_today:
-            # Already ran (published/noop/failed/skipped) earlier this run —
-            # counted in the seed above; never re-admitted or deferred.
+            # Already ran (published/noop/failed/pending) earlier this run —
+            # counted in the seed above; never re-admitted or deferred. A
+            # `skipped` row does NOT land here (excluded from `ran_today`
+            # above) — a task skipped at plan stage falls through to the
+            # normal budget check below instead, as if it had not been
+            # touched this run yet.
             entry["deferred"] = False
             continue
         task_minutes = report.last_minutes(config, tid)

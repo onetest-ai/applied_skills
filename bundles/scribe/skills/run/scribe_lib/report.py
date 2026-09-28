@@ -40,12 +40,17 @@ _SECTION_COUNT_KEYS = (
 )
 
 # `append_run` only stamps `minutes` for these — post-`prepare` outcomes
-# (fix round 2, NEW issue). `skipped` (both "not due" and "upstream_failed")
-# and `pending` (a `propose`-mode publish awaiting review) are recorded
-# without `prepare` ever having run for that task this cycle, so any
-# `started_at` on disk for it belongs to an earlier run and must not be read
-# as this row's elapsed time.
-_MINUTES_STATUSES = {"published", "noop", "failed"}
+# (fix round 2, NEW issue; fix round 3, Important #1). `skipped` (both
+# "not due" and "upstream_failed") is recorded at the PLAN stage, without
+# `prepare` ever having run for that task this cycle, so any `started_at`
+# on disk for it belongs to an earlier run and must not be read as this
+# row's elapsed time. `pending` (a `propose`-mode `publish_task` row) is
+# the OPPOSITE case: it is written after the full prepare/draft/render
+# pipeline, same as `published` — round 2 wrongly grouped it with `skipped`
+# in this set's comment (it was never actually in the set, so a propose
+# task's `minutes` was never recorded and its budget estimate never left
+# `default_task_minutes`).
+_MINUTES_STATUSES = {"published", "noop", "failed", "pending"}
 
 
 def run_report_path(config: Config) -> Path:
