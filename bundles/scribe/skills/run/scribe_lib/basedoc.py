@@ -37,6 +37,11 @@ base has to be recovered from it:
      (plus `"missing": [titles]` for deleted headings), removes any old
      base.md/base.json, and writes nothing. Dropping the text would lose a
      human's content; a missing section would fail `accept` every night.
+     Before that, structure the base cannot hold is refused the same way
+     with `{"status": "failed", "reason": "unsupported_structure", "detail":
+     [...]}`: any heading not at level 2 (except the one H1 title) and any
+     text before the first section (`_structure_problems`). This runs before
+     the re-save check, so such an edit is never read as a plain re-save.
   4. Claims matched per section against the previous `_src/vNNN.md` (parsed by
      `{#id}`), on `claims.normalize_text` — tags stripped, so a long tag can
      never make an edit look unchanged (PoC I2); see `_carry_claims`:
@@ -448,6 +453,34 @@ def _published_docx_path(config: Config, instance: dict[str, Any]) -> Path:
     return config.out_root / instance["out"] / f"{instance['title']}.docx"
 
 
+_TEXT_BEFORE_SECTIONS = "text before the first section"
+
+
+def _structure_problems(body: str) -> list[str]:
+    """What in the recovered docx body the base cannot hold: every heading
+    that is not level 2, except a first H1 (the document title) that comes
+    before any section, and `_TEXT_BEFORE_SECTIONS` when anything but blank
+    lines precedes the first H2. Each offending heading as `"H<n>: <title>"`."""
+    problems: list[str] = []
+    seen_h2 = seen_title = text_before = False
+    for ln in body.splitlines():
+        m = _HEADING_RE.match(ln)
+        if not m:
+            if not seen_h2 and ln.strip():
+                text_before = True
+            continue
+        level, title = len(m.group(1)), m.group(2).strip()
+        if level == 2:
+            seen_h2 = True
+        elif level == 1 and not seen_h2 and not seen_title:
+            seen_title = True
+        else:
+            problems.append(f"H{level}: {title}")
+    if text_before:
+        problems.insert(0, _TEXT_BEFORE_SECTIONS)
+    return problems
+
+
 def _base_result(version: int | None, edited: bool = False, **lists: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "base_version": version,
@@ -478,6 +511,11 @@ def base_task(
         base_md_path.write_text(text, encoding="utf-8")
         base_json_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
         return result
+
+    def _refuse(failed: dict[str, Any]) -> dict[str, Any]:
+        base_md_path.unlink(missing_ok=True)
+        base_json_path.unlink(missing_ok=True)
+        return failed
 
     version = state.get("version")
     if not state or not version:
@@ -510,6 +548,15 @@ def base_task(
     title_to_sid = {_heading_key(s["title"]): s["id"] for s in sections_spec}
     prev_sections = split_by_section_id(prev_text_restored)
 
+    # Structure the base cannot represent is refused loudly, never dropped
+    # (fix round 1): a heading at any level but 2 (other than the one H1 title)
+    # and any text before the first section. Dropped silently, such content
+    # vanished, turned the claims after it into tombstones, or made the edit
+    # read as a plain re-save — so this runs before the re-save check.
+    problems = _structure_problems(body)
+    if problems:
+        return _refuse({"status": "failed", "reason": "unsupported_structure", "detail": problems})
+
     docx_sections: dict[str, str] = {}
     unmatched_headings: list[str] = []
     for level, title, sec_body in split_sections(body):
@@ -527,12 +574,10 @@ def base_task(
     # from the previous version too (new in the template) is not "deleted".
     missing = [s["title"] for s in sections_spec if s["id"] not in docx_sections and s["id"] in prev_sections]
     if unmatched_headings or missing:
-        base_md_path.unlink(missing_ok=True)
-        base_json_path.unlink(missing_ok=True)
         failed: dict[str, Any] = {"status": "failed", "reason": "section_heading_changed", "headings": unmatched_headings}
         if missing:
             failed["missing"] = missing
-        return failed
+        return _refuse(failed)
 
     # A9 / I1: a Word "open and save" (pandoc/Word re-serializes punctuation,
     # quotes, whitespace, table delimiter rows; a diagram round-trips as an

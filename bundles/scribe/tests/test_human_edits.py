@@ -13,9 +13,9 @@ V1_OVERVIEW = ("Delivery takes 3 days. [RAG:1] <!-- c:aaaa0001 -->\n\n"
 V1_DETAILS = "Detail one. [RAG:2] <!-- c:bbbb0001 -->\n\n```mermaid\nflowchart LR\n  A-->B\n```"
 
 
-def _edited_docx(path, overview_md, details_md, overview_title="Overview"):
+def _edited_docx(path, overview_md, details_md, overview_title="Overview", preamble=""):
     src = path.parent / "edit.md"
-    src.write_text(f"# Mini m1\n\n## {overview_title}\n\n{overview_md}\n\n## Details\n\n{details_md}\n")
+    src.write_text(f"# Mini m1\n\n{preamble}## {overview_title}\n\n{overview_md}\n\n## Details\n\n{details_md}\n")
     path.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(["pandoc", str(src), "-o", str(path)], check=True)
 
@@ -144,3 +144,34 @@ def test_prepare_fails_and_writes_no_pack_on_a_renamed_heading(tmp_path):
     assert r["status"] == "failed" and r["reason"] == "section_heading_changed"
     assert r["headings"] == ["Summary"] and r["missing"] == ["Overview"]
     assert not (config.work_dir / "m1" / "pack").exists()
+
+
+OV = "Delivery takes 3 days.^[RAG:1 — doc, Intro]\n\nRoutes are planned weekly.^[RAG:3 — doc, Intro]"
+DT = "Detail one.^[RAG:2 — doc, Intro]"
+
+
+def _assert_structure_refused(config, r, detail):
+    assert r == {"status": "failed", "reason": "unsupported_structure", "detail": detail}
+    assert not (config.work_dir / "m1" / "base.md").exists()
+    assert not (config.work_dir / "m1" / "base.json").exists()  # so no human_deleted tombstone anywhere
+    assert "human_deleted" not in json.loads((config.out_root / "m1" / "_src" / "state.json").read_text())
+
+
+def test_h3_inserted_mid_section_is_refused_not_tombstoned(tmp_path):
+    config, data, inst, tpl = _setup(tmp_path)
+    _edited_docx(config.out_root / "m1" / "Mini m1.docx",
+                 "Delivery takes 3 days.^[RAG:1 — doc, Intro]\n\n### Human note\n\nA paragraph a person wrote.\n\n"
+                 "Routes are planned weekly.^[RAG:3 — doc, Intro]", DT)
+    _assert_structure_refused(config, base_task(config, "m1", inst, tpl), ["H3: Human note"])
+
+
+def test_h3_at_section_end_is_refused_not_read_as_resave(tmp_path):
+    config, data, inst, tpl = _setup(tmp_path)
+    _edited_docx(config.out_root / "m1" / "Mini m1.docx", OV + "\n\n### Follow-up\n\nCheck with ops.", DT)
+    _assert_structure_refused(config, base_task(config, "m1", inst, tpl), ["H3: Follow-up"])
+
+
+def test_text_under_the_title_before_the_first_section_is_refused(tmp_path):
+    config, data, inst, tpl = _setup(tmp_path)
+    _edited_docx(config.out_root / "m1" / "Mini m1.docx", OV, DT, preamble="Draft - do not circulate.\n\n")
+    _assert_structure_refused(config, base_task(config, "m1", inst, tpl), ["text before the first section"])

@@ -105,10 +105,17 @@ Run `scribe.py prepare <id>`. It clears the previous run's `work/<id>/` outputs 
 writes `work/<id>/pack/`. Read `work/<id>/pack/plan.json`:
 `{"stale": [{"section", "reasons"}], "carried": [...], "noop": bool}`.
 
-If `prepare` exits 1 with `"reason": "section_heading_changed"`, someone renamed (`headings`)
-or deleted (`missing`) a section heading in the published docx. This is a failure (see above):
-put those heading names in the `--reason` so the person who edited the docx knows which
-headings to restore. Never edit the docx yourself.
+If `prepare` exits 1 with one of these reasons, the published docx was edited in a way the
+scripts refuse rather than guess about:
+
+- `"section_heading_changed"`: someone renamed (`headings`) or deleted (`missing`) a section
+  heading.
+- `"unsupported_structure"`: someone added a heading that is not a section heading (an `H3`,
+  a second title), or typed text above the first section; `detail` lists each one.
+
+Both are a failure (see above): the task fails and the published version stays untouched.
+Put the listed headings or `detail` items in the `--reason`, so the person who edited the
+docx knows what to undo. Never edit the docx yourself.
 
 - `noop: true` → run `scribe.py observe <id>` (records tonight's raw/Brain snapshot and section
   fingerprints so the same unchanged input does not make this task due again tomorrow for the
