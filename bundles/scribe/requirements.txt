@@ -1,0 +1,16 @@
+# scribe bundle — Python dependencies. A self-contained COPY of bundles/brain/requirements.txt:
+# scribe imports brain's parse_corpus, chunking and mcp/brain/semantic_core, and plugins are
+# installed into separate cache dirs, so this file must not reference ../brain.
+# Keep in sync: tests/test_packaging.py::test_requirements_cover_brain_requirements.
+
+sqlite-vec
+fastembed
+pymupdf
+openpyxl     # XLSX structure dump
+tomli; python_version < "3.11"  # brain.toml source-root config on Python 3.10
+pandas
+pyarrow
+fastmcp==2.14.7
+uvicorn>=0.30,<1
+boto3             # extract_facts.py — AWS Bedrock Sonnet for verbatim fact extraction
+pyyaml            # generate_promptfoo.py — write promptfooconfig.yaml

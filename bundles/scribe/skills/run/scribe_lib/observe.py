@@ -1,0 +1,96 @@
+"""observe: record what a noop run saw, without publishing anything.
+
+Defect (replay Nights 2-4): a task can end a run as a noop — `prepare`'s
+`plan.json` has no stale sections (`fingerprint.py` found nothing new against
+the Brain/raw index), or `merge`'s `next.md` would be byte-identical to the
+previous version — and in both cases nothing calls `publish`, so
+`state.json`'s `raw_snapshot`/`brain_snapshot`/`upstream_versions` and every
+section's `fingerprint` are left exactly as they were after the LAST publish.
+The next night's `plan`/`fingerprint` then compares the Brain/raw as they are
+NOW against that stale snapshot, finds the same new raw file or the same
+already-considered Brain change again, and reports the task due for the same
+reason forever — even though this run already looked and found nothing worth
+drafting.
+
+`observe_task` closes that loop: it updates ONLY the observation fields —
+`raw_snapshot`, `brain_snapshot`, `upstream_versions`, each section's
+`fingerprint` (from `work/<task>/fingerprint.json`, written by `prepare` on
+every run, noop or not), and `last_checked` (an ISO timestamp) — leaving
+`version`, `published`, and every `cited_chunks`/`cited_raw` (top-level and
+per-section) exactly as they were. A noop must never look like a publish: no
+version bump, no published-file hash, no citation is recorded as if new
+content had been drafted and merged.
+
+Call this once a run has decided a task is a noop (`plan.json.noop` from
+`prepare`, or `merge.json.noop` from `merge`) — see `scribe.py observe
+<task>` and the `scribe:run` SKILL.md's noop paths.
+"""
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from scribe_lib.config import (
+    Config,
+    read_state,
+    read_synced_files,
+    resolve_instance_inputs,
+    raw_snapshot,
+    state_path,
+)
+
+
+def _observed_at(config: Config) -> str:
+    return config.now if "T" in config.now else f"{config.now}T00:00:00"
+
+
+def observe_task(
+    config: Config,
+    task_id: str,
+    instance: dict[str, Any],
+    template: dict[str, Any],
+    instances: dict[str, Any],
+    edges: dict[str, list[str]],
+) -> dict[str, Any]:
+    state = read_state(config, instance)
+    raw_inputs = resolve_instance_inputs(instance, template).get("raw") or {}
+
+    fp_path = config.work_dir / task_id / "fingerprint.json"
+    fp_sections = (
+        json.loads(fp_path.read_text(encoding="utf-8")).get("sections", {}) if fp_path.is_file() else {}
+    )
+
+    # Refresh only `fingerprint` on each section's state entry — `cited_chunks`
+    # / `cited_raw` are what a PUBLISH recorded and must survive a noop
+    # untouched (they describe what the document actually cites, not what
+    # tonight's search considered).
+    sections_state: dict[str, Any] = {sid: dict(info) for sid, info in (state.get("sections") or {}).items()}
+    for sid, info in fp_sections.items():
+        entry = dict(sections_state.get(sid) or {})
+        entry["fingerprint"] = info.get("fingerprint")
+        entry.setdefault("cited_chunks", {})
+        entry.setdefault("cited_raw", {})
+        sections_state[sid] = entry
+
+    upstream_versions = {
+        up: (read_state(config, instances[up]).get("version") or 0) for up in edges.get(task_id, [])
+    }
+
+    new_state = {
+        **state,
+        "sections": sections_state,
+        "brain_snapshot": read_synced_files(config.brain_db),
+        "raw_snapshot": raw_snapshot(config, raw_inputs),
+        "upstream_versions": upstream_versions,
+        "last_checked": _observed_at(config),
+    }
+    path = state_path(config, instance)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(new_state, indent=2), encoding="utf-8")
+
+    return {
+        "task": task_id,
+        "observed": True,
+        "sections": sorted(sections_state.keys()),
+        "last_checked": new_state["last_checked"],
+    }

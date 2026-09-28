@@ -1,0 +1,270 @@
+"""check-file: deterministically verify every `[FILE:]` claim an agent drafted.
+
+For every claim (bullet/paragraph block) in `work/<task>/sections/<sid>.md`
+that carries a `[FILE:<path>#<locator>]` tag, the tag is either **carried**
+or **new/changed**.
+
+A tag is **carried** when the claim it sits on matches a claim already in
+`work/<task>/base.md`'s SAME section — by the claim's `<!-- c:xxxxxxxx -->`
+id comment when the draft claim has one, else by normalized-text equality —
+and that base claim carries the exact same `[FILE:...]` tag. Per the drafting
+contract (`skills/run/SKILL.md`) a claim is only carried with its id comment
+when its text is kept verbatim, so this also naturally excludes a reworded
+claim even when the agent kept (or wrote) an id comment on it: reworded text
+never equals the base claim's normalized text, so it falls through to the
+new/changed path below. A carried tag needs no fresh quote: it is verified by
+re-checking that the cited raw file's sha256 still equals the one recorded
+for this path in the task's published `state.json` (`state.sections.<sid>.
+cited_raw`) — the same evidence that was good enough to publish that claim is
+still good enough now, as long as the file has not changed underneath it. No
+usable state record for the path (never published, or the path was cited
+under a different section) falls through to new/changed too — there is
+nothing to verify a "carry" against.
+
+**Human-authored claims are skipped**: a draft claim that
+matches (same way) a base claim of human origin (`origin=human|
+human_modified` in its comment, or a legacy id-less base claim — see
+`claims.base_claim_origin`) is not checked at all and needs no quote; a
+human's own citation is the human's call. They are counted in
+`human_origin_skipped`, not in `checked`.
+
+Every other `[FILE:]` tag (new, changed, or on a claim not found in base) is
+new/changed and needs a fresh quote:
+  1. `path` must be a parsed, `status: "ok"` entry in `work/<task>/raw/manifest.json`.
+  2. The sidecar `work/<task>/sections/<sid>.evidence.json` must have an entry
+     `{"claim_ref": <index>, "tag": "[FILE:...]", "quote": "..."}` for this
+     claim's 0-based index (among claim blocks in that file) and this tag.
+  3. That quote (whitespace-normalized, case-insensitive) must occur in the
+     parsed raw Markdown (`work/<task>/raw/<path>.md`).
+
+A claim that fails any of these (for any of its `[FILE:]` tags, carried or
+not) is rewritten
+in place to `Not modeled: <reason>. <!-- cf:N -->` (keeping its bullet/
+paragraph shape, dropping its tags and any claim id — it is no longer a
+claim) and recorded in `work/<task>/check-file.json`:
+
+    {"checked": <int>, "passed": <int>, "human_origin_skipped": <int>,
+     "failed": [{"section", "claim_ref", "tag", "reason"}]}
+
+`checked`/`passed` count *claims* (not tags): a claim with two failing
+`[FILE:]` tags is one failure, not two.
+
+**Idempotency.** `evidence.json`'s `claim_ref` is a positional index into the
+ORIGINAL drafted file (assigned once, by the agent, before any check-file
+run). A naive re-run that only counts *current* claim blocks (bullet/para) to
+recompute that index breaks the moment one claim is rewritten to
+`Not modeled:` — every later real claim then shifts down by one against the
+unchanged sidecar and gets misjudged as "missing evidence quote", silently
+destroying valid content on a second pass (fix round 1). The `<!-- cf:N -->`
+comment appended to a rewritten claim's `Not modeled:` line is how a later
+run recovers the ORIGINAL index at that position without re-counting from
+scratch: scanning resets the running index to `N` whenever it hits a
+`cf:`-marked block (and does not re-check it — it is already resolved), so
+every subsequent real claim's recomputed index still lines up with the
+`claim_ref`s the sidecar was written against. A second run on unchanged
+inputs changes nothing.
+"""
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+from scribe_lib import claims
+from scribe_lib.basedoc import split_by_section_id
+from scribe_lib.config import Config, read_state, sha256_file
+
+_CF_MARKER_RE = re.compile(r"<!--\s*cf:(\d+)\s*-->\s*$")
+
+
+def _normalize_ws(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "")).strip().lower()
+
+
+def _cf_marker(block: dict[str, Any]) -> int | None:
+    """The original claim index a previously-rewritten `Not modeled:` block
+    stood at, if it carries a `<!-- cf:N -->` marker from an earlier run."""
+    if block["kind"] != "not_modeled":
+        return None
+    m = _CF_MARKER_RE.search(block["raw"])
+    return int(m.group(1)) if m else None
+
+
+def _load_manifest(raw_dir: Path) -> dict[str, dict[str, Any]]:
+    path = raw_dir / "manifest.json"
+    if not path.is_file():
+        return {}
+    entries = json.loads(path.read_text(encoding="utf-8"))
+    return {e["path"]: e for e in entries}
+
+
+def _load_evidence(sections_dir: Path, sid: str) -> list[dict[str, Any]]:
+    path = sections_dir / f"{sid}.evidence.json"
+    if not path.is_file():
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _base_claims_by_section(work_dir: Path) -> dict[str, list[dict[str, Any]]]:
+    base_path = work_dir / "base.md"
+    if not base_path.is_file():
+        return {}
+    base_sections = split_by_section_id(base_path.read_text(encoding="utf-8"))
+    return {
+        sid: [b for b in claims.parse_blocks(body) if claims.is_claim(b)]
+        for sid, body in base_sections.items()
+    }
+
+
+def _find_carried_base_claim(
+    base_claims: list[dict[str, Any]], block: dict[str, Any]
+) -> dict[str, Any] | None:
+    """The base claim (same section) this draft claim carries forward, or
+    None. Matched by claim id when the draft claim has one (and its text is
+    still exactly the base claim's — a reworded claim never equals the base
+    text even if the agent kept/wrote an id comment on it), else by
+    normalized-text equality."""
+    claim_id = block["claim_id"]
+    for base_block in base_claims:
+        if claim_id:
+            if base_block["claim_id"] == claim_id and base_block["normalized"] == block["normalized"]:
+                return base_block
+        elif base_block["normalized"] == block["normalized"]:
+            return base_block
+    return None
+
+
+def _carried_raw_reason(config: Config, path: str, prior_sha: str) -> str | None:
+    """None if `path` under raw_root still hashes to `prior_sha`; else a
+    human-readable reason."""
+    full = config.raw_root / path
+    if not full.is_file():
+        return f"cited raw file missing: {path}"
+    if sha256_file(full) != prior_sha:
+        return f"cited raw file changed since publish: {path}"
+    return None
+
+
+def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | None = None) -> dict[str, Any]:
+    work_dir = config.work_dir / task_id
+    sections_dir = work_dir / "sections"
+    raw_dir = work_dir / "raw"
+    manifest = _load_manifest(raw_dir)
+    base_claims_by_section = _base_claims_by_section(work_dir)
+    state_sections = (read_state(config, instance).get("sections") or {}) if instance else {}
+
+    checked = 0
+    passed = 0
+    human_skipped = 0
+    failed: list[dict[str, Any]] = []
+
+    if not sections_dir.is_dir():
+        result = {"task": task_id, "checked": 0, "passed": 0, "human_origin_skipped": 0, "failed": []}
+        (work_dir / "check-file.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+        return result
+
+    for section_path in sorted(sections_dir.glob("*.md")):
+        sid = section_path.stem
+        evidence = _load_evidence(sections_dir, sid)
+        # Keyed on the unescaped tag, like `block["tags"]`: the agent may copy an
+        # escaped tag (`\_`, `\>` from a docx round trip) from the prior text.
+        evidence_by_key = {(e["claim_ref"], claims.unescape_tags(e["tag"])): e for e in evidence}
+        base_claims = base_claims_by_section.get(sid, [])
+        cited_raw = (state_sections.get(sid) or {}).get("cited_raw") or {}
+
+        body = section_path.read_text(encoding="utf-8")
+        blocks = claims.parse_blocks(body)
+
+        changed = False
+        claim_idx = -1
+        for block in blocks:
+            marker = _cf_marker(block)
+            if marker is not None:
+                # Already resolved by a previous run — restore the running
+                # index to its original position and skip re-checking it.
+                claim_idx = marker
+                continue
+            if not claims.is_claim(block):
+                continue
+            claim_idx += 1
+            file_tags = [t for t in block["tags"] if t.startswith("[FILE:")]
+            if not file_tags:
+                continue
+
+            base_match = _find_carried_base_claim(base_claims, block)
+            if base_match is not None and claims.base_claim_origin(base_match) in claims.HUMAN_ORIGINS:
+                human_skipped += 1
+                continue
+            checked += 1
+
+            reason: str | None = None
+            failing_tag: str | None = None
+            for tag in file_tags:
+                _, value = claims.parse_tag(tag)
+                path = value.split("#", 1)[0]
+
+                carried = (
+                    base_match is not None
+                    and tag in base_match["tags"]
+                    and path in cited_raw
+                )
+                if carried:
+                    reason = _carried_raw_reason(config, path, cited_raw[path])
+                    if reason is not None:
+                        failing_tag = tag
+                        break
+                    continue
+
+                entry = evidence_by_key.get((claim_idx, tag))
+                if entry is None:
+                    reason = "missing evidence quote"
+                    failing_tag = tag
+                    break
+                manifest_entry = manifest.get(path)
+                if manifest_entry is None or manifest_entry.get("status") != "ok":
+                    reason = f"raw file not in manifest: {path}"
+                    failing_tag = tag
+                    break
+                md_rel = manifest_entry.get("md") or f"{path}.md"
+                raw_md_path = raw_dir / md_rel
+                if not raw_md_path.is_file():
+                    reason = f"parsed raw file missing: {md_rel}"
+                    failing_tag = tag
+                    break
+                raw_text = raw_md_path.read_text(encoding="utf-8")
+                quote = entry.get("quote", "")
+                if _normalize_ws(quote) not in _normalize_ws(raw_text):
+                    reason = f"quote not found in {path}"
+                    failing_tag = tag
+                    break
+
+            if reason is None:
+                passed += 1
+                continue
+
+            failed.append({"section": sid, "claim_ref": claim_idx, "tag": failing_tag, "reason": reason})
+            prefix = "- " if block["kind"] == "bullet" else ""
+            block["raw"] = f"{prefix}Not modeled: {reason}. <!-- cf:{claim_idx} -->"
+            block["text"] = f"Not modeled: {reason}."
+            block["kind"] = "not_modeled"
+            block["tags"] = []
+            block["claim_id"] = None
+            block["sup_ref"] = None
+            block["superseded"] = False
+            changed = True
+
+        if changed:
+            rendered = [(b, b["raw"]) for b in blocks]
+            section_path.write_text(claims.render_blocks(rendered), encoding="utf-8")
+
+    result = {
+        "task": task_id,
+        "checked": checked,
+        "passed": passed,
+        "human_origin_skipped": human_skipped,
+        "failed": failed,
+    }
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (work_dir / "check-file.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    return result
