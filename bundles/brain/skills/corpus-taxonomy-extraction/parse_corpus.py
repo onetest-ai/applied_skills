@@ -18,7 +18,7 @@ Usage:
 A file that cannot be parsed is reported in one `[ERR] <file>: <reason>` line and an
 `error` manifest entry; pass --verbose for the full traceback.
 """
-import argparse, json, os, shutil, subprocess, sys, tempfile, warnings, traceback
+import argparse, json, os, shutil, sqlite3, subprocess, sys, tempfile, warnings, traceback
 from pathlib import Path
 warnings.filterwarnings("ignore")
 
@@ -154,11 +154,109 @@ def _merge_speaker_turns(groups, merge_cues):
     return turns
 
 
-def _parse_srt(path, merge_cues=1):
+def _fold_interjections(turns, min_chars):
+    """Fold a turn shorter than min_chars into the previous turn, inline as "[Speaker: text]".
+
+    A listener's "Mhm." or a short answer like "Three." then stays next to the turn it
+    responds to instead of becoming its own section (and so its own chunk). Every word is
+    kept. Square brackets, because Teams speaker names carry parentheses ("Name (Partner)")
+    and transcript text carries none. The first turn has no predecessor and is kept as is.
+    min_chars <= 0 returns a copy unchanged.
+    """
+    if min_chars <= 0:
+        return [dict(t) for t in turns]
+    out = []
+    for t in turns:
+        if out and len(t["text"]) < min_chars:
+            said = "%s: %s" % (t["speaker"], t["text"]) if t["speaker"] else t["text"]
+            out[-1] = {**out[-1], "text": "%s [%s]" % (out[-1]["text"], said)}
+        else:
+            out.append(dict(t))
+    return out
+
+
+def _pack_turns(turns, max_chars, label=lambda ts: ts):
+    """Group consecutive turns (any speaker) into packs whose rendered size stays within
+    max_chars, so a short answer stays next to its question in one section (one chunk).
+
+    Rendered size of one turn = len(label(ts)) + 1 + (len(speaker) + 2 if speaker else 0) +
+    len(text) + 2, where label(ts) is the turn's actual display timestamp — this mirrors
+    what _render_turn_sections actually emits per turn. label defaults to identity (the
+    turn's ts is already display-formatted, as SRT's is); pass the format function (e.g.
+    _vtt_label) when ts is still raw, so an H:MM:SS label (past the first hour) is counted
+    at its real length instead of the MM:SS default. A turn whose own rendered size exceeds
+    max_chars is still emitted, alone, as its own pack. max_chars <= 0 returns one pack per
+    turn (packing off)."""
+    if max_chars <= 0:
+        return [[t] for t in turns]
+    packs, cur, size = [], [], 0
+    for t in turns:
+        speaker_part = (len(t["speaker"]) + 2) if t["speaker"] else 0
+        n = len(label(t["ts"])) + 1 + speaker_part + len(t["text"]) + 2
+        if cur and size + n > max_chars:
+            packs.append(cur)
+            cur, size = [], 0
+        cur.append(t)
+        size += n
+    if cur:
+        packs.append(cur)
+    return packs
+
+
+def _render_turn_sections(packs, label):
+    """One ## section per pack. A single-turn pack keeps today's per-turn format exactly
+    (speaker in the heading plus a `<!-- speaker -->` marker). A multi-turn pack gets a
+    time-range heading and one "MM:SS Speaker: text" (or "MM:SS text") paragraph per turn,
+    with no marker — the indexer would otherwise lift only the first speaker for the whole
+    section. `seq`/cue numbers count turns, not packs, across the whole document."""
+    out, seq = [], 0
+    for pack in packs:
+        first = seq + 1
+        seq += len(pack)
+        if len(pack) == 1:
+            t = pack[0]
+            who = (" — %s" % t["speaker"]) if t["speaker"] else ""
+            marker = ("<!-- speaker: %s -->\n\n" % t["speaker"]) if t["speaker"] else ""
+            out.append("\n## %s%s (cue %d)\n\n%s%s\n" % (label(t["ts"]), who, seq, marker, t["text"]))
+        else:
+            body = "\n\n".join(
+                (("%s %s: %s" % (label(t["ts"]), t["speaker"], t["text"])) if t["speaker"]
+                 else ("%s %s" % (label(t["ts"]), t["text"])))
+                for t in pack
+            )
+            out.append("\n## %s–%s (cues %d–%d)\n\n%s\n" % (label(pack[0]["ts"]), label(pack[-1]["ts"]), first, seq, body))
+    return "\n".join(out)
+
+
+def _hms_label(hour, minute, second):
+    """MM:SS, or H:MM:SS when hour is non-zero (a cue past the first hour renders
+    unambiguously instead of wrapping back to 00:SS). Meetings under an hour are
+    byte-identical to before this fix — the hour prefix only appears when needed."""
+    if int(hour) > 0:
+        return "%d:%s:%s" % (int(hour), minute, second)
+    return "%s:%s" % (minute, second)
+
+
+def _vtt_label(ts):
+    """WebVTT timestamp -> MM:SS, or H:MM:SS once the hour part is non-zero. HH:MM:SS[.mmm]
+    -- strip fractional, split on colon; falls back to the first 5 chars if ts is too short."""
+    parts = ts.split(".")[0].split(":")
+    if len(parts) >= 3:
+        return _hms_label(parts[-3], parts[-2].zfill(2), parts[-1].zfill(2))
+    if len(parts) == 2:
+        return _hms_label(0, parts[-2].zfill(2), parts[-1].zfill(2))
+    return ts[:5]
+
+
+def _parse_srt(path, merge_cues=1, fold=0, pack=0):
     """SRT -> headed Markdown. Each numbered cue block -> one ## heading.
-    merge_cues>1 joins consecutive same-speaker cues into speaker turns."""
+    merge_cues>1 joins consecutive same-speaker cues into speaker turns; fold>0 folds
+    turns shorter than fold chars into the previous turn; pack>0 groups consecutive
+    turns into one section up to pack chars."""
     import re
-    with open(path, encoding="utf-8", errors="replace") as f:
+    # utf-8-sig strips a leading BOM if present (no-op otherwise) — a BOM'd sequence-number
+    # line fails .isdigit(), silently dropping the first cue.
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
         text = f.read()
     # Split on blank lines between cue blocks
     blocks = re.split(r"\n\s*\n", text.strip())
@@ -176,28 +274,30 @@ def _parse_srt(path, merge_cues=1):
             cue_text = " ".join(rows[i+1:])
             if cue_text.strip():
                 speaker, cue_text = _speaker_and_text(cue_text)
-                # Format: MM:SS from HH:MM:SS,mmm
-                parts = ts.split(":")
-                label = "%s:%s" % (parts[1], parts[2].split(",")[0])
-                groups.append({"ts": label, "speaker": speaker, "text": cue_text.strip()})
+                speaker, cue_text = _clean_cue_text(speaker), _clean_cue_text(cue_text)
+                # Emptiness is checked AFTER cleaning (matching VTT's filter at
+                # `if full_text:` below) — a cue that is markup-only after stripping tags
+                # (e.g. `Ann: <00:00:01.500>`) must produce no turn, not a hollow one.
+                if cue_text:
+                    # Format: MM:SS from HH:MM:SS,mmm, or H:MM:SS once the hour part is non-zero.
+                    parts = ts.split(":")
+                    label = _hms_label(parts[0], parts[1], parts[2].split(",")[0])
+                    groups.append({"ts": label, "speaker": speaker, "text": cue_text.strip()})
 
-    turns = _merge_speaker_turns(groups, merge_cues)
-
-    lines = []
-    for seq, turn in enumerate(turns, 1):
-        who = (" — %s" % turn["speaker"]) if turn["speaker"] else ""
-        marker = ("<!-- speaker: %s -->\n\n" % turn["speaker"]) if turn["speaker"] else ""
-        lines.append("\n## %s%s (cue %d)\n\n%s%s\n" % (turn["ts"], who, seq, marker, turn["text"]))
-    return "\n".join(lines)
+    turns = _fold_interjections(_merge_speaker_turns(groups, merge_cues), fold)
+    return _render_turn_sections(_pack_turns(turns, pack), lambda ts: ts)
 
 
-def _parse_vtt(path, merge_cues=1):
+def _parse_vtt(path, merge_cues=1, fold=0, pack=0):
     """WebVTT -> headed Markdown. Multi-line cues (same UUID prefix) merged.
-    merge_cues>1 joins consecutive same-speaker UUID groups into speaker turns."""
+    merge_cues>1 joins consecutive same-speaker UUID groups into speaker turns; fold>0
+    folds turns shorter than fold chars into the previous turn; pack>0 groups consecutive
+    turns into one section up to pack chars."""
     import re
-    with open(path, encoding="utf-8", errors="replace") as f:
+    # utf-8-sig strips a leading BOM if present (no-op otherwise) — without it a BOM'd
+    # "WEBVTT" line fails the ^WEBVTT header-strip regex below.
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
         text = f.read()
-    lines_out = []
     # Remove WEBVTT header and NOTE blocks
     body = re.sub(r"^WEBVTT.*?\n", "", text, flags=re.MULTILINE)
     blocks = re.split(r"\n\s*\n", body.strip())
@@ -219,6 +319,7 @@ def _parse_vtt(path, merge_cues=1):
             if not cue_text:
                 continue
             speaker, cue_text = _speaker_and_text(cue_text)
+            speaker, cue_text = _clean_cue_text(speaker), _clean_cue_text(cue_text)
             # Multi-line cues sharing a UUID base (ids "uuid-0", "uuid-1", …) merge
             # by stripping the trailing -N fragment counter. Id-less cues get a
             # unique base per block so distinct cues that happen to share a start
@@ -239,24 +340,9 @@ def _parse_vtt(path, merge_cues=1):
         if full_text:
             groups.append({"ts": entry["ts"], "speaker": entry["speaker"], "text": full_text})
 
-    # Merge consecutive same-speaker groups into turns
-    turns = _merge_speaker_turns(groups, merge_cues)
-
-    seq = 0
-    for turn in turns:
-        seq += 1
-        ts = turn["ts"]
-        # MM:SS from HH:MM:SS[.mmm] -- strip fractional, split on colon, take last two parts
-        parts = ts.split(".")[0].split(":")
-        if len(parts) >= 2:
-            label = "%s:%s" % (parts[-2].zfill(2), parts[-1].zfill(2))
-        else:
-            label = ts[:5]
-        speaker = turn["speaker"]
-        who = (" — %s" % speaker) if speaker else ""
-        marker = ("<!-- speaker: %s -->\n\n" % speaker) if speaker else ""
-        lines_out.append("\n## %s%s (cue %d)\n\n%s%s\n" % (label, who, seq, marker, turn["text"]))
-    return "\n".join(lines_out)
+    # Merge consecutive same-speaker groups into turns, then fold interjections
+    turns = _fold_interjections(_merge_speaker_turns(groups, merge_cues), fold)
+    return _render_turn_sections(_pack_turns(turns, pack, _vtt_label), _vtt_label)
 
 
 def _parse_ai_dial_json(path):
@@ -331,6 +417,28 @@ def _speaker_and_text(text: str) -> tuple[str, str]:
         if lead not in _NON_SPEAKER_PREFIXES:
             return name, labelled.group(2).strip()
     return "", re.sub(r"</?v[^>]*>", "", text).strip()
+
+
+def _clean_cue_text(text):
+    """Drop WebVTT inline markup (<b>, <i>, <u>, <c.class>, <lang ..>, <ruby>, <rt>, cue timestamps
+    <00:01.000>) and decode HTML entities (&amp; -> &). Speaker <v> tags are handled by _speaker_and_text.
+
+    Per the WebVTT spec, only <v …> and <lang …> carry a space-separated annotation; <b>, <i>,
+    <u>, <c>, <ruby>, <rt> take only an optional .class suffix — a broader pattern would swallow
+    literal spoken text shaped like a tag (e.g. "<i can't believe it>") as silent word loss.
+
+    html.unescape can turn `&#10;`/`&NewLine;` (or `&#13;`) into a real newline/carriage
+    return, which would otherwise let a decoded entity open a live `##`/`#` heading inside a
+    transcript section (seeding parent_heading/breadcrumb_path — the CLAUDE.md preamble/H1
+    invariant) or split a multi-turn pack's one-paragraph-per-turn format. Collapsing
+    whitespace after unescaping is golden-safe: cue rows are already splitlines()-joined
+    before this runs, so no newline survives in today's corpus.
+    """
+    import html, re
+    cleaned = html.unescape(re.sub(
+        r"</?(?:b|i|u|c|ruby|rt)(?:\.[\w.-]+)?>|</?lang(?:\.[\w.-]+)?(?:\s[^<>]*)?>|<\d{2}:[\d:.]+>",
+        "", text))
+    return " ".join(cleaned.split())
 
 
 def _parse_text(path):
@@ -416,7 +524,7 @@ def _parse_html(path, min_text=HTML_MIN_TEXT):
     return md, "pymupdf-html"
 
 
-def parse_one(path, xlsx_max_mb, sample_rows, merge_cues=1):
+def parse_one(path, xlsx_max_mb, sample_rows, merge_cues=1, fold=0, pack=0):
     ext = os.path.splitext(path)[1].lower()
     size_mb = os.path.getsize(path) / 1e6
     if ext in (".pptx", ".docx", ".ppt", ".doc"):
@@ -430,9 +538,9 @@ def parse_one(path, xlsx_max_mb, sample_rows, merge_cues=1):
         row_limit = None if size_mb <= xlsx_max_mb else sample_rows
         return parse_xlsx_structure(path, row_limit), "openpyxl-structure"
     if ext == ".srt":
-        return _parse_srt(path, merge_cues=merge_cues), "transcript-etl"
+        return _parse_srt(path, merge_cues=merge_cues, fold=fold, pack=pack), "transcript-etl"
     if ext == ".vtt":
-        return _parse_vtt(path, merge_cues=merge_cues), "transcript-etl"
+        return _parse_vtt(path, merge_cues=merge_cues, fold=fold, pack=pack), "transcript-etl"
     if ext == ".json":
         return _parse_ai_dial_json(path), "ai-dial-json"
     if ext in (".md", ".markdown", ".txt"):
@@ -441,6 +549,14 @@ def parse_one(path, xlsx_max_mb, sample_rows, merge_cues=1):
         md, how = _parse_html(path)
         return (md or None), how
     return None, "skipped"
+
+def registered_paths(db: str, root_key: str) -> set[str]:
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        rows = con.execute("SELECT relative_path FROM sources WHERE root_key=? AND state='active'", (root_key,)).fetchall()
+    finally:
+        con.close()
+    return {r[0] for r in rows}
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
@@ -452,9 +568,19 @@ def main(argv=None):
                     help="comma-separated extensions (no dot) to include")
     ap.add_argument("--merge-cues", type=int, default=1,
                     help="join N consecutive same-speaker VTT/SRT cues into one chunk (default: 1 = per-cue)")
+    ap.add_argument("--registry-db", help="parse only files registered as active sources in this store's source registry")
+    ap.add_argument("--root-key", help="source registry root key that --corpus points at (with --registry-db)")
+    ap.add_argument("--fold-interjections", type=int, default=0,
+                    help="VTT/SRT: fold a turn shorter than N chars (\"Mhm.\", \"Three.\") into the previous "
+                         "turn as \"[Speaker: text]\" instead of its own chunk (default: 0 = off)")
+    ap.add_argument("--pack-turns", type=int, default=0,
+                    help="VTT/SRT: group consecutive turns into one section up to N chars (default: 0 = off)")
     ap.add_argument("--verbose", action="store_true",
                     help="print the full traceback for a file that fails to parse (default: one line per file)")
     a = ap.parse_args(argv)
+    if bool(a.registry_db) != bool(a.root_key):
+        ap.error("--registry-db and --root-key go together")
+    registered = registered_paths(a.registry_db, a.root_key) if a.registry_db else None
     allow = {"." + e.strip().lower().lstrip(".") for e in a.formats.split(",") if e.strip()}
     os.makedirs(a.out, exist_ok=True)
     manifest = []
@@ -477,8 +603,15 @@ def main(argv=None):
                 if os.path.exists(stale):
                     os.remove(stale)
                 continue
+            if registered is not None and rel.replace(os.sep, "/") not in registered:
+                manifest.append({"source": rel, "skipped": True, "method": "unregistered"})
+                stale = os.path.join(a.out, rel.replace(os.sep, "__") + ".md")
+                if os.path.exists(stale):
+                    os.remove(stale)
+                continue
             try:
-                md, method = parse_one(src, a.xlsx_max_mb, a.sample_rows, merge_cues=a.merge_cues)
+                md, method = parse_one(src, a.xlsx_max_mb, a.sample_rows, merge_cues=a.merge_cues,
+                                       fold=a.fold_interjections, pack=a.pack_turns)
                 if not md:
                     manifest.append({"source": rel, "skipped": True, "method": method})
                     continue

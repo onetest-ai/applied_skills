@@ -246,7 +246,8 @@ def build_plan(con: sqlite3.Connection, config: dict[str, Any], root_filter: str
     roots_out, actions = [], []
     # Same content (SHA-256) present at multiple live paths — the classic
     # SharePoint/OneDrive/Drive sync artifact that would register (and render +
-    # embed) the same document several times. Advisory only; never auto-collapsed.
+    # embed) the same document several times. Only the canonical copy is added;
+    # the others become skip_duplicate (see _skip_duplicates).
     present_by_sha: dict[str, list[dict[str, str]]] = {}
     selected = [root_filter] if root_filter else sorted(config["roots"])
     for key in selected:
@@ -296,8 +297,25 @@ def build_plan(con: sqlite3.Connection, config: dict[str, Any], root_filter: str
                             "relative_path": rel, "sha256": registered[rel]["source_sha256"]})
     duplicates = [{"sha256": digest, "paths": sorted(paths, key=lambda p: (p["root_key"], p["relative_path"]))}
                   for digest, paths in sorted(present_by_sha.items()) if len(paths) > 1]
+    actions = _skip_duplicates(actions, [g["paths"] for g in duplicates], {(r["root_key"], r["relative_path"]) for r in rows})
     return {"version": 1, "created_at": utcnow(), "config_sha256": config_fingerprint(config["path"]),
             "roots": roots_out, "actions": actions, "duplicate_content": duplicates}
+
+
+def _skip_duplicates(actions: list[dict[str, object]], duplicate_paths: list[list[dict[str, str]]],
+                     registered: set[tuple[str, str]]) -> list[dict[str, object]]:
+    """Canonical copy = the registered path if one is, else the first (root_key, relative_path)."""
+    canonical: dict[tuple[str, str], dict[str, str]] = {}
+    for paths in duplicate_paths:
+        keep = next((p for p in paths if (p["root_key"], p["relative_path"]) in registered), paths[0])
+        for p in paths:
+            if p != keep:
+                canonical[(p["root_key"], p["relative_path"])] = keep
+    out: list[dict[str, object]] = []
+    for item in actions:
+        keep = canonical.get((str(item["root_key"]), str(item["relative_path"]))) if item["action"] == "add" else None
+        out.append({**item, "action": "skip_duplicate", "duplicate_of": keep} if keep else item)
+    return out
 
 
 def json_out(value: Any) -> None:

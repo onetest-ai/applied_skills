@@ -322,7 +322,7 @@ Prepare batches in a fresh run-specific directory. `classify_write.py` reads eve
 CLASSIFY_RUN="$PROJECT/classify/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$CLASSIFY_RUN"
 "$PY" "$SKILLS/corpus-taxonomy-extraction/classify_prep.py" \
-  --db "$DB" --taxonomy "$TAX" --out "$CLASSIFY_RUN" --batches 8
+  --db "$DB" --taxonomy "$TAX" --out "$CLASSIFY_RUN"
 ```
 
 For each `classify/batch_K.json`, dispatch one Sonnet text subagent. Its contract:
@@ -490,7 +490,7 @@ Extract `reclassify_chunk_ids` from `sync_plan.json` and pass them to:
 ```bash
 "$PY" "$SKILLS/corpus-taxonomy-extraction/classify_prep.py" \
   --db "$DB" --taxonomy "$TAX" --out "$CLASSIFY_UPDATE_RUN" \
-  --chunks <comma-separated-ids> --batches <N>
+  --chunks <comma-separated-ids>
 ```
 
 `CLASSIFY_UPDATE_RUN` must be a new empty directory for this update. Dispatch and validate classification subagents as above, then:

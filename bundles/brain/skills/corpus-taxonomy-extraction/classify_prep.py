@@ -11,21 +11,53 @@ Reads `chunks` from the knowledge SQLite, writes:
   <out>/instructions.md   — the classification task
   <out>/batch_<k>.json     — [{id, source, title, preview}] for subagent k
 
+Batches hold at most --max-chunks chunks and --max-bytes bytes, so one agent's reply stays
+under the 32K output-token limit and its batch file is read in one Read call; --batches is
+only a minimum.
+
 Usage: classify_prep.py --db knowledge.sqlite --taxonomy taxonomy_v0.json --out <dir> [--batches 5] [--preview 400]
+                        [--max-chunks 150] [--max-bytes 60000]
 """
-import argparse, json, os, sqlite3, sys
+import argparse, json, math, os, sqlite3, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from taxo_io import one_line
 
-def main():
+BatchItem = dict[str, int | str]
+
+
+def _serialized_size(batch: list[BatchItem]) -> int:
+    return len(json.dumps(batch, indent=1).encode())
+
+
+def _fit(batch: list[BatchItem], max_bytes: int) -> list[list[BatchItem]]:
+    if len(batch) <= 1 or _serialized_size(batch) <= max_bytes:
+        return [batch]
+    mid = len(batch) // 2
+    return _fit(batch[:mid], max_bytes) + _fit(batch[mid:], max_bytes)
+
+
+def split_batches(items: list[BatchItem], max_chunks: int, max_bytes: int, min_batches: int) -> list[list[BatchItem]]:
+    if not items:
+        return []
+    # Size the count for both caps up front; _fit only splits a batch that uneven items still overflow.
+    by_bytes = math.ceil(_serialized_size(items) / max(1, max_bytes))
+    n = min(len(items), max(1, min_batches, math.ceil(len(items) / max(1, max_chunks)), by_bytes))
+    size = math.ceil(len(items) / n)
+    groups = [items[k * size:(k + 1) * size] for k in range(n)]
+    return [part for g in groups if g for part in _fit(g, max_bytes)]
+
+
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True); ap.add_argument("--taxonomy", required=True)
     ap.add_argument("--out", required=True); ap.add_argument("--batches", type=int, default=5)
     ap.add_argument("--preview", type=int, default=400)
+    ap.add_argument("--max-chunks", type=int, default=150, help="most chunks per batch (default 150)")
+    ap.add_argument("--max-bytes", type=int, default=60000, help="most bytes per batch file (default 60000)")
     ap.add_argument("--docs", help="comma list of source relpaths — prep ONLY these docs' chunks (incremental reclassify)")
     ap.add_argument("--chunks", help="comma list of chunk ids — prep ONLY these chunks (incremental reclassify)")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     os.makedirs(a.out, exist_ok=True)
     tax = json.load(open(a.taxonomy))
     it = tax.get("intent_taxonomy", {})
@@ -68,14 +100,12 @@ def main():
     rows = con.execute(f"SELECT id, source, title, substr(text,1,?) FROM chunks{where} ORDER BY id", params).fetchall()
     if not rows:
         print(f"no chunks match — nothing to classify -> {a.out}"); return
-    n = max(1, a.batches)
-    size = (len(rows) + n - 1) // n
-    for k in range(n):
-        batch = rows[k*size:(k+1)*size]
-        if not batch: break
-        items = [{"id": r[0], "source": r[1], "title": r[2], "preview": " ".join((r[3] or "").split())} for r in batch]
-        json.dump(items, open(os.path.join(a.out, f"batch_{k}.json"), "w"), indent=1)
-    print(f"prepared {len(rows)} chunks into {min(n, (len(rows)+size-1)//size)} batches -> {a.out}")
+    items: list[BatchItem] = [{"id": r[0], "source": r[1], "title": r[2], "preview": " ".join((r[3] or "").split())} for r in rows]
+    batches = split_batches(items, a.max_chunks, a.max_bytes, a.batches)
+    for k, batch in enumerate(batches):
+        json.dump(batch, open(os.path.join(a.out, f"batch_{k}.json"), "w"), indent=1)
+    print(f"prepared {len(rows)} chunks into {len(batches)} batches "
+          f"(<= {a.max_chunks} chunks, <= {a.max_bytes} bytes each) -> {a.out}")
 
 if __name__ == "__main__":
     main()

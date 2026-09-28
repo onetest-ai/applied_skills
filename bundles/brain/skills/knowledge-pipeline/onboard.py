@@ -306,7 +306,12 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     # 1a · parse transcripts → Markdown (VTT/SRT corpora only — skip if no transcripts)
     #      --merge-cues joins same-speaker cues into speaker turns; omitting it produces
     #      ~25k single-line chunks that agents classify as [] and retrieval quality collapses.
-    "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats vtt,srt --merge-cues 10
+    #      --fold-interjections N folds a turn shorter than N chars ("Mhm.", "Three.") into the
+    #      previous turn as "[Speaker: text]" instead of its own chunk. --pack-turns N groups
+    #      consecutive turns into one section up to N chars, one "MM:SS Speaker: text" paragraph
+    #      per turn — keep N below the indexer's --max-chars (default 1200). Measured on one
+    #      corpus (77 VTT/SRT files, these flags, indexed at 1200 max-chars): 2,978 chunks total.
+    "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats vtt,srt --merge-cues 10 --fold-interjections 20 --pack-turns 1000
 
     # 1b · parse narrative docs → Markdown (pymupdf text; visual pages via visual-parse)
     #      If the corpus has meeting recordings, run step 1m (below) BEFORE this step, so a
@@ -348,7 +353,7 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     "$PY" "{CTE/'build_graph.py'}" --taxonomy "{proj/'taxonomy'/'current.json'}" --db "$DB"
 
     # 5 · 🤖 per-section tags — prep, dispatch Sonnet subagents, write
-    "$PY" "{CTE/'classify_prep.py'}" --db "$DB" --taxonomy "{proj/'taxonomy'/'current.json'}" --out "{proj/'classify'}" --batches 25
+    "$PY" "{CTE/'classify_prep.py'}" --db "$DB" --taxonomy "{proj/'taxonomy'/'current.json'}" --out "{proj/'classify'}"
     #     → N Sonnet subagents read classify/{{instructions,vocab,batch_k}} → write classify/result_k.json
     "$PY" "{CTE/'classify_write.py'}" --db "$DB" --results "{proj/'classify'}"
 
