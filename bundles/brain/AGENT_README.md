@@ -604,36 +604,6 @@ For a long build, keep a small execution log in the brain project, for example:
 
 After each phase record commands, inputs, counts, failures, and next action. On resume, inspect disk and the last checkpoint before launching more subagents. Do not duplicate a batch already represented by a valid result file.
 
-## Hand-off mode (unattended nightly runs)
-
-For a Brain that a Scribe project rebuilds documents against on a schedule, `brain-maintenance`
-has a non-interactive mode meant to run headless, right before `/scribe:run --due` in the same
-cron/launchd invocation (see `bundles/scribe/README.md`'s Scheduling section for the exact chained
-command and its `--permission-mode bypassPermissions` rationale):
-
-```bash
-"$PY" "$SKILLS/brain-maintenance/maintenance.py" status --profile <profile.json> > status.json
-"$PY" "$SKILLS/brain-maintenance/maintenance.py" handoff --profile <profile.json> \
-  --status status.json --out handoff-report.json
-# or, when status itself couldn't be produced (e.g. a source root is offline):
-"$PY" "$SKILLS/brain-maintenance/maintenance.py" handoff --profile <profile.json> \
-  --abort-reason "root_unavailable: <root>" --out handoff-report.json
-```
-
-`handoff` classifies the pending update (never both `--status` and `--abort-reason` — exactly
-one) and writes a decision report: `applied`, `deferred`, or `abort_reasons` (a stale-taxonomy
-provisional marker, a blocked-missing-parsed source, a strict-source error, or an unreachable
-root all abort rather than apply something half-safe). Pass `--apply-plan <path>` to additionally
-write a filtered apply plan (only the actions `handoff` itself classified as safe to apply) that
-`source apply --plan <path>` then executes — this is the *only* mutation path hand-off mode takes;
-it never calls a broader apply than what it explicitly planned.
-
-Downstream, a `brain_sync` run — attended or via hand-off — always UPSERTs `meta.built_at` (an
-ISO-8601 UTC timestamp) on success; that field, not a file mtime or a build log, is what a
-consumer like Scribe reads to know how fresh this Brain's answers are, and what its own
-stale-Brain preflight compares against before deciding whether to draft against the last good
-build.
-
 ## Human-facing completion report
 
 End with a concise report containing:
@@ -658,16 +628,35 @@ across the plugin boundary:
   it lets a published document re-enter the corpus as source material. `source_registry.
   is_scribe_artifact` also skips any file carrying the `scribe-task` marker as a second,
   independent guard.
-- **`meta.built_at`.** `brain_sync`'s apply step UPSERTs this on every successful build/refresh —
-  it's the timestamp Scribe's hand-off mode and preflight read to decide whether the last night's
-  Brain refresh actually happened. Don't write to `meta.built_at` from anywhere except
-  `brain_sync.write_built_at`.
+- **`meta.built_at`.** `brain_sync`'s apply (or seed) step UPSERTs this on every successful
+  build/refresh. Don't write to `meta.built_at` from anywhere except `brain_sync.write_built_at`.
+  It is **not** what Scribe's preflight keys off directly — the only reader is `maintenance.py
+  handoff`, which copies it into the `built_at` field of the report it writes; Scribe's own
+  `doctor.brain_handoff.stale_brain` looks at the latest report's `decision` and its **file
+  name** being dated today, never at `meta.built_at` itself (see the profile/`--out` note below).
 - **Unattended hand-off mode.** `brain-maintenance`'s `maintenance.py handoff` subcommand (see
   its own `SKILL.md`, "Unattended hand-off mode") is what a nightly cron/launchd chain
-  (`scribe.py schedule`) runs before `/scribe:run --due`: it classifies `build_status`'s plan into
-  `apply`/`defer`/`abort`, applies only the safe additions itself, and always leaves a dated
-  report (even on failure, via `--abort-reason`) so a missing report never reads as a fresh
-  Brain. It never resolves a taxonomy ambiguity or force-deploys — those stay a human's job in
-  the next interactive session.
+  (`scribe.py schedule`) runs before `/scribe:run --due`. The profile is a **TOML** file
+  (`--profile brain-maintenance.toml`, not JSON), and `--out` **must** be a dated
+  `ops/handoff/<YYYY-MM-DD>.json` path — Scribe's preflight (`doctor.py`) finds the latest report
+  by lexically sorting `*.json` in `brain_handoff_dir` and reads it as stale unless its filename
+  stem is today's date, so a fixed name like `handoff-report.json` would sort after every dated
+  report and never register as fresh OR as stale:
+  ```bash
+  "$PY" "$SKILLS/brain-maintenance/maintenance.py" status --profile brain-maintenance.toml \
+    --out "$PROJECT/.brain-maintenance/runs/status.json"
+  "$PY" "$SKILLS/brain-maintenance/maintenance.py" handoff --profile brain-maintenance.toml \
+    --status "$PROJECT/.brain-maintenance/runs/status.json" \
+    --out "$PROJECT/ops/handoff/$(date +%Y-%m-%d).json"
+  # or, when status itself couldn't be produced (e.g. a source root is offline):
+  "$PY" "$SKILLS/brain-maintenance/maintenance.py" handoff --profile brain-maintenance.toml \
+    --abort-reason "root_unavailable: <root>" --out "$PROJECT/ops/handoff/$(date +%Y-%m-%d).json"
+  ```
+  `handoff` classifies the plan into `apply`/`defer`/`abort` (the `decision` field; a stale
+  provisional taxonomy, a blocked parsed delta, a strict-source error, or an unreachable root all
+  abort), never resolves a taxonomy ambiguity or force-deploys, and mutates the source registry
+  only via a separate `source apply --plan <path>` built from `--apply-plan`'s output — those
+  stay a human's job (or this exact chain) in the next interactive session. The Scribe project's
+  `scribe.toml` `brain_handoff_dir` must point at this same `ops/handoff` directory.
 
 Do not say “incremental update complete” if only `brain_sync apply` ran while changed visual sources were never rendered and assembled.

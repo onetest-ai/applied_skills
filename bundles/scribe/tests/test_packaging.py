@@ -38,6 +38,9 @@ def test_marketplace_lists_scribe_with_plugin_version():
 def test_mermaid_cli_is_pinned():
     from scribe_lib import render
     assert render.MERMAID_CLI == "@mermaid-js/mermaid-cli@12.0.0"
+    src = (SCRIBE / "skills" / "run" / "scribe_lib" / "render.py").read_text() + \
+          (SCRIBE / "skills" / "run" / "scribe_lib" / "doctor.py").read_text()
+    assert not re.search(r'"@mermaid-js/mermaid-cli"', src)
 
 
 def test_docs_exist_and_versions_agree():
@@ -48,9 +51,6 @@ def test_docs_exist_and_versions_agree():
     assert market["metadata"]["version"] == "0.10.0"
     claude_md = (REPO_ROOT / "CLAUDE.md").read_text()
     assert "bundles/scribe" in claude_md and "pytest bundles/scribe/tests" in claude_md
-    src = (SCRIBE / "skills" / "run" / "scribe_lib" / "render.py").read_text() + \
-          (SCRIBE / "skills" / "run" / "scribe_lib" / "doctor.py").read_text()
-    assert not re.search(r'"@mermaid-js/mermaid-cli"', src)
 
 
 def test_skills_do_not_describe_a_permission_sandbox():

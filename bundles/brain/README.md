@@ -535,11 +535,15 @@ checks it as a second, independent guard even if the `exclude` glob is ever miss
 mis-scoped. If you see a Scribe output folder listed as a normal source in `brain source
 status`, run `guard-brain` again (or add the exclude glob by hand) before the next build.
 
-**`meta.built_at`.** Every successful `brain_sync` apply (`brain_sync.write_built_at`) UPSERTs
-an ISO-8601 UTC timestamp into the store's `meta` table under `built_at`. This is how Scribe (and
-`brain-maintenance`'s own hand-off mode) tell "the Brain finished a build/refresh" apart from
-"the Brain exists" — a stale `built_at` is what a hand-off report's staleness check and Scribe's
-`doctor.brain_handoff.stale_brain` both key off.
+**`meta.built_at`.** Every successful `brain_sync` apply (or seed) UPSERTs an ISO-8601 UTC
+timestamp into the store's `meta` table under `built_at` (`brain_sync.write_built_at`). The only
+reader is `maintenance.py handoff`, which copies it verbatim into the `built_at` field of the
+hand-off report it writes (`_read_built_at`, `maintenance.py`). Scribe itself never opens the
+Brain to read `meta.built_at` — its own `doctor.brain_handoff.stale_brain` is computed purely
+from the hand-off report: the **latest report's `decision`** (`abort` ⇒ stale) and its **file
+name** (`ops/handoff/<YYYY-MM-DD>.json` — no report dated today ⇒ stale). `built_at` rides along
+in that report as a human-readable "as of" timestamp; it is not itself part of Scribe's
+staleness check.
 
 **The hand-off runbook.** For an unattended nightly chain (`scribe.py schedule` prints the cron
 line / launchd plist for this), `brain-maintenance` exposes `maintenance.py handoff`: it reads
@@ -581,32 +585,6 @@ These deps live in a venv that **belongs to the skills, not your project** — k
 Use `--user` to build **one shared venv reused by every project** instead of a venv per project. The generated `BRAIN.md` and scripts then run under that interpreter (`BRAIN_PY`). Zero-install alternative (no venv, uv caches the deps): `uv run --with-requirements requirements.txt python <script>`.
 
 The map/classify steps assume a subagent mechanism with a model override (e.g. Sonnet); on another harness, substitute a Sonnet-class model that can read a file and emit JSON.
-
-## Scribe: living documents built on this Brain
-
-The `scribe` plugin (`bundles/scribe`) drafts scheduled, versioned, cited docx/pdf documents
-against a Brain plus a synced raw-evidence folder — a third consumer of `knowledge.sqlite`,
-alongside `kb` and any hosted MCP client. Three things about a Brain matter once Scribe is in
-the picture:
-
-- **The loop guard.** Scribe stamps every docx/pptx/xlsx/pdf/md it publishes with a
-  `scribe-task` marker (a custom document property, PDF keyword, or first-line comment
-  respectively), and this Brain's `source_registry.is_scribe_artifact` checks that same marker
-  to skip Scribe's own output — so a Scribe document published into a synced folder this Brain
-  also watches is never re-ingested as if it were new source material. Belt-and-suspenders:
-  Scribe's `guard-brain` command additionally adds the task's output path as an `exclude` glob in
-  `brain.toml`, for a Brain root that hasn't picked up the marker check yet (or as a second,
-  visible line of defense).
-- **`meta.built_at`.** Every successful `brain_sync` UPSERTs an ISO-8601 UTC timestamp into
-  `meta.built_at` — the one field Scribe (and hand-off mode) read to know how fresh "this Brain"
-  is, without re-deriving it from file mtimes or a build log.
-- **Hand-off mode.** For an unattended nightly schedule, `brain-maintenance handoff` classifies
-  and (optionally) applies this Brain's pending updates non-interactively, then reports a
-  decision (`applied`/`deferred`/`abort_reasons`) that Scribe's own preflight reads before
-  drafting — so a run against a Brain that failed to refresh still makes progress against the
-  last good build instead of blocking the whole night's documents on an unrelated Brain-side
-  failure. See `bundles/scribe/README.md`'s Scheduling section for the chained cron/launchd
-  command this pairs with.
 
 ## Generic vs project-specific
 

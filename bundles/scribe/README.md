@@ -44,6 +44,12 @@ and a reachable Brain:
 /scribe:tasks                # list tasks, check status, enable/disable, promote to a template
 ```
 
+`promote <task> --as <template-id>` refuses to overwrite an existing template id unless you pass
+`--force` (every instance still pinned to the old version keeps working; the template file
+itself resets to version 1). Only prose fields (`goal`, `inputs`, and each section's
+`title`/`intent`/`queries`/`must`) get `{{param}}` substituted for the instance's param values —
+every id (`id`, section `id`s), `kind`, `lanes` and `acceptance` is copied byte-for-byte.
+
 `/scribe:onboard` is interactive — it asks one question at a time (purpose, starting point,
 scope, evidence, output, acceptance, operations), shows a per-section Brain/raw evidence
 coverage table before drafting anything, and always trial-runs the new task in propose mode
@@ -58,16 +64,17 @@ One `scribe.toml` per Scribe project, next to `tasks/` and `out/`:
 
 ```toml
 [project]
-brain_db      = "../brain-project/knowledge.sqlite"   # the store the scripts read directly
-brain_catalog = "../brain-project/schema/metrics.json"
-brain_skills  = "/path/to/applied_skills/bundles/brain/skills"  # brain bundle's skills dir (parse_corpus.py, chunking.py)
-brain_mcp_dir = "/path/to/applied_skills/mcp/brain"              # mcp/brain checkout (semantic_core.py)
+brain_db      = "../brain-project/knowledge.sqlite"   # required — the store the scripts read directly
+brain_catalog = "../brain-project/schema/metrics.json"                 # required
+brain_skills  = "/path/to/applied_skills/bundles/brain/skills"         # required — brain bundle's skills dir (parse_corpus.py, chunking.py)
+brain_mcp_dir = "/path/to/applied_skills/mcp/brain"                    # required — mcp/brain checkout (semantic_core.py)
 out_root      = "out"          # default "out" — published docx/pdf + lineage + run reports
 tasks_dir     = "tasks"        # default "tasks" — one *.task.md per document
-templates_dir = "templates"    # project templates, ADDED to the library templates in skills/run/templates/
+templates_dir = "/path/to/applied_skills/bundles/scribe/skills/run/templates"  # required — the LIBRARY templates dir
 raw_root      = "raw-replay"   # default "raw-replay" — the synced folder of raw evidence
 work_dir      = "work"         # default "work" — scratch space, cleared per task per run
-brain_handoff_dir = "../brain-project/out/_handoff"   # optional — hand-off mode reports (A1)
+brain_handoff_dir = "../brain-project/ops/handoff"   # optional — hand-off mode reports (A1); must be the
+                                                      # SAME dated-report dir the Brain's `handoff --out` writes to
 
 [run]
 top_k              = 8    # default 8  — evidence items fetched per section query
@@ -80,12 +87,20 @@ enabled = true
 tasks   = ["domain-profile--*", "subsystem-profile--*"]   # fnmatch globs against task id
 ```
 
-`brain_db`/`brain_catalog`/`brain_skills`/`brain_mcp_dir`/`out_root`/`tasks_dir`/`templates_dir`/
-`raw_root`/`work_dir` all resolve relative to the project dir unless absolute.
-`SCRIBE_BRAIN_DB`/`SCRIBE_NOW` environment variables override `brain_db`/today's date, mainly
-for tests. A group's `tasks` list is `fnmatch` globs matched against task ids — including
-fan-out children, whose ids are `<parent>--<taxonomy-node-id>` (never `[node]`: brackets break
-`[TASK:...]` citation tags and glob matching alike).
+`brain_db`, `brain_catalog`, `brain_skills`, `brain_mcp_dir` and `templates_dir` are **required** —
+`scribe.toml` fails to load without them. `templates_dir` is the **library** templates dir (ship
+with the plugin, or wherever your checkout keeps `bundles/scribe/skills/run/templates`); a
+project's own `<project>/templates/` is picked up automatically whenever that directory exists,
+*in addition to* `templates_dir` — you never point `templates_dir` at the project dir itself, or
+the library templates (`domain-profile`, `subsystem-profile`, `raid`, …) disappear.
+`out_root`/`tasks_dir`/`raw_root`/`work_dir` default as shown. All paths resolve relative to the
+project dir unless absolute. `SCRIBE_BRAIN_DB`/`SCRIBE_NOW` environment variables override
+`brain_db`/today's date, mainly for tests. A group's `tasks` list is `fnmatch` globs matched
+against task ids — including fan-out children, whose ids are `<parent>--<taxonomy-node-id>`
+(never `[node]`: brackets break `[TASK:...]` citation tags and glob matching alike). **A new
+fan-out child never runs on its own** — it expands `enabled: false` and is listed under
+`plan`/`list`'s `new_fanout_children` until `scribe.py --project . enable <child id>` records the
+approval on its parent task's `approved_children:`.
 
 ## Artifacts tree
 
@@ -114,9 +129,9 @@ work/
 ## Scheduling
 
 ```bash
-scribe.py schedule --time 02:00                          # a crontab line
-scribe.py schedule --time 02:00 --launchd                 # a launchd plist (macOS)
-scribe.py schedule --brain-project <brain project dir>    # chain a Brain hand-off first
+scribe.py --project . schedule --time 02:00                          # a crontab line
+scribe.py --project . schedule --time 02:00 --launchd                 # a launchd plist (macOS)
+scribe.py --project . schedule --brain-project <brain project dir>    # chain a Brain hand-off first
 ```
 
 `schedule` only **prints** text — it never touches `crontab`/`launchctl` itself; installing what
@@ -155,6 +170,11 @@ silent unattended failure still leaves evidence.
   text above the first section, or renamed/deleted a section heading. `prepare` fails with the
   offending headings/detail listed; the published version stays untouched until the docx is
   fixed.
+- **`guard-brain` printed a `manual` line instead of editing `brain.toml`.** It only auto-edits an
+  `exclude` list written as its own `[sources.roots.<key>]` table; a root declared as a
+  single-line inline table (`<key> = { ... }`) can't be safely rewritten by a script, so
+  `guard-brain` returns a hint line to paste in yourself for that root rather than guess at TOML
+  formatting. Do it, then re-run `guard-brain` to confirm.
 
 See `docs/scribe-guide.md` (repo root) for the document-owner's guide — what survives editing the
 docx in Word, reading the Changes block, and the propose/review flow.

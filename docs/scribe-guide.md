@@ -74,13 +74,22 @@ If a proposal is marked stale (a newer version was published in between, e.g. be
 task was also run manually), approving it is refused — ask for the task to be re-run instead so
 a fresh proposal is built against the current state.
 
+## When a new document appears on its own
+
+Some documents are configured to fan out one per item under a taxonomy node (e.g. one subsystem
+profile per subsystem the Brain knows about). When the Brain gains a new node under that kind of
+task, Scribe doesn't start publishing a document for it automatically — the new child arrives
+disabled and shows up under `/scribe:tasks`'s listing (`new_fanout_children`) until someone runs
+`enable` on it. If you were expecting a new document and don't see it, ask whoever runs Scribe to
+check that list — it's very likely just waiting for that one approval.
+
 ## "What depends on this file?"
 
 If a raw file or a Brain document changes and you want to know which published documents cite it
 before touching anything:
 
 ```
-scribe.py index --query "<raw-relative path, or a Brain document id>"
+scribe.py --project <scribe project dir> index --query "<raw-relative path, or a Brain document id>"
 ```
 
 It returns every task/version/section/claim that currently cites that source — including
