@@ -187,7 +187,8 @@ def test_merge_carries_claim_id_on_reword_and_assigns_new_id_for_new_text(tmp_pa
     assert overview["reworded"] == 1
     assert overview["added"] == 1
     assert overview["kept"] == 0
-    assert overview["dropped"] == 0
+    assert overview["dropped_by_check"] == 0
+    assert overview["dropped_by_model"] == 0
     assert overview["superseded"] == 0
 
     from scribe_lib.basedoc import split_by_section_id
@@ -226,7 +227,8 @@ def test_merge_dropped_vs_superseded_accounting(tmp_path):
     assert details["claims_before"] == 2
     assert details["claims_after"] == 1
     assert details["superseded"] == 1
-    assert details["dropped"] == 1
+    assert details["dropped_by_check"] == 0
+    assert details["dropped_by_model"] == 1
     assert details["kept"] == 0
     assert details["reworded"] == 0
     assert details["added"] == 0
@@ -271,7 +273,8 @@ def test_merge_kept_not_superseded_for_already_superseded_claim_carried_unchange
     assert details["superseded"] == 0
     assert details["added"] == 1
     assert details["reworded"] == 0
-    assert details["dropped"] == 0
+    assert details["dropped_by_check"] == 0
+    assert details["dropped_by_model"] == 0
 
 
 def test_merge_noop_when_nothing_changed(tmp_path):

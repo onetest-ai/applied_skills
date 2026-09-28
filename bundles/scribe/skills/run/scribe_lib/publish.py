@@ -71,21 +71,13 @@ from scribe_lib.merge import parse_header
 # version — the failure mode this task exists to close).
 _JOURNAL_STEPS = ("stage", "archive_previous", "place_new", "write_src", "write_state")
 
-
-def run_report_path(config: Config) -> Path:
-    """`out/_runs/<SCRIBE_NOW date>.json` — one run report per (replayed) day."""
-    return config.out_root / "_runs" / f"{config.now[:10]}.json"
-
-
-def append_run(config: Config, entry: dict[str, Any]) -> None:
-    """Append one row to the run report. Also used by `scribe.py report` for
-    rows publish never sees (noop, failures before publish, skipped tasks)."""
-    path = run_report_path(config)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    rows: list[dict[str, Any]] = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
-    rows.append(entry)
-    path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
-
+# `run_report_path`/`append_run` now live in `report.py` (A12 — that module
+# owns the run report end to end, including embedding each task's
+# `merge.json` counts onto its row). Re-imported here, not redefined, so
+# every existing `_append_run(...)` call in this file keeps working, and a
+# published row picks up its `merge` counts the same way `report --status`'s
+# rows do — through `append_run` itself, not a second code path.
+from scribe_lib.report import append_run, run_report_path  # noqa: E402
 
 _append_run = append_run
 

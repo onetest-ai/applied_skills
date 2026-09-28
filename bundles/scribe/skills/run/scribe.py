@@ -50,8 +50,9 @@ from scribe_lib.lineage import lineage_task  # noqa: E402
 from scribe_lib.merge import merge_task  # noqa: E402
 from scribe_lib.observe import observe_task  # noqa: E402
 from scribe_lib.pack import prepare_task  # noqa: E402
-from scribe_lib.publish import append_run, publish_task, run_report_path  # noqa: E402
+from scribe_lib.publish import publish_task  # noqa: E402
 from scribe_lib.raw import gather_raw_task  # noqa: E402
+from scribe_lib import report  # noqa: E402
 from scribe_lib.render import render_task  # noqa: E402
 
 NOT_IMPLEMENTED: tuple[str, ...] = ()
@@ -132,6 +133,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_report.add_argument("--stage", help="Step that ended the task, e.g. prepare, merge, accept, verifier")
     p_report.add_argument("--reason", help="Why (required with --status)")
+    p_report.add_argument(
+        "--summary", action="store_true",
+        help="Print operator metrics (A12): per-task churn + totals, aggregated from the run report",
+    )
+    p_report.add_argument("--date", help="Date (YYYY-MM-DD) for --summary; default today (SCRIBE_NOW)")
 
     return parser
 
@@ -288,7 +294,7 @@ def compute_plan(
     return {
         "status": "ok",
         "now": config.now,
-        "run_report": str(run_report_path(config)),
+        "run_report": str(report.run_report_path(config)),
         "order": order,
         "tasks": tasks_out,
         "notes": top_notes,
@@ -454,20 +460,21 @@ def cmd_doctor(config: Config) -> int:
 
 
 def cmd_report(config: Config, args: argparse.Namespace) -> int:
-    path = run_report_path(config)
+    if args.summary:
+        date = args.date or config.now[:10]
+        _print(report.summary(config, date))
+        return 0
+
+    path = report.run_report_path(config)
     if args.status:
         if not args.reason:
             raise ScribeError("report --status needs --reason")
-        task_id = args.task or "_run"
         if args.task:
             data = validate_all(config)
             if args.task not in data["instances"]:
                 raise ScribeError(f"unknown task '{args.task}'")
-        row: dict[str, Any] = {"task": task_id, "version": None, "status": args.status, "reasons": [args.reason]}
-        if args.stage:
-            row["stage"] = args.stage
-        append_run(config, row)
-    rows = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
+        report.record(config, task=args.task, status=args.status, reason=args.reason, stage=args.stage)
+    rows = report.rows(config)
     _print({"status": "ok", "run_report": str(path), "rows": rows})
     return 0
 

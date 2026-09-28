@@ -48,7 +48,7 @@ def test_invented_id_is_ignored_and_claim_matched_by_text(tmp_path):
     config, data = _setup(tmp_path, "Alpha fact about the widget. [RAG:1] <!-- c:aaaa0001 -->")
     m, blocks = _merge(config, data, "Alpha fact about the widgets. [RAG:1] <!-- c:deadbeef -->\n")
     assert blocks[0]["claim_id"] == "aaaa0001"
-    assert (m["reworded"], m["added"], m["dropped"]) == (1, 0, 0)
+    assert (m["reworded"], m["added"], m["dropped_by_check"], m["dropped_by_model"]) == (1, 0, 0, 0)
     assert "deadbeef" not in (config.work_dir / "m1" / "next.md").read_text()
 
 

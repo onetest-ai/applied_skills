@@ -32,8 +32,16 @@ by `check-file`) for every stale section — refusing if one is missing.
   claim sets per section (script-owned; the agent never drafts it).
 - `work/<task>/merge.json`: `{task, version, noop, sections: {sid: {status:
   "carried"|"drafted", claims_before, claims_after, kept, reworded, recited,
-  dropped, added, superseded, suppressed_tombstone}}}`. `dropped` = base claims
-  no draft claim matched.
+  added, superseded, dropped_by_check, dropped_by_model, suppressed_tombstone,
+  false_stale}}}` (spec A12; PoC finding I7). A base claim no draft claim
+  matched is `dropped_by_check` when its id or normalized text appears in
+  this run's `check-file.json.failed`, `check-task.json.failed` or
+  `verifier.json.rejected` (a deterministic check or the verifier is why it's
+  gone) — everything else `dropped_by_model` (the drafting model silently
+  dropped it). `false_stale` (a `"drafted"` section that redrafted and
+  changed nothing visible) is `status == "drafted" and added + reworded +
+  recited + superseded == 0` — a section can be false-stale and still have
+  drops; R4 keeps drops counted within `dropped_by_*` either way.
 - Tombstones (spec A8): a drafted claim whose `normalized` text equals a claim
   a person deleted from the published docx in this section
   (`base.json.human_deleted` ∪ `state.json.human_deleted`) is dropped before
@@ -51,6 +59,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 from scribe_lib import claims
@@ -101,8 +110,63 @@ def tombstones(base_json: dict[str, Any], state: dict[str, Any]) -> dict[str, se
     return out
 
 
+def _load_json(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+
+def _check_failure_keys(work_dir: Path) -> tuple[set[str], list[str]]:
+    """`(ids, texts)` gathered from this run's `check-file.json.failed`,
+    `check-task.json.failed` and `verifier.json.rejected` — every candidate
+    a dropped base claim can be attributed to (A12). Each entry's `claim`
+    (falling back to `claim_id`/`claim_ref` for a differently-shaped
+    producer) is a claim id (an 8-hex `c:xxxxxxxx`, with or without the
+    `c:` prefix) or, per `skills/run/SKILL.md` step 6, "`<c:id or first 8
+    words>`" — so it is recorded both as a candidate id and as normalized
+    text, and matched against a dropped base claim either way."""
+    ids: set[str] = set()
+    texts: list[str] = []
+    entries = (
+        _load_json(work_dir / "check-file.json").get("failed") or []
+    ) + (
+        _load_json(work_dir / "check-task.json").get("failed") or []
+    ) + (
+        _load_json(work_dir / "verifier.json").get("rejected") or []
+    )
+    for entry in entries:
+        candidate = entry.get("claim")
+        if candidate is None:
+            candidate = entry.get("claim_id")
+        if candidate is None:
+            candidate = entry.get("claim_ref")
+        if candidate is None:
+            continue
+        candidate = str(candidate)
+        ids.add(candidate[2:] if candidate.startswith("c:") else candidate)
+        texts.append(claims.normalize_text(candidate))
+    return ids, texts
+
+
+def _dropped_by_check(block: dict[str, Any], failed_ids: set[str], failed_texts: list[str]) -> bool:
+    claim_id = block.get("claim_id")
+    if claim_id and claim_id in failed_ids:
+        return True
+    normalized = block["normalized"]
+    return any(t and (normalized.startswith(t) or t.startswith(normalized)) for t in failed_texts)
+
+
 def _merge_drafted_section(
-    task_id: str, sid: str, base_body: str, draft_text: str, tombstoned: set[str] | frozenset[str] = frozenset()
+    task_id: str,
+    sid: str,
+    base_body: str,
+    draft_text: str,
+    tombstoned: set[str] | frozenset[str] = frozenset(),
+    failed_ids: set[str] | frozenset[str] = frozenset(),
+    failed_texts: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     base_blocks = [b for b in claims.parse_blocks(base_body) if claims.is_claim(b)]
     # A drafted claim a person deleted is dropped before matching — unless the
@@ -116,7 +180,9 @@ def _merge_drafted_section(
     results = {id(r["block"]): r for r in claims.match_claims(base_blocks, draft_blocks, task_id, sid)}
 
     counts = dict.fromkeys(("kept", "reworded", "recited", "added", "superseded"), 0)
-    examples: dict[str, list[str]] = {"added": [], "reworded": [], "recited": [], "dropped": [], "superseded": []}
+    examples: dict[str, list[str]] = {
+        "added": [], "reworded": [], "recited": [], "dropped_by_check": [], "dropped_by_model": [], "superseded": [],
+    }
     rendered: list[tuple[dict[str, Any], str]] = []
 
     for block in draft_blocks:
@@ -137,16 +203,27 @@ def _merge_drafted_section(
 
     matched = {id(r["base"]) for r in results.values() if r["base"] is not None}
     dropped_blocks = [b for b in base_blocks if id(b) not in matched]
+    dropped_by_check = 0
+    dropped_by_model = 0
     for b in dropped_blocks:
-        examples["dropped"].append(b["normalized"][:160])
+        if _dropped_by_check(b, failed_ids, failed_texts):
+            dropped_by_check += 1
+            examples["dropped_by_check"].append(b["normalized"][:160])
+        else:
+            dropped_by_model += 1
+            examples["dropped_by_model"].append(b["normalized"][:160])
+
+    false_stale = counts["added"] + counts["reworded"] + counts["recited"] + counts["superseded"] == 0
 
     return {
         "body": claims.render_blocks(rendered),
         "claims_before": len(base_blocks),
         "claims_after": sum(counts.values()),
         **counts,
-        "dropped": len(dropped_blocks),
+        "dropped_by_check": dropped_by_check,
+        "dropped_by_model": dropped_by_model,
         "suppressed_tombstone": suppressed,
+        "false_stale": false_stale,
         "examples": examples,
     }
 
@@ -163,7 +240,8 @@ def _render_changes(
         rep = section_reports[sid]
         if rep["status"] == "carried":
             continue
-        added, dropped, reworded, superseded = rep["added"], rep["dropped"], rep["reworded"], rep["superseded"]
+        added, reworded, superseded = rep["added"], rep["reworded"], rep["superseded"]
+        dropped = rep.get("dropped_by_check", 0) + rep.get("dropped_by_model", 0)
         recited = rep.get("recited", 0)
         if not (added or dropped or reworded or superseded or recited):
             continue
@@ -173,7 +251,7 @@ def _render_changes(
         )
         examples = examples_by_section.get(sid, {})
         shown = 0
-        for cat in ("superseded", "dropped", "reworded", "recited", "added"):
+        for cat in ("superseded", "dropped_by_check", "dropped_by_model", "reworded", "recited", "added"):
             for ex in examples.get(cat, []):
                 if shown >= 5:
                     break
@@ -237,6 +315,7 @@ def merge_task(
 
     state = read_state(config, instance)
     tombstoned = tombstones(base_json, state)
+    failed_ids, failed_texts = _check_failure_keys(work_dir)
 
     sections_dir = work_dir / "sections"
     for sid in sorted(stale_ids):
@@ -255,7 +334,8 @@ def merge_task(
         if sid in stale_ids:
             draft_text = (sections_dir / f"{sid}.md").read_text(encoding="utf-8")
             report = _merge_drafted_section(
-                task_id, sid, base_sections.get(sid, ""), draft_text, tombstoned.get(sid, frozenset())
+                task_id, sid, base_sections.get(sid, ""), draft_text, tombstoned.get(sid, frozenset()),
+                failed_ids, tuple(failed_texts),
             )
             next_bodies[sid] = report["body"]
             examples_by_section[sid] = report.pop("examples")
@@ -272,10 +352,12 @@ def merge_task(
                 "kept": claim_count,
                 "reworded": 0,
                 "recited": 0,
-                "dropped": 0,
                 "added": 0,
                 "superseded": 0,
+                "dropped_by_check": 0,
+                "dropped_by_model": 0,
                 "suppressed_tombstone": 0,
+                "false_stale": False,
             }
 
     prev_version = state.get("version") or 0
