@@ -185,7 +185,8 @@ def scan_corpus(config: str | None = None, corpus: str | None = None) -> dict:
             root = r["path"]
             if not root.is_dir():
                 continue
-            included = set(source_registry.iter_files(root, r["include"]).values())
+            disk, _skipped = source_registry.iter_files(root, r["include"], r.get("exclude", []))
+            included = set(disk.values())
             files += sorted(included)
             for p in sorted(root.rglob("*")):
                 if p.is_file() and p.suffix.lower() in VIDEO_EXT and p.resolve() not in included:

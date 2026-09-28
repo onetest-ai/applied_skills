@@ -215,6 +215,27 @@ def test_render_writes_docx_pdf_and_render_json(tmp_path, monkeypatch):
 
 
 @pytest.mark.skipif(not pandoc_available, reason="pandoc not installed")
+@pytest.mark.skipif(not soffice_available, reason="soffice/libreoffice not installed")
+def test_rendered_pdf_carries_scribe_marker(tmp_path, monkeypatch):
+    import fitz
+
+    config = _config(tmp_path)
+    monkeypatch.setattr(brain_mod, "evidence", _fake_evidence)
+
+    import scribe_lib.render as render_mod
+
+    monkeypatch.setattr(render_mod, "_run_mermaid", lambda mmd, png: (False, "skip diagram in this test"))
+    _write_next(config, "t1")
+    instances = {"t1": {"title": "Demo Title"}}
+
+    result = render_task(config, "t1", instances["t1"], instances)
+
+    pdf_path = config.work_dir / "t1" / "render" / result["pdf"]
+    with fitz.open(pdf_path) as d:
+        assert "scribe-task=t1" in d.metadata["keywords"]
+
+
+@pytest.mark.skipif(not pandoc_available, reason="pandoc not installed")
 def test_custom_property_lands_in_docx(tmp_path, monkeypatch):
     config = _config(tmp_path)
     monkeypatch.setattr(brain_mod, "evidence", _fake_evidence)

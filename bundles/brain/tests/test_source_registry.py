@@ -238,5 +238,49 @@ include = ["**/*.pdf"]
             self.assertIsNotNone(doc[1])
 
 
+class LoopGuardTests(SourceRegistryTests):
+    def _docx_with_scribe_property(self, path):
+        import zipfile
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr("[Content_Types].xml", "<Types/>")
+            z.writestr("docProps/custom.xml",
+                       '<Properties><property name="scribe-task"><vt:lpwstr>t1</vt:lpwstr></property></Properties>')
+
+    def test_exclude_glob_and_scribe_marker_are_skipped_with_reasons(self):
+        self.config.write_text(self.config.read_text().replace(
+            'include = ["**/*.pdf"]', 'include = ["**/*.pdf", "**/*.docx", "**/*.md"]\nexclude = ["**/_ai-docs/**"]'))
+        docs = self.root / "docs"
+        (docs / "_ai-docs").mkdir()
+        (docs / "_ai-docs" / "Profile.docx").write_bytes(b"x")
+        (docs / "moved").mkdir()
+        self._docx_with_scribe_property(docs / "moved" / "Copied Profile.docx")
+        (docs / "notes.md").write_text("<!-- scribe: task=t1 version=2 -->\n# T\n")
+        (docs / "real.pdf").write_bytes(b"%PDF-1.4")
+        cfg = R.load_config(self.config)
+        with sqlite3.connect(self.db) as con:
+            con.row_factory = sqlite3.Row
+            plan = R.build_plan(con, cfg)
+        added = {a["relative_path"] for a in plan["actions"] if a["action"] == "add"}
+        self.assertEqual(added, {"real.pdf"})
+        skipped = {(s["relative_path"], s["reason"]) for s in plan["skipped_generated"]}
+        self.assertEqual(skipped, {("_ai-docs/Profile.docx", "excluded"),
+                                   ("moved/Copied Profile.docx", "scribe_marker"),
+                                   ("notes.md", "scribe_marker")})
+
+    def test_pdf_keyword_marker_is_detected(self):
+        import fitz
+        pdf = self.root / "docs" / "p.pdf"
+        d = fitz.open(); d.new_page(); d.set_metadata({"keywords": "scribe-task=t9"}); d.save(pdf)
+        self.assertTrue(R.is_scribe_artifact(pdf))
+        plain = self.root / "docs" / "q.pdf"
+        d = fitz.open(); d.new_page(); d.save(plain)
+        self.assertFalse(R.is_scribe_artifact(plain))
+
+    def test_exclude_must_be_string_array(self):
+        self.config.write_text(self.config.read_text().replace('include = ["**/*.pdf"]', 'include = ["**/*.pdf"]\nexclude = "x"'))
+        with self.assertRaises(ValueError):
+            R.load_config(self.config)
+
+
 if __name__ == "__main__":
     unittest.main()

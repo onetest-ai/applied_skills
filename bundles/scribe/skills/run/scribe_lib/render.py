@@ -151,6 +151,16 @@ def _run_mermaid(mmd_path: Path, png_path: Path) -> tuple[bool, str | None]:
     return True, None
 
 
+def _stamp_pdf(pdf_path: Path, task_id: str) -> None:
+    import fitz
+
+    with fitz.open(pdf_path) as d:
+        meta = dict(d.metadata or {})
+        meta["keywords"] = f"scribe-task={task_id}"
+        d.set_metadata(meta)
+        d.saveIncr()
+
+
 def _reference_docx(config: Config) -> Path:
     for tdir in config.templates_dirs:
         candidate = tdir / "reference.docx"
@@ -283,6 +293,11 @@ def render_task(
             )
             if proc.returncode != 0 and not pdf_path.is_file():
                 errors.append(f"soffice failed: {(proc.stderr or proc.stdout).strip()}")
+            elif pdf_path.is_file():
+                try:
+                    _stamp_pdf(pdf_path, task_id)
+                except Exception as exc:  # pragma: no cover - defensive, mirrors mermaid's never-raise contract
+                    errors.append(f"pdf marker stamp failed: {exc}")
         except FileNotFoundError:
             errors.append("soffice not found on PATH")
         except subprocess.TimeoutExpired:
