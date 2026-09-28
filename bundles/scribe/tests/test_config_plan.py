@@ -136,7 +136,10 @@ def test_validate_accepts_three_templates_with_sample_instances(tmp_path):
     code, payload = _run(proj, "validate")
     assert code == 0, payload
     assert payload["status"] == "ok"
-    assert sorted(payload["templates"]) == ["discovery-digest", "domain-profile", "subsystem-profile"]
+    assert sorted(payload["templates"]) == [
+        "ai-opportunity-map", "discovery-digest", "domain-profile", "engagement-summary",
+        "glossary", "open-questions-decisions", "raid", "subsystem-profile", "weekly-digest",
+    ]
     assert payload["tasks"] == ["t1", "t2", "t3"]
 
 
