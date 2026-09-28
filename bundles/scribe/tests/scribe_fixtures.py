@@ -243,5 +243,5 @@ def run_version(config, data, inst, template, stale: list[str], drafts: dict[str
     accepted = accept_task(config, task_id, inst, template)
     published = publish_task(config, task_id, inst, template, data["instances"], data["edges"], no_render=True)
     assert published["status"] == "ok", published
-    lineage_task(config, task_id, inst, template)
+    lineage_task(config, task_id, inst, template, data["instances"])
     return accepted

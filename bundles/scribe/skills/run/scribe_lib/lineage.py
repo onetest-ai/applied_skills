@@ -2,7 +2,12 @@
 currently-published version of a task (i.e. run this after `publish`).
 
 Node types: `doc`, `section`, `claim`, `chunk`, `metric`, `graph_node`,
-`raw_span`, `task_claim`, `source`.
+`raw_span`, `task_claim`, `source`. A `task_claim` node carries
+`upstream_version: int | None` — the upstream task's CURRENT published
+version at lineage time (read via `instances[up_task]`'s state, not the
+version that was current when the citing claim was drafted) — so the reverse
+index and any impact query can see, without a second lookup, whether the
+citing task is still current with what it cites.
 Edge types: `has_section`, `has_claim`, `cites {role}`, `from`,
 `carried_from` (claim -> the same claim id in the previous version, only if
 it existed there), `derived_from_task` (a `[TASK:]`-citing claim -> the
@@ -76,8 +81,16 @@ class _NodeSet:
             self.nodes.append(node)
 
 
-def lineage_task(config: Config, task_id: str, instance: dict[str, Any], template: dict[str, Any]) -> dict[str, Any]:
+def lineage_task(
+    config: Config,
+    task_id: str,
+    instance: dict[str, Any],
+    template: dict[str, Any],
+    instances: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     from scribe_lib.config import read_state
+
+    instances_by_id = instances or {}
 
     state = read_state(config, instance)
     version = state.get("version")
@@ -246,8 +259,18 @@ def lineage_task(config: Config, task_id: str, instance: dict[str, Any], templat
                         edges.append({"type": "from", "from": span_id, "to": source_node_id})
                     elif kind == "TASK":
                         up_task, _, up_claim = value.partition("#c:")
+                        up_inst = instances_by_id.get(up_task)
+                        up_version = (read_state(config, up_inst).get("version") if up_inst else None)
                         tc_id = f"task_claim:{up_task}:{up_claim}"
-                        nodeset.add({"id": tc_id, "type": "task_claim", "task": up_task, "claim_id": up_claim})
+                        nodeset.add(
+                            {
+                                "id": tc_id,
+                                "type": "task_claim",
+                                "task": up_task,
+                                "claim_id": up_claim,
+                                "upstream_version": up_version,
+                            }
+                        )
                         edges.append({"type": "cites", "role": "supports", "from": claim_node_id, "to": tc_id})
                         edges.append({"type": "derived_from_task", "from": claim_node_id, "to": tc_id})
 

@@ -191,7 +191,7 @@ text — same section, same wording, same trailing `<!-- c:xxxxxxxx -->` id — 
 cited raw file's hash instead of demanding a fresh quote, so skip it in `evidence.json`. Only
 a genuinely new claim, or one whose wording or citation changed, needs a quote entry.
 
-### 5. Check file claims (script)
+### 5. Check file and task claims (script)
 
 Run `scribe.py check-file <id>`. It rewrites every `[FILE:]` claim whose quote it cannot
 find into `Not modeled: <reason>. <!-- cf:<n> -->` and writes `work/<id>/check-file.json`.
@@ -199,6 +199,11 @@ Human-authored claims are skipped (counted in `human_origin_skipped`), but only 
 text and tags are unchanged from the base; a human claim whose wording or citation changed
 is checked like any other. Do not re-draft
 the rewritten claims.
+
+Run `$SCRIBE check-task <task>`. It rewrites every `[TASK:up#c:id]` claim whose
+upstream claim is gone or superseded into `Not modeled: upstream claim <up>#c:<id> is
+no longer published.` and writes `work/<id>/check-task.json`. Do not re-draft the
+rewritten claims.
 
 ### 6. Verify Brain claims (you dispatch `kb:verifier` once)
 
@@ -213,8 +218,8 @@ Dispatch the `kb:verifier` subagent **once for this task**, with a prompt that:
   `origin=human_modified`, and every block with neither a `<!-- c:… -->` comment nor a
   citation tag. Skip a human-origin claim only when its text and tags are exactly as in
   the base; a human claim whose citation changed is verified like any other. Check every `[RAG:]`,
-  `[MART:]` and `[GRAPH:]` tag. `[FILE:]` and `[TASK:]` tags are checked elsewhere — skip
-  claims that carry only those. Return one line per checked claim, exactly:
+  `[MART:]` and `[GRAPH:]` tag. `[FILE:]` tags were checked by `check-file` and `[TASK:]` tags
+  by `check-task` — skip claims that carry only those. Return one line per checked claim, exactly:
   `CLAIM | <section> | <c:xxxxxxxx id from the claim's trailing comment, or -> | <the claim's first 8 words, verbatim> | verified|unsupported|grain-mismatch|uncited-number | <reason>`
   and nothing else on those lines."
 

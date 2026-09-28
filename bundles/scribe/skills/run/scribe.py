@@ -12,8 +12,8 @@ Usage:
   scribe.py --project PROJ delta <task>
 
 Implemented: validate, plan, delta, gather-raw, fingerprint, base, prepare,
-check-file, merge, accept, publish, lineage, index, render, doctor, report,
-observe. `publish --no-render` still works without a render.
+check-file, check-task, merge, accept, publish, lineage, index, render,
+doctor, report, observe. `publish --no-render` still works without a render.
 """
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from scribe_lib.accept import accept_task  # noqa: E402
 from scribe_lib.basedoc import base_task  # noqa: E402
 from scribe_lib.checkfile import check_file_task  # noqa: E402
+from scribe_lib.checktask import check_task_task  # noqa: E402
 from scribe_lib.config import (  # noqa: E402
     Config,
     ScribeError,
@@ -83,6 +84,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_checkfile = sub.add_parser("check-file", help="Verify every [FILE:] claim's quote against the parsed raw text")
     p_checkfile.add_argument("task", help="Task id")
+
+    p_checktask = sub.add_parser("check-task", help="Verify every [TASK:] claim cites a live upstream claim")
+    p_checktask.add_argument("task", help="Task id")
 
     p_merge = sub.add_parser("merge", help="base.md + drafted stale sections -> work/<task>/next.md")
     p_merge.add_argument("task", help="Task id")
@@ -339,6 +343,16 @@ def cmd_check_file(config: Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_check_task(config: Config, args: argparse.Namespace) -> int:
+    data = validate_all(config)
+    instances = data["instances"]
+    if args.task not in instances:
+        raise ScribeError(f"unknown task '{args.task}'")
+    result = check_task_task(config, args.task, instances)
+    _print({"status": "ok", **result})
+    return 0
+
+
 def cmd_merge(config: Config, args: argparse.Namespace) -> int:
     data = validate_all(config)
     instances, templates = data["instances"], data["templates"]
@@ -441,7 +455,7 @@ def cmd_lineage(config: Config, args: argparse.Namespace) -> int:
     inst = instances[args.task]
     template_id, _ = parse_template_ref(inst["template"])
     template = templates[template_id]
-    result = lineage_task(config, args.task, inst, template)
+    result = lineage_task(config, args.task, inst, template, instances)
     _print(result)
     return 0
 
@@ -482,6 +496,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_prepare(config, args)
         if args.command == "check-file":
             return cmd_check_file(config, args)
+        if args.command == "check-task":
+            return cmd_check_task(config, args)
         if args.command == "merge":
             return cmd_merge(config, args)
         if args.command == "observe":

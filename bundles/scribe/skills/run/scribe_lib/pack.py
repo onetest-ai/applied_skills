@@ -40,7 +40,7 @@ for the agent to do this run.
 
 prepare starts a run, so it first deletes the previous run's per-run files
 under `work/<task>/` (`sections/`, `render/`, `next.md`, `merge.json`,
-`check-file.json`, `verifier.json`).
+`check-file.json`, `check-task.json`, `verifier.json`).
 """
 from __future__ import annotations
 
@@ -50,7 +50,8 @@ from pathlib import Path
 from typing import Any
 
 from scribe_lib import claims as claim_parser
-from scribe_lib.basedoc import base_task, parse_units, split_by_section_id
+from scribe_lib.basedoc import base_task, split_by_section_id
+from scribe_lib.checktask import _upstream_claims
 from scribe_lib.config import (
     Config,
     ScribeError,
@@ -74,23 +75,19 @@ def _truncate(text: str, limit: int) -> str:
 
 
 def _collect_upstream_claims(config: Config, instances: dict[str, Any], upstream_tasks: list[str]) -> dict[str, str]:
+    """`{"[TASK:<up>#c:<id>]": text, ...}` — every LIVE (non-superseded) claim
+    in each upstream task's latest published version, keyed by the exact tag
+    a drafting agent should cite. A superseded upstream claim is never
+    offered: citing it would only be checked against the still-superseded
+    text by `check-task`, which treats "superseded" the same as "gone"."""
     claims: dict[str, str] = {}
     for up in upstream_tasks:
         inst = instances.get(up)
         if not inst:
             continue
-        state = read_state(config, inst)
-        version = state.get("version")
-        if not version:
-            continue
-        src = config.out_root / inst["out"] / "_src" / f"v{version:03d}.md"
-        if not src.is_file():
-            continue
-        sections = split_by_section_id(src.read_text(encoding="utf-8"))
-        for body in sections.values():
-            for unit in parse_units(body, with_ids=True):
-                if unit["claim_id"]:
-                    claims[f"[TASK:{up}#c:{unit['claim_id']}]"] = unit["text"]
+        for cid, block in _upstream_claims(config, inst).items():
+            if not block.get("superseded"):
+                claims[f"[TASK:{up}#c:{cid}]"] = block["text"]
     return claims
 
 
@@ -177,7 +174,7 @@ def _render_pack_section(
 # removes them: a noop night must not leave the previous night's drafted
 # sections (check-file would re-check them), merge.json/verifier.json (metrics
 # would count them again) or render output (publish must only ship tonight's).
-_PER_RUN_FILES = ("next.md", "merge.json", "check-file.json", "verifier.json")
+_PER_RUN_FILES = ("next.md", "merge.json", "check-file.json", "check-task.json", "verifier.json")
 _PER_RUN_DIRS = ("sections", "render")
 
 

@@ -41,6 +41,7 @@ from typing import Any
 from scribe_lib import brain as brain_mod
 from scribe_lib import claims
 from scribe_lib.basedoc import split_by_section_id
+from scribe_lib.checktask import _upstream_claims
 from scribe_lib.config import (
     Config,
     ScribeError,
@@ -71,11 +72,11 @@ def append_run(config: Config, entry: dict[str, Any]) -> None:
 _append_run = append_run
 
 
-def cited_from_section(config: Config, body: str) -> dict[str, Any]:
+def cited_from_section(config: Config, body: str, instances: dict[str, Any] | None = None) -> dict[str, Any]:
     """What a section's merged claims actually cite, keyed by tag kind:
     `{"cited_chunks": {chunk_id: text_hash|None}, "cited_raw": {path: sha256|None},
-    "cited_task_claims": {}}` (renamed from the private `_cited_from_section`,
-    now a dict so a later kind — `cited_task_claims`, Task 7 — extends the
+    "cited_task_claims": {"<up>#<claim_id>": text_hash|None}}` (renamed from
+    the private `_cited_from_section`, now a dict so a later kind extends the
     shape without another positional return value). Used by both `publish`
     (recording what a version cites) and `observe` (recomputing a noop's
     cited_* from the still-published text, spec A9).
@@ -88,9 +89,20 @@ def cited_from_section(config: Config, body: str) -> dict[str, Any]:
     would never report `cited_chunk_gone`/`raw_file_removed` for it again.
     Keeping the key (value `None`) keeps it checked; `fingerprint.py` already
     treats any non-`ok` evidence as `gone` regardless of the prior hash, and
-    a missing raw file as `removed` regardless of the prior sha."""
+    a missing raw file as `removed` regardless of the prior sha.
+
+    `[TASK:up#c:id]` tags (spec A6) record `up#id -> text_hash(normalize_text(
+    upstream claim's content))`, read from `up`'s latest published `_src` via
+    `checktask._upstream_claims`. `None` when `up` is unknown or that claim
+    id no longer exists there — same "record, never omit" rule, so a gone
+    upstream claim stays checked by `fingerprint.py` forever, not just once.
+    `instances` is optional (callers that never cite `[TASK:]`, or tests that
+    only exercise RAG/FILE, may omit it) — with no `instances`, any `[TASK:]`
+    tag is simply recorded as gone (`None`), never silently dropped."""
     cited_chunks: dict[str, str | None] = {}
     cited_raw: dict[str, str | None] = {}
+    cited_task_claims: dict[str, str | None] = {}
+    upstream_cache: dict[str, dict[str, dict]] = {}
     for block in claims.parse_blocks(body):
         for tag in block.get("tags", []):
             kind, value = claims.parse_tag(tag)
@@ -103,7 +115,17 @@ def cited_from_section(config: Config, body: str) -> dict[str, Any]:
                 path = value.split("#", 1)[0]
                 full = config.raw_root / path
                 cited_raw[path] = sha256_file(full) if full.is_file() else None
-    return {"cited_chunks": cited_chunks, "cited_raw": cited_raw, "cited_task_claims": {}}
+            elif kind == "TASK":
+                up, _, cid = value.partition("#c:")
+                if up not in upstream_cache:
+                    upstream_cache[up] = (
+                        _upstream_claims(config, instances[up]) if instances and up in instances else {}
+                    )
+                target = upstream_cache[up].get(cid)
+                cited_task_claims[f"{up}#{cid}"] = (
+                    brain_mod.text_hash(claims.normalize_text(target["content"])) if target is not None else None
+                )
+    return {"cited_chunks": cited_chunks, "cited_raw": cited_raw, "cited_task_claims": cited_task_claims}
 
 
 def _human_deleted(state: dict[str, Any], work_dir: Path, next_sections: dict[str, str]) -> list[dict[str, Any]]:
@@ -246,12 +268,15 @@ def publish_task(
     all_cited_chunks: dict[str, str] = {}
     all_cited_raw: dict[str, str] = {}
     for sid, body in next_sections.items():
-        cited = cited_from_section(config, body)
-        cited_chunks, cited_raw = cited["cited_chunks"], cited["cited_raw"]
+        cited = cited_from_section(config, body, instances)
+        cited_chunks, cited_raw, cited_task_claims = (
+            cited["cited_chunks"], cited["cited_raw"], cited["cited_task_claims"]
+        )
         sections_state[sid] = {
             "fingerprint": fp_sections.get(sid, {}).get("fingerprint"),
             "cited_chunks": cited_chunks,
             "cited_raw": cited_raw,
+            "cited_task_claims": cited_task_claims,
         }
         all_cited_chunks.update(cited_chunks)
         all_cited_raw.update(cited_raw)

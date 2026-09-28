@@ -17,7 +17,9 @@ keeping a raw hit only if its text contains >= 2 distinct query tokens
 floor" the brief calls out to stop every transcript matching every section
 under plain OR-matching. `considered` = the sorted union of
 `(chunk_id, text_hash)` (brain) and `(path#locator, text_hash)` (raw);
-`fingerprint = sha256(json({considered, upstream_versions}))`.
+`fingerprint = sha256(json({considered}))` — a section's fingerprint no
+longer includes upstream task version numbers (spec A6): an upstream publish,
+by itself, is not evidence that THIS section changed.
 
 ## State shape this module reads (and that `publish` writes)
 
@@ -28,16 +30,26 @@ writes compatibly:
         "fingerprint":  "<sha256 hex>",                     # from the last fingerprint run this section was drafted against
         "cited_chunks": {"<chunk_id>": "<text_hash16>"},    # RAG chunks this section's merged claims actually cite
         "cited_raw":    {"<raw-rel-path>": "<sha256>"},     # raw files this section's merged claims actually cite (whole-file hash)
+        "cited_task_claims": {"<up>#<claim_id>": "<text_hash16>"},  # `[TASK:]` claims this section's merged claims actually cite
     }
-    state["upstream_versions"] = {"<task id>": <int version>}
+    state["upstream_versions"] = {"<task id>": <int version>}   # diagnostic only (plan/report); not part of a section's fingerprint
 
-`cited_chunks`/`cited_raw` are populated by `publish` from the claims that
-were actually merged into a section — `fingerprint` itself never writes state.
-Before a task's first publish, every section's prior `cited_chunks`/
-`cited_raw` is empty, so only "fingerprint_changed" (via
+`cited_chunks`/`cited_raw`/`cited_task_claims` are populated by `publish`
+(and `observe`, for a noop) from the claims that were actually merged into a
+section — `fingerprint` itself never writes state. Before a task's first
+publish, every section's prior `cited_chunks`/`cited_raw`/`cited_task_claims`
+is empty, so only "fingerprint_changed" (via
 `state["sections"][sid]["fingerprint"]`) or "first_run" can fire;
-"cited_chunk_changed"/"cited_chunk_gone"/"raw_file_changed"/"raw_file_removed"
+"cited_chunk_changed"/"cited_chunk_gone"/"raw_file_changed"/"raw_file_removed"/
+"cited_task_claim_changed"/"cited_task_claim_gone"
 are exercised in this task's tests against a hand-written state.json.
+
+**A6 — staleness by consumption, not by version.** There is no
+"upstream_published" reason: a downstream section is stale because an
+upstream claim it actually cites (`[TASK:up#c:id]`, recorded at publish as
+`cited_task_claims`) changed text or disappeared — not because task `up`
+published a new version that this section never looked at. A section that
+cites nothing from `up` never goes stale just because `up` did.
 
 Writes `work/<task>/fingerprint.json`:
 
@@ -52,6 +64,7 @@ Writes `work/<task>/fingerprint.json`:
           "fingerprint": "<sha256 hex>",
           "cited_chunk_status": {"<chunk_id>": "same"|"changed"|"gone"},
           "cited_raw_status": {"<path>": "same"|"changed"|"removed"},
+          "cited_task_claim_status": {"<up>#<claim_id>": "same"|"changed"|"gone"},
           "stale": bool,
           "stale_reasons": [...]
         }
@@ -71,6 +84,8 @@ from pathlib import Path
 from typing import Any
 
 from scribe_lib import brain as brain_mod
+from scribe_lib import claims
+from scribe_lib.checktask import _upstream_claims
 from scribe_lib.config import (
     Config,
     parse_template_ref,
@@ -144,10 +159,7 @@ def fingerprint_task(
 
     state = read_state(config, instance)
     prior_sections = state.get("sections") or {}
-    prior_upstream = state.get("upstream_versions") or {}
-    upstream_versions = {
-        up: (read_state(config, instances[up]).get("version") or 0) for up in edges.get(task_id, [])
-    }
+    upstream_claims_cache: dict[str, dict[str, dict]] = {}
 
     out_sections: dict[str, Any] = {}
     for sec in sections_spec:
@@ -189,7 +201,6 @@ def fingerprint_task(
                 "brain": [list(x) for x in considered_brain],
                 "raw": [list(x) for x in considered_raw],
             },
-            "upstream_versions": dict(sorted(upstream_versions.items())),
         }
         fp = hashlib.sha256(
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -199,6 +210,7 @@ def fingerprint_task(
         stale_reasons: list[str] = []
         cited_chunk_status: dict[str, str] = {}
         cited_raw_status: dict[str, str] = {}
+        cited_task_claim_status: dict[str, str] = {}
         if not state:
             stale_reasons.append("first_run")
         else:
@@ -231,8 +243,21 @@ def fingerprint_task(
             if "removed" in cited_raw_status.values():
                 stale_reasons.append("raw_file_removed")
 
-            if any(v > prior_upstream.get(up, -1) for up, v in upstream_versions.items()):
-                stale_reasons.append("upstream_published")
+            for key, prior_hash in (prior.get("cited_task_claims") or {}).items():
+                up, _, cid = key.partition("#")
+                if up not in upstream_claims_cache:
+                    upstream_claims_cache[up] = _upstream_claims(config, instances[up]) if up in instances else {}
+                target = upstream_claims_cache[up].get(cid)
+                if target is None:
+                    cited_task_claim_status[key] = "gone"
+                elif brain_mod.text_hash(claims.normalize_text(target["content"])) != prior_hash:
+                    cited_task_claim_status[key] = "changed"
+                else:
+                    cited_task_claim_status[key] = "same"
+            if "changed" in cited_task_claim_status.values():
+                stale_reasons.append("cited_task_claim_changed")
+            if "gone" in cited_task_claim_status.values():
+                stale_reasons.append("cited_task_claim_gone")
 
         out_sections[sid] = {
             "queries": queries,
@@ -261,6 +286,7 @@ def fingerprint_task(
             "fingerprint": fp,
             "cited_chunk_status": cited_chunk_status,
             "cited_raw_status": cited_raw_status,
+            "cited_task_claim_status": cited_task_claim_status,
             "stale": bool(stale_reasons),
             "stale_reasons": stale_reasons,
         }
