@@ -577,16 +577,18 @@ def test_publish_propose_does_not_advance_state(tmp_path, monkeypatch):
     (work_dir / "next.md").write_text(next_text, encoding="utf-8")
 
     result = publish_task(config, "m1", inst, template, data["instances"], data["edges"], no_render=True)
-    assert result["status"] == "ok"
+    assert result["status"] == "pending"
     assert result["published"] is False
     assert result["pending_version"] == 2
 
     state_after = json.loads((out_dir / "_src" / "state.json").read_text(encoding="utf-8"))
     assert state_after["version"] == 1  # unchanged
 
-    pending_dir = out_dir / "_pending"
-    assert (pending_dir / "v002.md").read_text(encoding="utf-8") == next_text
-    assert (pending_dir / "v002.diff.md").is_file()
+    pending_dir = out_dir / "_pending" / "v002"
+    assert (pending_dir / "doc.md").read_text(encoding="utf-8") == next_text
+    assert (pending_dir / "diff.md").is_file()
+    pending_meta = json.loads((pending_dir / "pending.json").read_text(encoding="utf-8"))
+    assert pending_meta["version"] == 2
     assert not (out_dir / "Mini Propose.docx").exists()
 
 

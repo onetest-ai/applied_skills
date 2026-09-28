@@ -77,7 +77,7 @@ _JOURNAL_STEPS = ("stage", "archive_previous", "place_new", "write_src", "write_
 # every existing `_append_run(...)` call in this file keeps working, and a
 # published row picks up its `merge` counts the same way `report --status`'s
 # rows do — through `append_run` itself, not a second code path.
-from scribe_lib.report import append_run, run_report_path  # noqa: E402
+from scribe_lib.report import append_run, merge_counts_for_row, run_report_path  # noqa: E402
 
 _append_run = append_run
 
@@ -419,134 +419,89 @@ def _resume_journal(
     }
 
 
-def publish_task(
+def resume_leftover_journal(
     config: Config,
     task_id: str,
     instance: dict[str, Any],
     template: dict[str, Any],
     instances: dict[str, Any],
     edges: dict[str, list[str]],
-    *,
+    out_dir: Path,
+    src_dir: Path,
+    state: dict[str, Any],
+    no_render: bool,
+) -> dict[str, Any] | None:
+    """Resolve any journal `_src/.pending/journal.json` left by a prior
+    crashed commit — resume it (finish whatever steps remain) or discard it
+    (already applied, or unreadable), before anything else happens. Returns
+    the resume result, or `None` when there was nothing to resume (the
+    caller then proceeds with its own new commit).
+
+    Public (task 12) so `review.approve` can call it first, exactly as
+    `publish_task`'s "auto" mode does — the journal at `_src/.pending/` is
+    the SAME file regardless of whether the commit that left it behind was
+    an `auto`-mode `publish` or a propose-mode `review.approve` (both go
+    through `commit_fresh`/`_resume_journal` below), so a crash during
+    either is resumable by a retry of either."""
+    pending_dir = src_dir / ".pending"
+    journal = _read_journal(pending_dir)
+    if journal is None:
+        return None
+    prev_version = state.get("version") or 0
+    journal_version = journal.get("version")
+    if not isinstance(journal_version, int):
+        # Corrupt/malformed journal (review fix round 2, Minor): never
+        # resume from a version we can't trust — discard it the same way an
+        # already-applied one is discarded, rather than risk
+        # `_resume_journal` formatting/comparing a non-int version.
+        shutil.rmtree(pending_dir, ignore_errors=True)
+        return None
+    if prev_version >= journal_version:
+        # `state.json` already reflects this version (or a later one) — the
+        # journal is stale bookkeeping only (A10: "a retry finds
+        # `.pending/` and completes or discards it").
+        shutil.rmtree(pending_dir, ignore_errors=True)
+        return None
+    # This call's entire job is to resolve the leftover journal (complete
+    # it, or report why it couldn't) — never to also decide, in the same
+    # call, what a possibly-different `next.md`/pending proposal means. A
+    # NEW publish/approve is a separate concern for the next call.
+    return _resume_journal(
+        config, task_id, instance, template, instances, edges,
+        out_dir, src_dir, pending_dir, journal, state, no_render,
+    )
+
+
+def commit_fresh(
+    config: Config,
+    task_id: str,
+    instance: dict[str, Any],
+    template: dict[str, Any],
+    instances: dict[str, Any],
+    edges: dict[str, list[str]],
+    out_dir: Path,
+    src_dir: Path,
+    state: dict[str, Any],
+    new_version: int,
+    next_text: str,
+    header: dict[str, Any],
+    docx_src: Path,
+    pdf_src: Path,
     no_render: bool,
 ) -> dict[str, Any]:
-    work_dir = config.work_dir / task_id
-    next_path = work_dir / "next.md"
-    out_dir = config.out_root / instance["out"]
-    publish_mode = instance.get("publish", "auto")
-    src_dir = out_dir / "_src"
-    src_dir.mkdir(parents=True, exist_ok=True)
+    """The journaled atomic commit (A10; PoC m1) — stage `docx_src`/`pdf_src`
+    + `next_text` into `_src/.pending/`, then archive_previous, place_new,
+    write_src, write_state, each recorded to the journal before the next
+    step starts. Used by `publish_task`'s `auto` mode (staging from
+    `work/<task>/render/`) AND `review.approve` (task 12; staging from an
+    already-proposed `out/<task>/_pending/vNNN/`) — the ONE place a version
+    is actually committed through `_src`/`state.json`, so a crash partway
+    leaves the same resumable journal `resume_leftover_journal` above
+    finishes, regardless of which caller started it.
 
-    state = read_state(config, instance)
+    Caller has already confirmed a leftover journal was resolved (there was
+    none, or it named an older version) — see `resume_leftover_journal`."""
     prev_version = state.get("version") or 0
-
-    # -- resume (or discard) a leftover journal FIRST, before anything that
-    # depends on `next.md` (review fix round 1, Important #2). A journal is
-    # read and finished (or thrown away) using ONLY its own staged content —
-    # `work/<task>/next.md` may already hold a different, newer draft by the
-    # time this runs, and must never be consulted for a journal that names
-    # an OLDER version than what `next.md` currently has.
-    if publish_mode == "auto":
-        pending_dir = src_dir / ".pending"
-        journal = _read_journal(pending_dir)
-        if journal is not None:
-            journal_version = journal.get("version")
-            if not isinstance(journal_version, int):
-                # Corrupt/malformed journal (review fix round 2, Minor):
-                # never resume from a version we can't trust — discard it
-                # the same way an already-applied one is discarded, rather
-                # than risk `_resume_journal` formatting/comparing a
-                # non-int version.
-                shutil.rmtree(pending_dir, ignore_errors=True)
-            elif prev_version >= journal_version:
-                # `state.json` already reflects this version (or a later
-                # one) — the journal is stale bookkeeping only (A10: "a
-                # retry finds `.pending/` and completes or discards it").
-                shutil.rmtree(pending_dir, ignore_errors=True)
-            else:
-                # This call's entire job is to resolve the leftover journal
-                # (complete it, or report why it couldn't) — never to also
-                # decide, in the same call, what a possibly-different
-                # `next.md` means. A NEW publish (if `next.md` now names a
-                # further version) is a separate concern for the next call.
-                return _resume_journal(
-                    config, task_id, instance, template, instances, edges,
-                    out_dir, src_dir, pending_dir, journal, state, no_render,
-                )
-
-    if not next_path.is_file():
-        merge_path = work_dir / "merge.json"
-        if merge_path.is_file() and json.loads(merge_path.read_text(encoding="utf-8")).get("noop"):
-            reason = "merge was a noop — nothing to publish"
-            run_status = "noop"
-        else:
-            reason = "no work/<task>/next.md to publish (run merge first)"
-            run_status = "failed"
-        _append_run(config, {"task": task_id, "version": None, "status": run_status, "reasons": [reason]})
-        return {"status": "error", "task": task_id, "reason": reason}
-
-    next_text = next_path.read_text(encoding="utf-8")
-    header = parse_header(next_text)
-    new_version = header["version"]
-
-    # A stale next.md (e.g. left over from a run whose merge was a noop, or
-    # from a version that already got published through some other path)
-    # must never be republished — merge.py now deletes next.md on noop, but
-    # this is the load-bearing guard: publish only accepts a next.md for
-    # EXACTLY the version after the one currently published.
-    if new_version != prev_version + 1:
-        reason = (
-            f"work/{task_id}/next.md is for v{new_version}, but v{prev_version} is already "
-            f"published (expected v{prev_version + 1}) — stale next.md, re-run merge"
-        )
-        _append_run(config, {"task": task_id, "version": None, "status": "failed", "reasons": [reason]})
-        return {"status": "error", "task": task_id, "reason": reason}
-
-    render_dir = work_dir / "render"
-    docx_src = render_dir / f"{instance['title']}.docx"
-    pdf_src = render_dir / f"{instance['title']}.pdf"
-    if not no_render:
-        missing = [p.name for p in (docx_src, pdf_src) if not p.is_file()]
-        if missing:
-            reason = f"missing rendered files {missing} under work/{task_id}/render/ (run render, or pass --no-render)"
-            _append_run(config, {"task": task_id, "version": None, "status": "failed", "reasons": [reason]})
-            return {"status": "error", "task": task_id, "reason": reason}
-
-    if publish_mode == "propose":
-        pending_dir = out_dir / "_pending"
-        pending_dir.mkdir(parents=True, exist_ok=True)
-        (pending_dir / f"v{new_version:03d}.md").write_text(next_text, encoding="utf-8")
-        if not no_render:
-            shutil.copy2(docx_src, pending_dir / f"v{new_version:03d}.docx")
-            shutil.copy2(pdf_src, pending_dir / f"v{new_version:03d}.pdf")
-
-        prev_text = ""
-        if prev_version:
-            prev_path = src_dir / f"v{prev_version:03d}.md"
-            prev_text = prev_path.read_text(encoding="utf-8") if prev_path.is_file() else ""
-        diff = "\n".join(
-            difflib.unified_diff(
-                prev_text.splitlines(),
-                next_text.splitlines(),
-                fromfile=f"v{prev_version:03d}.md",
-                tofile=f"v{new_version:03d}.md",
-                lineterm="",
-            )
-        )
-        (pending_dir / f"v{new_version:03d}.diff.md").write_text(diff + "\n", encoding="utf-8")
-
-        _append_run(config, {"task": task_id, "version": new_version, "status": "pending", "reasons": []})
-        return {"status": "ok", "task": task_id, "published": False, "pending_version": new_version}
-
-    # -- auto: journaled atomic publish (A10; PoC m1) --
-    #
-    # `out_dir/_src/.pending/` holds this run's staged output plus
-    # `journal.json`. Any journal left by a PRIOR run was already resolved
-    # (resumed or discarded) above, before `next.md` was even read — so
-    # starting here always means a brand-new journal for `new_version`.
-    # Every step that finishes is recorded to the journal BEFORE the next
-    # one starts, so a crash at any point leaves the journal naming exactly
-    # what is safe to skip on the next call's resume. `.pending/` (journal
-    # included) is removed only once every step has completed.
     stable_docx = out_dir / f"{instance['title']}.docx"
     stable_pdf = out_dir / f"{instance['title']}.pdf"
     pending_dir = src_dir / ".pending"
@@ -612,3 +567,135 @@ def publish_task(
         "pdf_sha256": pdf_sha,
         "md_sha256": md_sha,
     }
+
+
+def publish_task(
+    config: Config,
+    task_id: str,
+    instance: dict[str, Any],
+    template: dict[str, Any],
+    instances: dict[str, Any],
+    edges: dict[str, list[str]],
+    *,
+    no_render: bool,
+) -> dict[str, Any]:
+    work_dir = config.work_dir / task_id
+    next_path = work_dir / "next.md"
+    out_dir = config.out_root / instance["out"]
+    publish_mode = instance.get("publish", "auto")
+    src_dir = out_dir / "_src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+
+    state = read_state(config, instance)
+    prev_version = state.get("version") or 0
+
+    # -- resume (or discard) a leftover journal FIRST, before anything that
+    # depends on `next.md` (review fix round 1, Important #2). A journal is
+    # read and finished (or thrown away) using ONLY its own staged content —
+    # `work/<task>/next.md` may already hold a different, newer draft by the
+    # time this runs, and must never be consulted for a journal that names
+    # an OLDER version than what `next.md` currently has.
+    if publish_mode == "auto":
+        resumed = resume_leftover_journal(
+            config, task_id, instance, template, instances, edges, out_dir, src_dir, state, no_render
+        )
+        if resumed is not None:
+            return resumed
+
+    if not next_path.is_file():
+        merge_path = work_dir / "merge.json"
+        if merge_path.is_file() and json.loads(merge_path.read_text(encoding="utf-8")).get("noop"):
+            reason = "merge was a noop — nothing to publish"
+            run_status = "noop"
+        else:
+            reason = "no work/<task>/next.md to publish (run merge first)"
+            run_status = "failed"
+        _append_run(config, {"task": task_id, "version": None, "status": run_status, "reasons": [reason]})
+        return {"status": "error", "task": task_id, "reason": reason}
+
+    next_text = next_path.read_text(encoding="utf-8")
+    header = parse_header(next_text)
+    new_version = header["version"]
+
+    # A stale next.md (e.g. left over from a run whose merge was a noop, or
+    # from a version that already got published through some other path)
+    # must never be republished — merge.py now deletes next.md on noop, but
+    # this is the load-bearing guard: publish only accepts a next.md for
+    # EXACTLY the version after the one currently published.
+    if new_version != prev_version + 1:
+        reason = (
+            f"work/{task_id}/next.md is for v{new_version}, but v{prev_version} is already "
+            f"published (expected v{prev_version + 1}) — stale next.md, re-run merge"
+        )
+        _append_run(config, {"task": task_id, "version": None, "status": "failed", "reasons": [reason]})
+        return {"status": "error", "task": task_id, "reason": reason}
+
+    render_dir = work_dir / "render"
+    docx_src = render_dir / f"{instance['title']}.docx"
+    pdf_src = render_dir / f"{instance['title']}.pdf"
+    if not no_render:
+        missing = [p.name for p in (docx_src, pdf_src) if not p.is_file()]
+        if missing:
+            reason = f"missing rendered files {missing} under work/{task_id}/render/ (run render, or pass --no-render)"
+            _append_run(config, {"task": task_id, "version": None, "status": "failed", "reasons": [reason]})
+            return {"status": "error", "task": task_id, "reason": reason}
+
+    if publish_mode == "propose":
+        # Task 12: stage into `out_dir/_pending/vNNN/` — a directory
+        # distinct from the journaled `_src/.pending/` above (`state.json`
+        # is NOT advanced) — and record `pending.json` so `review.py` can
+        # list/approve/reject it later. A new proposal replaces any older
+        # one for this task (only the latest is reviewable): every
+        # existing `vNNN/` under `_pending/` is removed first.
+        pending_root = out_dir / "_pending"
+        if pending_root.is_dir():
+            for child in pending_root.iterdir():
+                if child.is_dir() and child.name.startswith("v"):
+                    shutil.rmtree(child, ignore_errors=True)
+        pending_dir = pending_root / f"v{new_version:03d}"
+        pending_dir.mkdir(parents=True, exist_ok=True)
+        (pending_dir / "doc.md").write_text(next_text, encoding="utf-8")
+        if not no_render:
+            shutil.copy2(docx_src, pending_dir / "doc.docx")
+            shutil.copy2(pdf_src, pending_dir / "doc.pdf")
+
+        prev_text = ""
+        if prev_version:
+            prev_path = src_dir / f"v{prev_version:03d}.md"
+            prev_text = prev_path.read_text(encoding="utf-8") if prev_path.is_file() else ""
+        diff = "\n".join(
+            difflib.unified_diff(
+                prev_text.splitlines(),
+                next_text.splitlines(),
+                fromfile=f"v{prev_version:03d}.md",
+                tofile=f"v{new_version:03d}.md",
+                lineterm="",
+            )
+        )
+        (pending_dir / "diff.md").write_text(diff + "\n", encoding="utf-8")
+        (pending_dir / "pending.json").write_text(
+            json.dumps(
+                {
+                    "task": task_id,
+                    "version": new_version,
+                    "built_at": header["built_at"],
+                    "merge": merge_counts_for_row(config, task_id),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        _append_run(config, {"task": task_id, "version": new_version, "status": "pending", "reasons": []})
+        return {"status": "pending", "task": task_id, "published": False, "pending_version": new_version}
+
+    # -- auto: journaled atomic publish (A10; PoC m1) --
+    #
+    # `out_dir/_src/.pending/` holds this run's staged output plus
+    # `journal.json`. Any journal left by a PRIOR run was already resolved
+    # (resumed or discarded) above, before `next.md` was even read — so
+    # starting here always means a brand-new journal for `new_version`.
+    return commit_fresh(
+        config, task_id, instance, template, instances, edges, out_dir, src_dir, state, new_version,
+        next_text, header, docx_src, pdf_src, no_render,
+    )

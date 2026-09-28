@@ -13,8 +13,8 @@ Usage:
 
 Implemented: validate, plan, delta, gather-raw, fingerprint, base, prepare,
 check-file, check-task, merge, accept, publish, lineage, index, render,
-doctor, report, observe, list, status, enable, disable, promote. `publish
---no-render` still works without a render.
+doctor, report, observe, list, status, enable, disable, promote, review.
+`publish --no-render` still works without a render.
 """
 from __future__ import annotations
 
@@ -56,6 +56,7 @@ from scribe_lib.publish import publish_task  # noqa: E402
 from scribe_lib.raw import gather_raw_task  # noqa: E402
 from scribe_lib import registry  # noqa: E402
 from scribe_lib import report  # noqa: E402
+from scribe_lib import review  # noqa: E402
 from scribe_lib.render import render_task  # noqa: E402
 
 NOT_IMPLEMENTED: tuple[str, ...] = ()
@@ -159,6 +160,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_promote.add_argument(
         "--force", action="store_true", help="Overwrite an existing template id instead of refusing"
     )
+
+    p_review = sub.add_parser(
+        "review", help="Propose-mode review queue: list pending proposals, approve or reject one"
+    )
+    p_review.add_argument("action", choices=("list", "approve", "reject"), help="list | approve | reject")
+    p_review.add_argument("task", nargs="?", help="Task id (required for approve/reject)")
+    p_review.add_argument("--reason", help="One-line reason (required for reject)")
 
     return parser
 
@@ -660,6 +668,25 @@ def cmd_promote(config: Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_review(config: Config, args: argparse.Namespace) -> int:
+    if args.action == "list":
+        rows = review.list_pending(config)
+        _print({"status": "ok", "pending": rows})
+        return 0
+    if not args.task:
+        raise ScribeError(f"review {args.action} requires a task id")
+    if args.action == "approve":
+        result = review.approve(config, args.task)
+        _print(result)
+        return 0 if result["status"] == "ok" else 1
+    # reject
+    if not args.reason:
+        raise ScribeError("review reject requires --reason")
+    result = review.reject(config, args.task, args.reason)
+    _print(result)
+    return 0 if result["status"] == "ok" else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -716,6 +743,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_disable(config, args)
         if args.command == "promote":
             return cmd_promote(config, args)
+        if args.command == "review":
+            return cmd_review(config, args)
     except ScribeError as exc:
         print(json.dumps({"status": "error", "reason": str(exc)}))
         return 1

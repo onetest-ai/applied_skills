@@ -35,7 +35,7 @@ def _contract(text: str) -> str:
 
 
 def test_both_skills_exist():
-    assert {p.parent.name for p in SKILLS} == {"run", "onboard", "tasks"}
+    assert {p.parent.name for p in SKILLS} == {"run", "onboard", "tasks", "review"}
 
 
 @pytest.mark.parametrize("path", SKILLS, ids=lambda p: p.parent.name)

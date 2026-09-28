@@ -262,7 +262,7 @@ def test_propose_mode_publish_row_carries_minutes(tmp_path, monkeypatch):
         doc("m1", 1, "Mini m1", {"overview": "New text.", "details": "D."}), encoding="utf-8"
     )
     r = publish_mod.publish_task(config, "m1", inst, tpl, data["instances"], data["edges"], no_render=True)
-    assert r["status"] == "ok" and r["published"] is False
+    assert r["status"] == "pending" and r["published"] is False
 
     row = next(row for row in report_mod.rows(config) if row["task"] == "m1" and row["status"] == "pending")
     assert row["minutes"] is not None
