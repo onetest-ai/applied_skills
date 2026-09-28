@@ -22,6 +22,23 @@ class HandoffSkillTextTests(unittest.TestCase):
         self.assertIn("continue to step 3 regardless of `status`'s exit code", section)
         self.assertIn("only the `handoff` classification below decides apply vs. abort", section)
 
+    def test_skill_overwrites_the_apply_report_when_a_later_step_fails(self):
+        """Final-review I6: step 3 writes `decision: "apply"` BEFORE anything is applied;
+        a failure in source apply / parse / update / classify / marts must overwrite that
+        same dated report with an abort, or scribe reads the stale Brain as fresh."""
+        text = (HERE / "SKILL.md").read_text(encoding="utf-8")
+        section = " ".join(text[text.index("## Unattended hand-off mode"):].split())
+        self.assertIn("If any step from here on fails", section)
+        self.assertIn('--abort-reason "<step>: <the printed error>"', section)
+        self.assertIn("Use the same dated path step 3 wrote", section)
+
+    def test_skill_passes_root_excludes_to_parse_corpus(self):
+        """Final-review C1: excluded files are never registered, so parsing them makes
+        --strict-sources refuse the update."""
+        text = " ".join((HERE / "SKILL.md").read_text(encoding="utf-8").split())
+        self.assertIn("--exclude '<glob 1>'", text)
+        self.assertIn("one `--exclude` per glob", text)
+
 
 def status(**over):
     base = {"source_plan": {"roots": [{"root_key": "docs", "status": "available"}], "actions": [], "duplicate_content": []},
@@ -197,6 +214,20 @@ enabled = false
         self.assertEqual(data["decision"], "abort")
         self.assertEqual(data["abort_reasons"], ["doctor: soffice missing"])
         self.assertNotIn("apply_actions", data)  # internal-only, never persisted
+
+    def test_abort_reason_overwrites_todays_apply_report(self):
+        """Final-review I6(a): the SKILL re-runs `handoff --abort-reason ... --out <same
+        dated path>` after a failed apply — the abort must replace the apply report."""
+        import json as _json
+        out = self.project / "ops" / "handoff" / "2026-01-06.json"
+        out.parent.mkdir(parents=True)
+        out.write_text(_json.dumps({"decision": "apply", "abort_reasons": []}), encoding="utf-8")
+        rc = M.main(["handoff", "--profile", str(self.profile_path),
+                     "--abort-reason", "update parsed: unmanaged parsed documents", "--out", str(out)])
+        self.assertEqual(rc, 3)
+        data = _json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(data["decision"], "abort")
+        self.assertEqual(data["abort_reasons"], ["update parsed: unmanaged parsed documents"])
 
     def test_status_and_abort_reason_are_mutually_exclusive(self):
         out = self.project / "ops" / "handoff" / "2026-01-06.json"

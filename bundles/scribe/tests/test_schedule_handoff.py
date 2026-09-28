@@ -103,8 +103,20 @@ def test_no_report_for_todays_date_marks_brain_stale(tmp_path, monkeypatch):
     assert s["decision"] == "apply"  # the report itself was a clean apply — just not today's
 
 
+def _with_built_at(db, built_at):
+    import sqlite3
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+    if built_at is not None:
+        con.execute("INSERT OR REPLACE INTO meta VALUES('built_at', ?)", (built_at,))
+    con.commit()
+    con.close()
+    return db
+
+
 def test_fresh_report_dated_today_is_not_stale(tmp_path, monkeypatch):
-    proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"))
+    db = _with_built_at(fixture_brain_db(tmp_path / "k.sqlite"), "2026-01-06T12:30:00+00:00")
+    proj = setup_mini_project(tmp_path, brain_db=db)
     hand = tmp_path / "brain" / "ops" / "handoff"
     write_json(hand / "2026-01-06.json", {"decision": "apply", "abort_reasons": []})
     _configure_handoff_dir(proj, hand)
@@ -208,3 +220,42 @@ def test_launchd_command_creates_logs_and_logs_both_halves(tmp_path, monkeypatch
     assert log.parent == scribe_dir / "logs" and log.is_file()
     text = log.read_text()
     assert "stub-out /brain:brain-maintenance handoff" in text and "stub-err /scribe:run --due" in text
+
+
+def _apply_today(tmp_path, monkeypatch, built_at, report):
+    db = _with_built_at(fixture_brain_db(tmp_path / "k.sqlite"), built_at)
+    proj = setup_mini_project(tmp_path, brain_db=db)
+    hand = tmp_path / "brain" / "ops" / "handoff"
+    write_json(hand / "2026-01-06.json", report)
+    _configure_handoff_dir(proj, hand)
+    monkeypatch.setenv("SCRIBE_NOW", "2026-01-06")
+    config, _ = load(proj)
+    return handoff_status(config)
+
+
+APPLY = {"decision": "apply", "abort_reasons": [], "created_at": "2026-01-06T12:00:00+00:00"}
+
+
+def test_apply_report_without_a_rebuild_behind_it_is_stale(tmp_path, monkeypatch):
+    """Final-review I6: the apply report is written before the apply runs; a failed
+    apply/parse/update behind it must not read as a fresh Brain."""
+    s = _apply_today(tmp_path, monkeypatch, "2026-01-05T12:00:00+00:00", APPLY)
+    assert s["stale_brain"] is True and s["reasons"] == ["brain not rebuilt after hand-off"]
+
+
+def test_apply_report_with_no_built_at_is_stale(tmp_path, monkeypatch):
+    s = _apply_today(tmp_path, monkeypatch, None, APPLY)
+    assert s["stale_brain"] is True and s["reasons"] == ["brain not rebuilt after hand-off"]
+
+
+def test_apply_report_with_a_rebuild_that_day_is_fresh(tmp_path, monkeypatch):
+    s = _apply_today(tmp_path, monkeypatch, "2026-01-06T12:20:00+00:00", APPLY)
+    assert s["stale_brain"] is False and s["reasons"] == []
+
+
+def test_report_date_comes_from_created_at_before_the_file_name(tmp_path, monkeypatch):
+    """T14 minor: the file name is not the only date — a report whose own created_at
+    says an earlier day is not today's report, whatever it is named."""
+    old = {**APPLY, "created_at": "2026-01-04T12:00:00+00:00"}
+    s = _apply_today(tmp_path, monkeypatch, "2026-01-06T12:20:00+00:00", old)
+    assert s["stale_brain"] is True and s["reasons"] == ["no hand-off report for 2026-01-06"]

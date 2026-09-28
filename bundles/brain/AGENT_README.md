@@ -632,10 +632,12 @@ across the plugin boundary:
   parsed into an unmanaged doc that `--strict-sources` refuses.
 - **`meta.built_at`.** `brain_sync`'s apply (or seed) step UPSERTs this on every successful
   build/refresh. Don't write to `meta.built_at` from anywhere except `brain_sync.write_built_at`.
-  It is **not** what Scribe's preflight keys off directly — the only reader is `maintenance.py
-  handoff`, which copies it into the `built_at` field of the report it writes; Scribe's own
-  `doctor.brain_handoff.stale_brain` looks at the latest report's `decision` and its **file
-  name** being dated today, never at `meta.built_at` itself (see the profile/`--out` note below).
+  `maintenance.py handoff` copies it into the `built_at` field of the report it writes, and
+  Scribe's `doctor.brain_handoff.stale_brain` reads it too (read-only): the latest report must
+  be dated today (its `created_at`, else its **file name**) and not `abort`, and an `apply`
+  report needs `meta.built_at` dated no earlier than the report — an apply that failed after
+  the report was written reads as stale (`brain not rebuilt after hand-off`). On any failure
+  after step 3 of the hand-off, overwrite today's report with `handoff --abort-reason`.
 - **Unattended hand-off mode.** `brain-maintenance`'s `maintenance.py handoff` subcommand (see
   its own `SKILL.md`, "Unattended hand-off mode") is what a nightly cron/launchd chain
   (`scribe.py schedule`) runs before `/scribe:run --due`. The profile is a **TOML** file

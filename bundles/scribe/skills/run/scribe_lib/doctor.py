@@ -20,7 +20,10 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
+
+from scribe_lib.config import read_brain_meta
 
 from scribe_lib.render import MERMAID_CLI
 
@@ -79,6 +82,21 @@ def run_doctor() -> dict[str, Any]:
     return {"status": "ok" if all_found else "error", "checks": checks, "all_found": all_found}
 
 
+def _local_date(stamp: Any) -> str | None:
+    """`YYYY-MM-DD` of an ISO timestamp in local time (the zone `config.now` and the
+    hand-off report's file name are dated in; `created_at`/`built_at` are UTC), or None
+    when absent or unparseable. A naive timestamp is taken as UTC."""
+    if not isinstance(stamp, str) or not stamp:
+        return None
+    try:
+        moment = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone().date().isoformat()
+
+
 def handoff_status(config: "Config") -> dict[str, Any]:
     """Brain hand-off preflight (spec A1): the newest `*.json` report brain-maintenance's
     `handoff` subcommand wrote under `config.brain_handoff_dir`, by file name — the
@@ -98,6 +116,11 @@ def handoff_status(config: "Config") -> dict[str, Any]:
     line fires even when the failure was upstream of `handoff` ever running (doctor or
     `status` itself failing before hand-off could classify anything; see
     `maintenance.py handoff --abort-reason` for the brain-side half of this fix).
+
+    Final-review I6: the report's date is its own `created_at` (in local time) when
+    present, else its file name; and a `decision: "apply"` report additionally needs the
+    Brain's `meta.built_at` (read-only) dated no earlier than the report — otherwise the
+    apply behind it failed (`reasons: ["brain not rebuilt after hand-off"]`).
     """
     empty = {"latest": None, "decision": None, "stale_brain": False, "reasons": []}
     handoff_dir = config.brain_handoff_dir
@@ -114,6 +137,7 @@ def handoff_status(config: "Config") -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {**empty, "latest": str(latest), "stale_brain": True, "reasons": no_report_reasons}
     decision = data.get("decision")
+    report_date = _local_date(data.get("created_at")) or latest.stem
     if decision == "abort":
         return {
             "latest": str(latest),
@@ -121,8 +145,16 @@ def handoff_status(config: "Config") -> dict[str, Any]:
             "stale_brain": True,
             "reasons": data.get("abort_reasons") or [],
         }
-    if latest.stem < today:
+    if report_date < today:
         return {"latest": str(latest), "decision": decision, "stale_brain": True, "reasons": no_report_reasons}
+    if decision == "apply":
+        # Final-review I6: an `apply` report is written BEFORE the apply runs, so a
+        # failed source apply / parse / `update parsed` behind it still reads `apply`.
+        # The Brain itself says whether it was rebuilt: `meta.built_at` (read-only).
+        built_date = _local_date(read_brain_meta(config.brain_db).get("built_at"))
+        if built_date is None or built_date < report_date:
+            return {"latest": str(latest), "decision": decision, "stale_brain": True,
+                    "reasons": ["brain not rebuilt after hand-off"]}
     return {
         "latest": str(latest),
         "decision": decision,

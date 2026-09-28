@@ -538,14 +538,15 @@ files are skipped without a flag, and both skips are listed in `parsed/manifest.
 status`, run `guard-brain` again (or add the exclude glob by hand) before the next build.
 
 **`meta.built_at`.** Every successful `brain_sync` apply (or seed) UPSERTs an ISO-8601 UTC
-timestamp into the store's `meta` table under `built_at` (`brain_sync.write_built_at`). The only
-reader is `maintenance.py handoff`, which copies it verbatim into the `built_at` field of the
-hand-off report it writes (`_read_built_at`, `maintenance.py`). Scribe itself never opens the
-Brain to read `meta.built_at` — its own `doctor.brain_handoff.stale_brain` is computed purely
-from the hand-off report: the **latest report's `decision`** (`abort` ⇒ stale) and its **file
-name** (`ops/handoff/<YYYY-MM-DD>.json` — no report dated today ⇒ stale). `built_at` rides along
-in that report as a human-readable "as of" timestamp; it is not itself part of Scribe's
-staleness check.
+timestamp into the store's `meta` table under `built_at` (`brain_sync.write_built_at`).
+`maintenance.py handoff` copies it verbatim into the `built_at` field of the hand-off report it
+writes (`_read_built_at`, `maintenance.py`), and Scribe's `doctor.brain_handoff.stale_brain`
+reads it (read-only) as a cross-check: the **latest report** must be dated today (its own
+`created_at`, else its file name `ops/handoff/<YYYY-MM-DD>.json`) and not `abort`, and a
+`decision: "apply"` report also needs `meta.built_at` dated no earlier than the report — the
+report is written before the apply runs, so an apply that then failed reads as stale
+(`brain not rebuilt after hand-off`). The hand-off runbook also overwrites that day's report
+with an abort when any step after classification fails.
 
 **The hand-off runbook.** For an unattended nightly chain (`scribe.py schedule` prints the cron
 line / launchd plist for this), `brain-maintenance` exposes `maintenance.py handoff`: it reads
