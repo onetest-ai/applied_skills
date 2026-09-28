@@ -82,13 +82,22 @@ bash $SKILLS/evals/run_e2e.sh \
 
 ```bash
 $VENV $SKILL_TAXO/parse_corpus.py \
-  --corpus     "$CORPUS" \
-  --out        "$PARSED" \
-  --formats    vtt,srt \
-  --merge-cues 10
+  --corpus              "$CORPUS" \
+  --out                 "$PARSED" \
+  --formats             vtt,srt \
+  --merge-cues          10 \
+  --fold-interjections  20 \
+  --pack-turns          1000
 ```
 
 > **`--merge-cues 10` is mandatory.** Without it every cue becomes its own chunk (~79 chars). Classification agents return `[]` for nearly all of them and retrieval collapses. The eval pipeline will produce near-0% pass rate on a corpus parsed without merging.
+
+`--fold-interjections 20` folds a turn shorter than 20 chars ("Mhm.", "Three.") into the
+previous turn as `[Speaker: text]` instead of giving it its own chunk. `--pack-turns 1000`
+groups consecutive turns (any speaker) into one section up to 1,000 chars, one
+`MM:SS Speaker: text` paragraph per turn — keep the value below the indexer's `--max-chars`
+(default 1200), or a pack splits into `(part N)` chunks that each carry the whole range
+heading and cue span.
 
 **Check:** `ls $WORK/parsed/*.md | wc -l` equals your source file count.
 
@@ -103,7 +112,8 @@ $VENV $SKILL_KI/knowledge_index.py index \
   --reset
 ```
 
-With `--merge-cues 10`, expect ~2,500–4,000 chunks for a typical VTT corpus (not 25k).
+With `--merge-cues 10 --fold-interjections 20 --pack-turns 1000`, measured on one corpus (77
+VTT/SRT files, indexed at the default 1200 max-chars): 2,978 chunks total (not 25k).
 
 ---
 
@@ -115,11 +125,10 @@ With `--merge-cues 10`, expect ~2,500–4,000 chunks for a typical VTT corpus (n
 $VENV $SKILL_TAXO/classify_prep.py \
   --db       "$DB" \
   --taxonomy "$TAXONOMY" \
-  --out      "$CLASSIFY_DIR" \
-  --batches  25
+  --out      "$CLASSIFY_DIR"
 ```
 
-`--batches 25` keeps each agent under ~1,000 chunks (~32k input tokens). Too few batches → agent hits context limit and writes nothing.
+Batches are capped at 150 chunks / 60 KB, so each agent's reply stays under the 32K output-token limit.
 
 **Output directory:** `result_*.json` files land in the same `$CLASSIFY_DIR` as `batch_*.json` — not a `results/` subdirectory.
 

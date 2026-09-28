@@ -74,10 +74,19 @@ VTT and SRT (meeting transcripts) are parsed separately from the taxonomy induct
 "$PY" "$CTE/parse_corpus.py" --corpus <docs> --out map_parsed --formats pptx,docx,pdf,md,markdown,txt
 
 # Knowledge-index pass — transcripts (separate output dir, --merge-cues required)
-"$PY" "$CTE/parse_corpus.py" --corpus <docs> --out parsed --formats vtt,srt --merge-cues 10
+"$PY" "$CTE/parse_corpus.py" --corpus <docs> --out parsed --formats vtt,srt --merge-cues 10 \
+  --fold-interjections 20 --pack-turns 1000
 ```
 
 `--merge-cues 10` joins up to 10 consecutive same-speaker cues into one speaker-turn paragraph before chunking. **Omitting it produces ~25k single-line chunks averaging 79 chars — classification agents correctly return `[]` for nearly all of them and retrieval quality collapses.** Always pass `--merge-cues N > 1` for VTT/SRT.
+
+`--fold-interjections 20` folds a turn shorter than 20 chars ("Mhm.", "Three.") into the
+previous turn as `[Speaker: text]` instead of giving it its own chunk. `--pack-turns 1000`
+groups consecutive turns (any speaker) into one section up to 1,000 chars, one
+`MM:SS Speaker: text` paragraph per turn, so a short answer stays next to its question in one
+chunk — keep the value below the indexer's `--max-chars` (default 1200). Both are recommended
+alongside `--merge-cues`; measured on one corpus (77 VTT/SRT files, these flags, indexed at the
+default 1200 max-chars): 2,978 chunks total.
 
 ### 2. Map — Sonnet subagents, one batch per subagent
 Instantiate `map_instructions.template.md` (shipped with this skill): replace `{{GOAL}}` with the run's goal, `{{MAP_DIR}}` with the run's map-output dir, and `{{AUDIENCE}}` with the project audience (`brain.toml` `[project].audience`, or the store's `health().about.audience`; leave it empty if none); write it to the run dir as `map_instructions.md`. The audience is a **secondary** emphasis lens — it re-orders which goal-relevant intents/dimensions to favor and nudges vocabulary; the goal stays the primary filter and audience never drops a goal-relevant term. Dispatch subagents (model: sonnet) that read that instantiated file + their assigned parsed files and write one JSON per source into the map dir. The bulk document context lives and dies inside each subagent — the orchestrator only sees compact JSON. Extract `intent_classes`, `metrics` (with `source_type`), `entities`; each item carries `evidence` (≤200-char quote), `source`, `confidence`. Give any anchor taxonomy doc its own subagent.

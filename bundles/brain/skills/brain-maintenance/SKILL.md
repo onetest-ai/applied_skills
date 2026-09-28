@@ -97,7 +97,7 @@ Generate and inspect the canonical source plan:
 
 Do not interpret an unavailable root as an empty root.
 
-Before applying, check the plan's `duplicate_content` groups: a synced source tree (SharePoint/OneDrive/Drive) commonly presents the same SHA-256 at multiple live paths, which would register and re-embed the same document several times. Resolve duplicates with the human (keep one canonical path) before `apply`; `missing` at an old path after a re-sync is a warning under `import`, never an inferred deletion.
+Before applying, check the plan's `duplicate_content` groups: a synced source tree (SharePoint/OneDrive/Drive) commonly presents the same SHA-256 at multiple live paths, which would register and re-embed the same document several times. Every copy except the canonical one is a `skip_duplicate` action (`duplicate_of` names the canonical path: the registered copy if there is one, else the first path in sort order), so `apply` registers one copy; show the groups to the human, and `source adopt` a different copy first if they want it canonical; `missing` at an old path after a re-sync is a warning under `import`, never an inferred deletion.
 
 ### 3. Materialize changed narrative sources
 
@@ -152,17 +152,52 @@ See `visual-parse` → "Meeting recordings" for the full per-recording command s
 an existing project needed `"**/*.html"`/`"**/*.htm"` added for the HTML branch — the doctor
 warns when it finds videos in the corpus that no registered root's `include` matches.
 
-**VTT/SRT sources require two separate parse passes** — `--merge-cues` only applies to transcripts and must not be passed for PDF/PPTX/DOCX:
+**VTT/SRT sources require two separate parse passes** — `--merge-cues` only applies to transcripts and must not be passed for PDF/PPTX/DOCX. Recommended transcript flags:
+`--formats vtt,srt --merge-cues 10 --fold-interjections 20 --pack-turns 1000`.
+`--fold-interjections N` folds a turn shorter than N chars ("Mhm.", "Three.") into the previous
+turn as `[Speaker: text]` instead of giving it its own chunk. `--pack-turns N` groups consecutive
+turns (any speaker) into one section up to N chars, one `MM:SS Speaker: text` paragraph per turn,
+so a short answer stays next to its question in one chunk — keep N below the indexer's
+`--max-chars` (default 1200), or a pack gets split into `(part N)` chunks that each carry the
+whole range heading and cue span. Measured on one corpus (77 VTT/SRT files, these flags, indexed
+at the default 1200 max-chars): 2,978 chunks total.
 
 ```bash
 # Pass 1 — transcripts only. A recording's transcript is skipped automatically (recorded as
 # consumed-by-video) while it is in the `inputs` of that recording's video-lane manifest entry
 # and the video doc exists in parsed/ — the same holds for a Teams .docx in pass 2; every
 # other file, including one next to a video this Brain does not ingest, parses as before.
-"$PY" "$SKILLS/corpus-taxonomy-extraction/parse_corpus.py" --corpus <root> --out parsed/ --formats vtt,srt --merge-cues 10
+# Files not registered as active sources (e.g. a copy `source plan` marked skip_duplicate) are skipped as `unregistered`.
+"$PY" "$SKILLS/corpus-taxonomy-extraction/parse_corpus.py" --corpus <root> --out parsed/ --formats vtt,srt --merge-cues 10 \
+  --fold-interjections 20 --pack-turns 1000 \
+  --registry-db "$DB" --root-key <root-key>
 # Pass 2 — narrative docs
-"$PY" "$SKILLS/corpus-taxonomy-extraction/parse_corpus.py" --corpus <root> --out parsed/ --formats pptx,docx,pdf,md,markdown,txt,html,htm
+"$PY" "$SKILLS/corpus-taxonomy-extraction/parse_corpus.py" --corpus <root> --out parsed/ --formats pptx,docx,pdf,md,markdown,txt,html,htm \
+  --registry-db "$DB" --root-key <root-key>
 ```
+
+**Adopting `--fold-interjections`/`--pack-turns` on an existing Brain changes every
+speaker-named transcript's parsed bytes once.** Like the `# fidelity:` header above, turning
+these flags on for the first time re-chunks every VTT/SRT document that has speaker-named turns,
+so the parsed-store delta shows those documents as `changed` and reclassifies them (paid) on
+this one pass. That is expected — the underlying source did not change — but plan for it the
+same way as the fidelity-header rollout.
+
+**Entity decoding and hour-aware timestamps (this release) also change parsed bytes for
+affected transcripts, once.** `parse_corpus.py` now decodes HTML entities in cue text (e.g.
+`&amp;` -> `&`) and VTT inline markup, and renders a cue past the first hour as `H:MM:SS`
+instead of wrapping back to `MM:SS`. In the test corpus this touched 18 of 73 transcripts
+(entity decoding) plus any transcript with cues past 01:00:00 (hour labels). Their next
+`brain update` shows them `changed` and reclassifies them once — expected, not drift.
+
+**The breadcrumb/parent_heading fix changes chunking, not parsed bytes — `brain_sync` will not
+see it.** Consecutive `##` sections used to inherit the first `##` title ever seen as their
+`parent_heading`/breadcrumb head; that is now fixed to treat them as siblings. Because the
+parsed Markdown bytes are unchanged, `brain_sync`'s hash-based delta detects no change and will
+not re-index documents on its own. An existing Brain gets correct breadcrumbs only for documents
+that are re-indexed for some other reason (a content change, a flag change above) or on a full
+re-index — say this plainly to an operator who asks why an old chunk's breadcrumb still looks
+wrong after upgrading.
 
 **`plan` reports a `superseded_by_video` key.** These are transcript documents retired
 because their video's parsed document now supersedes them — a deletion by design, not drift.
@@ -192,7 +227,7 @@ Commands use `$PY`, `$SKILLS` and `$DB` as set under **Required project contract
 If `sync_plan.json.reclassify_chunk_ids` is non-empty:
 
 1. rebuild the taxonomy graph first, so categories added since the last build are in the graph (`classify_write` drops labels that are not graph nodes);
-2. prepare batches in a fresh run directory, with `--batches` from `[classification].batches` in `brain-maintenance.toml` (the default 5 overflows agent context on VTT corpora — always read the profile value);
+2. prepare batches in a fresh run directory (`classify_prep.py` caps each batch at 150 chunks / 60 KB, so one agent's reply stays under the 32K output-token limit);
 3. dispatch Sonnet text subagents, one per `batch_k.json`: each reads that dir's `instructions.md`, `vocab.md` and its batch and writes `result_k.json`;
 4. verify exact chunk-id coverage and valid labels;
 5. run incremental `classify_write` without `--reset`.
@@ -202,7 +237,7 @@ If `sync_plan.json.reclassify_chunk_ids` is non-empty:
 IDS=$("$PY" -c 'import json;print(",".join(map(str,json.load(open("sync_plan.json"))["reclassify_chunk_ids"])))')
 RUN="classify/update-$(date +%Y%m%d-%H%M%S)"
 "$PY" "$SKILLS/corpus-taxonomy-extraction/classify_prep.py" --db "$DB" --taxonomy taxonomy/current.json \
-  --chunks "$IDS" --out "$RUN" --batches <classification.batches>
+  --chunks "$IDS" --out "$RUN"
 # dispatch and validate the subagents over $RUN, then:
 "$PY" "$SKILLS/corpus-taxonomy-extraction/classify_write.py" --db "$DB" --results "$RUN"
 ```
