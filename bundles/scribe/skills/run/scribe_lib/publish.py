@@ -12,11 +12,16 @@ end without a render pass).
   ones are written under the stable name, `_src/vNNN.md` is written, and
   `_src/state.json` advances — see `_build_state` for the exact shape (kept
   compatible with what `fingerprint`/`prepare` read: `version`, `built_at`, `published`,
-  `sections` (per-section `fingerprint`/`cited_chunks`/`cited_raw`, per
+  `sections` (per-section `fingerprint`/`cited_chunks`/`cited_raw`/`cited_task_claims`, per
   `fingerprint.py`'s documented contract), `brain_snapshot`, `raw_snapshot`,
-  `upstream_versions`; `cited_chunks`/`cited_raw` are ALSO written at the top
-  level as a whole-document union — an addition, not a rename; `human_deleted`
-  is every tombstone so far, `_human_deleted`).
+  `upstream_versions`, `upstream_claims_snapshot` (task-wide: every LIVE claim
+  currently cite-able across this task's upstream tasks, spec A6 controller
+  ruling — `checktask.live_upstream_claims`, compared by `fingerprint.py`
+  against a fresh recomputation to catch NEW upstream material for a
+  `tasks`-lane section, independent of `upstream_versions`); `cited_chunks`/
+  `cited_raw` are ALSO written at the top level as a whole-document union —
+  an addition, not a rename; `human_deleted` is every tombstone so far,
+  `_human_deleted`).
 - **propose**: writes `_pending/vNNN.md[.docx/.pdf]` + `vNNN.diff.md` (a
   unified diff of the Markdown against the previous published version); state
   is not advanced.
@@ -41,7 +46,7 @@ from typing import Any
 from scribe_lib import brain as brain_mod
 from scribe_lib import claims
 from scribe_lib.basedoc import split_by_section_id
-from scribe_lib.checktask import _upstream_claims
+from scribe_lib.checktask import _upstream_claims, live_upstream_claims
 from scribe_lib.config import (
     Config,
     ScribeError,
@@ -93,12 +98,16 @@ def cited_from_section(config: Config, body: str, instances: dict[str, Any] | No
 
     `[TASK:up#c:id]` tags (spec A6) record `up#id -> text_hash(normalize_text(
     upstream claim's content))`, read from `up`'s latest published `_src` via
-    `checktask._upstream_claims`. `None` when `up` is unknown or that claim
-    id no longer exists there — same "record, never omit" rule, so a gone
-    upstream claim stays checked by `fingerprint.py` forever, not just once.
-    `instances` is optional (callers that never cite `[TASK:]`, or tests that
-    only exercise RAG/FILE, may omit it) — with no `instances`, any `[TASK:]`
-    tag is simply recorded as gone (`None`), never silently dropped."""
+    `checktask._upstream_claims`. `None` when `up` is unknown, that claim id
+    no longer exists there, OR it exists but is now `**Superseded (...):**`
+    (review fix round 1, Important 1: `normalize_text` strips the superseded
+    marker, so a naive hash comparison reports "same" for a claim that became
+    superseded — recording `None` instead forces `fingerprint.py` to treat it
+    as needing attention on every run until the citing section is redrafted,
+    the same "record, never omit" rule as a gone claim). `instances` is
+    optional (callers that never cite `[TASK:]`, or tests that only exercise
+    RAG/FILE, may omit it) — with no `instances`, any `[TASK:]` tag is simply
+    recorded as gone (`None`), never silently dropped."""
     cited_chunks: dict[str, str | None] = {}
     cited_raw: dict[str, str | None] = {}
     cited_task_claims: dict[str, str | None] = {}
@@ -123,7 +132,9 @@ def cited_from_section(config: Config, body: str, instances: dict[str, Any] | No
                     )
                 target = upstream_cache[up].get(cid)
                 cited_task_claims[f"{up}#{cid}"] = (
-                    brain_mod.text_hash(claims.normalize_text(target["content"])) if target is not None else None
+                    brain_mod.text_hash(claims.normalize_text(target["content"]))
+                    if target is not None and not target.get("superseded")
+                    else None
                 )
     return {"cited_chunks": cited_chunks, "cited_raw": cited_raw, "cited_task_claims": cited_task_claims}
 
@@ -298,6 +309,7 @@ def publish_task(
         "brain_snapshot": read_synced_files(config.brain_db),
         "raw_snapshot": raw_snapshot(config, raw_inputs),
         "upstream_versions": upstream_versions,
+        "upstream_claims_snapshot": live_upstream_claims(config, instances, edges.get(task_id, [])),
     }
     (src_dir / "state.json").write_text(json.dumps(new_state, indent=2), encoding="utf-8")
 

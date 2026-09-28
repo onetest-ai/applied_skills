@@ -26,7 +26,7 @@ output:
       title: "Workstream highlights"
       intent: "What changed in the other Scribe documents this cycle, cited back to the claims that changed."
       queries: ["{{name}} update", "{{name}} progress", "{{name}} highlight"]
-      lanes: [narrative]
+      lanes: [narrative, tasks]
     - id: next-steps
       title: "Next steps"
       intent: "What happens next and who owns it."

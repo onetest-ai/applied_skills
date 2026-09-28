@@ -13,7 +13,11 @@ reason forever — even though this run already looked and found nothing worth
 drafting.
 
 `observe_task` closes that loop: it updates ONLY the observation fields —
-`raw_snapshot`, `brain_snapshot`, `upstream_versions`, each section's
+`raw_snapshot`, `brain_snapshot`, `upstream_versions`, `upstream_claims_snapshot`
+(spec A6 controller ruling — see `checktask.live_upstream_claims`; safe to
+refresh on a noop because a noop, by definition, found no `tasks`-lane
+section stale, so this task-wide snapshot cannot have drifted from what the
+last fingerprint run already compared it against), each section's
 `fingerprint` (from `work/<task>/fingerprint.json`, written by `prepare` on
 every run, noop or not), and `last_checked` (an ISO timestamp) — leaving
 `version`, `published`, and the top-level `cited_chunks`/`cited_raw` exactly
@@ -46,6 +50,7 @@ import json
 from typing import Any
 
 from scribe_lib.basedoc import split_by_section_id
+from scribe_lib.checktask import live_upstream_claims
 from scribe_lib.config import (
     Config,
     read_state,
@@ -114,6 +119,7 @@ def observe_task(
         "brain_snapshot": read_synced_files(config.brain_db),
         "raw_snapshot": raw_snapshot(config, raw_inputs),
         "upstream_versions": upstream_versions,
+        "upstream_claims_snapshot": live_upstream_claims(config, instances, edges.get(task_id, [])),
         "last_checked": _observed_at(config),
     }
     path = state_path(config, instance)

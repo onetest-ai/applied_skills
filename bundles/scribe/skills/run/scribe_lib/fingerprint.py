@@ -16,9 +16,11 @@ keeping a raw hit only if its text contains >= 2 distinct query tokens
 (len > 2, word-bounded) or the whole query phrase — this is the "relevance
 floor" the brief calls out to stop every transcript matching every section
 under plain OR-matching. `considered` = the sorted union of
-`(chunk_id, text_hash)` (brain) and `(path#locator, text_hash)` (raw);
-`fingerprint = sha256(json({considered}))` — a section's fingerprint no
-longer includes upstream task version numbers (spec A6): an upstream publish,
+`(chunk_id, text_hash)` (brain), `(path#locator, text_hash)` (raw), and —
+for an upstream-consuming section only, see the controller ruling below —
+`(up#claim_id, text_hash)` for every LIVE claim across the task's upstream
+tasks; `fingerprint = sha256(json({considered}))`. A section's fingerprint no
+longer includes upstream task VERSION numbers (spec A6): an upstream publish,
 by itself, is not evidence that THIS section changed.
 
 ## State shape this module reads (and that `publish` writes)
@@ -33,6 +35,7 @@ writes compatibly:
         "cited_task_claims": {"<up>#<claim_id>": "<text_hash16>"},  # `[TASK:]` claims this section's merged claims actually cite
     }
     state["upstream_versions"] = {"<task id>": <int version>}   # diagnostic only (plan/report); not part of a section's fingerprint
+    state["upstream_claims_snapshot"] = {"<up>#<claim_id>": "<text_hash16>"}  # task-wide: every LIVE claim across upstream tasks, see below
 
 `cited_chunks`/`cited_raw`/`cited_task_claims` are populated by `publish`
 (and `observe`, for a noop) from the claims that were actually merged into a
@@ -41,15 +44,31 @@ publish, every section's prior `cited_chunks`/`cited_raw`/`cited_task_claims`
 is empty, so only "fingerprint_changed" (via
 `state["sections"][sid]["fingerprint"]`) or "first_run" can fire;
 "cited_chunk_changed"/"cited_chunk_gone"/"raw_file_changed"/"raw_file_removed"/
-"cited_task_claim_changed"/"cited_task_claim_gone"
+"cited_task_claim_changed"/"cited_task_claim_gone"/"cited_task_claim_superseded"
 are exercised in this task's tests against a hand-written state.json.
 
 **A6 — staleness by consumption, not by version.** There is no
 "upstream_published" reason: a downstream section is stale because an
 upstream claim it actually cites (`[TASK:up#c:id]`, recorded at publish as
-`cited_task_claims`) changed text or disappeared — not because task `up`
+`cited_task_claims`) changed text, disappeared, or became superseded (review
+fix round 1, Important 1 — superseded is its own status,
+`cited_task_claim_superseded`, checked before any hash comparison, because
+`normalize_text` strips the `**Superseded (...):**` marker and would
+otherwise hash-match the pre-supersede text) — not because task `up`
 published a new version that this section never looked at. A section that
 cites nothing from `up` never goes stale just because `up` did.
+
+**Controller ruling — an upstream-consuming section must see NEW material
+too.** A section is "upstream-consuming" when its template `lanes` include
+`tasks`, OR it currently cites any `[TASK:]` claim (`prior.cited_task_claims`
+non-empty). For such a section only, `considered` also includes every LIVE
+(non-superseded) claim key across the task's upstream tasks
+(`checktask.live_upstream_claims`), compared against
+`state["upstream_claims_snapshot"]`; a new or changed live claim there marks
+the section stale with `upstream_claims_changed`, in addition to changing the
+section's `fingerprint` hash. A non-consuming section's `considered.tasks` is
+always `[]`, so its hash — and its staleness — is untouched by any upstream
+publish, preserving the A6 intent above.
 
 Writes `work/<task>/fingerprint.json`:
 
@@ -60,11 +79,12 @@ Writes `work/<task>/fingerprint.json`:
           "queries": [...],
           "brain_hits": [{"chunk_id","source","section","score","text","text_hash","via":[...]}, ...],
           "raw_hits":   [{"path","locator","text","text_hash"}, ...],
-          "considered": {"brain": [[chunk_id, text_hash], ...], "raw": [["path#locator", text_hash], ...]},
+          "considered": {"brain": [[chunk_id, text_hash], ...], "raw": [["path#locator", text_hash], ...],
+                         "tasks": [["<up>#<claim_id>", text_hash], ...]},  # only for a consuming section
           "fingerprint": "<sha256 hex>",
           "cited_chunk_status": {"<chunk_id>": "same"|"changed"|"gone"},
           "cited_raw_status": {"<path>": "same"|"changed"|"removed"},
-          "cited_task_claim_status": {"<up>#<claim_id>": "same"|"changed"|"gone"},
+          "cited_task_claim_status": {"<up>#<claim_id>": "same"|"changed"|"gone"|"superseded"},
           "stale": bool,
           "stale_reasons": [...]
         }
@@ -85,7 +105,7 @@ from typing import Any
 
 from scribe_lib import brain as brain_mod
 from scribe_lib import claims
-from scribe_lib.checktask import _upstream_claims
+from scribe_lib.checktask import _upstream_claims, live_upstream_claims
 from scribe_lib.config import (
     Config,
     parse_template_ref,
@@ -161,10 +181,31 @@ def fingerprint_task(
     prior_sections = state.get("sections") or {}
     upstream_claims_cache: dict[str, dict[str, dict]] = {}
 
+    # Task-wide (not per-section) "what could be cited right now" snapshot —
+    # controller ruling on the reviewer's open question: a `tasks`-lane
+    # section (or one that already cites `[TASK:]`) must be able to pick up
+    # NEW upstream material, not just notice that a claim it already cites
+    # changed/superseded. Compared against `state["upstream_claims_snapshot"]`
+    # (written by `publish`/`observe`) once, up front — every consuming
+    # section shares the same comparison.
+    task_upstream_ids = edges.get(task_id, [])
+    current_upstream_snapshot = (
+        live_upstream_claims(config, instances, task_upstream_ids) if task_upstream_ids else {}
+    )
+    prior_upstream_snapshot = state.get("upstream_claims_snapshot") or {}
+    upstream_snapshot_changed = current_upstream_snapshot != prior_upstream_snapshot
+
     out_sections: dict[str, Any] = {}
     for sec in sections_spec:
         sid = sec["id"]
         queries = [substitute_params(q, params) for q in (sec.get("queries") or [])]
+        prior = prior_sections.get(sid) or {}
+        # A section "consumes" upstream tasks when its template lanes say so,
+        # or when it currently cites any `[TASK:]` claim (recorded at the
+        # last publish/observe) — either is enough to make new upstream
+        # material relevant to it. A5/A6 intent is preserved for every other
+        # section: it is never marked stale just because SOME task published.
+        is_consuming = "tasks" in (sec.get("lanes") or []) or bool(prior.get("cited_task_claims"))
 
         # Each tag label gets its own tag-filtered search; a task with tags
         # ALSO always gets one untagged search per query (R10), so a chunk
@@ -196,17 +237,21 @@ def fingerprint_task(
             (f"{p}#{loc}", brain_mod.text_hash(h.get("text", "")))
             for (p, loc), h in raw_hit_map.items()
         )
+        # Only an upstream-consuming section's hash depends on what upstream
+        # tasks currently hold live — a non-consuming section's fingerprint
+        # is untouched by any upstream publish (A6 intent preserved).
+        considered_tasks = sorted(current_upstream_snapshot.items()) if is_consuming else []
         payload = {
             "considered": {
                 "brain": [list(x) for x in considered_brain],
                 "raw": [list(x) for x in considered_raw],
+                "tasks": [list(x) for x in considered_tasks],
             },
         }
         fp = hashlib.sha256(
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
 
-        prior = prior_sections.get(sid) or {}
         stale_reasons: list[str] = []
         cited_chunk_status: dict[str, str] = {}
         cited_raw_status: dict[str, str] = {}
@@ -250,6 +295,15 @@ def fingerprint_task(
                 target = upstream_claims_cache[up].get(cid)
                 if target is None:
                     cited_task_claim_status[key] = "gone"
+                elif target.get("superseded"):
+                    # Important 1 (review fix round 1): `normalize_text`
+                    # strips the `**Superseded (...):**` marker, so a naive
+                    # hash comparison would report "same" for a claim that
+                    # became superseded and the section would be carried
+                    # byte-for-byte, never seen by `check-task`. Superseded
+                    # is its own status, checked before the hash comparison,
+                    # regardless of whether the hash still matches.
+                    cited_task_claim_status[key] = "superseded"
                 elif brain_mod.text_hash(claims.normalize_text(target["content"])) != prior_hash:
                     cited_task_claim_status[key] = "changed"
                 else:
@@ -258,6 +312,11 @@ def fingerprint_task(
                 stale_reasons.append("cited_task_claim_changed")
             if "gone" in cited_task_claim_status.values():
                 stale_reasons.append("cited_task_claim_gone")
+            if "superseded" in cited_task_claim_status.values():
+                stale_reasons.append("cited_task_claim_superseded")
+
+            if is_consuming and task_upstream_ids and upstream_snapshot_changed:
+                stale_reasons.append("upstream_claims_changed")
 
         out_sections[sid] = {
             "queries": queries,

@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from scribe_lib import brain as brain_mod
 from scribe_lib import claims
 from scribe_lib.basedoc import split_by_section_id
 from scribe_lib.config import Config, read_state
@@ -56,6 +57,35 @@ def _upstream_claims(config: Config, inst: dict[str, Any]) -> dict[str, dict]:
         for b in claims.parse_blocks(body):
             if claims.is_claim(b) and b.get("claim_id"):
                 out[b["claim_id"]] = b
+    return out
+
+
+def live_upstream_claims(config: Config, instances: dict[str, Any], upstream_tasks: list[str]) -> dict[str, str]:
+    """`{"<up>#<claim_id>": text_hash(normalize_text(content))}` for every
+    LIVE (non-superseded) claim across `upstream_tasks`'s latest published
+    versions — a task-wide snapshot of "what could be cited right now",
+    independent of what any section actually cites. Two callers:
+
+      - `fingerprint.fingerprint_task` recomputes it every run and compares
+        it against `state["upstream_claims_snapshot"]` (written by `publish`/
+        `observe`) to decide whether an upstream-consuming section (spec A6
+        controller ruling: `tasks` in the section's `lanes`, or it currently
+        holds any `cited_task_claims`) should go stale because NEW upstream
+        material appeared, not just because a claim it already cites changed.
+      - `publish`/`observe` write its result as `state["upstream_claims_snapshot"]`
+        so the next fingerprint run has something to compare against.
+
+    A superseded claim is excluded here for the same reason `pack` never
+    offers one to cite (spec A6 + Important-1 fix): it is not something a
+    section should newly pick up."""
+    out: dict[str, str] = {}
+    for up in upstream_tasks:
+        inst = instances.get(up)
+        if not inst:
+            continue
+        for cid, block in _upstream_claims(config, inst).items():
+            if not block.get("superseded"):
+                out[f"{up}#{cid}"] = brain_mod.text_hash(claims.normalize_text(block["content"]))
     return out
 
 
