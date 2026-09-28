@@ -51,6 +51,7 @@ from scribe_lib.checktask import _upstream_claims, live_upstream_claims
 from scribe_lib.config import (
     Config,
     ScribeError,
+    docx_edited,
     raw_root_available,
     raw_snapshot,
     read_state,
@@ -307,7 +308,7 @@ def _compute_new_state(
         "human_deleted": _human_deleted(state, work_dir, next_sections),
         "version": version,
         "built_at": header["built_at"],
-        "published": {"docx_sha256": docx_sha, "pdf_sha256": pdf_sha, "md_sha256": md_sha},
+        **_published_fields(docx_sha, pdf_sha, md_sha),
         "sections": sections_state,
         "cited_chunks": all_cited_chunks,
         "cited_raw": all_cited_raw,
@@ -317,6 +318,31 @@ def _compute_new_state(
         "upstream_claims_snapshot": live_upstream_claims(config, instances, edges.get(task_id, [])),
     }
     return new_state, md_sha
+
+
+def _published_fields(docx_sha: str | None, pdf_sha: str | None, md_sha: str) -> dict[str, Any]:
+    """`published` plus `docx_seen_sha256` (final-review I2): a fresh publish's live docx
+    IS the published one, so the last-seen sha resets to it."""
+    return {
+        "published": {"docx_sha256": docx_sha, "pdf_sha256": pdf_sha, "md_sha256": md_sha},
+        "docx_seen_sha256": docx_sha,
+    }
+
+
+HUMAN_EDIT_DURING_PUBLISH = "human_edit_during_publish"
+
+
+def _refuse_human_edit(config: Config, task_id: str, pending_dir: Path, version: int) -> dict[str, Any]:
+    """Final-review I1: the stable docx was edited by a person after the journaled publish
+    that is now being resumed (a locked docx failed `archive_previous`; the person then
+    saved edits). Archiving it would move their edits out of the living document and
+    record fingerprints for text they never saw. Discard the journal, leave the docx
+    untouched, and fail — the next `prepare` reads the edit as its base."""
+    shutil.rmtree(pending_dir, ignore_errors=True)
+    detail = f"published docx edited by a person after v{version:03d} was staged; journal discarded"
+    _append_run(config, {"task": task_id, "version": None, "status": "failed",
+                         "reasons": [HUMAN_EDIT_DURING_PUBLISH, detail]})
+    return {"status": "failed", "task": task_id, "reason": HUMAN_EDIT_DURING_PUBLISH, "detail": detail}
 
 
 def _permission_error_result(task_id: str, exc: PermissionError) -> dict[str, Any]:
@@ -369,8 +395,13 @@ def _resume_journal(
     commit's state and run-row `merge` counts, FROZEN at propose time —
     never recomputed here from `work/<task_id>/` (which may have been
     overwritten by a `prepare` that ran while the proposal sat unreviewed).
-    Both are `None` for an `auto`-mode journal, which recomputes live from
-    `work/` exactly as before."""
+    Final-review I1: an `auto` commit now freezes its state onto the journal at
+    `stage` time too, so every current journal carries `state_snapshot`; only a
+    journal written before that fix (no snapshot) still recomputes live from `work/`.
+    And before `archive_previous` runs, the live stable docx is compared with
+    `state.published.docx_sha256` (and `docx_seen_sha256`): a person's edit saved
+    after the failed publish discards the journal (`human_edit_during_publish`)
+    instead of archiving their edit away."""
     version = journal["version"]
     prev_version = version - 1
     steps_done = set(journal.get("steps_done") or [])
@@ -387,6 +418,9 @@ def _resume_journal(
     versions_dir = out_dir / "_versions"
     dst_versions_docx = versions_dir / f"v{prev_version:03d}_{config.now[:10]}.docx"
     dst_versions_pdf = versions_dir / f"v{prev_version:03d}_{config.now[:10]}.pdf"
+
+    if "archive_previous" not in steps_done and docx_edited(stable_docx, state):
+        return _refuse_human_edit(config, task_id, pending_dir, version)
 
     try:
         if "archive_previous" not in steps_done:
@@ -423,7 +457,7 @@ def _resume_journal(
             if state_snapshot is not None:
                 new_state = dict(state_snapshot)
                 md_sha = hashlib.sha256(next_text.encode("utf-8")).hexdigest()
-                new_state["published"] = {"docx_sha256": docx_sha, "pdf_sha256": pdf_sha, "md_sha256": md_sha}
+                new_state.update(_published_fields(docx_sha, pdf_sha, md_sha))
             else:
                 header = parse_header(next_text)
                 new_state, md_sha = _compute_new_state(
@@ -548,8 +582,8 @@ def commit_fresh(
     ran while the proposal sat unreviewed. Both ride onto the journal
     itself (`state_snapshot`/`merge_override`) so a crash mid-commit is
     resumed with the SAME frozen values, never a live recompute — see
-    `_resume_journal`. `None` (the `auto`-mode default) means "compute live
-    from `work/`, exactly as before task 12"."""
+    `_resume_journal`. `None` (the `auto`-mode default) means "compute from
+    `work/` now, at stage time, and freeze that onto the journal" (final-review I1)."""
     prev_version = state.get("version") or 0
     stable_docx = out_dir / f"{instance['title']}.docx"
     stable_pdf = out_dir / f"{instance['title']}.pdf"
@@ -566,6 +600,17 @@ def commit_fresh(
     # `publish_task`'s own retry OR `review.approve` — reads the ORIGINAL
     # commit's rendered-ness back, rather than trusting whatever the resume
     # caller happens to pass (see `_resume_journal`'s docstring).
+    # Final-review I1 (closes T9 "resume uses current fingerprint.json"): an `auto`
+    # commit's state is computed HERE, at stage time, from `work/<task>/` as this version
+    # was built from it, and frozen onto the journal — exactly as `approve` freezes a
+    # proposal's. A resume then writes these fingerprints/sections, never those of a
+    # later `prepare` that overwrote `work/<task>/fingerprint.json` in between.
+    # `published` is filled in from the placed files at `write_state`.
+    if precomputed_state is None:
+        precomputed_state, _ = _compute_new_state(
+            config, task_id, instance, template, instances, edges, state, new_version,
+            next_text, header, None, None,
+        )
     journal = {
         "version": new_version,
         "steps_done": [],
@@ -605,15 +650,9 @@ def commit_fresh(
         docx_sha = sha256_file(stable_docx) if not no_render and stable_docx.is_file() else None
         pdf_sha = sha256_file(stable_pdf) if not no_render and stable_pdf.is_file() else None
 
-        if precomputed_state is not None:
-            new_state = dict(precomputed_state)
-            md_sha = hashlib.sha256(next_text.encode("utf-8")).hexdigest()
-            new_state["published"] = {"docx_sha256": docx_sha, "pdf_sha256": pdf_sha, "md_sha256": md_sha}
-        else:
-            new_state, md_sha = _compute_new_state(
-                config, task_id, instance, template, instances, edges, state, new_version,
-                next_text, header, docx_sha, pdf_sha,
-            )
+        new_state = dict(precomputed_state)
+        md_sha = hashlib.sha256(next_text.encode("utf-8")).hexdigest()
+        new_state.update(_published_fields(docx_sha, pdf_sha, md_sha))
         _write_state(src_dir / "state.json", new_state)
         _mark_step(pending_dir, journal, "write_state")
     except PermissionError as exc:
@@ -764,6 +803,11 @@ def publish_task(
             next_text, header, propose_docx_sha, propose_pdf_sha,
         )
         (pending_dir / "state.json").write_text(json.dumps(state_snapshot, indent=2), encoding="utf-8")
+        # Final-review I5: `approve` builds this version's lineage from the inputs it was
+        # drafted from — frozen here, like the state above — not from a later prepare's.
+        for name in ("fingerprint.json", "base.json"):
+            if (work_dir / name).is_file():
+                shutil.copy2(work_dir / name, pending_dir / name)
 
         merge_snapshot = merge_counts_for_row(config, task_id)
         (pending_dir / "pending.json").write_text(

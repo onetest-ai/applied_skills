@@ -285,7 +285,11 @@ and **ends the task there — later commands in this list are not run**, so a fa
    render result; a diagram that failed to render fails the task here.
 4. `scribe.py publish <id>` (it records its own run-report row). If its JSON has
    `"published": false` (a `publish: propose` task: the version went to `_pending/` for
-   review), this task is done — skip lineage and index.
+   review), this task is done — skip lineage and index (`review approve` builds them when
+   the version is approved). A `failed` result with reason `human_edit_during_publish`
+   means a person edited the published docx after an earlier failed publish: the leftover
+   publish was discarded and the docx left untouched; record it as failed and move on — the
+   next run drafts from their edit.
 5. `scribe.py lineage <id>`.
 6. `scribe.py index`.
 

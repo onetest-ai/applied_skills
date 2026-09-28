@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 from scribe_lib import brain as brain_mod
@@ -87,7 +88,13 @@ def lineage_task(
     instance: dict[str, Any],
     template: dict[str, Any],
     instances: dict[str, Any] | None = None,
+    *,
+    fingerprint_path: Path | None = None,
+    base_json_path: Path | None = None,
 ) -> dict[str, Any]:
+    """`fingerprint_path`/`base_json_path` default to `work/<task>/`; `review.approve`
+    passes the copies a proposal froze at propose time (final-review I5), because
+    `work/<task>/` may belong to a later prepare by the time a proposal is approved."""
     from scribe_lib.config import read_state
 
     instances_by_id = instances or {}
@@ -107,10 +114,10 @@ def lineage_task(
     sections = split_by_section_id(text)
 
     work_dir = config.work_dir / task_id
-    fp_path = work_dir / "fingerprint.json"
+    fp_path = fingerprint_path or work_dir / "fingerprint.json"
     retrieval = json.loads(fp_path.read_text(encoding="utf-8")).get("sections", {}) if fp_path.is_file() else {}
 
-    base_json_path = work_dir / "base.json"
+    base_json_path = base_json_path or work_dir / "base.json"
     base_json = json.loads(base_json_path.read_text(encoding="utf-8")) if base_json_path.is_file() else {}
     human_modified_ids = {h["claim_id"] for h in (base_json.get("human_modified") or []) if h.get("claim_id")}
 

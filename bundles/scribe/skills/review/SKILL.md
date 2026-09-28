@@ -26,9 +26,11 @@ prints one JSON object; exit 1 carries a `"reason"` — show it to the user.
 
 1. `scribe.py review list` → `pending`, one entry per task with a proposal waiting:
    `task`, `version`, `diff` (a unified diff of the Markdown against the previously
-   published version), `stale` (an intervening publish already moved past the version this
-   proposal was built against — it can no longer be approved as-is). If it's empty, tell
-   the user there is nothing to review and stop.
+   published version), `stale` (it can no longer be approved as-is) and `stale_reason`:
+   `version_moved` (an intervening publish already moved past the version this proposal
+   was built against) or `human_edit_since_proposal` (someone edited the live published
+   docx after this proposal was built — approving would archive their edit away). If it's
+   empty, tell the user there is nothing to review and stop.
 2. For each pending entry, show the task, its version, and its diff, then ask the user,
    one task at a time: approve, reject (ask for a one-line reason), or skip. If `stale` is
    true, say so up front and steer toward reject + re-running `/scribe:run --task <id>`
@@ -37,9 +39,15 @@ prints one JSON object; exit 1 carries a `"reason"` — show it to the user.
    decision from an earlier one, and do not batch multiple tasks under one answer.
 3. Approve → `scribe.py review approve <task>`. This publishes the proposed version
    through the same versioned, journaled path `/scribe:run` uses — `_src/vNNN.md` is
-   written and `state.json` advances. Report the result (new version) or, if it refuses
-   because the proposal is stale (an intervening publish already moved past it), tell the
-   user and suggest re-running `/scribe:run --task <id>` to draft a fresh proposal.
+   written and `state.json` advances — and then builds that version's lineage
+   (`_src/vNNN.lineage.json`, `vNNN.sources.json`) and refreshes the reverse index, the
+   same `lineage` + `index` steps `/scribe:run` runs after an auto publish; do not run them
+   again. If the result carries `lineage_error`, the version IS published — tell the user
+   and suggest `scribe.py lineage <task>` then `scribe.py index`. Report the result (new
+   version) or, if it refuses because the proposal is stale (`version_moved` or
+   `human_edit_since_proposal`), tell the user and suggest re-running
+   `/scribe:run --task <id>` to draft a fresh proposal — after a live-docx edit, that run
+   drafts from the edit.
 4. Reject → `scribe.py review reject <task> --reason "<reason>"`. This discards the
    staged proposal and records the reason in the run report; nothing is published.
 5. Skip → leave the proposal in place and move to the next task; it stays reviewable next

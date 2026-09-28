@@ -66,6 +66,24 @@ def _observed_at(config: Config) -> str:
     return config.now if "T" in config.now else f"{config.now}T00:00:00"
 
 
+def _seen_docx(config: Config, task_id: str, state: dict[str, Any]) -> dict[str, Any]:
+    """`{"docx_seen_sha256": sha}` when tonight's base examined a live docx and found no
+    human edit (a Word re-save), else `{}` (final-review I2). Taken from `base.json`'s
+    `docx_sha256` — the sha `base` actually read — never re-hashed here, and never written
+    for an edited base. `published` itself is never touched."""
+    base_path = config.work_dir / task_id / "base.json"
+    if not base_path.is_file():
+        return {}
+    try:
+        base = json.loads(base_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    sha = base.get("docx_sha256")
+    if base.get("base_edited") or not sha or base.get("base_version") != state.get("version"):
+        return {}
+    return {"docx_seen_sha256": sha}
+
+
 def observe_task(
     config: Config,
     task_id: str,
@@ -128,6 +146,7 @@ def observe_task(
 
     new_state = {
         **state,
+        **_seen_docx(config, task_id, state),
         "sections": sections_state,
         "brain_snapshot": read_synced_files(config.brain_db),
         "raw_snapshot": fresh_raw_snapshot if fresh_raw_snapshot is not None else state.get("raw_snapshot"),

@@ -45,6 +45,7 @@ from scribe_lib.config import (  # noqa: E402
     read_state,
     resolve_instance_inputs,
     load_config,
+    docx_edited,
     sha256_file,
     validate_all,
 )
@@ -262,11 +263,8 @@ def _due_reasons(
         if any(version > recorded_upstream.get(up, -1) for up, version in upstream_versions.items()):
             reasons.append("upstream_published")
 
-        published = state.get("published") or {}
-        docx_sha = published.get("docx_sha256")
-        out_dir = config.out_root / instance["out"]
-        docx_path = out_dir / f"{instance['title']}.docx"
-        if docx_sha and docx_path.is_file() and sha256_file(docx_path) != docx_sha:
+        docx_path = config.out_root / instance["out"] / f"{instance['title']}.docx"
+        if docx_edited(docx_path, state):
             reasons.append("base_edited")
 
         if cadence == "daily":

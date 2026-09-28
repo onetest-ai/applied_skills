@@ -591,6 +591,18 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def docx_edited(docx_path: Path, state: dict[str, Any]) -> bool:
+    """True when the live published docx carries a human edit Scribe has not seen: it
+    exists, a docx was published (`state.published.docx_sha256`), and its sha is neither
+    that nor `state.docx_seen_sha256` (final-review I2: the sha of a Word re-save without
+    edits, recorded by `observe` so a plain re-save is not `base_edited` every night).
+    The one predicate `plan`, `base`, a journal resume and `approve` share (I1/I2)."""
+    published_sha = (state.get("published") or {}).get("docx_sha256")
+    if not published_sha or not docx_path.is_file():
+        return False
+    return sha256_file(docx_path) not in {published_sha, state.get("docx_seen_sha256")}
+
+
 def _glob_path_match(rel: str, pattern: str) -> bool:
     """Segment-aware glob match where a bare '**' path segment matches zero or
     more path segments.

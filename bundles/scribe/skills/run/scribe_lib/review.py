@@ -42,8 +42,17 @@ from typing import Any
 
 from scribe_lib import publish as publish_mod
 from scribe_lib.config import Config, ScribeError, parse_template_ref, read_state, validate_all
+from scribe_lib.index import build_index
+from scribe_lib.lineage import lineage_task
 from scribe_lib.merge import parse_header
 from scribe_lib.report import append_run
+
+
+HUMAN_EDIT_SINCE_PROPOSAL = "human_edit_since_proposal"
+
+
+def _stable_docx(config: Config, instance: dict[str, Any]) -> Path:
+    return config.out_root / instance["out"] / f"{instance['title']}.docx"
 
 
 def _pending_root(config: Config, instance: dict[str, Any]) -> Path:
@@ -90,14 +99,21 @@ def list_pending(config: Config) -> list[dict[str, Any]]:
         diff_path = pending_dir / "diff.md"
         diff = diff_path.read_text(encoding="utf-8") if diff_path.is_file() else ""
         version = meta.get("version")
-        prev_version = read_state(config, instance).get("version") or 0
+        state = read_state(config, instance)
+        prev_version = state.get("version") or 0
+        stale_reason = None
+        if version != prev_version + 1:
+            stale_reason = "version_moved"
+        elif publish_mod.docx_edited(_stable_docx(config, instance), state):
+            stale_reason = HUMAN_EDIT_SINCE_PROPOSAL
         out.append(
             {
                 "task": task_id,
                 "version": version,
                 "path": str(pending_dir),
                 "diff": diff,
-                "stale": version != prev_version + 1,
+                "stale": stale_reason is not None,
+                "stale_reason": stale_reason,
             }
         )
     return out
@@ -135,6 +151,10 @@ def approve(config: Config, task_id: str) -> dict[str, Any]:
             # this call is returning here rather than reaching the normal
             # post-commit cleanup below.
             stale_pending = _pending_root(config, instance) / f"v{resumed['version']:03d}"
+            resumed.update(_lineage_and_index(
+                config, task_id, instance, template, instances,
+                stale_pending if stale_pending.is_dir() else None,
+            ))
             if stale_pending.is_dir():
                 shutil.rmtree(stale_pending, ignore_errors=True)
         return resumed
@@ -155,6 +175,21 @@ def approve(config: Config, task_id: str) -> dict[str, Any]:
         )
         append_run(config, {"task": task_id, "version": None, "status": "failed", "reasons": [reason]})
         return {"status": "error", "task": task_id, "reason": reason}
+
+    # Final-review I1: a person edited the LIVE docx after this proposal was built (a
+    # reviewer fixing something in place, then approving). Committing would archive
+    # their fix away — refuse; the proposal is stale (`list` says so) and the next
+    # `prepare` reads the edit as its base.
+    if publish_mod.docx_edited(_stable_docx(config, instance), state):
+        meta["stale_reason"] = HUMAN_EDIT_SINCE_PROPOSAL
+        (pending_dir / "pending.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        reason = (
+            f"published docx for task '{task_id}' was edited since pending v{version} was "
+            f"proposed; re-propose (the next run drafts from the edit)"
+        )
+        append_run(config, {"task": task_id, "version": None, "status": "failed",
+                            "reasons": [HUMAN_EDIT_SINCE_PROPOSAL, reason]})
+        return {"status": "error", "task": task_id, "reason": HUMAN_EDIT_SINCE_PROPOSAL, "detail": reason}
 
     next_text = (pending_dir / "doc.md").read_text(encoding="utf-8")
     header = parse_header(next_text)
@@ -193,8 +228,36 @@ def approve(config: Config, task_id: str) -> dict[str, Any]:
         precomputed_state=precomputed_state, merge_override=merge_override,
     )
     if result.get("status") == "ok":
+        result.update(_lineage_and_index(config, task_id, instance, template, instances, pending_dir))
         shutil.rmtree(pending_dir, ignore_errors=True)
     return result
+
+
+def _lineage_and_index(
+    config: Config,
+    task_id: str,
+    instance: dict[str, Any],
+    template: dict[str, Any],
+    instances: dict[str, Any],
+    pending_dir: Path | None,
+) -> dict[str, Any]:
+    """Final-review I5: an approved version gets the same `vNNN.lineage.json`/
+    `sources.json` and reverse-index entry an `auto` publish gets from run step 7
+    (`scribe.py lineage` + `scribe.py index`), or `index --query` never sees a
+    propose-mode task's claims. Built from the fingerprint/base the proposal froze at
+    propose time when present (else `work/<task>/`, a pre-fix proposal). The version is
+    already committed, so a failure here is reported (`lineage_error`), never raised."""
+    kwargs: dict[str, Path] = {}
+    if pending_dir is not None:
+        for key, name in (("fingerprint_path", "fingerprint.json"), ("base_json_path", "base.json")):
+            if (pending_dir / name).is_file():
+                kwargs[key] = pending_dir / name
+    try:
+        lineage = lineage_task(config, task_id, instance, template, instances, **kwargs)
+        keys = len(build_index(config))
+    except Exception as exc:  # noqa: BLE001 — the commit already happened; report, don't mask it
+        return {"lineage_error": f"{type(exc).__name__}: {exc}"}
+    return {"lineage_path": lineage["lineage_path"], "index_keys": keys}
 
 
 def reject(config: Config, task_id: str, reason: str) -> dict[str, Any]:

@@ -318,3 +318,38 @@ def test_approve_builds_state_from_the_staged_proposal_not_live_work(tmp_path, m
     rows = json.loads(next((config.out_root / "_runs").glob("*.json")).read_text(encoding="utf-8"))
     published_row = next(row for row in rows if row["status"] == "published")
     assert published_row["merge"] == {"overview": {"kept": 1}}
+
+
+def test_approve_builds_lineage_and_index_for_the_approved_version(tmp_path, monkeypatch):
+    """Final-review I5: propose-mode versions never got lineage, so `index --query`
+    silently missed every claim of every propose-mode task. Approve builds it."""
+    from scribe_lib.index import query_index
+
+    config, data, inst, tpl = _proposed(tmp_path, monkeypatch)
+    src = config.out_root / inst["out"] / "_src"
+    r = review.approve(config, "m1")
+    assert r["status"] == "ok" and "lineage_error" not in r, r
+    assert (src / "v002.lineage.json").is_file() and (src / "v002.sources.json").is_file()
+    lineage = json.loads((src / "v002.lineage.json").read_text())
+    doc_ids = {n["doc_id"] for n in lineage["nodes"] if n["type"] == "chunk" and n.get("doc_id")}
+    assert doc_ids
+    hits = [e for d in doc_ids for e in query_index(config, d)]
+    assert any(e["task"] == "m1" and e["version"] == 2 for e in hits), hits
+
+
+def test_proposal_freezes_the_lineage_inputs_it_was_built_from(tmp_path, monkeypatch):
+    monkeypatch.setattr(brain_mod, "evidence", fake_evidence)
+    proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"), publish="propose")
+    config, data = load(proj)
+    inst, tpl = data["instances"]["m1"], data["templates"]["mini-profile"]
+    publish_seed(config, inst, doc("m1", 1, "Mini m1", {"overview": "Old. [RAG:1] <!-- c:aaaa0001 -->", "details": DETAILS}), 1, docx_sha=None)
+    work = config.work_dir / "m1"
+    write_json(work / "fingerprint.json", {"sections": {"overview": {"fingerprint": "night1"}}})
+    write_json(work / "base.json", {"base_version": 1, "base_edited": False, "human_added": [], "human_modified": []})
+    (work / "next.md").write_text(doc("m1", 2, "Mini m1", {"overview": "New. [RAG:1] <!-- c:aaaa0001 -->", "details": DETAILS}))
+    assert publish_task(config, "m1", inst, tpl, data["instances"], data["edges"], no_render=True)["status"] == "pending"
+    pending = config.out_root / "m1" / "_pending" / "v002"
+    assert json.loads((pending / "fingerprint.json").read_text())["sections"]["overview"]["fingerprint"] == "night1"
+    assert (pending / "base.json").is_file()
+    write_json(work / "fingerprint.json", {"sections": {"overview": {"fingerprint": "night2"}}})
+    assert review.approve(config, "m1")["status"] == "ok"

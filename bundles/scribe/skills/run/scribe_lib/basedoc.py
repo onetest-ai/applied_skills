@@ -86,7 +86,7 @@ from pathlib import Path
 from typing import Any
 
 from scribe_lib import claims
-from scribe_lib.config import Config, ScribeError, read_state, sha256_file, substitute_params
+from scribe_lib.config import Config, ScribeError, docx_edited, read_state, sha256_file, substitute_params
 
 _TEXT_TRUNCATE = 200
 
@@ -535,9 +535,21 @@ def base_task(
         else ""
     )
 
-    edited = bool(docx_path.is_file() and published_sha and sha256_file(docx_path) != published_sha)
+    # The live sha this base was built from (final-review I2): `observe` records it as
+    # `state.docx_seen_sha256` after a noop, so a re-save that reads as no edit below is
+    # not `base_edited` again every night. Recorded from HERE, not re-hashed at observe
+    # time, so an edit saved mid-run is never mistaken for the re-save this run examined.
+    live_sha = sha256_file(docx_path) if docx_path.is_file() and published_sha else None
+
+    def _unedited() -> dict[str, Any]:
+        result = _base_result(version)
+        if live_sha is not None:
+            result["docx_sha256"] = live_sha
+        return _write(prev_text_restored, result)
+
+    edited = docx_edited(docx_path, state)
     if not edited:
-        return _write(prev_text_restored, _base_result(version))
+        return _unedited()
 
     gfm = _docx_to_gfm(docx_path)
     body, footnote_defs = _extract_footnotes(gfm)
@@ -593,7 +605,7 @@ def base_task(
         _resave_units(docx_sections.get(sec["id"], ""), False) == _resave_units(prev_sections.get(sec["id"], ""), True)
         for sec in sections_spec
     ):
-        return _write(prev_text_restored, _base_result(version))
+        return _unedited()
 
     lists: dict[str, list[dict[str, Any]]] = {"human_added": [], "human_modified": [], "human_deleted": []}
     out_lines: list[str] = []
