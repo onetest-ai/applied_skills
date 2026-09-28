@@ -342,3 +342,145 @@ def test_plan_reports_raw_root_unavailable_note(tmp_path, monkeypatch):
     m1_entry = next(t for t in plan["tasks"] if t["id"] == "m1")
     assert "raw_root_unavailable" in m1_entry.get("notes", [])
     assert "raw_changed" not in m1_entry["reasons"]
+
+
+# ----------------------------------------------------------- fix round 2 --
+
+def test_offline_publish_carries_the_prior_cited_raw_sha_instead_of_writing_null(tmp_path, monkeypatch):
+    """Review fix round 2, Important #1 (finding 1 was still open after round
+    1): round 1 froze `gather-raw` and `fingerprint`'s raw-status checks, but
+    `publish`'s own `cited_from_section` still wrote `cited_raw[path] = None`
+    for every `[FILE:]` tag whenever the raw root was offline — the mass drop
+    just moved one publish later: the NEXT online fingerprint run would read
+    that recorded `None` as `raw_file_changed`/gone (fingerprint compares the
+    RECORDED sha, not today's raw availability), and check-file's
+    `_carried_raw_reason` would fail every carried claim against a `None`
+    prior sha.
+
+    True end-to-end, per the coordinator's spec: v1 publish (raw available,
+    with a [FILE:] claim) -> raw root removed -> prepare -> draft carrying
+    the claim UNCHANGED plus a REAL change in another section (so this is a
+    genuine v2 publish, not a noop) -> check-file -> merge -> publish v2
+    OFFLINE (no_render, consistent with the rest of this suite) -> assert
+    state.cited_raw for that path is still the v1 sha (not None) and
+    raw_snapshot is unchanged -> restore the raw root (the identical file) ->
+    prepare + check-file again -> the claim is not stale for raw reasons and
+    is not rewritten."""
+    from scribe_lib.basedoc import split_by_section_id
+
+    monkeypatch.setattr(brain_mod, "evidence", fake_evidence)
+    # Round 1: no brain hits at all. Round 2: a NEW hit for the "details"
+    # query only — a real, independent reason for v2 to be non-noop, so the
+    # overview section (carrying the [FILE:] claim unchanged) is the only
+    # thing exercising the offline-raw path.
+    def search_round1(cfg, q, limit, tag):
+        return []
+
+    def search_round2(cfg, q, limit, tag):
+        if "details" in q.lower():
+            return [{"chunk_id": "2", "source": "x.md", "section": "S", "score": 1.0, "text": "Detail chunk text."}]
+        return []
+
+    monkeypatch.setattr(brain_mod, "search", search_round1)
+    proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"))
+    a_md = proj / "raw-replay" / "a.md"
+    a_md_content = "Widget overview: alpha note recorded for the record.\n"
+    write_text(a_md, a_md_content)
+    config, data = load(proj)
+    inst, tpl = data["instances"]["m1"], data["templates"]["mini-profile"]
+
+    # -- v1: raw available --
+    prepare_task(config, "m1")
+    write_text(
+        config.work_dir / "m1" / "sections" / "overview.md",
+        "Widget overview note. [FILE:a.md#p1]\n",
+    )
+    write_json(
+        config.work_dir / "m1" / "sections" / "overview.evidence.json",
+        [{"claim_ref": 0, "tag": "[FILE:a.md#p1]", "quote": "alpha note recorded"}],
+    )
+    write_text(config.work_dir / "m1" / "sections" / "details.md", DETAILS + "\n")
+    cf1 = check_file_task(config, "m1", inst)
+    assert cf1["failed"] == [], cf1
+    merged1 = merge_task(config, "m1", data["instances"], data["templates"])
+    assert merged1["noop"] is False
+    published1 = publish_mod.publish_task(config, "m1", inst, tpl, data["instances"], data["edges"], no_render=True)
+    assert published1["status"] == "ok", published1
+
+    v1_sha = read_state(config, inst)["sections"]["overview"]["cited_raw"]["a.md"]
+    assert v1_sha, "sanity: v1 must have actually recorded a sha for a.md"
+    raw_inputs = resolve_instance_inputs(inst, tpl).get("raw") or {}
+    snapshot_before = raw_snapshot(config, raw_inputs)
+    assert snapshot_before == read_state(config, inst)["raw_snapshot"]
+
+    published_overview = split_by_section_id(
+        (config.out_root / "m1" / "_src" / "v001.md").read_text(encoding="utf-8")
+    )["overview"]
+    assert "[FILE:a.md#p1]" in published_overview
+
+    # -- raw root removed; a genuine v2 (details changes, overview carries) --
+    shutil.rmtree(config.raw_root)
+    monkeypatch.setattr(brain_mod, "search", search_round2)
+    prepare_task(config, "m1")
+
+    plan_json = json.loads((config.work_dir / "m1" / "pack" / "plan.json").read_text(encoding="utf-8"))
+    stale_sids = {e["section"] for e in plan_json["stale"]}
+    assert stale_sids == {"details"}, plan_json  # overview carried, not stale
+
+    write_text(config.work_dir / "m1" / "sections" / "details.md", "Fresh detail about the widget. [RAG:2]\n")
+    # `overview` is carried (not stale), but `merge_task` reads a carried
+    # section straight from `base.md`, not `sections/overview.md` — write it
+    # anyway so `check_file_task` (which scans every `sections/*.md`, stale
+    # or not) exercises the carried-[FILE:]-claim-while-offline path too.
+    write_text(config.work_dir / "m1" / "sections" / "overview.md", published_overview)
+
+    cf2 = check_file_task(config, "m1", inst)
+    assert cf2["failed"] == [], cf2
+    assert cf2["raw_offline_notes"], cf2
+
+    merged2 = merge_task(config, "m1", data["instances"], data["templates"])
+    assert merged2["noop"] is False
+    next_sections2 = split_by_section_id((config.work_dir / "m1" / "next.md").read_text(encoding="utf-8"))
+    assert "[FILE:a.md#p1]" in next_sections2["overview"]  # carried claim survived merge too
+
+    published2 = publish_mod.publish_task(config, "m1", inst, tpl, data["instances"], data["edges"], no_render=True)
+    assert published2["status"] == "ok" and published2["version"] == 2, published2
+
+    state2 = read_state(config, inst)
+    # THE fix: recorded as the carried-forward v1 sha, never None.
+    assert state2["sections"]["overview"]["cited_raw"]["a.md"] == v1_sha
+    assert state2["sections"]["overview"]["cited_raw"]["a.md"] is not None
+    assert state2["raw_snapshot"] == snapshot_before  # still frozen, unchanged
+
+    # -- restore the raw root (the identical file) --
+    write_text(a_md, a_md_content)
+    prepare_task(config, "m1")
+
+    fp3 = json.loads((config.work_dir / "m1" / "fingerprint.json").read_text(encoding="utf-8"))
+    overview_fp3 = fp3["sections"]["overview"]
+    assert "raw_file_changed" not in overview_fp3["stale_reasons"]
+    assert "raw_file_removed" not in overview_fp3["stale_reasons"]
+    assert overview_fp3["cited_raw_status"].get("a.md") == "same"
+
+    write_text(config.work_dir / "m1" / "sections" / "overview.md", published_overview)
+    cf3 = check_file_task(config, "m1", inst)
+    assert cf3["failed"] == [], cf3
+    section_text3 = (config.work_dir / "m1" / "sections" / "overview.md").read_text(encoding="utf-8")
+    assert "[FILE:a.md#p1]" in section_text3  # still not rewritten
+
+
+def test_corrupt_journal_version_is_discarded_not_resumed(tmp_path, monkeypatch):
+    """Review fix round 2, Minor: a journal whose `version` isn't an int
+    (corrupt/malformed) must be discarded like an already-applied one, never
+    handed to `_resume_journal` (which formats/compares it as an int)."""
+    config, data, inst, tpl, out = _ready(tmp_path, monkeypatch)
+    pending_dir = out / "_src" / ".pending"
+    pending_dir.mkdir(parents=True, exist_ok=True)
+    (pending_dir / "journal.json").write_text(
+        json.dumps({"version": "not-a-number", "steps_done": ["stage"]}), encoding="utf-8"
+    )
+
+    r = publish_mod.publish_task(config, "m1", inst, tpl, data["instances"], data["edges"], no_render=False)
+    assert r["status"] == "ok" and r["version"] == 2
+    assert not pending_dir.exists()
+    assert read_state(config, inst)["version"] == 2

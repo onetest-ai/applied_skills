@@ -99,7 +99,15 @@ def observe_task(
         entry = dict(sections_state.get(sid) or {})
         entry["fingerprint"] = info.get("fingerprint")
         if sid in published_sections:
-            cited = cited_from_section(config, published_sections[sid], instances)
+            # Review fix round 2, Important #1: carry this section's PRIOR
+            # cited_raw shas forward while the raw root is offline —
+            # `cited_from_section` uses them instead of writing `None` for a
+            # path it can't currently check, so an offline noop settles
+            # nothing into a false "gone" (which the NEXT online run would
+            # otherwise read as `raw_file_changed`/removed, and check-file
+            # would rewrite as Not modeled — the mass-drop bug recurring one
+            # run later, through the observe path this time).
+            cited = cited_from_section(config, published_sections[sid], instances, entry.get("cited_raw"))
             entry["cited_chunks"] = cited["cited_chunks"]
             entry["cited_raw"] = cited["cited_raw"]
             entry["cited_task_claims"] = cited["cited_task_claims"]

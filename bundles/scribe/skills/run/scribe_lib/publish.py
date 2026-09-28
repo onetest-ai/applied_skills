@@ -51,6 +51,7 @@ from scribe_lib.checktask import _upstream_claims, live_upstream_claims
 from scribe_lib.config import (
     Config,
     ScribeError,
+    raw_root_available,
     raw_snapshot,
     read_state,
     read_synced_files,
@@ -89,7 +90,12 @@ def append_run(config: Config, entry: dict[str, Any]) -> None:
 _append_run = append_run
 
 
-def cited_from_section(config: Config, body: str, instances: dict[str, Any] | None = None) -> dict[str, Any]:
+def cited_from_section(
+    config: Config,
+    body: str,
+    instances: dict[str, Any] | None = None,
+    prior_cited_raw: dict[str, str | None] | None = None,
+) -> dict[str, Any]:
     """What a section's merged claims actually cite, keyed by tag kind:
     `{"cited_chunks": {chunk_id: text_hash|None}, "cited_raw": {path: sha256|None},
     "cited_task_claims": {"<up>#<claim_id>": text_hash|None}}` (renamed from
@@ -108,6 +114,23 @@ def cited_from_section(config: Config, body: str, instances: dict[str, Any] | No
     treats any non-`ok` evidence as `gone` regardless of the prior hash, and
     a missing raw file as `removed` regardless of the prior sha.
 
+    **Review fix round 2, Important #1**: a `[FILE:]` tag's sha is recorded
+    as `None` only when the raw root is REACHABLE and the file is genuinely
+    gone. When `raw_root_available(config)` is `False`, the file's presence
+    can't be checked at all — writing `None` here would carry the mass-drop
+    bug from round 1 exactly one run later: the NEXT fingerprint run would
+    read that `None` as `raw_file_changed`/gone (fingerprint compares the
+    RECORDED sha, not the raw root's availability), and `check-file`'s
+    `_carried_raw_reason` would compare against a `None` prior sha and fail
+    every carried claim. So while offline, this function carries the PRIOR
+    state's sha for that path forward unchanged (`prior_cited_raw`, this
+    section's `state.sections.<sid>.cited_raw` before this run) — the same
+    "freeze, don't delete" contract `raw.py`'s `gather_raw_task` already
+    applies to the parsed corpus. `prior_cited_raw` is `None`/omitted for a
+    caller that has no prior state to carry (first publish) or genuinely
+    doesn't care (a few narrow tests) — the tag is then recorded `None`,
+    same as before this fix, since there is nothing to carry forward.
+
     `[TASK:up#c:id]` tags (spec A6) record `up#id -> text_hash(normalize_text(
     upstream claim's content))`, read from `up`'s latest published `_src` via
     `checktask._upstream_claims`. `None` when `up` is unknown, that claim id
@@ -124,6 +147,7 @@ def cited_from_section(config: Config, body: str, instances: dict[str, Any] | No
     cited_raw: dict[str, str | None] = {}
     cited_task_claims: dict[str, str | None] = {}
     upstream_cache: dict[str, dict[str, dict]] = {}
+    raw_available = raw_root_available(config)
     for block in claims.parse_blocks(body):
         for tag in block.get("tags", []):
             kind, value = claims.parse_tag(tag)
@@ -134,8 +158,11 @@ def cited_from_section(config: Config, body: str, instances: dict[str, Any] | No
                 )
             elif kind == "FILE":
                 path = value.split("#", 1)[0]
-                full = config.raw_root / path
-                cited_raw[path] = sha256_file(full) if full.is_file() else None
+                if raw_available:
+                    full = config.raw_root / path
+                    cited_raw[path] = sha256_file(full) if full.is_file() else None
+                else:
+                    cited_raw[path] = (prior_cited_raw or {}).get(path)
             elif kind == "TASK":
                 up, _, cid = value.partition("#c:")
                 if up not in upstream_cache:
@@ -249,11 +276,13 @@ def _compute_new_state(
     )
 
     next_sections = split_by_section_id(next_text)
+    prior_sections_state = state.get("sections") or {}
     sections_state: dict[str, Any] = {}
     all_cited_chunks: dict[str, str] = {}
     all_cited_raw: dict[str, str] = {}
     for sid, body in next_sections.items():
-        cited = cited_from_section(config, body, instances)
+        prior_cited_raw = (prior_sections_state.get(sid) or {}).get("cited_raw") or {}
+        cited = cited_from_section(config, body, instances, prior_cited_raw)
         cited_chunks, cited_raw, cited_task_claims = (
             cited["cited_chunks"], cited["cited_raw"], cited["cited_task_claims"]
         )
@@ -429,7 +458,14 @@ def publish_task(
         journal = _read_journal(pending_dir)
         if journal is not None:
             journal_version = journal.get("version")
-            if isinstance(journal_version, int) and prev_version >= journal_version:
+            if not isinstance(journal_version, int):
+                # Corrupt/malformed journal (review fix round 2, Minor):
+                # never resume from a version we can't trust — discard it
+                # the same way an already-applied one is discarded, rather
+                # than risk `_resume_journal` formatting/comparing a
+                # non-int version.
+                shutil.rmtree(pending_dir, ignore_errors=True)
+            elif prev_version >= journal_version:
                 # `state.json` already reflects this version (or a later
                 # one) — the journal is stale bookkeeping only (A10: "a
                 # retry finds `.pending/` and completes or discards it").
