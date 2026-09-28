@@ -32,88 +32,89 @@ def _load_lineages(config: Config) -> dict[str, dict[str, Any]]:
     return lineages
 
 
-def _direct_targets(lineage: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
-    """claim_id -> {doc_ids, paths, task_refs} for the CURRENT version's claims
-    only, plus claim_id -> section, both scoped to this one task's lineage."""
+ClaimRef = tuple[str, str]  # (task, claim_id)
+
+
+def _direct_targets(
+    task_id: str, lineage: dict[str, Any]
+) -> tuple[dict[ClaimRef, dict[str, Any]], dict[ClaimRef, str]]:
+    """(task, claim_id) -> {doc_ids, paths, task_refs} for the CURRENT version's
+    claims only, plus (task, claim_id) -> section. A claim id is unique within a
+    document (`merge` re-mints duplicates and ignores ids not in the base), so
+    the key names exactly one claim."""
     version = lineage["header"]["version"]
     nodes_by_id = {n["id"]: n for n in lineage["nodes"]}
-    claim_node_to_cid = {
-        n["id"]: n["claim_id"] for n in lineage["nodes"] if n["type"] == "claim" and n.get("version") == version
-    }
-    claim_section = {
-        n["claim_id"]: n["section"] for n in lineage["nodes"] if n["type"] == "claim" and n.get("version") == version
-    }
-    targets: dict[str, dict[str, Any]] = {
-        cid: {"doc_ids": set(), "paths": set(), "task_refs": set()} for cid in claim_node_to_cid.values()
+    current = [n for n in lineage["nodes"] if n["type"] == "claim" and n.get("version") == version]
+    claim_node_to_ref = {n["id"]: (task_id, n["claim_id"]) for n in current}
+    claim_section = {(task_id, n["claim_id"]): n["section"] for n in current}
+    targets: dict[ClaimRef, dict[str, Any]] = {
+        ref: {"doc_ids": set(), "paths": set(), "task_refs": set()} for ref in claim_node_to_ref.values()
     }
     for e in lineage["edges"]:
         if e["type"] != "cites":
             continue
-        cid = claim_node_to_cid.get(e["from"])
-        if cid is None:
+        ref = claim_node_to_ref.get(e["from"])
+        if ref is None:
             continue
         to_node = nodes_by_id.get(e["to"])
         if to_node is None:
             continue
         if to_node["type"] == "chunk" and to_node.get("doc_id"):
-            targets[cid]["doc_ids"].add(to_node["doc_id"])
+            targets[ref]["doc_ids"].add(to_node["doc_id"])
         elif to_node["type"] == "raw_span" and to_node.get("path"):
-            targets[cid]["paths"].add(to_node["path"])
+            targets[ref]["paths"].add(to_node["path"])
         elif to_node["type"] == "task_claim":
-            targets[cid]["task_refs"].add((to_node["task"], to_node["claim_id"]))
+            targets[ref]["task_refs"].add((to_node["task"], to_node["claim_id"]))
     return targets, claim_section
 
 
 def _resolve(
-    task_id: str,
-    claim_id: str,
-    per_task_targets: dict[str, dict[str, dict[str, Any]]],
-    memo: dict[tuple[str, str], dict[str, set]],
-    visiting: set[tuple[str, str]],
+    ref: ClaimRef,
+    targets_by_ref: dict[ClaimRef, dict[str, Any]],
+    memo: dict[ClaimRef, dict[str, set]],
+    visiting: set[ClaimRef],
 ) -> dict[str, set]:
-    key = (task_id, claim_id)
-    if key in memo:
-        return memo[key]
-    if key in visiting:  # DAG guard; shouldn't happen given inputs.tasks is acyclic
+    if ref in memo:
+        return memo[ref]
+    if ref in visiting:  # DAG guard; shouldn't happen given inputs.tasks is acyclic
         return {"doc_ids": set(), "paths": set()}
-    targets = per_task_targets.get(task_id, {}).get(claim_id)
+    targets = targets_by_ref.get(ref)
     if targets is None:
-        memo[key] = {"doc_ids": set(), "paths": set()}
-        return memo[key]
-    visiting.add(key)
+        memo[ref] = {"doc_ids": set(), "paths": set()}
+        return memo[ref]
+    visiting.add(ref)
     doc_ids = set(targets["doc_ids"])
     paths = set(targets["paths"])
-    for up_task, up_claim in targets["task_refs"]:
-        sub = _resolve(up_task, up_claim, per_task_targets, memo, visiting)
+    for up_ref in targets["task_refs"]:
+        sub = _resolve(up_ref, targets_by_ref, memo, visiting)
         doc_ids |= sub["doc_ids"]
         paths |= sub["paths"]
-    visiting.discard(key)
+    visiting.discard(ref)
     result = {"doc_ids": doc_ids, "paths": paths}
-    memo[key] = result
+    memo[ref] = result
     return result
 
 
 def build_index(config: Config) -> dict[str, list[dict[str, Any]]]:
     lineages = _load_lineages(config)
-    per_task_targets: dict[str, dict[str, dict[str, Any]]] = {}
-    claim_meta: dict[tuple[str, str], dict[str, Any]] = {}
+    targets_by_ref: dict[ClaimRef, dict[str, Any]] = {}
+    claim_meta: dict[ClaimRef, dict[str, Any]] = {}
     for tid, lineage in lineages.items():
-        targets, claim_section = _direct_targets(lineage)
-        per_task_targets[tid] = targets
+        targets, claim_section = _direct_targets(tid, lineage)
+        targets_by_ref.update(targets)
         version = lineage["header"]["version"]
-        for cid, sid in claim_section.items():
-            claim_meta[(tid, cid)] = {"task": tid, "version": version, "section": sid, "claim": cid}
+        for (task, cid), sid in claim_section.items():
+            claim_meta[(task, cid)] = {"task": task, "version": version, "section": sid, "claim": cid}
 
     index: dict[str, list[dict[str, Any]]] = {}
-    memo: dict[tuple[str, str], dict[str, set]] = {}
-    for tid, targets in per_task_targets.items():
-        for cid in targets:
-            resolved = _resolve(tid, cid, per_task_targets, memo, set())
-            meta = claim_meta[(tid, cid)]
-            for doc_id in resolved["doc_ids"]:
-                index.setdefault(doc_id, []).append(meta)
-            for path in resolved["paths"]:
-                index.setdefault(path, []).append(meta)
+    memo: dict[ClaimRef, dict[str, set]] = {}
+    for ref in targets_by_ref:
+        resolved = _resolve(ref, targets_by_ref, memo, set())
+        meta = claim_meta[ref]
+        for doc_id in resolved["doc_ids"]:
+            index.setdefault(doc_id, []).append(meta)
+        for path in resolved["paths"]:
+            index.setdefault(path, []).append(meta)
 
     for key, entries in index.items():
         seen: set[tuple[Any, ...]] = set()

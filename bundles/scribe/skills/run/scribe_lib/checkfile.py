@@ -24,8 +24,10 @@ nothing to verify a "carry" against.
 **Human-authored claims are skipped**: a draft claim that
 matches (same way) a base claim of human origin (`origin=human|
 human_modified` in its comment, or a legacy id-less base claim — see
-`claims.base_claim_origin`) is not checked at all and needs no quote; a
-human's own citation is the human's call. They are counted in
+`claims.base_claim_origin`) with the same `claims.claim_key` — text AND tags
+unchanged — is not checked at all and needs no quote; a human's own citation
+is the human's call. A human claim whose citation changed is the agent's
+citation now, and is checked like any other (spec A5). They are counted in
 `human_origin_skipped`, not in `checked`.
 
 Every other `[FILE:]` tag (new, changed, or on a claim not found in base) is
@@ -193,7 +195,11 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
                 continue
 
             base_match = _find_carried_base_claim(base_claims, block)
-            if base_match is not None and claims.base_claim_origin(base_match) in claims.HUMAN_ORIGINS:
+            if (
+                base_match is not None
+                and claims.claim_key(base_match) == claims.claim_key(block)
+                and claims.base_claim_origin(base_match) in claims.HUMAN_ORIGINS
+            ):
                 human_skipped += 1
                 continue
             checked += 1

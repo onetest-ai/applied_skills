@@ -1,4 +1,4 @@
-"""Claim parser — shared by check-file, merge and accept.
+"""Claim parser — the one claim model, shared by base, pack, check-file, merge and accept.
 
 A section body (the Markdown under one `## Title {#id}` heading, or an agent's
 drafted `work/<task>/sections/<sid>.md`) is a sequence of **blocks**:
@@ -36,6 +36,7 @@ unescaped. `raw` stays byte-exact.
 """
 from __future__ import annotations
 
+import difflib
 import hashlib
 import re
 from typing import Any
@@ -52,6 +53,8 @@ _MD_ESCAPE_RE = re.compile(r"\\([!-/:-@\[\\^-`{-~])")
 SUPERSEDED_RE = re.compile(r"^\*\*Superseded \(([^)]+)\):\*\*\s*")
 NOT_MODELED_RE = re.compile(r"^Not modeled:", re.IGNORECASE)
 FENCE_RE = re.compile(r"^```(\S*)\s*$")
+# A draft claim matches an unmatched base claim at this normalized-text similarity.
+MATCH_RATIO = 0.9
 
 
 def unescape_tag_body(value: str) -> str:
@@ -223,3 +226,75 @@ def render_blocks(rendered: list[tuple[dict[str, Any], str]]) -> str:
         lines.append(text)
         prev_kind = block["kind"]
     return ("\n".join(lines)).strip() + "\n" if lines else ""
+
+
+def claim_key(block: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
+    """`(normalized text, sorted tags)` — a claim is the same claim only when both
+    are equal (spec A5): same text with different tags is a re-cite, not a keep."""
+    return (block["normalized"], tuple(sorted(block["tags"])))
+
+
+def _mint(task_id: str, section_id: str, normalized: str, used: set[str]) -> str:
+    """`assign_claim_id`, re-hashed as `normalized#2`, `#3`, ... while the id is
+    already taken in this section (two claims never share an id)."""
+    cid, n = assign_claim_id(task_id, section_id, normalized), 1
+    while cid in used:
+        n += 1
+        cid = assign_claim_id(task_id, section_id, f"{normalized}#{n}")
+    return cid
+
+
+def match_claims(
+    base: list[dict[str, Any]], draft: list[dict[str, Any]], task_id: str, section_id: str
+) -> list[dict[str, Any]]:
+    """Match a section's drafted claim blocks to its base claim blocks — the one
+    claim-continuity rule every command uses.
+
+    Returns one `{"block", "claim_id", "category", "base"}` per draft CLAIM block,
+    in draft order (non-claim blocks are skipped). A base claim is matched at most
+    once:
+      1. the draft block's own `<!-- c:x -->` id, if `x` is an unmatched base
+         claim's id; any other agent-written id (invented, copied from elsewhere,
+         already used) is ignored;
+      2. else the unmatched base claim with the highest `SequenceMatcher` ratio
+         over `normalized`, ties broken by base claim id ascending, accepted at
+         `>= MATCH_RATIO`;
+      3. else no base: a fresh id (`_mint`, never one already used in this section).
+    A matched base claim with no id (a legacy human addition, before ids were
+    persisted) gets a fresh id too. Category: `superseded` (the block became
+    superseded this version), `kept` (equal `claim_key`), `recited` (equal text,
+    different tags), `reworded` (ratio match, different text), `added` (no base).
+    Base claims absent from every result's `base` were dropped."""
+    unmatched: dict[str, dict[str, Any]] = {}
+    for idx, b in enumerate(x for x in base if is_claim(x)):
+        unmatched[b["claim_id"] or f"~noid{idx:06d}"] = b
+    used = {k for k in unmatched if not k.startswith("~")}
+    out: list[dict[str, Any]] = []
+    for blk in (d for d in draft if is_claim(d)):
+        key = blk.get("claim_id")
+        if not (key and key in unmatched):
+            ranked = sorted(
+                (
+                    (difflib.SequenceMatcher(None, blk["normalized"], b["normalized"]).ratio(), k)
+                    for k, b in unmatched.items()
+                ),
+                key=lambda t: (-t[0], t[1]),
+            )
+            key = ranked[0][1] if ranked and ranked[0][0] >= MATCH_RATIO else None
+        match = unmatched.pop(key) if key else None
+        if match is not None:
+            cid = match["claim_id"] or _mint(task_id, section_id, blk["normalized"], used)
+            if blk["superseded"] and not match["superseded"]:
+                cat = "superseded"
+            elif claim_key(blk) == claim_key(match):
+                cat = "kept"
+            elif blk["normalized"] == match["normalized"]:
+                cat = "recited"
+            else:
+                cat = "reworded"
+        else:
+            cid = _mint(task_id, section_id, blk["normalized"], used)
+            cat = "added"
+        used.add(cid)
+        out.append({"block": blk, "claim_id": cid, "category": cat, "base": match})
+    return out

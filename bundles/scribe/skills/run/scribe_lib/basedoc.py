@@ -169,46 +169,41 @@ def split_by_section_id(text: str) -> dict[str, str]:
     return out
 
 
-def _split_claim_comment(text: str) -> tuple[str | None, str | None, str | None, str]:
-    """(claim_id, sup_ref, origin, text without the comment, tags unescaped)."""
-    m = claims.CLAIM_ID_RE.search(text)
-    if m:
-        return m.group(1), m.group(2), m.group(3), _normalize(claims.unescape_tags(text[: m.start()]))
-    return None, None, None, _normalize(claims.unescape_tags(text))
+def _unit(block: dict[str, Any], with_ids: bool) -> dict[str, Any]:
+    """A `claims.parse_blocks` claim or `Not modeled:` block as a unit:
+    `{kind: "para"|"bullet", text, claim_id, sup_ref, origin}`. `text` is the
+    block's `content` (tags unescaped, id comment and bullet marker removed),
+    whitespace-collapsed."""
+    kind = block["kind"]
+    if kind == "not_modeled":
+        kind = "bullet" if block["raw"].lstrip().startswith("- ") else "para"
+    unit = {"kind": kind, "text": _normalize(block["content"]), "claim_id": None, "sup_ref": None, "origin": None}
+    if with_ids:
+        unit.update(claim_id=block["claim_id"], sup_ref=block["sup_ref"], origin=claims.base_claim_origin(block))
+    return unit
+
+
+def _section_items(text: str, with_ids: bool) -> list[dict[str, Any]]:
+    """`text`'s blocks in order: a unit per claim/`Not modeled:` block, and a
+    `{"kind": "code", "raw": ...}` item per fenced code block (carried verbatim,
+    never a unit or a claim)."""
+    return [
+        {"kind": "code", "raw": b["raw"]} if b["kind"] == "code" else _unit(b, with_ids)
+        for b in claims.parse_blocks(text)
+    ]
 
 
 def parse_units(text: str, with_ids: bool) -> list[dict[str, Any]]:
-    """[{kind: "para"|"bullet", text, claim_id, sup_ref, origin}] — paragraphs/bullets in `text`.
-
-    A paragraph whose every non-blank line starts with `- ` becomes one
-    "bullet" unit per line; anything else becomes one "para" unit (its lines
-    joined with a space). `with_ids=True` strips + captures a trailing
+    """[{kind: "para"|"bullet", text, claim_id, sup_ref, origin}] — the paragraphs/
+    bullets in `text`, parsed by `claims.parse_blocks` (the one claim parser):
+    each `- ` item is its own bullet unit, fenced code blocks (e.g. a mermaid
+    diagram) are never units. `with_ids=True` captures the trailing
     `<!-- c:xxxxxxxx( sup=c:yyyyyyyy)?( origin=...)? -->` comment (used for the
-    previous version's units; an id-less previous unit gets `origin: "human"`,
-    see `claims.base_claim_origin`);
-    `with_ids=False` just normalizes (used for freshly recovered docx text,
-    which never carries those comments).
+    previous version's units; an id-less previous claim gets `origin: "human"`,
+    see `claims.base_claim_origin`); `with_ids=False` ignores it (used for
+    freshly recovered docx text, which never carries those comments).
     """
-    out: list[dict[str, Any]] = []
-    for para in re.split(r"\n\s*\n", text.strip()):
-        para = para.strip()
-        if not para:
-            continue
-        lines = [ln for ln in para.splitlines() if ln.strip()]
-        bullet = bool(lines) and all(ln.strip().startswith("- ") for ln in lines)
-        raws = [ln.strip()[2:].strip() for ln in lines] if bullet else [" ".join(ln.strip() for ln in lines)]
-        for raw in raws:
-            if with_ids:
-                claim_id, sup_ref, origin, norm = _split_claim_comment(raw)
-                if not claim_id and not claims.NOT_MODELED_RE.match(norm):
-                    origin = "human"
-            else:
-                claim_id, sup_ref, origin, norm = None, None, None, _normalize(raw)
-            out.append(
-                {"kind": "bullet" if bullet else "para", "text": norm, "claim_id": claim_id,
-                 "sup_ref": sup_ref, "origin": origin}
-            )
-    return out
+    return [u for u in _section_items(text, with_ids) if u["kind"] != "code"]
 
 
 def _is_not_modeled(unit: dict[str, Any]) -> bool:
@@ -226,6 +221,8 @@ def _carry_claims(
     human_added: list[dict[str, Any]] = []
     human_modified: list[dict[str, Any]] = []
     for u in new_units:
+        if u["kind"] == "code":
+            continue
         u["sup_ref"], u["origin"] = None, None
         if _is_not_modeled(u):
             # A `Not modeled:` line is not a claim: no id, no origin.
@@ -260,6 +257,12 @@ def _render_units(units: list[dict[str, Any]]) -> str:
     lines: list[str] = []
     prev_kind: str | None = None
     for u in units:
+        if u["kind"] == "code":
+            if lines:
+                lines.append("")
+            lines.append(u["raw"])
+            prev_kind = "code"
+            continue
         tag = (
             " " + claims.claim_comment(u["claim_id"], u.get("sup_ref"), u.get("origin"))
             if u["claim_id"]
@@ -378,7 +381,7 @@ def base_task(
         sid = sec["id"]
         if sid not in docx_sections:
             continue
-        new_units = parse_units(docx_sections[sid], with_ids=False)
+        new_units = _section_items(docx_sections[sid], with_ids=False)
         prev_units = parse_units(prev_sections.get(sid, ""), with_ids=True)
         assigned, added, modified = _carry_claims(new_units, prev_units, task_id, sid)
         for a in added:

@@ -7,20 +7,21 @@ by `check-file`) for every stale section — refusing if one is missing.
 
 - **Carried** sections are copied from `base.md` byte-for-byte (asserted).
 - **Drafted** sections keep the agent's text; every claim (bullet/paragraph)
-  gets a claim id: a base claim whose normalized text the draft claim matches
-  (ratio >= 0.9) keeps that base claim's id (or, if the agent already wrote an
-  explicit `<!-- c:xxxx -->` naming a real base claim id, that id is kept
-  outright); everything else gets a fresh
-  `sha256(task|section|normalized)[:8]` id. A claim already marked
-  `**Superseded (<date>):**` keeps whatever id it resolves to via the same
-  rule, and any `sup=c:yyyyyyyy` the agent wrote is passed through verbatim.
-  Origin: a draft claim whose text is unchanged from the
-  base claim it matched keeps that base claim's origin in its comment
-  (`<!-- c:xxxx origin=human -->`); an id-less base claim (a legacy human
-  addition, from before origin was persisted in the comment) matched this way
-  gets a fresh id and `origin=human`. The agent's
-  own `origin=` is ignored. Tag bodies are written unescaped (`claims` reads
-  them that way, Defect A).
+  is matched to the base section's claims by `claims.match_claims` — the one
+  claim-continuity rule (spec A5): the agent's own `<!-- c:xxxx -->` counts
+  only when it names a still-unmatched base claim (an invented, copied or
+  duplicate id is ignored), else the most similar unmatched base claim
+  (normalized-text ratio >= 0.9, ties by id) lends its id, else a fresh
+  `sha256(task|section|normalized)[:8]` id is minted (re-hashed on a clash, so
+  ids are unique in the section). Any `sup=c:yyyyyyyy` the agent wrote is
+  passed through verbatim. Categories: `kept` (same text AND tags), `recited`
+  (same text, different tags), `reworded`, `added`, `superseded`.
+  Origin: only a `kept` claim keeps its base claim's origin in its comment
+  (`<!-- c:xxxx origin=human -->`); a re-cited or reworded human claim is
+  the agent's claim now. An id-less base claim (a legacy human addition, from
+  before origin was persisted in the comment) matched and kept this way gets
+  a fresh id and `origin=human`. The agent's own `origin=` is ignored. Tag
+  bodies are written unescaped (`claims` reads them that way, Defect A).
   `superseded` counts only a claim becoming superseded THIS version — a base
   claim that was already superseded and is carried forward unchanged counts
   as `kept`, not `superseded` again (a base claim that was already superseded
@@ -30,16 +31,14 @@ by `check-file`) for every stale section — refusing if one is missing.
 - `## Changes in this version {#changes}` is generated from the base-vs-next
   claim sets per section (script-owned; the agent never drafts it).
 - `work/<task>/merge.json`: `{task, version, noop, sections: {sid: {status:
-  "carried"|"drafted", claims_before, claims_after, kept, reworded, dropped,
-  added, superseded}}}`. `dropped` = base claim ids (or id-less base claims,
-  keyed synthetically) absent from next that were not superseded.
+  "carried"|"drafted", claims_before, claims_after, kept, reworded, recited,
+  dropped, added, superseded}}}`. `dropped` = base claims no draft claim matched.
 - Noop: if `next.md` would be byte-identical to the previous version (ignoring
   the header comment and the Changes section), nothing is written and the
   result carries `"noop": true`.
 """
 from __future__ import annotations
 
-import difflib
 import json
 import re
 from typing import Any
@@ -83,92 +82,40 @@ def _base_field(base_version: int | None, base_edited: bool) -> str:
 
 def _merge_drafted_section(task_id: str, sid: str, base_body: str, draft_text: str) -> dict[str, Any]:
     base_blocks = [b for b in claims.parse_blocks(base_body) if claims.is_claim(b)]
-    base_pool: dict[str, dict[str, Any]] = {}
-    for idx, b in enumerate(base_blocks):
-        key = b["claim_id"] or f"__noid__{idx}"
-        base_pool[key] = b
-    unmatched = set(base_pool.keys())
-
     draft_blocks = claims.parse_blocks(draft_text)
+    results = {id(r["block"]): r for r in claims.match_claims(base_blocks, draft_blocks, task_id, sid)}
 
-    kept = reworded = dropped = added = superseded = 0
-    examples: dict[str, list[str]] = {"added": [], "reworded": [], "dropped": [], "superseded": []}
+    counts = dict.fromkeys(("kept", "reworded", "recited", "added", "superseded"), 0)
+    examples: dict[str, list[str]] = {"added": [], "reworded": [], "recited": [], "dropped": [], "superseded": []}
     rendered: list[tuple[dict[str, Any], str]] = []
 
     for block in draft_blocks:
-        if not claims.is_claim(block):
+        r = results.get(id(block))
+        if r is None:  # not a claim: code fence, `Not modeled:` line
             rendered.append((block, claims.render_claim(block, None)))
             continue
+        category = r["category"]
+        counts[category] += 1
+        if category != "kept":
+            examples[category].append(block["normalized"][:160])
+        # Origin comes only from the matched BASE claim, and only while text
+        # AND tags are unchanged (`kept`): an `origin=` the agent wrote is never
+        # trusted, and a human claim the agent reworded or re-cited is no
+        # longer human-authored.
+        origin = claims.base_claim_origin(r["base"]) if category == "kept" else None
+        rendered.append((block, claims.render_claim(block, r["claim_id"], block["sup_ref"], origin)))
 
-        normalized = block["normalized"]
-        explicit_id = block["claim_id"]
-        sup_ref = block["sup_ref"]
-        matched_key: str | None = None
+    matched = {id(r["base"]) for r in results.values() if r["base"] is not None}
+    dropped_blocks = [b for b in base_blocks if id(b) not in matched]
+    for b in dropped_blocks:
+        examples["dropped"].append(b["normalized"][:160])
 
-        if explicit_id and explicit_id in unmatched:
-            matched_key = explicit_id
-            unmatched.discard(explicit_id)
-        elif not explicit_id:
-            best_key, best_ratio = None, 0.0
-            for key in unmatched:
-                ratio = difflib.SequenceMatcher(None, normalized, base_pool[key]["normalized"]).ratio()
-                if ratio > best_ratio:
-                    best_ratio, best_key = ratio, key
-            if best_key is not None and best_ratio >= 0.9:
-                matched_key = best_key
-                unmatched.discard(best_key)
-
-        if matched_key is not None and not matched_key.startswith("__noid__"):
-            claim_id = matched_key
-        elif matched_key is not None:
-            claim_id = claims.assign_claim_id(task_id, sid, normalized)
-        elif explicit_id:
-            claim_id = explicit_id  # agent-supplied id with no base match
-        else:
-            claim_id = claims.assign_claim_id(task_id, sid, normalized)
-
-        already_superseded = matched_key is not None and bool(base_pool[matched_key].get("superseded"))
-        if block["superseded"] and not already_superseded:
-            # Newly superseded THIS version — the transition H2 counts.
-            category = "superseded"
-            superseded += 1
-        elif matched_key is not None and normalized == base_pool[matched_key]["normalized"]:
-            category = "kept"
-            kept += 1
-        elif matched_key is not None:
-            category = "reworded"
-            reworded += 1
-        else:
-            category = "added"
-            added += 1
-
-        if category in ("reworded", "added", "superseded"):
-            examples[category].append(normalized[:160])
-
-        # Origin comes only from the matched BASE claim, and only while the
-        # text is unchanged: an `origin=` the agent wrote is never trusted,
-        # and a human claim the agent reworded is no longer human-authored.
-        origin = None
-        if matched_key is not None and normalized == base_pool[matched_key]["normalized"]:
-            origin = claims.base_claim_origin(base_pool[matched_key])
-
-        rendered.append((block, claims.render_claim(block, claim_id, sup_ref, origin)))
-
-    dropped = len(unmatched)
-    for key in unmatched:
-        examples["dropped"].append(base_pool[key]["normalized"][:160])
-
-    body = claims.render_blocks(rendered)
-    claims_after = kept + reworded + superseded + added
     return {
-        "body": body,
+        "body": claims.render_blocks(rendered),
         "claims_before": len(base_blocks),
-        "claims_after": claims_after,
-        "kept": kept,
-        "reworded": reworded,
-        "dropped": dropped,
-        "added": added,
-        "superseded": superseded,
+        "claims_after": sum(counts.values()),
+        **counts,
+        "dropped": len(dropped_blocks),
         "examples": examples,
     }
 
@@ -186,15 +133,16 @@ def _render_changes(
         if rep["status"] == "carried":
             continue
         added, dropped, reworded, superseded = rep["added"], rep["dropped"], rep["reworded"], rep["superseded"]
-        if not (added or dropped or reworded or superseded):
+        recited = rep.get("recited", 0)
+        if not (added or dropped or reworded or superseded or recited):
             continue
         lines.append(
             f"- **{sec['title']}**: {added} added, {dropped} removed, "
-            f"{reworded} reworded, {superseded} superseded"
+            f"{reworded} reworded, {superseded} superseded" + (f", {recited} re-cited" if recited else "")
         )
         examples = examples_by_section.get(sid, {})
         shown = 0
-        for cat in ("superseded", "dropped", "reworded", "added"):
+        for cat in ("superseded", "dropped", "reworded", "recited", "added"):
             for ex in examples.get(cat, []):
                 if shown >= 5:
                     break
@@ -287,6 +235,7 @@ def merge_task(
                 "claims_after": claim_count,
                 "kept": claim_count,
                 "reworded": 0,
+                "recited": 0,
                 "dropped": 0,
                 "added": 0,
                 "superseded": 0,

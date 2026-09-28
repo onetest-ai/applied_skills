@@ -189,12 +189,14 @@ the rewritten claims.
 Dispatch the `kb:verifier` subagent **once for this task**, with a prompt that:
 
 - names the Brain: "Verify against the Brain served by MCP server `<server name>` (about.name `<name>`)";
-- lists the absolute paths of every `work/<id>/sections/*.md` you wrote in step 4;
+- lists the absolute paths of every `work/<id>/sections/*.md` you wrote in step 4, and of
+  `work/<id>/base.md` (the prior text, one `## Title {#<section>}` heading per section);
 - says: "Each paragraph or `- ` bullet is one claim; skip fenced code blocks and blocks
-  whose text, after any leading `- `, starts with `Not modeled:`. Skip human-authored
-  claims: every block whose trailing comment contains `origin=human` or
+  whose text, after any leading `- `, starts with `Not modeled:`. Human-authored claims
+  are every block whose trailing comment contains `origin=human` or
   `origin=human_modified`, and every block with neither a `<!-- c:… -->` comment nor a
-  citation tag. Check every `[RAG:]`,
+  citation tag. Skip a human-origin claim only when its text and tags are exactly as in
+  the base; a human claim whose citation changed is verified like any other. Check every `[RAG:]`,
   `[MART:]` and `[GRAPH:]` tag. `[FILE:]` and `[TASK:]` tags are checked elsewhere — skip
   claims that carry only those. Return one line per checked claim, exactly:
   `CLAIM | <section> | <c:xxxxxxxx id from the claim's trailing comment, or -> | <the claim's first 8 words, verbatim> | verified|unsupported|grain-mismatch|uncited-number | <reason>`
@@ -206,14 +208,15 @@ other line (summaries, counts, commentary). For each such line whose verdict is 
 `verified`, find the claim in `work/<id>/sections/<section>.md` **by content, never by
 position**: the block ending with that `<!-- c:xxxxxxxx -->` comment when the id field is
 not `-`, otherwise the one block whose text (after any leading `- `) starts with those
-8 words. If that block is human-authored (as defined in the prompt above), leave it
-unchanged and do not count the line as a rejection — a human-authored claim is never
-rejected, whatever the verifier says. Otherwise replace that block (the whole paragraph,
+8 words. If that block is a human-authored claim whose text and tags are exactly as in
+`work/<id>/base.md` (the claims the prompt above told the verifier to skip), leave it
+unchanged and do not count the line as a rejection — such a claim is never rejected,
+whatever the verifier says. A human claim whose citation changed is rejected like any other. Otherwise replace that block (the whole paragraph,
 or the bullet keeping its `- `) with `Not modeled: <reason>.`. If no block, or more than one block, matches a line, leave the
 section unchanged and record that line in `verifier.json` under `unmatched` instead.
 Do not re-draft rejected claims, do not run `check-file` again, and do not dispatch the
 verifier a second time. Then write `work/<id>/verifier.json`:
-`{"checked": <CLAIM lines read>, "human_origin_claims": <human-authored blocks in the section files you sent, which the verifier was told to skip>, "rejected": [{"section": "<section>", "claim": "<c:id or first 8 words>", "verdict": "<verdict>", "reason": "<reason>"}], "unmatched": [<CLAIM lines you could not match>]}`.
+`{"checked": <CLAIM lines read>, "human_origin_claims": <human-authored blocks in the section files you sent whose text and tags are exactly as in the base, which the verifier was told to skip>, "rejected": [{"section": "<section>", "claim": "<c:id or first 8 words>", "verdict": "<verdict>", "reason": "<reason>"}], "unmatched": [<CLAIM lines you could not match>]}`.
 
 ### 7. Merge, render, accept, publish, lineage, index (scripts)
 
