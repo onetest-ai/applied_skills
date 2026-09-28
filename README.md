@@ -12,14 +12,15 @@ Everything lands in **one portable `knowledge.sqlite`** (no server) — narrativ
 
 ## Start here: build a Brain, or use one?
 
-This repo is the **`applied-ai`** marketplace with exactly two plugins. Pick by what you're doing:
+This repo is the **`applied-ai`** marketplace with three plugins. Pick by what you're doing:
 
 | You want to… | Use | Surface | Start |
 |---|---|---|---|
 | **Build / maintain / deploy** a Brain from a corpus | **`brain`** (`/brain:*`) | Claude Code (CLI) | [Build a Brain](#build-a-brain-brain--claude-code) |
 | **Query & co-author** with an existing Brain | **`kb`** (`/kb:*`) | Claude Code **and** Claude Cowork | [Use a Brain in Claude Code](#use-a-brain-in-claude-code-kb) · [in Cowork](#use-a-brain-in-claude-cowork-kb) |
+| **Author scheduled, cited living documents** from a Brain | **`scribe`** (`/scribe:*`) | Claude Code (CLI), unattended-capable | [Author living documents](#author-living-documents-scribe--claude-code) |
 
-`brain` is the heavy, interactive build side — it runs in **Claude Code only** (it needs local scripts, a venv, and source credentials). `kb` is the lightweight librarian that consumes a Brain's MCP and works in **both Claude Code and Cowork**. Most consumers only need `kb`.
+`brain` is the heavy, interactive build side — it runs in **Claude Code only** (it needs local scripts, a venv, and source credentials). `kb` is the lightweight librarian that consumes a Brain's MCP and works in **both Claude Code and Cowork**. `scribe` is the author: it drafts, verifies and versions docx/pdf documents against a Brain, and can run unattended (cron/launchd) once set up. Most consumers only need `kb`.
 
 ---
 
@@ -56,6 +57,32 @@ For the same querying, inside Claude Desktop's Cowork. Cowork keeps its own plug
 4. **Verify** — ask a simple question with `/kb:ask` and confirm it cites the Brain you expect, then use `/kb:explore`, `/kb:report`, …
 
 Each project has its own Brain endpoint; if you're in two projects, add both connectors and leave both enabled — kb discovers every reachable Brain and asks which to use when more than one answers, and you can name one in the request ("ask the acme brain about …", which always wins even over a pin) or pin one per project as above for every request that names none. **Cowork caveats:** ambient mode (`/kb:mode`) and the SessionStart health line rely on hooks, which don't fire in Cowork — ground answers by invoking the kb skills explicitly. Full walkthrough: [`bundles/kb/docs/cowork-setup.md`](bundles/kb/docs/cowork-setup.md).
+
+---
+
+## Author living documents (`scribe` · Claude Code)
+
+For the person who needs a handful of **living documents** — a domain profile, a RAID log, a
+weekly digest — kept current against a Brain instead of written once and going stale.
+
+```bash
+claude plugin marketplace add onetest-ai/applied_skills
+claude plugin install brain@applied-ai
+claude plugin install scribe@applied-ai
+
+/scribe:onboard         # add one new document, interactively
+/scribe:run --due       # draft, verify, render and publish everything due
+```
+
+Every version is a docx + pdf pair, every sentence a cited claim (or an honest
+`Not modeled: …`), and every run redrafts only the sections whose evidence actually
+changed — with a `## Changes in this version` block explaining what moved. A person can
+hand-edit the published docx in Word (corrections, additions, deletions survive; renaming a
+section heading is refused, not guessed at) and Scribe carries the edits forward. It can run
+unattended on a schedule (`scribe.py schedule` prints a cron line or launchd plist, never
+installs one) and, for documents that shouldn't publish themselves, stage each new version for
+a human's `/scribe:review` instead. See [`bundles/scribe/README.md`](bundles/scribe/README.md)
+for setup and [`docs/scribe-guide.md`](docs/scribe-guide.md) for the document-owner's guide.
 
 ---
 
@@ -174,6 +201,7 @@ git clone git@github.com:onetest-ai/applied_skills.git && cd applied_skills
 claude plugin marketplace add onetest-ai/applied_skills
 claude plugin install brain@applied-ai   # Build/maintain/deploy the Brain (/brain:*)
 claude plugin install kb@applied-ai       # Interrogate/author (/kb:*)
+claude plugin install scribe@applied-ai  # Scheduled, cited living documents (/scribe:*)
 ```
 
 Restart the host session after installing so it loads the skills. Don't combine the plugin and the copy/symlink install — pick one, or the skills load twice. Corpus-specific configuration (source roots, family definitions, metric catalogs, taxonomy, deployment profiles) belongs in the **consuming project's** repo, not here; each skill's example templates show the shape to copy. See [`bundles/SPEC.md`](bundles/SPEC.md) for the bundle format.

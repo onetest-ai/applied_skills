@@ -101,3 +101,22 @@ def test_run_drafting_forbids_uncited_structure():
     step4 = _step(RUN_SKILL.read_text(encoding="utf-8"), "### 4.", "### 5.")
     for token in ("No sub-headings", "no tables", "no lead-in", "blank line between a"):
         assert token in step4, token
+
+
+def test_every_documented_subcommand_and_flag_exists():
+    import subprocess
+    import sys
+
+    from scribe_fixtures import REPO_ROOT as _REPO_ROOT
+
+    skills_dir = _REPO_ROOT / "bundles" / "scribe" / "skills"
+    scribe_py = skills_dir / "run" / "scribe.py"
+    help_top = subprocess.run([sys.executable, str(scribe_py), "--help"], capture_output=True, text=True).stdout
+    for md in skills_dir.glob("*/SKILL.md"):
+        for sub, flags in re.findall(r'\$SCRIBE ([a-z-]+)((?: [^\n`]*)?)', md.read_text()):
+            assert sub in help_top, f"{md.parent.name}: unknown subcommand {sub}"
+            sub_help = subprocess.run(
+                [sys.executable, str(scribe_py), sub, "--help"], capture_output=True, text=True
+            ).stdout
+            for flag in re.findall(r"(--[a-z-]+)", flags):
+                assert flag in sub_help, f"{md.parent.name}: {sub} has no {flag}"

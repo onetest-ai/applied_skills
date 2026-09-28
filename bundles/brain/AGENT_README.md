@@ -604,6 +604,36 @@ For a long build, keep a small execution log in the brain project, for example:
 
 After each phase record commands, inputs, counts, failures, and next action. On resume, inspect disk and the last checkpoint before launching more subagents. Do not duplicate a batch already represented by a valid result file.
 
+## Hand-off mode (unattended nightly runs)
+
+For a Brain that a Scribe project rebuilds documents against on a schedule, `brain-maintenance`
+has a non-interactive mode meant to run headless, right before `/scribe:run --due` in the same
+cron/launchd invocation (see `bundles/scribe/README.md`'s Scheduling section for the exact chained
+command and its `--permission-mode bypassPermissions` rationale):
+
+```bash
+"$PY" "$SKILLS/brain-maintenance/maintenance.py" status --profile <profile.json> > status.json
+"$PY" "$SKILLS/brain-maintenance/maintenance.py" handoff --profile <profile.json> \
+  --status status.json --out handoff-report.json
+# or, when status itself couldn't be produced (e.g. a source root is offline):
+"$PY" "$SKILLS/brain-maintenance/maintenance.py" handoff --profile <profile.json> \
+  --abort-reason "root_unavailable: <root>" --out handoff-report.json
+```
+
+`handoff` classifies the pending update (never both `--status` and `--abort-reason` — exactly
+one) and writes a decision report: `applied`, `deferred`, or `abort_reasons` (a stale-taxonomy
+provisional marker, a blocked-missing-parsed source, a strict-source error, or an unreachable
+root all abort rather than apply something half-safe). Pass `--apply-plan <path>` to additionally
+write a filtered apply plan (only the actions `handoff` itself classified as safe to apply) that
+`source apply --plan <path>` then executes — this is the *only* mutation path hand-off mode takes;
+it never calls a broader apply than what it explicitly planned.
+
+Downstream, a `brain_sync` run — attended or via hand-off — always UPSERTs `meta.built_at` (an
+ISO-8601 UTC timestamp) on success; that field, not a file mtime or a build log, is what a
+consumer like Scribe reads to know how fresh this Brain's answers are, and what its own
+stale-Brain preflight compares against before deciding whether to draft against the last good
+build.
+
 ## Human-facing completion report
 
 End with a concise report containing:
@@ -616,5 +646,28 @@ End with a concise report containing:
 6. store row counts and marts audit;
 7. verification result and known gaps;
 8. exact project paths for `knowledge.sqlite`, taxonomy, parsed corpus, assets, and vault.
+
+## Working with Scribe
+
+If this project also runs `scribe` (`bundles/scribe`) against this Brain, three things carry
+across the plugin boundary:
+
+- **Loop guard.** Before a build/rebuild, check `brain.toml`'s source roots for a Scribe output
+  folder (`scribe:onboard`'s `guard-brain` adds an `exclude` glob for it automatically). Never
+  hand-remove that exclude without confirming with whoever owns the Scribe project — reversing
+  it lets a published document re-enter the corpus as source material. `source_registry.
+  is_scribe_artifact` also skips any file carrying the `scribe-task` marker as a second,
+  independent guard.
+- **`meta.built_at`.** `brain_sync`'s apply step UPSERTs this on every successful build/refresh —
+  it's the timestamp Scribe's hand-off mode and preflight read to decide whether the last night's
+  Brain refresh actually happened. Don't write to `meta.built_at` from anywhere except
+  `brain_sync.write_built_at`.
+- **Unattended hand-off mode.** `brain-maintenance`'s `maintenance.py handoff` subcommand (see
+  its own `SKILL.md`, "Unattended hand-off mode") is what a nightly cron/launchd chain
+  (`scribe.py schedule`) runs before `/scribe:run --due`: it classifies `build_status`'s plan into
+  `apply`/`defer`/`abort`, applies only the safe additions itself, and always leaves a dated
+  report (even on failure, via `--abort-reason`) so a missing report never reads as a fresh
+  Brain. It never resolves a taxonomy ambiguity or force-deploys — those stay a human's job in
+  the next interactive session.
 
 Do not say “incremental update complete” if only `brain_sync apply` ran while changed visual sources were never rendered and assembled.

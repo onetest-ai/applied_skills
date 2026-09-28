@@ -4,13 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is
 
-A **marketplace of two Claude Code plugins**, not an application. The product is the skills themselves — `SKILL.md` files plus the deterministic scripts they drive — and they ship to other people's projects.
+A **marketplace of three Claude Code plugins**, not an application. The product is the skills themselves — `SKILL.md` files plus the deterministic scripts they drive — and they ship to other people's projects.
 
 - **`bundles/brain`** — builds, maintains and deploys a *Brain*: one portable `knowledge.sqlite` over a mixed corpus. Heavy, interactive, Claude Code only (needs local scripts, a venv, source credentials).
 - **`bundles/kb`** — the librarian that queries an existing Brain over MCP. Works in Claude Code **and** Claude Cowork.
-- **`mcp/brain`** — the FastMCP server that exposes a built `knowledge.sqlite` as governed read-only tools. This is what `kb` talks to.
+- **`bundles/scribe`** — the author: scheduled, versioned, claim-level-cited living documents (docx/pdf) drafted from a Brain plus a synced raw-evidence folder. Claude Code only, unattended-capable (cron/launchd hand-off into `/scribe:run --due`). Imports `parse_corpus`/`chunking`/`semantic_core` straight from `bundles/brain`/`mcp/brain`, so its own `requirements.txt` is a self-contained superset of brain's (never a relative import across bundles).
+- **`mcp/brain`** — the FastMCP server that exposes a built `knowledge.sqlite` as governed read-only tools. This is what `kb` and `scribe` talk to.
 
-`.claude-plugin/marketplace.json` lists both plugins; each bundle has its own `.claude-plugin/plugin.json`.
+`.claude-plugin/marketplace.json` lists all three plugins; each bundle has its own `.claude-plugin/plugin.json`.
 
 **The rule everything obeys:** *meaning is agentic, numbers are computed.* RAG and the taxonomy graph explain what things mean; deterministic marts compute every figure. Every answer is cited or an honest "not modeled". Gaps beat fabrication — this is why so much of the code below refuses rather than guesses.
 
@@ -19,9 +20,10 @@ A **marketplace of two Claude Code plugins**, not an application. The product is
 ## Commands
 
 ```bash
-# The three suites (from the repo root)
+# The four suites (from the repo root)
 uv run --with-requirements bundles/brain/requirements.txt --with pytest python -m pytest bundles/brain/tests
 uv run --with pytest python -m pytest bundles/kb/tests
+uv run --with-requirements bundles/scribe/requirements.txt --with pytest python -m pytest bundles/scribe/tests
 uv run --with-requirements bundles/brain/requirements.txt --with pytest python -m pytest mcp/brain/test_semantic_mcp.py
 
 # One file, one test
@@ -87,6 +89,14 @@ These are the things that take several files to see, and that tests pass while v
 - **Slug namespace.** A recording's slug is `video_slug` = `doc_slug(rel)` + `--<ext>` (`m/standup.mp4` → `m__standup--mp4`), because `doc_slug` drops the extension and a same-stem deck (`m/standup.pptx` → `m__standup`) would otherwise share — and lose — its asset dir. `frames` refuses and `forget` skips any dir whose `pages.json` is not `medium: video`. Do not "unify" the video slug back onto `doc_slug`.
 - **Per-item medium.** Every `vision_prep` batch item carries `medium` (`video` or `document`), and the no-content gate applies only to `video` items. A global gate lets a deck slide of team photos be answered `<!-- no-content -->`, which `page_render` caches forever and `vision_assemble` emits empty.
 - **Manifest-gated sidecar consumption.** `parse_corpus` skips a file (as `consumed-by-video`) only when it is listed in the `inputs` of a `method: "video-lane"` entry in the out dir's manifest whose `md` exists — keyed on `inputs`, never on file names, because a Teams `.docx` transcript is named after the meeting, not the recording (it is paired by its first paragraph), and a video assembled with `--transcript asr` has no sidecar in `inputs` and consumes nothing. There is no flag, so a corpus that never ran the video lane parses byte-identically. `assemble` writes that consumed entry and deletes the sidecar's stale parsed doc in the same step. The entry is what lets `brain_sync` retire the old transcript doc — and only while the video doc exists.
+
+**Scribe's claim model is one parser, shared by every stage.** `claims.py` (`bundles/scribe/skills/run/scribe_lib/claims.py`) is the only code that splits a section body into blocks (`bullet`/`para`/`code`/`not_modeled`) and parses a claim's trailing `<!-- c:xxxxxxxx( sup=c:yyyyyyyy)?( origin=human|human_modified)? -->` comment; `base`, `pack`, `check-file`, `check-task`, `merge` and `accept` all import it rather than re-deriving claim boundaries. A claim's tag bodies are unescaped on read (`unescape_tag_body`) because a docx round trip through pandoc backslash-escapes Markdown punctuation — `text`/`content`/`tags_in` always return the unescaped form, `raw` stays byte-exact. **Continuity across versions is keyed on `(normalized text, sorted tags)` together** (`claim_key`), never text alone — two claims with the same wording but different citations are different claims, and `match_claims` will not silently merge them.
+
+**`state.json` is written only by `publish` (a full rebuild) and `observe` (observation fields only).** `publish_task`/`review.commit_fresh` write the complete per-task state — `version`, `published`, `cited_chunks`/`cited_raw`/`cited_task_claims`, every section's `fingerprint` — through the one atomic `_write_state` (temp file + `os.replace`, never observed half-written). `observe_task` runs after a noop (`prepare`'s `plan.json.noop` or `merge`'s `next.md` would be byte-identical) and updates *only* `raw_snapshot`/`brain_snapshot`/`upstream_versions`/`upstream_claims_snapshot`/each section's `fingerprint`/`last_checked` — never `version` or `published` — so a night that found nothing to draft still refreshes what "prior" means for tomorrow's staleness check, without ever looking like a publish. No third writer exists; a new code path that wants to touch `state.json` belongs in one of these two, not a fresh `_write_state` call.
+
+**The loop guard is one contract shared by two bundles.** `render.py` (scribe) stamps every published artifact with a machine-readable marker — a `scribe-task` custom property in docx/pptx/xlsx `docProps/custom.xml`, a `scribe-task=<id>` PDF keyword, or (for `.md`/`.markdown`/`.txt`) a `<!-- scribe:...` first line — and `source_registry.is_scribe_artifact` (`bundles/brain/skills/knowledge-pipeline/source_registry.py`) reads exactly that same marker (`SCRIBE_MARKER = "scribe-task"`) to keep the Brain from re-ingesting Scribe's own output as source material. The two sides never share code, only the marker's exact name and shape — changing one without the other silently reopens the ingestion loop (a published document feeding back into its own evidence).
+
+**Scribe's publish journal lives under `_src/.pending/`, distinct from propose mode's `_pending/`.** An `auto`-publish records each finished step (`stage`, `archive_previous`, `place_new`, `write_src`, `write_state`) to `_src/.pending/journal.json` before starting the next, so a crash (process kill, a locked docx, `_write_state` raising) resumes exactly where it stopped on the next run instead of double-archiving the previous version or leaving neither the old nor the new stable file in place. This is unrelated to `out/<task>/_pending/`, where `publish: propose` stages a version awaiting `/scribe:review` — same word, two different directories with different lifetimes; do not conflate them when reasoning about what a crash mid-publish can leave behind.
 
 ## Conventions
 

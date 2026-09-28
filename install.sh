@@ -20,6 +20,7 @@
 #   ./install.sh                       # all skills -> ./.claude/skills + ./.dsh/skills
 #   ./install.sh --bundle brain        # just the 'brain' bundle's skills (from factory.json)
 #   ./install.sh --bundle brain --deps # + a DEDICATED venv (uv) for the skills' Python deps
+#   ./install.sh --bundle scribe --deps # the 'scribe' bundle (needs the brain plugin too)
 #   ./install.sh --target dsh --user   # -> ~/.dsh/skills
 #   ./install.sh --symlink             # link instead of copy (dev: edits reflect live)
 #
