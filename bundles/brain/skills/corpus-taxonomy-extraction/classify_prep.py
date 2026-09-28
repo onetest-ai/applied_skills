@@ -40,7 +40,9 @@ def _fit(batch: list[BatchItem], max_bytes: int) -> list[list[BatchItem]]:
 def split_batches(items: list[BatchItem], max_chunks: int, max_bytes: int, min_batches: int) -> list[list[BatchItem]]:
     if not items:
         return []
-    n = min(len(items), max(1, min_batches, math.ceil(len(items) / max(1, max_chunks))))
+    # Size the count for both caps up front; _fit only splits a batch that uneven items still overflow.
+    by_bytes = math.ceil(_serialized_size(items) / max(1, max_bytes))
+    n = min(len(items), max(1, min_batches, math.ceil(len(items) / max(1, max_chunks)), by_bytes))
     size = math.ceil(len(items) / n)
     groups = [items[k * size:(k + 1) * size] for k in range(n)]
     return [part for g in groups if g for part in _fit(g, max_bytes)]

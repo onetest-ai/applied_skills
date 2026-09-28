@@ -47,3 +47,15 @@ def test_cli_writes_capped_batches(tmp_path: Path):
     C.main(["--db", str(db), "--taxonomy", str(tax), "--out", str(tmp_path / "o"), "--batches", "2"])
     batches = sorted((tmp_path / "o").glob("batch_*.json"))
     assert len(batches) == 3 and all(len(json.loads(b.read_text())) <= 150 for b in batches)
+
+
+def test_byte_cap_sizes_the_batch_count_up_front():
+    # 300 x 400-char previews: 150 of them overflow 60 KB but 100 fit, so 3 even
+    # batches suffice. Splitting by chunk count first and halving each overflowing
+    # half afterwards gives 4 — one extra agent start-up per such run.
+    its = items(300, "y" * 400)
+    assert size(its[:100]) <= 60000 < size(its[:150])
+    out = C.split_batches(its, max_chunks=150, max_bytes=60000, min_batches=1)
+    assert len(out) == 3
+    assert all(size(b) <= 60000 for b in out)
+    assert [x["id"] for b in out for x in b] == list(range(300))
