@@ -7,8 +7,9 @@ bundle root (matching bundles/kb/tests/), not inside the skill directories.
 Because the tests still exercise the skill scripts directly, this conftest puts
 every skill's source directory on sys.path so a test can ``import parse_corpus``,
 ``import knowledge_index`` etc. regardless of which skill it belongs to. The only
-cross-skill duplicate module is ``chunking.py`` (corpus-taxonomy-extraction and
-knowledge-index ship byte-identical copies), so import order is irrelevant.
+cross-skill duplicate modules are ``chunking.py`` (corpus-taxonomy-extraction and
+knowledge-index) and ``scribe_marker.py`` (corpus-taxonomy-extraction and
+knowledge-pipeline); each pair ships byte-identical copies, so import order is irrelevant.
 
 It also carries the knowledge-index sqlite_vec shim (moved here verbatim):
 

@@ -159,10 +159,20 @@ warns when it finds videos in the corpus that no registered root's `include` mat
 # consumed-by-video) while it is in the `inputs` of that recording's video-lane manifest entry
 # and the video doc exists in parsed/ — the same holds for a Teams .docx in pass 2; every
 # other file, including one next to a video this Brain does not ingest, parses as before.
-"$PY" "$SKILLS/corpus-taxonomy-extraction/parse_corpus.py" --corpus <root> --out parsed/ --formats vtt,srt --merge-cues 10
+"$PY" "$SKILLS/corpus-taxonomy-extraction/parse_corpus.py" --corpus <root> --out parsed/ --formats vtt,srt --merge-cues 10 \
+  --exclude '<glob 1>' --exclude '<glob 2>'
 # Pass 2 — narrative docs
-"$PY" "$SKILLS/corpus-taxonomy-extraction/parse_corpus.py" --corpus <root> --out parsed/ --formats pptx,docx,pdf,md,markdown,txt,html,htm
+"$PY" "$SKILLS/corpus-taxonomy-extraction/parse_corpus.py" --corpus <root> --out parsed/ --formats pptx,docx,pdf,md,markdown,txt,html,htm \
+  --exclude '<glob 1>' --exclude '<glob 2>'
 ```
+
+**Pass every glob in that root's `brain.toml` `exclude` list to both passes, one `--exclude`
+per glob** (omit the flag when the root has no `exclude`). `source_registry` never registers
+an excluded file, so a parsed doc for one is an unmanaged document that makes
+`--strict-sources` (step 4) refuse the whole update. Scribe-marked files (a `scribe-task`
+docx/pdf property or a `<!-- scribe:` first line) are skipped by `parse_corpus` without any
+flag; both kinds of skip are recorded in `parsed/manifest.json` with `reason: "excluded"` or
+`reason: "scribe_marker"`.
 
 **`plan` reports a `superseded_by_video` key.** These are transcript documents retired
 because their video's parsed document now supersedes them — a deletion by design, not drift.
@@ -345,6 +355,21 @@ same exit code 3 — without needing a `status.json` at all.
    render/visual-parse and parsed-store `update` for the same set (steps 3–4 above), then
    `./brain update parsed ... --out "$PROJECT"`, which is what writes `meta.built_at` via
    `brain_sync apply`.
+
+   **If any step from here on fails** (source apply, parsing, `update parsed`,
+   classification, marts), overwrite today's report so it no longer says `apply`, then stop:
+
+   ```bash
+   "$PY" "$SKILLS/brain-maintenance/maintenance.py" handoff \
+     --profile "$PROJECT/brain-maintenance.toml" \
+     --abort-reason "<step>: <the printed error>" \
+     --out "$PROJECT/ops/handoff/$(date +%Y-%m-%d).json"
+   ```
+
+   Use the same dated path step 3 wrote. Left alone, an `apply` report with a failed apply
+   behind it reads to `scribe:run` as a fresh Brain. (Scribe also cross-checks
+   `meta.built_at` against an `apply` report's date, but the abort report is what names the
+   failure.)
 5. Classify the resulting new chunks against the **current** taxonomy only — no taxonomy
    changes in hand-off mode. Health items (untagged chunks, missing descriptions, …) stay
    queued for the human review app; do not run the review workbench unattended.

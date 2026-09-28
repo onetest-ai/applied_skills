@@ -625,9 +625,11 @@ across the plugin boundary:
 - **Loop guard.** Before a build/rebuild, check `brain.toml`'s source roots for a Scribe output
   folder (`scribe:onboard`'s `guard-brain` adds an `exclude` glob for it automatically). Never
   hand-remove that exclude without confirming with whoever owns the Scribe project — reversing
-  it lets a published document re-enter the corpus as source material. `source_registry.
+  it lets a published document re-enter the corpus as source material. `scribe_marker.
   is_scribe_artifact` also skips any file carrying the `scribe-task` marker as a second,
-  independent guard.
+  independent guard. `source_registry` and `parse_corpus.py` both apply both guards — pass the
+  root's `exclude` globs to `parse_corpus.py` as repeatable `--exclude`, or an excluded file is
+  parsed into an unmanaged doc that `--strict-sources` refuses.
 - **`meta.built_at`.** `brain_sync`'s apply (or seed) step UPSERTs this on every successful
   build/refresh. Don't write to `meta.built_at` from anywhere except `brain_sync.write_built_at`.
   It is **not** what Scribe's preflight keys off directly — the only reader is `maintenance.py

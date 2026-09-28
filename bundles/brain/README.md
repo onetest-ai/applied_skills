@@ -530,9 +530,11 @@ that would let the Brain cite its own generated prose as if it were evidence. Sc
 which adds an `exclude` glob to the source root that contains the task's output folder.
 Underneath, every Scribe-generated file also carries a machine-readable marker — a
 `scribe-task` custom property in a docx/pptx/xlsx, a `scribe-task=<id>` PDF keyword, or a
-`<!-- scribe:...` first line in a Markdown/text file — and `source_registry.is_scribe_artifact`
+`<!-- scribe:...` first line in a Markdown/text file — and `scribe_marker.is_scribe_artifact`
 checks it as a second, independent guard even if the `exclude` glob is ever missing or
-mis-scoped. If you see a Scribe output folder listed as a normal source in `brain source
+mis-scoped. Both walkers apply both guards: `source_registry` at registration and
+`parse_corpus.py` at parsing (pass the root's `exclude` globs as repeatable `--exclude`; marked
+files are skipped without a flag, and both skips are listed in `parsed/manifest.json`). If you see a Scribe output folder listed as a normal source in `brain source
 status`, run `guard-brain` again (or add the exclude glob by hand) before the next build.
 
 **`meta.built_at`.** Every successful `brain_sync` apply (or seed) UPSERTs an ISO-8601 UTC

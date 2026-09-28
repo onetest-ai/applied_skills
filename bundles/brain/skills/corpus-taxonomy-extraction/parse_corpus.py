@@ -454,7 +454,14 @@ def main(argv=None):
                     help="join N consecutive same-speaker VTT/SRT cues into one chunk (default: 1 = per-cue)")
     ap.add_argument("--verbose", action="store_true",
                     help="print the full traceback for a file that fails to parse (default: one line per file)")
+    ap.add_argument("--exclude", action="append", default=[], metavar="GLOB",
+                    help="corpus-relative glob to skip (repeatable; pass the source root's brain.toml "
+                         "`exclude` globs). Scribe-marked files are always skipped.")
     a = ap.parse_args(argv)
+    # The loop guard's shared predicate (byte-identical copy in knowledge-pipeline/),
+    # loaded here rather than at import time: scribe loads this module by file path.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import scribe_marker
     allow = {"." + e.strip().lower().lstrip(".") for e in a.formats.split(",") if e.strip()}
     os.makedirs(a.out, exist_ok=True)
     manifest = []
@@ -467,6 +474,16 @@ def main(argv=None):
             rel = os.path.relpath(src, a.corpus)
             ext = os.path.splitext(fn)[1].lower()
             if ext not in allow:
+                continue
+            reason = scribe_marker.skip_reason(src, rel.replace(os.sep, "/"), a.exclude)
+            if reason:
+                # Same predicate source_registry uses, so a file the registry never registers
+                # is never parsed into an unmanaged doc (which strict brain_sync refuses).
+                manifest.append({"source": rel, "skipped": True, "method": reason, "reason": reason})
+                stale = os.path.join(a.out, rel.replace(os.sep, "__") + ".md")
+                if os.path.exists(stale):
+                    os.remove(stale)
+                print(f"[skip] {reason:20} {rel}", file=sys.stderr)
                 continue
             if rel.replace(os.sep, "/") in consumed:
                 # The video lane already owns this transcript (see _video_lane_consumed).

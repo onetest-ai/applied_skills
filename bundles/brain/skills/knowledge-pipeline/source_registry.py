@@ -34,6 +34,9 @@ import uuid
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import scribe_marker  # noqa: E402  (byte-identical copy in corpus-taxonomy-extraction/)
+
 try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10
@@ -43,7 +46,7 @@ SCHEMA_VERSION = 1
 ROOT_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 SOURCE_KINDS = {"narrative", "reporting"}
 ROOT_MODES = {"import", "mirror", "managed"}
-SCRIBE_MARKER = "scribe-task"
+SCRIBE_MARKER = scribe_marker.SCRIBE_MARKER
 
 
 def utcnow() -> str:
@@ -226,33 +229,8 @@ def register(con: sqlite3.Connection, root_key: str, rel: str, path: Path, *, so
     return dict(con.execute("SELECT * FROM sources WHERE source_id=?", (sid,)).fetchone())
 
 
-def is_scribe_artifact(path: Path) -> bool:
-    """True for a file scribe generated (spec: Artifacts -> scribe marker). Never raises."""
-    suffix = path.suffix.lower()
-    try:
-        if suffix in (".docx", ".pptx", ".xlsx"):
-            import zipfile
-            with zipfile.ZipFile(path) as z:
-                if "docProps/custom.xml" not in z.namelist():
-                    return False
-                return f'name="{SCRIBE_MARKER}"' in z.read("docProps/custom.xml").decode("utf-8", "replace")
-        if suffix == ".pdf":
-            import pymupdf  # PyMuPDF, already a brain dependency
-            with pymupdf.open(path) as d:
-                return f"{SCRIBE_MARKER}=" in ((d.metadata or {}).get("keywords") or "")
-        if suffix in (".md", ".markdown", ".txt"):
-            with path.open("r", encoding="utf-8", errors="replace") as h:
-                return h.readline().lstrip().startswith("<!-- scribe:")
-    except Exception:
-        return False
-    return False
-
-
-def _glob_match(rel: str, pattern: str) -> bool:
-    if hasattr(PurePosixPath, "full_match"):
-        return PurePosixPath(rel).full_match(pattern)
-    rx = re.escape(pattern).replace(r"\*\*/", "(?:.*/)?").replace(r"\*\*", ".*").replace(r"\*", "[^/]*").replace(r"\?", "[^/]")
-    return re.fullmatch(rx, rel) is not None
+is_scribe_artifact = scribe_marker.is_scribe_artifact
+_glob_match = scribe_marker.glob_match
 
 
 def iter_files(root: Path, includes: list[str], excludes: list[str] | tuple = ()) -> tuple[dict[str, Path], list[dict[str, str]]]:
@@ -263,11 +241,9 @@ def iter_files(root: Path, includes: list[str], excludes: list[str] | tuple = ()
             if not p.is_file() or p.is_symlink():
                 continue
             rel = normalize_rel(p.relative_to(root).as_posix())
-            if any(_glob_match(rel, g) for g in excludes):
-                skipped[rel] = "excluded"
-                continue
-            if is_scribe_artifact(p):
-                skipped[rel] = "scribe_marker"
+            reason = scribe_marker.skip_reason(p, rel, excludes)
+            if reason:
+                skipped[rel] = reason
                 continue
             found[rel] = _resolved_inside(root, rel)
     return dict(sorted(found.items())), [{"relative_path": r, "reason": w} for r, w in sorted(skipped.items())]
