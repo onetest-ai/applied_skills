@@ -11,15 +11,16 @@ current working directory (the directory holding `scribe.toml`). This skill is
 interactive: **ask one question at a time**, wait for the answer, then move on. Never
 write a task file with `enabled: true` before the user has approved the dry run.
 
-**How to run scripts.** `$SCRIBE` means `"$PY" <skill-dir>/scribe.py --project .`, where `$PY` is the
+**How to run scripts.** `$SCRIBE` means `"$PY" <skill-dir>/../run/scribe.py --project .`, where `$PY` is the
 scribe venv interpreter from `./install.sh --bundle scribe --deps`. With no venv, use
-`uv run --with-requirements <skill-dir>/../../requirements.txt python <skill-dir>/scribe.py --project .`.
+`uv run --with-requirements <skill-dir>/../../requirements.txt python <skill-dir>/../run/scribe.py --project .`.
 Brain scripts (parse_corpus.py) live in the Brain plugin: their directory is `brain_skills` in `scribe.toml`.
+`<skill-dir>` here resolves to `skills/onboard`; `scribe.py` itself lives in the sibling `run`
+skill, hence the `../run/` segment in both forms above.
 
 `scribe.py <subcommand>` below is shorthand for `"$SCRIBE" <subcommand> [args]`, run from the
-project directory. `<skill-dir>` here resolves to `skills/onboard`; its run script path is
-`<skill-dir>/../run/scribe.py`. Each subcommand prints one JSON object; exit 1 carries a
-`"reason"` — show it to the user.
+project directory. Each subcommand prints one JSON object; exit 1 carries a `"reason"` —
+show it to the user.
 
 ## 0. Preflight (script + you)
 

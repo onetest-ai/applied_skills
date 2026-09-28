@@ -1,4 +1,6 @@
 import json, re
+from pathlib import Path
+
 from scribe_fixtures import REPO_ROOT
 
 SCRIBE = REPO_ROOT / "bundles" / "scribe"
@@ -44,3 +46,40 @@ def test_mermaid_cli_is_pinned():
 def test_skills_do_not_describe_a_permission_sandbox():
     text = (SCRIBE / "skills" / "run" / "SKILL.md").read_text()
     assert "rules allow only commands" not in text
+
+
+def test_scribe_paths_in_skill_md_resolve_to_real_files():
+    """Every SKILL.md defining `$SCRIBE` names a scribe.py path (and a
+    requirements.txt fallback path) relative to `<skill-dir>` (that SKILL.md's own
+    directory). Resolve both and assert the files they name actually exist — the
+    onboard/run regression this guards against: onboard's `<skill-dir>` is
+    `skills/onboard`, which has no `scribe.py` of its own (it lives in the sibling
+    `run` skill), so a `$SCRIBE` macro copied verbatim from run/SKILL.md silently
+    points at a nonexistent file.
+    """
+    scribe_re = re.compile(r'\$SCRIBE.*?means.*?"\$PY"\s+([^\s`]+?)\s+--project')
+    req_re = re.compile(r'--with-requirements\s+([^\s`]+?)\s+python\s+([^\s`]+?)\s+--project')
+
+    checked = 0
+    for skill_dir in (SCRIBE / "skills").iterdir():
+        md = skill_dir / "SKILL.md"
+        if not md.is_file():
+            continue
+        text = md.read_text()
+        if "$SCRIBE" not in text:
+            continue
+
+        m = scribe_re.search(text)
+        assert m, f"{md}: defines $SCRIBE but no resolvable scribe.py path found"
+        script_path = m.group(1).replace("<skill-dir>", str(skill_dir))
+        assert Path(script_path).resolve().is_file(), f"{md}: $SCRIBE script {script_path} does not exist"
+
+        m2 = req_re.search(text)
+        assert m2, f"{md}: no `uv run` fallback with a requirements path found"
+        req_path = m2.group(1).replace("<skill-dir>", str(skill_dir))
+        fallback_script = m2.group(2).replace("<skill-dir>", str(skill_dir))
+        assert Path(req_path).resolve().is_file(), f"{md}: fallback requirements {req_path} does not exist"
+        assert Path(fallback_script).resolve().is_file(), f"{md}: fallback script {fallback_script} does not exist"
+        checked += 1
+
+    assert checked >= 2
