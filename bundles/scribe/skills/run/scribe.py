@@ -339,7 +339,13 @@ def compute_plan(
 
     running_minutes = sum(ran_today.values())
     admitted = len(ran_today)
-    first_due_admitted = False
+    # Fix round 2, issue 4: the no-starvation bypass (below) must fire AT
+    # MOST once per RUN, not once per `plan --due` call — the run SKILL
+    # loop calls `plan --due` again after every task, so seeding this
+    # `False` on every call let every single task bypass the budget in
+    # turn. Seeding it from `ran_today` (something already ran THIS run)
+    # means the bypass only ever fires for the very first task of the run.
+    first_due_admitted = bool(ran_today)
     for tid in order:
         entry = entries[tid]
         if not entry["due"]:

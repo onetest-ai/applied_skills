@@ -296,16 +296,27 @@ _PER_RUN_FILES = ("next.md", "merge.json", "check-file.json", "check-task.json",
 _PER_RUN_DIRS = ("sections", "render")
 
 
-def _stamp_started(work_dir: Path) -> None:
-    """`work/<task>/started_at` — real wall-clock time (never `config.now`,
-    which is the replay date and does not advance within a run), read back
-    by `report.elapsed_minutes` when `publish`/`report --status` write the
-    task's `minutes` onto its run-report row (task 11, fix round 1, ruling
-    on issue 4a). Overwritten on every `prepare`, including a skipped one's
-    successor once the upstream unblocks — only the most recent `prepare`
-    of the day should count towards that task's elapsed time."""
+def _stamp_started(work_dir: Path, config: Config) -> None:
+    """`work/<task>/started_at` — `{"date": <run date>, "at": <real
+    wall-clock ISO time>}`, read back by `report.elapsed_minutes` when
+    `publish`/`report --status` write the task's `minutes` onto its
+    run-report row (task 11, fix round 1 ruling on issue 4a; fix round 2,
+    NEW issue). `at` is real wall-clock time (never `config.now`, which is
+    the replay date and does not advance within a run) so elapsed minutes
+    means something; `date` is `config.now[:10]` at STAMP time, compared
+    against `config.now[:10]` at READ time — not the wall clock's own
+    date, which would almost never equal a replay date (`SCRIBE_NOW`) and
+    would make every stamp look stale even seconds after `prepare` ran.
+    That comparison is what lets `elapsed_minutes` refuse a `started_at`
+    left over from a PRIOR run (a previous calendar day, or a previous
+    `SCRIBE_NOW` replay) instead of measuring wall-clock time since some
+    unrelated earlier day's `prepare`. Overwritten on every `prepare`,
+    including a skipped one's successor once the upstream unblocks — only
+    the most recent `prepare` of the day should count towards that task's
+    elapsed time."""
     work_dir.mkdir(parents=True, exist_ok=True)
-    (work_dir / "started_at").write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+    payload = {"date": config.now[:10], "at": datetime.now(timezone.utc).isoformat()}
+    (work_dir / "started_at").write_text(json.dumps(payload), encoding="utf-8")
 
 
 def _clear_previous_run(work_dir: Path) -> None:
@@ -353,7 +364,16 @@ def prepare_task(config: Config, task_id: str) -> dict[str, Any]:
         def _blocks(row: dict[str, Any]) -> bool:
             if row.get("status") == "failed":
                 return True
-            return row.get("status") == "skipped" and "upstream_failed" in (row.get("reasons") or [])
+            if row.get("status") != "skipped":
+                return False
+            # Fix round 2, issue 5: the real writer (run/SKILL.md step 2.3:
+            # `report --status skipped --reason "upstream_failed: <id>"`)
+            # stores a reason of "upstream_failed: <id>", not the bare
+            # string "upstream_failed" — an exact `in` membership check
+            # against `reasons` never matched it, so a skip caused by an
+            # upstream failure never propagated past one hop in practice.
+            # Match by prefix instead.
+            return any(str(r).startswith("upstream_failed") for r in (row.get("reasons") or []))
 
         failed_upstream = sorted(
             up for up in upstream if up in latest_by_task and _blocks(latest_by_task[up])
@@ -367,7 +387,7 @@ def prepare_task(config: Config, task_id: str) -> dict[str, Any]:
             }
 
     _clear_previous_run(config.work_dir / task_id)
-    _stamp_started(config.work_dir / task_id)
+    _stamp_started(config.work_dir / task_id, config)
 
     brain_delta = compute_brain_delta(config, state)
     raw_inputs = resolve_instance_inputs(instance, template).get("raw") or {}

@@ -197,15 +197,55 @@ def test_prepare_stamps_started_at_and_report_records_minutes(tmp_path, monkeypa
     started_path = config.work_dir / "m1" / "started_at"
     assert started_path.is_file()
 
-    past = (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat()
-    started_path.write_text(past, encoding="utf-8")
+    payload = json.loads(started_path.read_text())
+    assert payload["date"] == "2026-01-05"
+    past_at = (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat()
+    started_path.write_text(json.dumps({"date": payload["date"], "at": past_at}), encoding="utf-8")
 
     report_mod.record(config, task="m1", status="noop", reason="test")
     row = next(r for r in report_mod.rows(config) if r["task"] == "m1")
     assert row["minutes"] >= 2.9
 
 
-def test_budget_seeds_from_minutes_used_today_and_never_starves_first_due(tmp_path, monkeypatch):
+def test_skipped_at_plan_row_gets_no_minutes(tmp_path, monkeypatch):
+    """Fix round 2, NEW issue: a `skipped` row is written at the PLAN stage,
+    before `prepare` is ever called for that task this cycle — even though
+    `prepare` ran (and stamped `started_at`) once already this run, that
+    stamp must not leak into a later `skipped` row for the same task."""
+    monkeypatch.setenv("SCRIBE_NOW", "2026-01-05T09:00:00")
+    monkeypatch.setattr(brain_mod, "search", lambda cfg, q, limit, tag: [])
+    proj = _proj(tmp_path)
+    mini_task(proj, "m1")
+    config, _ = load(proj)
+
+    prepare_task(config, "m1")  # stamps a fresh started_at
+    report_mod.record(config, task="m1", status="skipped", reason="not due: cadence manual")
+    row = next(r for r in report_mod.rows(config) if r["task"] == "m1")
+    assert "minutes" not in row
+
+
+def test_stale_started_at_from_a_previous_run_yields_no_minutes(tmp_path, monkeypatch):
+    monkeypatch.setenv("SCRIBE_NOW", "2026-01-05T09:00:00")
+    proj = _proj(tmp_path)
+    mini_task(proj, "m1")
+    config, _ = load(proj)
+    started_path = config.work_dir / "m1" / "started_at"
+    started_path.parent.mkdir(parents=True, exist_ok=True)
+    started_path.write_text(
+        json.dumps({"date": "2026-01-04", "at": datetime.now(timezone.utc).isoformat()}), encoding="utf-8"
+    )
+
+    report_mod.record(config, task="m1", status="noop", reason="test")
+    row = next(r for r in report_mod.rows(config) if r["task"] == "m1")
+    assert "minutes" not in row
+
+
+def test_budget_seeds_from_minutes_used_today_and_defers_rather_than_starving(tmp_path, monkeypatch):
+    """Fix round 2, issue 4: once ANYTHING has run this run (`ran_today`
+    non-empty), the no-starvation bypass no longer fires — it exists only
+    to guarantee the run's very first task is never deferred, not to let
+    every subsequent `plan --due` re-admit its own "first" candidate over
+    budget."""
     monkeypatch.setenv("SCRIBE_NOW", "2026-01-05T09:00:00")
     proj = _proj(tmp_path)
     for t in ("a", "b", "c"):
@@ -219,8 +259,64 @@ def test_budget_seeds_from_minutes_used_today_and_never_starves_first_due(tmp_pa
     plan = scribe.compute_plan(config, data)
     rows = {t["task"]: t for t in plan["tasks"]}
     assert rows["a"]["deferred"] is False  # already ran this run — counted, not re-admitted
-    assert rows["b"]["deferred"] is False  # first NEW due task: never starved even over budget
-    assert rows["c"]["deferred"] is True   # 12 (a) + 10 (b) = 22 > 15: genuinely over budget
+    assert rows["b"]["deferred"] is True   # 12 (a) + 10 (b) = 22 > 15: over budget, NOT the run's first task
+    assert rows["c"]["deferred"] is True
+
+
+def test_due_loop_simulation_stops_by_budget(tmp_path, monkeypatch):
+    """Simulates the run SKILL's `--due` loop: `plan --due`, "run" its first
+    not-yet-processed task (append a run-report row with a fixed cost),
+    `plan --due` again, repeat until nothing is left. Must stop once the
+    budget is exhausted, leaving later due tasks deferred rather than
+    looping forever or draining the whole budget on every call."""
+    monkeypatch.setenv("SCRIBE_NOW", "2026-01-05T09:00:00")
+    proj = _proj(tmp_path)
+    for t in ("a", "b", "c", "d"):
+        mini_task(proj, t)
+    (proj / "scribe.toml").write_text((proj / "scribe.toml").read_text().replace(
+        "top_k = 8", "top_k = 8\nbudget_minutes = 25\ndefault_task_minutes = 10"))
+    config, _ = load(proj)
+    run_report = config.out_root / "_runs" / "2026-01-05.json"
+
+    processed: list[str] = []
+    for _ in range(10):  # safety cap; the loop must stop well before this
+        config, data = load(proj)
+        due_plan = scribe.compute_plan(config, data, due_only=True)
+        remaining = [t["task"] for t in due_plan["tasks"] if t["task"] not in processed]
+        if not remaining:
+            break
+        tid = remaining[0]
+        processed.append(tid)
+        rows = json.loads(run_report.read_text()) if run_report.is_file() else []
+        rows.append({"task": tid, "status": "published", "minutes": 10, "reasons": []})
+        write_json(run_report, rows)
+
+    assert processed == ["a", "b"]  # a:10, b:20 both <=25; c would make 30>25 and is not first -> deferred
+
+
+def test_due_loop_simulation_stops_by_max_tasks_per_run(tmp_path, monkeypatch):
+    monkeypatch.setenv("SCRIBE_NOW", "2026-01-05T09:00:00")
+    proj = _proj(tmp_path)
+    for t in ("a", "b", "c"):
+        mini_task(proj, t)
+    (proj / "scribe.toml").write_text((proj / "scribe.toml").read_text() + "max_tasks_per_run = 1\n")
+    config, _ = load(proj)
+    run_report = config.out_root / "_runs" / "2026-01-05.json"
+
+    processed: list[str] = []
+    for _ in range(10):
+        config, data = load(proj)
+        due_plan = scribe.compute_plan(config, data, due_only=True)
+        remaining = [t["task"] for t in due_plan["tasks"] if t["task"] not in processed]
+        if not remaining:
+            break
+        tid = remaining[0]
+        processed.append(tid)
+        rows = json.loads(run_report.read_text()) if run_report.is_file() else []
+        rows.append({"task": tid, "status": "published", "minutes": 5, "reasons": []})
+        write_json(run_report, rows)
+
+    assert processed == ["a"]
 
 
 def test_plan_due_excludes_deferred_but_full_plan_still_lists_it(tmp_path, monkeypatch):
@@ -292,14 +388,24 @@ def test_same_day_retry_of_upstream_unblocks_dependant(tmp_path, monkeypatch):
 
 
 def test_skipped_upstream_failed_propagates_transitively(tmp_path, monkeypatch):
+    """Fix round 2, issue 5: the real writer (run/SKILL.md step 2.3) records
+    the reason as `"upstream_failed: <id>"`, not the bare string
+    `"upstream_failed"` — write the `mid` row through the actual
+    `report.record` path (the same one `scribe.py report --status skipped
+    --reason "upstream_failed: up"` goes through) rather than a hand-built
+    row, so this test exercises the real reason string `_blocks` must match
+    by prefix."""
     monkeypatch.setenv("SCRIBE_NOW", "2026-01-05T09:00:00")
     proj = _proj(tmp_path)
     mini_task(proj, "up"); mini_task(proj, "mid", upstream=["up"]); mini_task(proj, "down", upstream=["mid"])
     config, _ = load(proj)
-    write_json(config.out_root / "_runs" / "2026-01-05.json", [
-        {"task": "up", "status": "failed", "reasons": ["accept"]},
-        {"task": "mid", "status": "skipped", "reasons": ["upstream_failed"]},
-    ])
+    write_json(config.out_root / "_runs" / "2026-01-05.json", [{"task": "up", "status": "failed", "reasons": ["accept"]}])
+    report_mod.record(config, task="mid", status="skipped", reason="upstream_failed: up", stage="plan")
+
+    rows = report_mod.rows(config)
+    mid_row = next(r for r in rows if r["task"] == "mid")
+    assert mid_row["reasons"] == ["upstream_failed: up"]  # the real writer's exact shape
+
     r = prepare_task(config, "down")
     assert r["status"] == "skipped" and r["reason"] == "upstream_failed" and r["upstream"] == ["mid"]
 

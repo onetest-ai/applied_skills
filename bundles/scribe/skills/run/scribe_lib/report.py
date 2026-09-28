@@ -39,6 +39,14 @@ _SECTION_COUNT_KEYS = (
     "kept", "reworded", "recited", "added", "superseded", "dropped_by_check", "dropped_by_model",
 )
 
+# `append_run` only stamps `minutes` for these — post-`prepare` outcomes
+# (fix round 2, NEW issue). `skipped` (both "not due" and "upstream_failed")
+# and `pending` (a `propose`-mode publish awaiting review) are recorded
+# without `prepare` ever having run for that task this cycle, so any
+# `started_at` on disk for it belongs to an earlier run and must not be read
+# as this row's elapsed time.
+_MINUTES_STATUSES = {"published", "noop", "failed"}
+
 
 def run_report_path(config: Config) -> Path:
     """`out/_runs/<SCRIBE_NOW date>.json` — one run report per (replayed) day."""
@@ -60,16 +68,27 @@ def merge_counts_for_row(config: Config, task_id: str) -> dict[str, Any] | None:
 
 def elapsed_minutes(config: Config, task_id: str) -> float | None:
     """Wall-clock minutes since `prepare` stamped `work/<task_id>/started_at`
-    (`pack._stamp_started`), or `None` when that file is absent/unreadable —
-    a task that has never been through `prepare` this run (or ever) records
-    no `minutes`. Real wall-clock time, not `config.now`: `SCRIBE_NOW` is the
-    replay date and never advances within a run, so it cannot measure a
-    single run's duration (task 11, fix round 1, ruling on issue 4a)."""
+    (`pack._stamp_started`), or `None` when that file is absent/unreadable
+    OR stale — a task that has never been through `prepare` THIS run
+    records no `minutes` (task 11, fix round 1 ruling on issue 4a; fix
+    round 2, NEW issue). `started_at` carries its own `date` (the
+    `config.now[:10]` `prepare` ran under), compared against THIS call's
+    `config.now[:10]` — not the wall clock's date, which would almost never
+    equal a replay date (`SCRIBE_NOW`). A mismatch means the stamp is left
+    over from an earlier run (a previous calendar day, or an earlier
+    `SCRIBE_NOW` replay of a backfill) and must not be read as this run's
+    elapsed time."""
     path = config.work_dir / task_id / "started_at"
     if not path.is_file():
         return None
     try:
-        started = datetime.fromisoformat(path.read_text(encoding="utf-8").strip())
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict) or payload.get("date") != config.now[:10]:
+        return None
+    try:
+        started = datetime.fromisoformat(str(payload.get("at")))
     except ValueError:
         return None
     if started.tzinfo is None:
@@ -90,7 +109,19 @@ def append_run(config: Config, entry: dict[str, Any]) -> None:
     caller already set one (`_resume_journal` and a few call sites pass an
     explicit `"minutes"`, which wins). This is the one place both required
     writers (`publish_task` and `scribe.py report --status`, via `record`
-    below) get it, the same way both already get `merge` counts."""
+    below) get it, the same way both already get `merge` counts.
+
+    Fix round 2 (NEW issue): restricted to `_MINUTES_STATUSES` — a row is
+    only a measurement of "time since `prepare` ran" when the run actually
+    reached `prepare` for that task. Both of run/SKILL.md's `skipped` writes
+    (step 2's "not due" and "upstream_failed") happen at the PLAN stage,
+    before `prepare` is ever called for that task id this run — so reading
+    `started_at` there would report elapsed time since some EARLIER task's
+    `prepare` call (whatever `started_at` happened to be left on disk from a
+    previous run of this same task), not anything about the skip itself.
+    `elapsed_minutes`'s own `date` freshness check narrows this further to
+    "this run", but does not by itself rule out "a different task in this
+    same run" — this status allowlist does."""
     path = run_report_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
@@ -101,7 +132,7 @@ def append_run(config: Config, entry: dict[str, Any]) -> None:
         merge = merge_counts_for_row(config, task_id)
         if merge is not None:
             row["merge"] = merge
-        if row.get("minutes") is None:
+        if row.get("minutes") is None and row.get("status") in _MINUTES_STATUSES:
             minutes = elapsed_minutes(config, task_id)
             if minutes is not None:
                 row["minutes"] = minutes
