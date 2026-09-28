@@ -102,10 +102,18 @@
         "audience": { "type": "string" },
         "cadence": { "type": "string", "enum": ["on-brain-update", "daily", "manual"] },
         "publish": { "type": "string", "enum": ["auto", "propose"] },
-        "out": { "type": "string", "description": "Relative dir under out_root." },
+        "out": { "type": "string", "description": "Relative dir under out_root. Must resolve under out_root, and no two tasks' out paths may be equal or nest one inside the other." },
         "inputs": {
           "type": "object",
           "description": "Deep-merged over the template's inputs; e.g. inputs.raw.exclude, inputs.tasks."
+        },
+        "for_each": {
+          "type": "object",
+          "required": ["taxonomy_under"],
+          "description": "Task templates and task instances — fan-out: this instance becomes one instance per child of the named taxonomy node (Brain graph_nodes), each `<id>[<child-node-id>]` with params.name/params.tags set to the child's label and out nested under the child's label.",
+          "properties": {
+            "taxonomy_under": { "type": "string", "description": "A taxonomy node LABEL (not id); its graph_nodes children become the fan-out instances." }
+          }
         }
       }
     }

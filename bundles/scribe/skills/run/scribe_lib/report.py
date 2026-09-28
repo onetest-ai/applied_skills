@@ -96,6 +96,27 @@ def rows(config: Config) -> list[dict[str, Any]]:
     return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
 
 
+def last_minutes(config: Config, task_id: str) -> float | None:
+    """The most recently recorded `minutes` value for `task_id` across every
+    run report under `out/_runs/*.json` (oldest to newest by filename, so
+    the last match found is the most recent), or `None` when it has never
+    been recorded — `compute_plan`'s budget deferral (task 11) then falls
+    back to `default_task_minutes`."""
+    runs_dir = config.out_root / "_runs"
+    if not runs_dir.is_dir():
+        return None
+    found: float | None = None
+    for path in sorted(runs_dir.glob("*.json")):
+        try:
+            file_rows = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        for row in file_rows:
+            if row.get("task") == task_id and row.get("minutes") is not None:
+                found = row["minutes"]
+    return found
+
+
 def _task_entry(row: dict[str, Any]) -> dict[str, Any]:
     """A task-level row for `summary`, folded from its `merge.json` sections
     (embedded on the run-report row by `append_run`). `stale`/`false_stale`
@@ -152,4 +173,4 @@ def summary(config: Config, date: str) -> dict[str, Any]:
     return {"date": date, "tasks": tasks, "totals": totals}
 
 
-__all__ = ["run_report_path", "append_run", "merge_counts_for_row", "record", "rows", "summary"]
+__all__ = ["run_report_path", "append_run", "merge_counts_for_row", "record", "rows", "last_minutes", "summary"]

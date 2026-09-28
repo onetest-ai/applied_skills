@@ -93,6 +93,7 @@ from scribe_lib.config import (
 )
 from scribe_lib.fingerprint import fingerprint_task
 from scribe_lib.raw import gather_raw_task
+from scribe_lib import report as report_mod
 
 EVIDENCE_TRUNCATE = 1200
 
@@ -311,6 +312,26 @@ def prepare_task(config: Config, task_id: str) -> dict[str, Any]:
     template_id, _ = parse_template_ref(instance["template"])
     template = templates[template_id]
     state = read_state(config, instance)
+
+    # Upstream-failure isolation (task 11): an upstream task that failed
+    # THIS run's build (a `failed` row in today's run report) leaves nothing
+    # trustworthy to draft downstream from — `prepare` refuses rather than
+    # drafting against stale/partial upstream claims, and touches nothing
+    # (no `_clear_previous_run`, no pack) so a retry of the upstream task
+    # alone, followed by a retry of this one, still finds last run's pack.
+    upstream = edges.get(task_id, [])
+    if upstream:
+        failed_upstream = sorted(
+            {row.get("task") for row in report_mod.rows(config) if row.get("status") == "failed"}
+            & set(upstream)
+        )
+        if failed_upstream:
+            return {
+                "task": task_id,
+                "status": "skipped",
+                "reason": "upstream_failed",
+                "upstream": failed_upstream,
+            }
 
     _clear_previous_run(config.work_dir / task_id)
 

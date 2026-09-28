@@ -18,7 +18,7 @@ import os
 import re
 import sqlite3
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -32,8 +32,15 @@ REQUIRED_TEMPLATE_FIELDS = {"id", "version", "goal", "params", "inputs", "output
 REQUIRED_INSTANCE_FIELDS = {"template", "id", "title", "params", "out"}
 
 
-class ScribeError(Exception):
-    """A refusal with a human-readable reason. Callers turn this into exit 1."""
+class ScribeError(ValueError):
+    """A refusal with a human-readable reason. Callers turn this into exit 1.
+
+    Subclasses `ValueError` (controller ruling R1, task 11) so tests can
+    assert refusals with `pytest.raises(ValueError, match=...)` without
+    importing `ScribeError` itself; `scribe.py`'s CLI still catches
+    `ScribeError` specifically and turns it into the JSON `{"status":
+    "error", "reason": ...}` / exit 1 shape.
+    """
 
 
 # --------------------------------------------------------------------- config --
@@ -52,6 +59,10 @@ class Config:
     work_dir: Path
     top_k: int
     now: str
+    groups: dict[str, dict[str, Any]] = field(default_factory=dict)
+    max_tasks_per_run: int = 20
+    budget_minutes: int = 90
+    default_task_minutes: int = 10
 
 
 def _resolve_path(project_dir: Path, value: str) -> Path:
@@ -86,6 +97,12 @@ def load_config(project_dir: str | Path) -> Config:
 
     now = os.environ.get("SCRIBE_NOW") or date.today().isoformat()
 
+    groups_raw = raw.get("groups") or {}
+    groups = {
+        name: {"enabled": bool(g.get("enabled", True)), "tasks": list(g.get("tasks") or [])}
+        for name, g in groups_raw.items()
+    }
+
     return Config(
         project_dir=project_dir,
         brain_db=_resolve_path(project_dir, brain_db_value),
@@ -99,6 +116,10 @@ def load_config(project_dir: str | Path) -> Config:
         work_dir=_resolve_path(project_dir, required("work_dir", "work")),
         top_k=int(run.get("top_k", 8)),
         now=now,
+        groups=groups,
+        max_tasks_per_run=int(run.get("max_tasks_per_run", 20)),
+        budget_minutes=int(run.get("budget_minutes", 90)),
+        default_task_minutes=int(run.get("default_task_minutes", 10)),
     )
 
 
@@ -159,6 +180,108 @@ def load_instances(config: Config) -> dict[str, dict[str, Any]]:
         fm["_path"] = str(path)
         instances[tid] = fm
     return instances
+
+
+def group_membership(config: "Config", task_id: str) -> tuple[str | None, bool | None]:
+    """`(group, group_enabled)` — `config.groups` whose `tasks` glob patterns
+    (fnmatch) match `task_id`, so groups filter which tasks run (task 11).
+    A task can be in no group (`(None, None)`; the caller falls back to the
+    instance's own `enabled:`), or in one or more; when several match, a
+    task runs only when EVERY matching group is enabled — so `group_enabled`
+    is the AND of them, and `group` (the name shown in `plan`/`list`) is the
+    alphabetically-first match, deterministic regardless of dict order."""
+    matching = sorted(
+        name
+        for name, g in (config.groups or {}).items()
+        if any(fnmatch.fnmatch(task_id, pattern) for pattern in (g.get("tasks") or []))
+    )
+    if not matching:
+        return None, None
+    enabled = all(config.groups[name].get("enabled", True) for name in matching)
+    return matching[0], enabled
+
+
+def _taxonomy_children(brain_db: Path, label: str) -> list[tuple[str, str]]:
+    """`[(child_id, child_label), ...]` — rows of the Brain's `graph_nodes`
+    whose `parent` is the id of the node whose `label` equals `label`,
+    opened strictly read-only (`mode=ro`), ordered by id for a deterministic
+    fan-out order."""
+    if not brain_db.is_file():
+        raise ScribeError(f"brain_db not found: {brain_db}")
+    con = sqlite3.connect(f"file:{brain_db.as_posix()}?mode=ro", uri=True, timeout=5.0)
+    try:
+        con.execute("PRAGMA query_only=ON")
+        row = con.execute("SELECT id FROM graph_nodes WHERE label = ?", (label,)).fetchone()
+        if row is None:
+            raise ScribeError(f"taxonomy node not found: '{label}'")
+        parent_id = row[0]
+        children = con.execute(
+            "SELECT id, label FROM graph_nodes WHERE parent = ? ORDER BY id", (parent_id,)
+        ).fetchall()
+    finally:
+        con.close()
+    return [(cid, clabel) for cid, clabel in children]
+
+
+def expand_instances(config: "Config", instances: dict[str, dict[str, Any]], brain_db: Path) -> dict[str, dict[str, Any]]:
+    """Task templates and task instances — fan-out: an instance whose
+    frontmatter has `for_each: {taxonomy_under: "<label>"}` becomes one
+    instance per child of that taxonomy node (`<id>[<child-node-id>]`), each
+    with `params.name = <child label>`, `params.tags = [<child label>]` and
+    `out = <out>/<child label>`, and no `for_each` key of its own (so it is
+    an ordinary instance from here on). An instance with no `for_each` is
+    passed through unchanged. Runs AFTER `validate_all`'s required-field /
+    declared-params check on the un-expanded instances — the base instance's
+    own `params` (e.g. just `name`) is what gets checked against the
+    template's declared params; the auto-injected `tags` param is never
+    checked against that declaration."""
+    result: dict[str, dict[str, Any]] = {}
+    for tid, inst in instances.items():
+        for_each = inst.get("for_each")
+        if not for_each:
+            result[tid] = inst
+            continue
+        label = for_each.get("taxonomy_under")
+        if not label:
+            raise ScribeError(f"{tid}: for_each missing 'taxonomy_under'")
+        for child_id, child_label in _taxonomy_children(brain_db, label):
+            new_id = f"{tid}[{child_id}]"
+            new_inst = dict(inst)
+            new_inst.pop("for_each", None)
+            new_inst["id"] = new_id
+            params = dict(inst.get("params") or {})
+            params["name"] = child_label
+            params["tags"] = [child_label]
+            new_inst["params"] = params
+            base_out = str(inst.get("out") or "")
+            new_inst["out"] = f"{base_out}/{child_label}" if base_out else child_label
+            result[new_id] = new_inst
+    return result
+
+
+def _validate_out_paths(config: "Config", instances: dict[str, dict[str, Any]]) -> None:
+    """`out` that is absolute, or resolves outside `out_root`, is refused;
+    so is a pair of tasks whose `out` paths are equal or one is a prefix
+    (an ancestor directory) of the other — two tasks would otherwise publish
+    into (or over) each other's files."""
+    resolved: dict[str, Path] = {}
+    for tid, inst in instances.items():
+        raw_out = str(inst.get("out") or "")
+        if Path(raw_out).is_absolute():
+            raise ScribeError(f"{tid}: out path '{raw_out}' is absolute")
+        candidate = (config.out_root / raw_out).resolve()
+        try:
+            candidate.relative_to(config.out_root)
+        except ValueError:
+            raise ScribeError(f"{tid}: out path '{raw_out}' resolves outside out_root")
+        resolved[tid] = candidate
+
+    ids = sorted(resolved)
+    for i, a in enumerate(ids):
+        for b in ids[i + 1 :]:
+            pa, pb = resolved[a], resolved[b]
+            if pa == pb or pa in pb.parents or pb in pa.parents:
+                raise ScribeError(f"out paths overlap: '{a}' ({pa}) and '{b}' ({pb})")
 
 
 # --------------------------------------------------------------- substitution --
@@ -296,6 +419,9 @@ def validate_all(config: Config) -> dict[str, Any]:
 
     if errors:
         raise ScribeError("; ".join(errors))
+
+    instances = expand_instances(config, instances, config.brain_db)
+    _validate_out_paths(config, instances)
 
     edges: dict[str, list[str]] = {}
     for tid, inst in instances.items():

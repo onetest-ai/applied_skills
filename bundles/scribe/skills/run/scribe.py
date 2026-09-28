@@ -13,7 +13,8 @@ Usage:
 
 Implemented: validate, plan, delta, gather-raw, fingerprint, base, prepare,
 check-file, check-task, merge, accept, publish, lineage, index, render,
-doctor, report, observe. `publish --no-render` still works without a render.
+doctor, report, observe, list, status, enable, disable, promote. `publish
+--no-render` still works without a render.
 """
 from __future__ import annotations
 
@@ -34,6 +35,7 @@ from scribe_lib.config import (  # noqa: E402
     ScribeError,
     compute_brain_delta,
     compute_raw_delta,
+    group_membership,
     parse_template_ref,
     raw_root_available,
     read_brain_identity,
@@ -52,6 +54,7 @@ from scribe_lib.observe import observe_task  # noqa: E402
 from scribe_lib.pack import prepare_task  # noqa: E402
 from scribe_lib.publish import publish_task  # noqa: E402
 from scribe_lib.raw import gather_raw_task  # noqa: E402
+from scribe_lib import registry  # noqa: E402
 from scribe_lib import report  # noqa: E402
 from scribe_lib.render import render_task  # noqa: E402
 
@@ -139,6 +142,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_report.add_argument("--date", help="Date (YYYY-MM-DD) for --summary; default today (SCRIBE_NOW)")
 
+    sub.add_parser("list", help="JSON rows: task, template, group, enabled, cadence, publish, version, last_status")
+
+    p_status = sub.add_parser("status", help="One task's registry row + its last run-report row")
+    p_status.add_argument("task", help="Task id")
+
+    p_enable = sub.add_parser("enable", help="Rewrite the task's enabled: frontmatter line to true")
+    p_enable.add_argument("task", help="Task id")
+
+    p_disable = sub.add_parser("disable", help="Rewrite the task's enabled: frontmatter line to false")
+    p_disable.add_argument("task", help="Task id")
+
+    p_promote = sub.add_parser("promote", help="Write a reusable template from a proven task instance")
+    p_promote.add_argument("task", help="Task id")
+    p_promote.add_argument("--as", dest="template_id", required=True, help="New template id")
+
     return parser
 
 
@@ -166,13 +184,17 @@ def _due_reasons(
     upstream_versions: dict[str, int],
     *,
     explicit: bool,
+    enabled: bool,
 ) -> tuple[bool, list[str], str, list[str]]:
     """Returns (due, reasons, cadence, notes). `explicit` = this task was
-    named via --task. `notes` (review fix round 1, Important #4) carries
-    `"raw_root_unavailable"` whenever the synced raw folder is offline right
-    now — independent of `state`/`due`, so a first-run task or one with no
-    other reason to be due still surfaces the outage rather than a quiet,
-    misleadingly-normal `plan`."""
+    named via --task. `enabled` (task 11) is the task's effective enabled
+    state — the AND of every matching group's `enabled` when it belongs to
+    one or more groups (`config.group_membership`), else its own
+    `enabled:` frontmatter (default true). `notes` (review fix round 1,
+    Important #4) carries `"raw_root_unavailable"` whenever the synced raw
+    folder is offline right now — independent of `state`/`due`, so a
+    first-run task or one with no other reason to be due still surfaces the
+    outage rather than a quiet, misleadingly-normal `plan`."""
     reasons: list[str] = []
     notes: list[str] = []
     cadence = instance.get("cadence", "on-brain-update")
@@ -221,7 +243,7 @@ def _due_reasons(
     due = bool(reasons)
     if cadence == "manual" and not explicit:
         due = False
-    if not instance.get("enabled", True) and not explicit:
+    if not enabled and not explicit:
         due = False
     return due, reasons, cadence, notes
 
@@ -253,14 +275,16 @@ def compute_plan(
             up: (read_state(config, instances[up]).get("version") or 0) for up in edges[tid]
         }
         explicit = task == tid
+        group, group_enabled = group_membership(config, tid)
+        enabled = group_enabled if group is not None else inst.get("enabled", True)
         due, reasons, cadence, notes = _due_reasons(
-            config, inst, template, state, upstream_versions, explicit=explicit
+            config, inst, template, state, upstream_versions, explicit=explicit, enabled=enabled
         )
         depends_on_due = any(entries[up]["due"] for up in edges[tid])
 
         not_due_reason = None
         if not due:
-            if not inst.get("enabled", True) and not explicit:
+            if not enabled and not explicit:
                 not_due_reason = "disabled"
             elif cadence == "manual" and not explicit:
                 not_due_reason = "cadence manual"
@@ -269,6 +293,7 @@ def compute_plan(
 
         entries[tid] = {
             "id": tid,
+            "task": tid,
             "template": inst["template"],
             "due": due,
             "reasons": reasons,
@@ -277,7 +302,33 @@ def compute_plan(
             "cadence": cadence,
             "upstream": edges[tid],
             "notes": notes,
+            "group": group,
+            "enabled": enabled,
         }
+
+    # Budget deferral (task 11): a running sum, in topological order, of
+    # each DUE task's last recorded `minutes` (from run reports —
+    # `report.last_minutes`) or `default_task_minutes` when it has never
+    # been recorded. A task past `budget_minutes` or `max_tasks_per_run` is
+    # marked `deferred` — NEVER dropped from `tasks_out`, still due, still
+    # runnable with `--task`; only a `--due` sweep skips it (it stays due
+    # again next time, budget permitting).
+    running_minutes = 0.0
+    admitted = 0
+    for tid in order:
+        entry = entries[tid]
+        if not entry["due"]:
+            entry["deferred"] = False
+            continue
+        task_minutes = report.last_minutes(config, tid)
+        if task_minutes is None:
+            task_minutes = config.default_task_minutes
+        if admitted >= config.max_tasks_per_run or running_minutes + task_minutes > config.budget_minutes:
+            entry["deferred"] = True
+        else:
+            entry["deferred"] = False
+            running_minutes += task_minutes
+            admitted += 1
 
     # Top-level notes (review fix round 1, Important #4): computed over
     # EVERY task, before `--task`/`--due` filtering, so an offline raw root
@@ -515,6 +566,36 @@ def cmd_index(config: Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_list(config: Config) -> int:
+    rows = registry.list_rows(config)
+    _print({"status": "ok", "tasks": rows})
+    return 0
+
+
+def cmd_status(config: Config, args: argparse.Namespace) -> int:
+    row = registry.status_row(config, args.task)
+    _print({"status": "ok", **row})
+    return 0
+
+
+def cmd_enable(config: Config, args: argparse.Namespace) -> int:
+    path = registry.set_enabled(config, args.task, True)
+    _print({"status": "ok", "task": args.task, "enabled": True, "path": str(path)})
+    return 0
+
+
+def cmd_disable(config: Config, args: argparse.Namespace) -> int:
+    path = registry.set_enabled(config, args.task, False)
+    _print({"status": "ok", "task": args.task, "enabled": False, "path": str(path)})
+    return 0
+
+
+def cmd_promote(config: Config, args: argparse.Namespace) -> int:
+    path = registry.promote(config, args.task, args.template_id)
+    _print({"status": "ok", "task": args.task, "template": args.template_id, "path": str(path)})
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -561,6 +642,16 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_doctor(config)
         if args.command == "report":
             return cmd_report(config, args)
+        if args.command == "list":
+            return cmd_list(config)
+        if args.command == "status":
+            return cmd_status(config, args)
+        if args.command == "enable":
+            return cmd_enable(config, args)
+        if args.command == "disable":
+            return cmd_disable(config, args)
+        if args.command == "promote":
+            return cmd_promote(config, args)
     except ScribeError as exc:
         print(json.dumps({"status": "error", "reason": str(exc)}))
         return 1
