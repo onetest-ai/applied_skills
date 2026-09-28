@@ -37,6 +37,46 @@ from scribe_lib.basedoc import split_by_section_id
 from scribe_lib.config import Config, parse_template_ref, substitute_params
 
 _UNVERIFIED_RE = re.compile(r"\[\?\]|UNVERIFIED")
+_MIN_CLAIMS_RE = re.compile(r"^min_claims:(\d+)$")
+_MAX_WORDS_RE = re.compile(r"^max_words:(\d+)$")
+
+# The three checks `accept_task` always computes from full task-level context
+# (base.json human-exemption keys, check-file.json, render.json) — a counted
+# check never shadows one of these even if a template's `acceptance` list
+# repeats its name.
+FIXED_CHECKS = ("sections_present", "zero_unverified", "diagrams_render")
+
+
+def run_check(check: dict[str, Any], sections: dict[str, str]) -> dict[str, Any]:
+    """One COUNTED acceptance check, evaluated purely against `sections`
+    (section id -> its Markdown body — `next.md`'s own
+    `split_by_section_id`, or any other id->body mapping an onboarding trial
+    run wants to check). `check["check"]` is `"min_claims:<n>"` or
+    `"max_words:<n>"`; the three structural checks in `FIXED_CHECKS` need
+    task-level context this function doesn't have and are never handled
+    here — `accept_task` computes those itself.
+
+    - `min_claims:<n>`: total claim (bullet/para) blocks across every
+      section body, counted via the shared `claims.parse_blocks`/`is_claim`
+      — the same claim model `accept_task`'s `zero_unverified` uses.
+    - `max_words:<n>`: total words across every section body's
+      `claims.visible_text` (what a human actually sees — comments/ids
+      stripped, tags kept, since a citation tag is still visible prose a
+      human reads, unlike an id comment).
+
+    Returns `{"check", "passed", "detail"}`."""
+    spec = str(check.get("check") or "")
+    m = _MIN_CLAIMS_RE.match(spec)
+    if m:
+        n = int(m.group(1))
+        count = sum(1 for body in sections.values() for b in claims.parse_blocks(body) if claims.is_claim(b))
+        return {"check": spec, "passed": count >= n, "detail": f"{count} claim(s), need >= {n}"}
+    m = _MAX_WORDS_RE.match(spec)
+    if m:
+        n = int(m.group(1))
+        total = sum(len(claims.visible_text(body).split()) for body in sections.values())
+        return {"check": spec, "passed": total <= n, "detail": f"{total} word(s), max {n}"}
+    raise ValueError(f"run_check: unsupported counted check {spec!r}")
 
 
 def _human_exempt_keys(base_json: dict[str, Any]) -> tuple[set[str], set[str]]:
@@ -152,11 +192,24 @@ def accept_task(config: Config, task_id: str, instance: dict[str, Any], template
     else:
         check_diagrams_render = {"passed": True, "skipped": True, "note": "no work/<task>/render/render.json (render not run yet)"}
 
-    checks = {
+    checks: dict[str, Any] = {
         "sections_present": check_sections_present,
         "zero_unverified": check_zero_unverified,
         "diagrams_render": check_diagrams_render,
     }
+
+    # Counted acceptance checks (`min_claims:<n>`/`max_words:<n>`) a template
+    # may declare alongside the three structural ones — evaluated against
+    # the same section bodies `zero_unverified` reads. A template that never
+    # declares one keeps `counted` empty and behaves exactly as before.
+    counted: dict[str, Any] = {}
+    for item in template.get("acceptance") or []:
+        spec = str(item.get("check") or "")
+        if spec in FIXED_CHECKS or spec in counted:
+            continue
+        counted[spec] = run_check(item, sections)
+    checks.update(counted)
+
     passed = all(c["passed"] for c in checks.values())
 
     reasons: list[str] = []
@@ -168,6 +221,9 @@ def accept_task(config: Config, task_id: str, instance: dict[str, Any], template
         reasons.append(f"zero_unverified: {len(unverified)} claim(s) failed")
     if not check_diagrams_render["passed"]:
         reasons.append("diagrams_render: failed")
+    for spec, result in counted.items():
+        if not result["passed"]:
+            reasons.append(f"{spec}: {result['detail']}")
 
     result = {
         "status": "ok" if passed else "error",

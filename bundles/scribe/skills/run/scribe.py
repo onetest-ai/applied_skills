@@ -13,7 +13,8 @@ Usage:
 
 Implemented: validate, plan, delta, gather-raw, fingerprint, base, prepare,
 check-file, check-task, merge, accept, publish, lineage, index, render,
-doctor, report, observe, list, status, enable, disable, promote, review.
+doctor, report, observe, list, status, enable, disable, promote, review,
+coverage, sections-from-example, guard-brain.
 `publish --no-render` still works without a render.
 """
 from __future__ import annotations
@@ -50,6 +51,7 @@ from scribe_lib.fingerprint import fingerprint_task  # noqa: E402
 from scribe_lib.index import build_index, query_index  # noqa: E402
 from scribe_lib.lineage import lineage_task  # noqa: E402
 from scribe_lib.merge import merge_task  # noqa: E402
+from scribe_lib import onboard  # noqa: E402
 from scribe_lib.observe import observe_task  # noqa: E402
 from scribe_lib.pack import prepare_task  # noqa: E402
 from scribe_lib.publish import publish_task  # noqa: E402
@@ -159,6 +161,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_promote.add_argument("--as", dest="template_id", required=True, help="New template id")
     p_promote.add_argument(
         "--force", action="store_true", help="Overwrite an existing template id instead of refusing"
+    )
+
+    p_coverage = sub.add_parser(
+        "coverage", help="Per-section Brain/raw evidence coverage for a (possibly disabled) task file"
+    )
+    p_coverage.add_argument("task_file", help="Path to a tasks/<id>.task.md file (relative to --project)")
+
+    p_sfe = sub.add_parser(
+        "sections-from-example", help="Propose template sections from an example document's own headings"
+    )
+    p_sfe.add_argument("file", help="Path to the example document (relative to --project)")
+
+    p_guard = sub.add_parser(
+        "guard-brain", help="Add this project's out_root as an exclude glob to the Brain's brain.toml"
+    )
+    p_guard.add_argument("--brain-toml", required=True, help="Path to the Brain project's brain.toml")
+    p_guard.add_argument(
+        "--require", action="store_true", help="Refuse (exit 1) if out_root is not inside any configured root"
     )
 
     p_review = sub.add_parser(
@@ -674,6 +694,32 @@ def cmd_promote(config: Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_project_relative(config: Config, value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else (config.project_dir / path).resolve()
+
+
+def cmd_coverage(config: Config, args: argparse.Namespace) -> int:
+    task_file = _resolve_project_relative(config, args.task_file)
+    result = onboard.coverage(config, task_file)
+    _print({"status": "ok", **result})
+    return 0
+
+
+def cmd_sections_from_example(config: Config, args: argparse.Namespace) -> int:
+    example = _resolve_project_relative(config, args.file)
+    sections = onboard.sections_from_example(config, example)
+    _print({"status": "ok", "sections": sections})
+    return 0
+
+
+def cmd_guard_brain(config: Config, args: argparse.Namespace) -> int:
+    brain_toml = _resolve_project_relative(config, args.brain_toml)
+    result = onboard.guard_brain(brain_toml, config.out_root, require=args.require)
+    _print({"status": "ok", **result})
+    return 0
+
+
 def cmd_review(config: Config, args: argparse.Namespace) -> int:
     if args.action == "list":
         rows = review.list_pending(config)
@@ -751,6 +797,12 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_promote(config, args)
         if args.command == "review":
             return cmd_review(config, args)
+        if args.command == "coverage":
+            return cmd_coverage(config, args)
+        if args.command == "sections-from-example":
+            return cmd_sections_from_example(config, args)
+        if args.command == "guard-brain":
+            return cmd_guard_brain(config, args)
     except ScribeError as exc:
         print(json.dumps({"status": "error", "reason": str(exc)}))
         return 1

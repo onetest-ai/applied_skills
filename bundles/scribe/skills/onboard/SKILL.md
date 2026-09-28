@@ -1,15 +1,15 @@
 ---
 name: onboard
-description: Use when the user wants to add a new Scribe document (a new task) to a project that already has `scribe.toml` and a Brain — asks one question at a time (purpose, starting point, scope, output), shows a per-section coverage table before anything is drafted, writes `tasks/<id>.task.md` disabled, dry-runs it as a proposal, and enables it once the user approves.
+description: Use when the user wants to add a new Scribe document (a new task) to a project that already has `scribe.toml` and a Brain — asks one question at a time (purpose, starting point, scope, evidence, output, acceptance, operations), shows a per-section coverage table before anything is drafted, writes `tasks/<id>.task.md` disabled, dry-runs it as a `propose` trial, and enables it once the user approves.
 argument-hint: "[task id]"
 ---
 
-# scribe:onboard (lite)
+# scribe:onboard
 
 You, the agent, walk the user through creating one new Scribe task in the project in the
 current working directory (the directory holding `scribe.toml`). This skill is
 interactive: **ask one question at a time**, wait for the answer, then move on. Never
-write a task file with `enabled: true` before the user has approved the dry run.
+write a task file with `enabled: true` before the user has approved the trial run.
 
 **How to run scripts.** `$SCRIBE` means `"$PY" <skill-dir>/../run/scribe.py --project .`, where `$PY` is the
 scribe venv interpreter from `./install.sh --bundle scribe --deps`. With no venv, use
@@ -22,57 +22,67 @@ skill, hence the `../run/` segment in both forms above.
 project directory. Each subcommand prints one JSON object; exit 1 carries a `"reason"` —
 show it to the user.
 
-## 0. Preflight (script + you)
+## 0. Hard gate (script + you)
 
-1. Run `scribe.py validate`. Exit 1 → show the reason and stop. Its `templates` list is
-   the library templates; its `tasks` list is the task ids already taken.
-2. Resolve the Brain by tool surface (contract below) and call `health`; tell the user in
-   one line which Brain you use (`about.name`, `about.goal`).
+1. Run `scribe.py doctor`. Exit 1 → show `reason`/`brain.error` and stop — pandoc/soffice/mermaid
+   missing, or the Brain the scripts read (`brain_db`) cannot be opened, are both hard blocks:
+   nothing downstream (coverage, dry run) can be trusted without them.
+2. Resolve the Brain by tool surface (contract below) and call `health`; confirm its `about.name`
+   matches `doctor`'s `brain` block (same store the scripts and your tools both read) and tell the
+   user in one line which Brain you use (`about.name`, `about.goal`).
+3. Confirm the raw-replay folder is reachable: run `scribe.py validate` (exit 1 → show the reason
+   and stop; its `templates` list is the library templates, its `tasks` list is the task ids
+   already taken) and check its top-level `notes` for `raw_root_unavailable`. If present, tell the
+   user the synced folder is offline right now and ask whether to continue anyway (raw evidence in
+   step 4 will read as empty, not "checked and found nothing") or wait.
 
 ## 1. Purpose and audience (ask)
 
-Ask: what the document is for and who reads it. From the answer propose a task `id`
-(lowercase, dashes, not in `validate`'s `tasks`), a `title` (it is also the output file
-name) and an `audience` line; ask the user to confirm or correct them.
+Ask: what the document is for, who reads it, how often it's expected to change. Default `goal`/
+`audience` to the Brain's `about.goal`/`about.audience` from step 0 if the user has nothing more
+specific. From the answer propose a task `id` (lowercase, dashes, not in `validate`'s `tasks`), a
+`title` (it is also the output file name), and an `audience` line; ask the user to confirm or
+correct them.
 
 ## 2. Starting point (ask)
 
-Ask: start from a library template, or from an example document the user already likes?
+Ask: start from a library template, a copy of an existing task, or an example document the user
+already likes?
 
 - **Library template.** Read each `<skill-dir>/../run/templates/<template id>.tmpl.md` in
-  `validate`'s `templates` list, summarise each one's `goal` and section titles in one
-  line, and ask which to use. The task will reference it as `<template id>@<version>`.
-- **Example document.** Ask for its path. It must sit in a directory of its own (ask the
-  user to copy it into `work/_onboard/<id>/example-src/` if its folder holds other
-  files). Parse it with the Brain's parser (the same one `scribe.py gather-raw` uses).
-  Read `brain_skills` from the project's `scribe.toml` (its `corpus-taxonomy-extraction`
-  subdirectory holds `parse_corpus.py`) and run, with `$PY` from "How to run scripts" above:
+  `validate`'s `templates` list, summarise each one's `goal` and section titles in one line, and
+  ask which to use. The task will reference it as `<template id>@<version>`.
+- **Copy of an existing task.** Ask which of `validate`'s `tasks` to copy. Read its
+  `tasks/<id>.task.md` and its template; reuse the same template reference and `output.sections`,
+  adjusting `params`/`inputs`/`audience` for the new purpose in the steps below.
+- **Example document.** Ask for its path (any format `scribe.py sections-from-example` reads —
+  `.docx`/`.pptx`/`.pdf`/`.md`/`.txt`). Run:
   ```
-  "$PY" <brain_skills>/corpus-taxonomy-extraction/parse_corpus.py --corpus <that directory> --out work/_onboard/<id>/example
+  scribe.py sections-from-example <path>
   ```
-  Read the Markdown it wrote under `work/_onboard/<id>/example/`, and propose one section
-  per top-level heading (or per heading-like line when the parse has no headings): `id`,
-  `title`, a one-line `intent`, 2–3 `queries` using `{{name}}`, and `lanes`
-  (`narrative` and/or `numbers`); a section that is a diagram also gets `kind: diagram`. Ask the user to confirm, drop or
-  rename sections. Write the result as a project template
-  `templates/<id>.tmpl.md`, using the frontmatter shape of
+  It returns `{"sections": [{"id", "title"}, ...]}` — one entry per top-level heading found in the
+  document's own structure (H2s, or H1s when it has no H2s). For each, ask the user to confirm,
+  drop, or rename it, and propose a one-line `intent`, 2–3 `queries` using `{{name}}`, and `lanes`
+  (`narrative` and/or `numbers`); a section that is a diagram also gets `kind: diagram`. Write the
+  result as a project template `templates/<id>.tmpl.md`, using the frontmatter shape of
   `<skill-dir>/../run/templates/domain-profile.tmpl.md` (`id: <id>`, `version: 1`,
   `params: [name, tags, aliases]`, the same `inputs` and `acceptance` blocks, your
-  `output.sections`), with that file's drafting-guidance body adapted to this document.
-  `scribe.py` loads `templates/` next to the library templates.
+  `output.sections`), with that file's drafting-guidance body adapted to this document. `scribe.py`
+  loads `templates/` next to the library templates.
 
 ## 3. Scope (ask)
 
-1. Call the Brain's `get_taxonomy` and show the top-level labels that fit the purpose.
-   Ask which labels scope the Brain retrieval (`params.tags`, exact labels; an empty list
-   means no tag filter).
-2. Ask for aliases: the words that identify this topic in raw files (`params.aliases`;
-   case-insensitive substrings of a raw file's path or parsed text) and any raw folders to
-   leave out (`inputs.raw.exclude`, globs such as `**/Internal meeting notes/**`).
-3. Ask whether the document builds on other tasks' published claims (`inputs.tasks`,
-   ids from `validate`'s `tasks`).
+1. Call the Brain's `get_taxonomy` and show the top-level labels that fit the purpose. Ask which
+   labels scope the Brain retrieval (`params.tags`, exact labels; an empty list means no tag
+   filter).
+2. Ask for aliases: the words that identify this topic in raw files (`params.aliases`,
+   case-insensitive substrings of a raw file's path or parsed text) and any raw folders to leave
+   out (`inputs.raw.exclude`, globs such as `**/Internal meeting notes/**`).
+3. Ask whether the document builds on other tasks' published claims (`inputs.tasks`, ids from
+   `validate`'s `tasks`).
 
-Write the draft task now, as `tasks/<id>.task.md`, so the coverage commands can load it:
+Write the draft task now, as `tasks/<id>.task.md`, so `coverage` can load it — `enabled: false`
+and `publish: propose` until the user approves in step 8:
 
 ```yaml
 ---
@@ -97,47 +107,88 @@ out: "<output folder under out/>"
 <one paragraph: what this document is for>
 ```
 
-Run `scribe.py validate`; on exit 1 fix the file with the user and re-run.
+Run `scribe.py validate`; on exit 1 fix the file with the user and re-run. `coverage` (next) reads
+the file straight off disk, so it works even while the task stays `enabled: false` and unlisted by
+`validate`'s own `tasks` (a disabled task is still parsed, just not run).
 
-## 4. Coverage table (script + you)
+## 4. Evidence check — the coverage table (script + you)
 
-Run `scribe.py gather-raw <id>`, then `scribe.py fingerprint <id>`. Both write only under
-`work/<id>/` and never touch `out/` or the task's published state, so no dry-run flag is
-needed. Read `work/<id>/fingerprint.json` and show one row per section:
+Run:
+```
+scribe.py coverage tasks/<id>.task.md
+```
+This is read-only: it runs each section's queries against the Brain (and against
+`work/<id>/raw/raw.sqlite`, if a prior `gather-raw` already built one — most first passes have
+none yet, which is fine) and writes nothing. Show one row per section from its `sections` list:
 
-| Section | Brain hits | Raw hits | Top sources | Coverage |
-|---|---|---|---|---|
+| Section | Brain hits | Raw hits | Top sources | Numbers | Coverage |
+|---|---|---|---|---|---|
 
-- *Brain hits* / *Raw hits*: the lengths of `brain_hits` / `raw_hits`.
-- *Top sources*: the distinct `source` (brain) and `path` (raw) of the first three hits.
-- *Coverage*: read those hits' `text` against the section's intent and write `good`,
-  `thin` or `no evidence` (`no evidence` when both counts are 0 or no hit addresses the
-  intent). A `no evidence` section will come out `Not modeled:` — say so.
+- *Brain hits* / *Raw hits*: `brain_hits` / `raw_hits` (counts).
+- *Top sources*: `top_sources` (up to three, brain `source` then raw `path`).
+- *Numbers*: `numbers_available` — this section has a `numbers` lane with metrics to look up.
+- *Coverage*: `no_evidence: true` → **no evidence**; otherwise **thin** (a handful of hits, none
+  clearly on-topic — use judgement reading `top_sources`) or **good**. A **no evidence** section
+  will come out `Not modeled:` in the trial run — say so now, before the task is saved as enabled.
 
 Ask whether to adjust scope (back to step 3), drop sections (step 2), or continue.
 
-## 5. Output and acceptance (ask)
+## 5. Output (ask)
 
-Ask, one at a time: the output folder under `out/` (`out`), the cadence
-(`on-brain-update`, `daily` or `manual`), and whether new versions publish automatically
-(`auto`) or wait in `_pending/` for review (`propose`). Keep `publish: propose` in the file
-until step 7. The output formats (docx + pdf) and acceptance checks come from the
-template. Update `tasks/<id>.task.md` and run `scribe.py validate` again.
+Ask, one at a time: the output folder under `out/` (`out`), diagrams to keep or drop (sections
+with `kind: diagram`), and anything about house style (tone, length) worth adding to the
+template's drafting-guidance body. The output formats (docx + pdf) come from the template.
 
-## 6. Dry run (skill)
+## 6. Acceptance (ask)
 
-Invoke the `scribe:run` skill with arguments `--task <id>`. Because the task is
-`publish: propose`, the version lands in `out/<out>/_pending/` (`vNNN.md`, `.docx`,
-`.pdf`, `vNNN.diff.md`) and nothing is published. Show the user the pending docx/pdf
-paths, the sections that came out `Not modeled:`, and how they compare with the coverage
-table's `no evidence` rows.
+Ask which acceptance checks apply, from this closed list only — **refuse anything vaguer**
+("comprehensive", "high quality", "thorough") and ask for a checkable substitute instead:
 
-## 7. Approval (ask)
+- `sections_present` — every declared section has a non-empty body.
+- `zero_unverified` — every claim is cited (or explicitly human/`Not modeled:`).
+- `diagrams_render` — every diagram in the document actually rendered.
+- `min_claims:<n>` — at least `<n>` claims across the document.
+- `max_words:<n>` — at most `<n>` words across the document.
 
-Ask whether to enable the task. On approval, edit `tasks/<id>.task.md`: `enabled: true`,
-and `publish:` set to the mode the user chose in step 5. Run `scribe.py validate` and
-`scribe.py plan` (no flags) and show this task's entry: `due` and `not_due_reason` are
-what the next `/scribe:run --due` will do with it. Without approval, leave `enabled: false` and say what to change.
+`sections_present`/`zero_unverified`/`diagrams_render` are structural and normally always apply;
+`min_claims:<n>`/`max_words:<n>` are optional counted checks a user can add for a section-count or
+length constraint. Update the template's `acceptance:` list accordingly.
+
+## 7. Operations (ask)
+
+Ask, one at a time: which group (if any, from `scribe.toml`'s `[groups]`), the cadence
+(`on-brain-update`, `daily`, or `manual`), and whether new versions publish automatically (`auto`)
+or wait in `_pending/` for review (`propose` — keep this through step 8's trial run regardless of
+the final choice). Update `tasks/<id>.task.md`'s `cadence`/`publish`/`out`, then:
+
+1. Run `scribe.py validate` again — exit 1 → fix with the user and re-run.
+2. Run `scribe.py guard-brain --brain-toml <brain project>/brain.toml`. This is the loop guard: it
+   adds an `exclude` glob to the Brain source root that contains this task's `out` path, so the
+   Brain never re-ingests Scribe's own published output as source material. Show the user
+   `{"changed", "roots", "glob"}` — `changed: false` with `roots: []` means `out` isn't under any
+   configured Brain root at all (nothing to guard; mention it, don't treat it as an error unless
+   the user expected one). `<brain project>/brain.toml` is the Brain project's own config file
+   (not part of this Scribe project) — ask the user for its path if it isn't obvious from
+   `brain_db` in `scribe.toml`.
+
+## 8. Trial run (skill)
+
+Invoke the `scribe:run` skill with arguments `--task <id>`. Because the task is `publish:
+propose`, the version lands in `out/<out>/_pending/` (`vNNN.md`, `.docx`, `.pdf`,
+`vNNN.diff.md`) and nothing is published yet. Show the user the pending docx/pdf paths, the
+sections that came out `Not modeled:`, and how they compare with step 4's coverage table.
+
+Then ask whether to approve:
+
+- **Approve.** Run `scribe.py review approve <id>` (promotes the pending version, per
+  `scribe:review`'s own contract) if the trial produced one; then edit `tasks/<id>.task.md`:
+  `enabled: true`, and `publish:` set to the mode chosen in step 7. Run `scribe.py validate` and
+  `scribe.py plan` (no flags) and show this task's entry — `due`/`not_due_reason` are what the
+  next `/scribe:run --due` will do with it.
+- **Not yet.** Leave `enabled: false`, say what to change, and let the user iterate (back to
+  whichever step needs it) before trying again.
+
+Without approval, the task stays `enabled: false` and unpublished.
 
 ## The Brain contract (non-negotiable)
 
