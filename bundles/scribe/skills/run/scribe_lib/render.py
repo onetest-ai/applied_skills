@@ -19,7 +19,7 @@ Three passes over the Document Markdown source, in this order:
    `render/diagrams/<section>-<n>.mmd` (n = 1-based, per section id seen so
    far this render; the doc's own H1 before any `## Title {#id}` heading
    counts as section "doc"), rendered to a same-named `.png` via
-   `npx -y @mermaid-js/mermaid-cli`, and replaced by
+   `npx -y` and the pinned `MERMAID_CLI`, and replaced by
    `![<section> diagram](diagrams/<...>.png)`. On failure the original fence
    is kept as a plain code block and the failure is recorded (never raises —
    `accept`'s `diagrams_render` check is what should catch this).
@@ -32,9 +32,9 @@ property in `docProps/custom.xml`, `-M title=...` as `dc:title` in
 --outdir render <title>.docx`.
 
 Deviation from the brief's literal mermaid-cli flags, documented here and in
-the task report: `-w 1600` is rejected ("unknown option '-w'") by the
-`@mermaid-js/mermaid-cli` version `npx -y` currently resolves (unpinned, so
-this is a moving target) — that CLI replaced `-w`/`-H` with a single
+the task report: `-w 1600` is rejected ("unknown option '-w'") by
+`MERMAID_CLI` (`@mermaid-js/mermaid-cli@12.0.0`, pinned so `npx -y` always
+resolves the same CLI) — that version replaced `-w`/`-H` with a single
 `--size <px>` option. `-b white --size 1600` is the same intent (bounded
 render size, white background) with the current flag name.
 
@@ -64,6 +64,12 @@ _ID_HEADING_RE = re.compile(r"^#{1,6}\s+.*\{#([\w-]+)\}\s*$")
 
 _MERMAID_TIMEOUT = 120
 _SOFFICE_TIMEOUT = 180
+
+# Pinned so `npx -y` resolves the same CLI (and flag surface) on every machine
+# and every run, rather than "whatever's currently latest" — see the module
+# docstring's note on `-w`/`--size` for what an unpinned version already broke
+# once. `doctor.py` imports this constant rather than repeating the literal.
+MERMAID_CLI = "@mermaid-js/mermaid-cli@12.0.0"
 
 
 def _rag_label(config: Config, chunk_id: str) -> str:
@@ -129,7 +135,7 @@ def _strip_line_comments(line: str) -> str:
 
 def _run_mermaid(mmd_path: Path, png_path: Path) -> tuple[bool, str | None]:
     cmd = [
-        "npx", "-y", "@mermaid-js/mermaid-cli",
+        "npx", "-y", MERMAID_CLI,
         "-i", str(mmd_path), "-o", str(png_path),
         "-b", "white", "--size", "1600",
     ]

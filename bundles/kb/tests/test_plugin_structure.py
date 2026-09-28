@@ -113,7 +113,7 @@ class TestCoworkCleanup(unittest.TestCase):
         market = load_json(REPO_ROOT / ".claude-plugin" / "marketplace.json")
         names = {p["name"] for p in market["plugins"]}
         self.assertNotIn("brain-cowork", names)
-        self.assertEqual(names, {"brain", "kb"})
+        self.assertEqual(names, {"brain", "kb", "scribe"})
 
 
 class TestCoworkDoc(unittest.TestCase):

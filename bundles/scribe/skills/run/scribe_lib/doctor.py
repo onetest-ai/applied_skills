@@ -2,12 +2,15 @@
 wired here as a `scribe.py` subcommand rather than a separate script — same
 deterministic check, no project config needed).
 
-Checks, each `{"tool", "found": bool, "version"?: str, "hint"?: str}`:
+Checks, each `{"tool", "found": bool, "version"?: str, "hint"?: str}`, plus the
+mermaid check's own `"pinned"` (the `MERMAID_CLI` version `render.py` pins,
+so the reported tool and the one `render` actually shells out to can never
+silently drift apart):
   - `pandoc` (`pandoc --version`, first line)
   - `soffice` (`soffice --version`, first line; also tries `libreoffice`)
-  - mermaid (`npx -y @mermaid-js/mermaid-cli --version`) — network/npm-backed,
-    so this one can be slow on a cold npx cache; still required, since
-    `render` cannot degrade past a failed diagram without `accept` catching it
+  - mermaid (`npx -y <MERMAID_CLI> --version`) — network/npm-backed, so this
+    one can be slow on a cold npx cache; still required, since `render`
+    cannot degrade past a failed diagram without `accept` catching it
 
 All three are required for `render` to produce a usable docx+pdf; `doctor`
 exits 1 if any is missing (checked by `scribe.py`, via `all_found`).
@@ -18,13 +21,15 @@ import shutil
 import subprocess
 from typing import Any
 
+from scribe_lib.render import MERMAID_CLI
+
 _TIMEOUT = 30
 _MERMAID_TIMEOUT = 60
 
 _HINTS = {
     "pandoc": "brew install pandoc  (or see https://pandoc.org/installing.html)",
     "soffice": "brew install --cask libreoffice",
-    "mermaid": "no install needed — `npx -y @mermaid-js/mermaid-cli` fetches it on "
+    "mermaid": f"no install needed — `npx -y {MERMAID_CLI}` fetches it on "
     "first use; check that Node/npm and a network path to the npm registry are "
     "available, and that Chrome/Chromium is installed for puppeteer",
 }
@@ -59,10 +64,11 @@ def run_doctor() -> dict[str, Any]:
 
     mermaid = _check(
         "mermaid",
-        ["npx", "-y", "@mermaid-js/mermaid-cli", "--version"],
+        ["npx", "-y", MERMAID_CLI, "--version"],
         which="npx",
         timeout=_MERMAID_TIMEOUT,
     )
+    mermaid["pinned"] = MERMAID_CLI.rsplit("@", 1)[-1]
 
     checks = [pandoc, soffice, mermaid]
     all_found = all(c["found"] for c in checks)

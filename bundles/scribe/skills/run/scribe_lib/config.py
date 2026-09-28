@@ -413,7 +413,7 @@ def _glob_path_match(rel: str, pattern: str) -> bool:
     very start of the string — "**/DIR/**" only matches DIR when it is
     nested under at least one other directory. That silently breaks the
     exact exclude shape the contract documents
-    (`**/Internal meetings transcripts/**`) whenever the excluded directory
+    (`**/internal/**`) whenever the excluded directory
     sits at the top of raw_root. This matcher instead matches path segment by
     segment, letting a '**' segment consume any number (including zero) of
     path segments, so a top-level match works the same as a nested one.
@@ -441,7 +441,7 @@ def select_raw_files(config: Config, raw_inputs: dict[str, Any]) -> list[Path]:
 
     Both `globs` and `exclude` are matched with `_glob_path_match`, not
     `Path.glob()`/`fnmatch.fnmatch` directly: stdlib `Path.glob()` treats a
-    *trailing bare* `**` segment (e.g. `**/Internal meetings transcripts/**`,
+    *trailing bare* `**` segment (e.g. `**/internal/**`,
     the exact shape a task's `inputs.raw.globs` uses to scope a glob to one
     subtree) as matching only that directory itself, not the files beneath
     it — the same class of bug `_glob_path_match` was written to fix for

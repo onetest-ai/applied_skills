@@ -1,7 +1,7 @@
 {
   "name": "scribe",
-  "description": "Maintain versioned, cited living documents from a Brain: fingerprint what changed, draft only stale sections, and merge back into a Markdown source of truth rendered to docx/pdf.",
-  "version": "0.0.1-poc",
+  "description": "Scheduled, versioned, lineage-tracked documents built from a Brain and a synced folder.",
+  "version": "0.1.0",
   "author": { "name": "onetest-ai" },
   "homepage": "https://github.com/onetest-ai/applied_skills",
   "keywords": ["living-docs", "brain", "citations", "mcp", "poc"]

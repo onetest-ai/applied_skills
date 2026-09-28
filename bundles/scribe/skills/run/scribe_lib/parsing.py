@@ -8,7 +8,7 @@ bytes when its path didn't match. That is fine for the raw-replay fixtures
 this bundle's own tests use (plain `.txt`) but is close to useless for a
 binary office format — a raw `.xlsx`/`.docx`/`.pdf` decoded as UTF-8-with-
 errors-ignored is mostly garbage, so an alias that is genuinely IN the
-document (e.g. "billing" appearing 146 times inside a workbook's cells)
+document (e.g. a term appearing dozens of times inside a workbook's cells)
 almost never survives that decode as a clean substring. `match` must run on
 the file's actual PARSED text, using the same `parse_corpus.parse_one` that
 `gather-raw` uses to produce its final Markdown output — not a second,

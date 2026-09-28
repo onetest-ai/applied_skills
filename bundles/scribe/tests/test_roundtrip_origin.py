@@ -46,8 +46,6 @@ from scribe_fixtures import (
     write_json,
 )
 
-import scribe
-
 pandoc_available = shutil.which("pandoc") is not None
 
 RUN_SKILL = REPO_ROOT / "bundles" / "scribe" / "skills" / "run" / "SKILL.md"

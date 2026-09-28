@@ -19,20 +19,23 @@ Brain contract below ("Several … ask the user") — record a failure instead w
 `scribe.py report` (section "Recording outcomes") and continue with the next task, or
 stop the run if the question is about the Brain.
 
+**How to run scripts.** `$SCRIBE` means `"$PY" <skill-dir>/scribe.py --project .`, where `$PY` is the
+scribe venv interpreter from `./install.sh --bundle scribe --deps`. With no venv, use
+`uv run --with-requirements <skill-dir>/../../requirements.txt python <skill-dir>/scribe.py --project .`.
+Brain scripts (parse_corpus.py) live in the Brain plugin: their directory is `brain_skills` in `scribe.toml`.
+
 ## The command you run
 
 Every script call is one Bash command of exactly this shape, run from the project
-directory — no `cd`, no pipes, no `&&`, no environment prefix (the project's permission
-rules allow only commands that start with `uv run`):
+directory — no `cd`, no pipes, no `&&`, no environment prefix:
 
 ```
-uv run --with-requirements <skill-dir>/../../../brain/requirements.txt --with pyyaml python <skill-dir>/scribe.py --project . <subcommand> [args]
+"$SCRIBE" <subcommand> [args]
 ```
 
 `<skill-dir>` is the base directory Claude Code printed for this skill (the directory
-holding this `SKILL.md` and `scribe.py`); the Brain bundle's `requirements.txt` sits three
-levels up because `run.sh` loads the `scribe` and `kb` plugins from the same source tree
-as `brain`. Below, `scribe.py <subcommand>` is shorthand for that full command.
+holding this `SKILL.md` and `scribe.py`). Below, `scribe.py <subcommand>` is shorthand
+for that full command.
 
 Every subcommand prints one JSON object. Exit 0 = ok; exit 1 = refused/failed and the
 JSON carries `"reason"`; exit 2 = usage error (treat it as exit 1).

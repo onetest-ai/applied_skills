@@ -11,17 +11,15 @@ current working directory (the directory holding `scribe.toml`). This skill is
 interactive: **ask one question at a time**, wait for the answer, then move on. Never
 write a task file with `enabled: true` before the user has approved the dry run.
 
-`scribe.py <subcommand>` below is shorthand for this one Bash command, run from the
-project directory:
+**How to run scripts.** `$SCRIBE` means `"$PY" <skill-dir>/scribe.py --project .`, where `$PY` is the
+scribe venv interpreter from `./install.sh --bundle scribe --deps`. With no venv, use
+`uv run --with-requirements <skill-dir>/../../requirements.txt python <skill-dir>/scribe.py --project .`.
+Brain scripts (parse_corpus.py) live in the Brain plugin: their directory is `brain_skills` in `scribe.toml`.
 
-```
-uv run --with-requirements <skill-dir>/../../../brain/requirements.txt --with pyyaml python <skill-dir>/../run/scribe.py --project . <subcommand> [args]
-```
-
-`<skill-dir>` is the base directory Claude Code printed for this skill; `scribe.py` lives in
-the sibling `run` skill, and the Brain bundle's `requirements.txt` three levels up (the
-`scribe` and `brain` bundles sit side by side in the source tree `run.sh` loads). Each
-subcommand prints one JSON object; exit 1 carries a `"reason"` — show it to the user.
+`scribe.py <subcommand>` below is shorthand for `"$SCRIBE" <subcommand> [args]`, run from the
+project directory. `<skill-dir>` here resolves to `skills/onboard`; its run script path is
+`<skill-dir>/../run/scribe.py`. Each subcommand prints one JSON object; exit 1 carries a
+`"reason"` — show it to the user.
 
 ## 0. Preflight (script + you)
 
@@ -45,9 +43,11 @@ Ask: start from a library template, or from an example document the user already
   line, and ask which to use. The task will reference it as `<template id>@<version>`.
 - **Example document.** Ask for its path. It must sit in a directory of its own (ask the
   user to copy it into `work/_onboard/<id>/example-src/` if its folder holds other
-  files). Parse it with the Brain's parser (the same one `scribe.py gather-raw` uses):
+  files). Parse it with the Brain's parser (the same one `scribe.py gather-raw` uses).
+  Read `brain_skills` from the project's `scribe.toml` (its `corpus-taxonomy-extraction`
+  subdirectory holds `parse_corpus.py`) and run, with `$PY` from "How to run scripts" above:
   ```
-  uv run --with-requirements <skill-dir>/../../../brain/requirements.txt python <skill-dir>/../../../brain/skills/corpus-taxonomy-extraction/parse_corpus.py --corpus <that directory> --out work/_onboard/<id>/example
+  "$PY" <brain_skills>/corpus-taxonomy-extraction/parse_corpus.py --corpus <that directory> --out work/_onboard/<id>/example
   ```
   Read the Markdown it wrote under `work/_onboard/<id>/example/`, and propose one section
   per top-level heading (or per heading-like line when the parse has no headings): `id`,
