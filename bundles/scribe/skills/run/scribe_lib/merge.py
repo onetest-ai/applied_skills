@@ -122,12 +122,27 @@ def _load_json(path: Path) -> dict[str, Any]:
 def _check_failure_keys(work_dir: Path) -> tuple[set[str], list[str]]:
     """`(ids, texts)` gathered from this run's `check-file.json.failed`,
     `check-task.json.failed` and `verifier.json.rejected` — every candidate
-    a dropped base claim can be attributed to (A12). Each entry's `claim`
-    (falling back to `claim_id`/`claim_ref` for a differently-shaped
-    producer) is a claim id (an 8-hex `c:xxxxxxxx`, with or without the
-    `c:` prefix) or, per `skills/run/SKILL.md` step 6, "`<c:id or first 8
-    words>`" — so it is recorded both as a candidate id and as normalized
-    text, and matched against a dropped base claim either way."""
+    a dropped base claim can be attributed to (A12).
+
+    Three producers, three shapes, all handled:
+      - `check-file.json.failed`: `{"section", "claim_ref", "claim",
+        "normalized", "tag", "reason"}` (`checkfile.py`) — `claim` is the
+        rewritten block's claim id (`None` for a legacy id-less claim),
+        `normalized` its exact normalized text, both captured before the
+        block was rewritten to `Not modeled:`.
+      - `check-task.json.failed`: `{"section", "claim", "tag", "reason"}`
+        (`checktask.py`) — `claim` is the claim id.
+      - `verifier.json.rejected`: `{"section", "claim", "verdict", "reason"}`
+        (`skills/run/SKILL.md` step 6) — `claim` is "`<c:id or first 8
+        words>`": either a claim id or a text snippet.
+
+    `claim` (falling back to `claim_id`/`claim_ref` only when a producer has
+    neither `claim` nor `normalized` — legacy `check-file.json` from before
+    this fix) is recorded both as a candidate id (`c:` prefix stripped) and
+    as normalized text, since `verifier.json` conflates the two; `normalized`,
+    when present, is recorded as an additional, exact text candidate — this
+    is what makes a `check-file` drop with a legacy id-less base claim
+    (`claim: None`) still attributable by text."""
     ids: set[str] = set()
     texts: list[str] = []
     entries = (
@@ -139,15 +154,17 @@ def _check_failure_keys(work_dir: Path) -> tuple[set[str], list[str]]:
     )
     for entry in entries:
         candidate = entry.get("claim")
-        if candidate is None:
+        normalized = entry.get("normalized")
+        if candidate is None and normalized is None:
             candidate = entry.get("claim_id")
-        if candidate is None:
-            candidate = entry.get("claim_ref")
-        if candidate is None:
-            continue
-        candidate = str(candidate)
-        ids.add(candidate[2:] if candidate.startswith("c:") else candidate)
-        texts.append(claims.normalize_text(candidate))
+            if candidate is None:
+                candidate = entry.get("claim_ref")
+        if candidate is not None:
+            candidate = str(candidate)
+            ids.add(candidate[2:] if candidate.startswith("c:") else candidate)
+            texts.append(claims.normalize_text(candidate))
+        if normalized:
+            texts.append(claims.normalize_text(normalized))
     return ids, texts
 
 

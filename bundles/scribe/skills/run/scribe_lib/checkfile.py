@@ -46,9 +46,18 @@ paragraph shape, dropping its tags and any claim id — it is no longer a
 claim) and recorded in `work/<task>/check-file.json`:
 
     {"checked": <int>, "passed": <int>, "human_origin_skipped": <int>,
-     "failed": [{"section", "claim_ref", "tag", "reason"}],
+     "failed": [{"section", "claim_ref", "claim", "normalized", "tag", "reason"}],
      "needs_quote": [{"section", "claim", "tag"}],
      "raw_offline_notes": [{"section", "claim_ref", "tag"}]}
+
+`failed`'s `claim` (the block's `claim_id`, `None` for an id-less legacy
+claim) and `normalized` (its normalized text, BEFORE the block is rewritten
+to `Not modeled:` below) exist so `merge.py`'s `dropped_by_check`/
+`dropped_by_model` attribution (spec A12) can match a base claim this run
+drops against this file's failures by id or by text — `claim_ref` alone (a
+positional index into THIS drafted file, not the base) can't answer "is the
+BASE claim this claim id/text drops the SAME claim a check-file failure just
+rewrote".
 
 `checked`/`passed` count *claims* (not tags): a claim with two failing
 `[FILE:]` tags is one failure, not two.
@@ -317,7 +326,16 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
                 passed += 1
                 continue
 
-            failed.append({"section": sid, "claim_ref": claim_idx, "tag": failing_tag, "reason": reason})
+            failed.append(
+                {
+                    "section": sid,
+                    "claim_ref": claim_idx,
+                    "claim": block["claim_id"],
+                    "normalized": block["normalized"],
+                    "tag": failing_tag,
+                    "reason": reason,
+                }
+            )
             prefix = "- " if block["kind"] == "bullet" else ""
             block["raw"] = f"{prefix}Not modeled: {reason}. <!-- cf:{claim_idx} -->"
             block["text"] = f"Not modeled: {reason}."

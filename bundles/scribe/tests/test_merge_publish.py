@@ -372,6 +372,8 @@ def test_check_file_removes_claim_with_absent_quote(tmp_path):
     assert result["failed"][0] == {
         "section": "overview",
         "claim_ref": 1,
+        "claim": None,
+        "normalized": "widget revenue doubled overnight.",
         "tag": "[FILE:note.txt#L2]",
         "reason": "quote not found in note.txt",
     }
