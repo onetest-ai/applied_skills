@@ -8,6 +8,7 @@ tiny in-memory fake, as in `test_prepare.py`.
 from __future__ import annotations
 
 import json
+import sqlite3
 import textwrap
 
 import pytest
@@ -196,7 +197,14 @@ def test_merge_omits_stale_brain_note_when_brain_is_fresh(tmp_path, monkeypatch)
     hand_dir = tmp_path / "brain" / "ops" / "handoff"
     write_json(hand_dir / "2026-01-05.json", {"decision": "apply", "abort_reasons": []})
 
-    proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"))
+    db = fixture_brain_db(tmp_path / "k.sqlite")
+    # Final-review I6: an `apply` report is fresh only with a rebuild behind it.
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)")
+    con.execute("INSERT INTO meta VALUES('built_at', '2026-01-05T12:00:00+00:00')")
+    con.commit()
+    con.close()
+    proj = setup_mini_project(tmp_path, brain_db=db)
     _configure_brain_handoff(proj, hand_dir)
     # Review fix round 2, Important #1: `handoff_status` now also treats a latest
     # report dated before today as stale ("no hand-off report for <today>"). Pin
