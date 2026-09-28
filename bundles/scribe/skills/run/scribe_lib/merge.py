@@ -33,9 +33,12 @@ by `check-file`) for every stale section — refusing if one is missing.
 - `work/<task>/merge.json`: `{task, version, noop, sections: {sid: {status:
   "carried"|"drafted", claims_before, claims_after, kept, reworded, recited,
   dropped, added, superseded}}}`. `dropped` = base claims no draft claim matched.
-- Noop: if `next.md` would be byte-identical to the previous version (ignoring
-  the header comment and the Changes section), nothing is written and the
-  result carries `"noop": true`.
+- Noop (A9): if `next.md`'s content — ignoring the header comment, the Changes
+  section, and anything a reader would never see (claim-id/origin comments,
+  Markdown backslash escapes, curly vs straight quotes, whitespace runs; see
+  `claims.visible_text`) — reads identically to the previous version, nothing
+  is written and the result carries `"noop": true`. A re-minted claim id or an
+  `origin=` flip alone is not a visible change.
 """
 from __future__ import annotations
 
@@ -272,7 +275,9 @@ def merge_task(
         prev_path = config.out_root / instance["out"] / "_src" / f"v{prev_version:03d}.md"
         if prev_path.is_file():
             prev_text = prev_path.read_text(encoding="utf-8")
-    noop = bool(prev_version) and _strip_header_and_changes(next_text) == _strip_header_and_changes(prev_text)
+    noop = bool(prev_version) and claims.visible_text(
+        _strip_header_and_changes(next_text)
+    ) == claims.visible_text(_strip_header_and_changes(prev_text))
 
     merge_result = {
         "task": task_id,

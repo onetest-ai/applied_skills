@@ -70,7 +70,14 @@ def append_run(config: Config, entry: dict[str, Any]) -> None:
 _append_run = append_run
 
 
-def _cited_from_section(config: Config, body: str) -> tuple[dict[str, str], dict[str, str]]:
+def cited_from_section(config: Config, body: str) -> dict[str, Any]:
+    """What a section's merged claims actually cite, keyed by tag kind:
+    `{"cited_chunks": {chunk_id: text_hash|None}, "cited_raw": {path: sha256},
+    "cited_task_claims": {}}` (renamed from the private `_cited_from_section`,
+    now a dict so a later kind — `cited_task_claims`, Task 7 — extends the
+    shape without another positional return value). Used by both `publish`
+    (recording what a version cites) and `observe` (recomputing a noop's
+    cited_* from the still-published text, spec A9)."""
     cited_chunks: dict[str, str] = {}
     cited_raw: dict[str, str] = {}
     for block in claims.parse_blocks(body):
@@ -85,7 +92,7 @@ def _cited_from_section(config: Config, body: str) -> tuple[dict[str, str], dict
                 full = config.raw_root / path
                 if full.is_file():
                     cited_raw[path] = sha256_file(full)
-    return cited_chunks, cited_raw
+    return {"cited_chunks": cited_chunks, "cited_raw": cited_raw, "cited_task_claims": {}}
 
 
 def publish_task(
@@ -206,7 +213,8 @@ def publish_task(
     all_cited_chunks: dict[str, str] = {}
     all_cited_raw: dict[str, str] = {}
     for sid, body in next_sections.items():
-        cited_chunks, cited_raw = _cited_from_section(config, body)
+        cited = cited_from_section(config, body)
+        cited_chunks, cited_raw = cited["cited_chunks"], cited["cited_raw"]
         sections_state[sid] = {
             "fingerprint": fp_sections.get(sid, {}).get("fingerprint"),
             "cited_chunks": cited_chunks,

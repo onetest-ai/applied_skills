@@ -9,7 +9,14 @@ that version's lineage marks `origin: human|human_modified` but whose comment
 lacks `origin=` (published before origin was persisted in the comment) gets it added
 (`_restore_legacy_origins`).
 
-If the docx sha differs, a human edited the published file directly, and the
+If the docx sha differs but every recovered section reads identically to the
+previous published version once comments/escapes/quotes/whitespace are
+normalized away (`claims.visible_text` — spec A9, PoC finding I1: a Word
+"open and save" round-trip changes bytes, not visible content), this is not a
+human edit either: fall back to the previous `_src` text verbatim, same as
+the unedited path (`base_edited: false`, no `human_added`/`human_modified`).
+
+Otherwise a human edited the published file directly, and the
 base has to be recovered from it:
   1. `pandoc -f docx -t gfm --wrap=none` to Markdown.
   2. Footnote -> tag: a citation tag was rendered (by `render`) as a
@@ -373,6 +380,29 @@ def base_task(
         docx_sections[sid] = sec_body
 
     prev_sections = split_by_section_id(prev_src.read_text(encoding="utf-8")) if prev_src.is_file() else {}
+
+    # A9 / I1: a Word "open and save" (pandoc/Word re-serializes punctuation,
+    # quotes, whitespace) changes the docx's bytes without a human changing
+    # anything a reader would see. If every section reads identically to the
+    # previous published version once comments/escapes/quotes/whitespace are
+    # normalized away, this is not a human edit — fall back to the previous
+    # `_src` text verbatim rather than recording a spurious human_added/
+    # human_modified claim from round-trip noise.
+    # The script-owned "Changes in this version" heading is never a template
+    # section, so it is always unmatched here — that alone is not a sign of a
+    # human edit (every docx recovery sees it, edited or not).
+    _real_unmatched = [h for h in unmatched_headings if h.strip().casefold() != "changes in this version"]
+    resave_only = not _real_unmatched and all(
+        claims.visible_text(docx_sections.get(sec["id"], "")) == claims.visible_text(prev_sections.get(sec["id"], ""))
+        for sec in sections_spec
+    )
+    if resave_only:
+        text = prev_src.read_text(encoding="utf-8") if prev_src.is_file() else ""
+        text = _restore_legacy_origins(text, src_dir / f"v{version:03d}.lineage.json")
+        base_md_path.write_text(text, encoding="utf-8")
+        result = {"base_version": version, "base_edited": False, "human_added": [], "human_modified": []}
+        base_json_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+        return result
 
     human_added_all: list[dict[str, Any]] = []
     human_modified_all: list[dict[str, Any]] = []

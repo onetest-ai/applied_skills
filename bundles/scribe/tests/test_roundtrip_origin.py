@@ -100,12 +100,20 @@ def test_render_docx_base_round_trip_yields_the_exact_original_tag(tmp_path, mon
     out_dir = config.out_root / "m1"
     out_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy(docx, out_dir / "Mini Round.docx")
-    publish_seed(config, inst, v1, 1, docx_sha="sha-of-a-different-docx")  # => treated as human-edited
+    # The "previous" published version genuinely lacks the file claim (unlike
+    # `v1`, which is only what got rendered into the docx just now) — a real
+    # content difference, not just a resaved-docx round trip (A9), so this
+    # exercises the docx-recovery path this test targets.
+    prev = doc("m1", 1, "Mini Round", {
+        "overview": "- Nothing here yet. <!-- c:zzzz0001 -->",
+        "details": "A cited detail. [RAG:7] <!-- c:bbbb0001 -->",
+    })
+    publish_seed(config, inst, prev, 1, docx_sha="sha-of-a-different-docx")  # => treated as human-edited
 
     result = base_task(config, "m1", inst, template)
     assert result["base_edited"] is True
     base_md = (config.work_dir / "m1" / "base.md").read_text(encoding="utf-8")
-    assert f"- A file claim. {ORIG_TAG} <!-- c:aaaa0001 -->" in base_md
+    assert f"- A file claim. {ORIG_TAG} " in base_md
     assert "\\_" not in base_md and "\\>" not in base_md
 
 
@@ -331,8 +339,15 @@ def test_legacy_human_modified_origin_is_restored_from_the_published_lineage(tmp
 
     plan_stale(config, "m1", ["overview"], ["details"])
     prior = split_by_section_id((config.work_dir / "m1" / "base.md").read_text(encoding="utf-8"))["overview"]
-    draft(config, "m1", "overview", prior + "\n")
-    merge_task(config, "m1", data["instances"], data["templates"])
+    # A9: restoring a legacy origin comment alone is not a VISIBLE change
+    # (comments are invisible to a reader), so a redraft that only carries
+    # `prior` forward unchanged is correctly a noop under the new policy —
+    # add a genuinely new claim too, so this run actually publishes and the
+    # carried-through origin can be checked in the published next.md.
+    new_claim = "A brand new claim about widget lookups. [RAG:9] "
+    draft(config, "m1", "overview", prior + "\n\n" + new_claim + "\n")
+    merge_result = merge_task(config, "m1", data["instances"], data["templates"])
+    assert merge_result["noop"] is False
     merged = {b["claim_id"]: b for b in claim_blocks(config.work_dir / "m1" / "next.md")["overview"]}
     assert merged["eeee0001"]["origin"] == "human_modified"
 

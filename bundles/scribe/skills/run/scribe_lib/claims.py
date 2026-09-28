@@ -51,6 +51,10 @@ CLAIM_ID_RE = re.compile(
 # `]` (it would end the tag), so `\]` stays escaped to keep the tag parseable.
 _MD_ESCAPE_RE = re.compile(r"\\([!-/:-@\[\\^-`{-~])")
 SUPERSEDED_RE = re.compile(r"^\*\*Superseded \(([^)]+)\):\*\*\s*")
+# Any HTML comment, anywhere (claim-id comments, origin markers, ...): never
+# part of what a reader sees, so never part of what counts as a "visible change".
+_COMMENT_ANY_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+_QUOTES = str.maketrans({"“": '"', "”": '"', "„": '"', "‘": "'", "’": "'"})
 NOT_MODELED_RE = re.compile(r"^Not modeled:", re.IGNORECASE)
 FENCE_RE = re.compile(r"^```(\S*)\s*$")
 # A draft claim matches an unmatched base claim at this normalized-text similarity.
@@ -92,6 +96,19 @@ def base_claim_origin(block: dict[str, Any]) -> str | None:
     if is_claim(block) and not block.get("claim_id"):
         return "human"
     return None
+
+
+def visible_text(md: str) -> str:
+    """What a human actually sees, for the noop test (spec A9): strip every
+    HTML comment (claim-id/origin comments included — a re-minted id or a
+    flipped `origin=` is not a visible change), unescape Markdown backslash
+    escapes, fold curly quotes to straight ones, collapse whitespace runs to
+    one space, strip. Two Markdown strings with the same `visible_text` read
+    identically to a person; only that equality may back a "nothing changed"
+    verdict."""
+    text = _COMMENT_ANY_RE.sub("", md)
+    text = _MD_ESCAPE_RE.sub(r"\1", text).translate(_QUOTES)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def normalize_text(content: str) -> str:
