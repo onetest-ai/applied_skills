@@ -156,6 +156,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_promote = sub.add_parser("promote", help="Write a reusable template from a proven task instance")
     p_promote.add_argument("task", help="Task id")
     p_promote.add_argument("--as", dest="template_id", required=True, help="New template id")
+    p_promote.add_argument(
+        "--force", action="store_true", help="Overwrite an existing template id instead of refusing"
+    )
 
     return parser
 
@@ -276,7 +279,12 @@ def compute_plan(
         }
         explicit = task == tid
         group, group_enabled = group_membership(config, tid)
-        enabled = group_enabled if group is not None else inst.get("enabled", True)
+        # Fix round 1, issue 1: a task runs only when its OWN `enabled:` is
+        # true AND (it is in no group, or every matching group is enabled)
+        # — not one or the other. Ignoring the instance's own `enabled:`
+        # whenever any group matched made `scribe.py disable <task>` a
+        # silent no-op for every grouped task.
+        enabled = inst.get("enabled", True) and (True if group is None else group_enabled)
         due, reasons, cadence, notes = _due_reasons(
             config, inst, template, state, upstream_versions, explicit=explicit, enabled=enabled
         )
@@ -306,41 +314,77 @@ def compute_plan(
             "enabled": enabled,
         }
 
-    # Budget deferral (task 11): a running sum, in topological order, of
-    # each DUE task's last recorded `minutes` (from run reports —
-    # `report.last_minutes`) or `default_task_minutes` when it has never
-    # been recorded. A task past `budget_minutes` or `max_tasks_per_run` is
-    # marked `deferred` — NEVER dropped from `tasks_out`, still due, still
-    # runnable with `--task`; only a `--due` sweep skips it (it stays due
-    # again next time, budget permitting).
-    running_minutes = 0.0
-    admitted = 0
+    # Budget deferral (task 11; fix round 1, issue 4). A running sum, in
+    # topological order, of each DUE task's minutes: `report.last_minutes`
+    # when it has run before, else `default_task_minutes`. A task past
+    # `budget_minutes` or `max_tasks_per_run` is marked `deferred` — NEVER
+    # dropped from `tasks_out`, still due, still runnable with `--task`;
+    # only `plan --due` skips a deferred task (it stays due again next
+    # `--due` sweep, budget permitting — see `due_only` below).
+    #
+    # The running sum SEEDS from minutes already spent THIS run (today's
+    # run-report rows), not from zero, so re-planning mid-run (the run
+    # SKILL's loop calls `plan --due` again after every task) does not
+    # forget what already ran. A task with a row in today's report already
+    # ran this run — it is never re-admitted or deferred here, regardless
+    # of whether it is still `due` (e.g. daily cadence still shows `due`
+    # after a noop `observe`).
+    today_rows = report.rows(config)
+    ran_today: dict[str, float] = {}
+    for row in today_rows:
+        row_task = row.get("task")
+        if not row_task or row_task == "_run":
+            continue
+        ran_today[row_task] = row.get("minutes") if row.get("minutes") is not None else config.default_task_minutes
+
+    running_minutes = sum(ran_today.values())
+    admitted = len(ran_today)
+    first_due_admitted = False
     for tid in order:
         entry = entries[tid]
         if not entry["due"]:
             entry["deferred"] = False
             continue
+        if tid in ran_today:
+            # Already ran (published/noop/failed/skipped) earlier this run —
+            # counted in the seed above; never re-admitted or deferred.
+            entry["deferred"] = False
+            continue
         task_minutes = report.last_minutes(config, tid)
         if task_minutes is None:
             task_minutes = config.default_task_minutes
-        if admitted >= config.max_tasks_per_run or running_minutes + task_minutes > config.budget_minutes:
+        over_budget = admitted >= config.max_tasks_per_run or running_minutes + task_minutes > config.budget_minutes
+        if over_budget and first_due_admitted:
             entry["deferred"] = True
         else:
+            # The first due-and-not-yet-run task of this plan is always
+            # admitted, even over budget — otherwise a single task whose
+            # own estimate exceeds the whole budget would be deferred on
+            # every run forever, which amounts to dropping it (no
+            # starvation, fix round 1 ruling).
             entry["deferred"] = False
             running_minutes += task_minutes
             admitted += 1
+            first_due_admitted = True
 
     # Top-level notes (review fix round 1, Important #4): computed over
     # EVERY task, before `--task`/`--due` filtering, so an offline raw root
     # stays visible even when the filtered `tasks` list would otherwise hide
-    # every task that has it.
-    top_notes = sorted({n for entry in entries.values() for n in entry["notes"]})
+    # every task that has it. Fan-out notes (fix round 1, issue 2) are
+    # folded in the same way.
+    top_notes = sorted(
+        {n for entry in entries.values() for n in entry["notes"]}
+        | {f"fanout_parent_missing: {label}" for label in (data.get("fanout_parent_missing") or [])}
+    )
 
     tasks_out = [entries[tid] for tid in order]
     if task:
         tasks_out = [t for t in tasks_out if t["id"] == task]
     if due_only:
-        tasks_out = [t for t in tasks_out if t["due"]]
+        # Fix round 1, issue 4(b): a deferred task is due but must not be
+        # picked up by a `--due` sweep — only the full `plan` (or an
+        # explicit `--task`) still shows it, `deferred: true`.
+        tasks_out = [t for t in tasks_out if t["due"] and not t["deferred"]]
 
     return {
         "status": "ok",
@@ -349,6 +393,7 @@ def compute_plan(
         "order": order,
         "tasks": tasks_out,
         "notes": top_notes,
+        "new_fanout_children": data.get("new_fanout_children") or [],
     }
 
 
@@ -567,8 +612,8 @@ def cmd_index(config: Config, args: argparse.Namespace) -> int:
 
 
 def cmd_list(config: Config) -> int:
-    rows = registry.list_rows(config)
-    _print({"status": "ok", "tasks": rows})
+    result = registry.list_rows(config)
+    _print({"status": "ok", **result})
     return 0
 
 
@@ -591,7 +636,7 @@ def cmd_disable(config: Config, args: argparse.Namespace) -> int:
 
 
 def cmd_promote(config: Config, args: argparse.Namespace) -> int:
-    path = registry.promote(config, args.task, args.template_id)
+    path = registry.promote(config, args.task, args.template_id, force=args.force)
     _print({"status": "ok", "task": args.task, "template": args.template_id, "path": str(path)})
     return 0
 

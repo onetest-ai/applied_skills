@@ -33,10 +33,24 @@ prints one JSON object; exit 1 carries a `"reason"` — show it to the user.
   the task and what toggling it changes (a disabled task is skipped by `/scribe:run --due`
   unless named explicitly with `--task`, and by any group it belongs to when that group is
   disabled) — then run the command and report the new state.
+  - A fan-out child id (`list`/`plan`'s `new_fanout_children` names it `<parent>--<node>`)
+    has no file of its own: `enable` records the approval into its parent's
+    `approved_children:` instead, and `disable` refuses — there is nothing to disable
+    directly, so tell the user to disable the parent (or its group) instead.
+  - A task appearing under `new_fanout_children` in `list`/`plan` has never been published
+    and was never approved — it starts `enabled: false` on its own. Surface these to the
+    user (task, parent, taxonomy node) before they ask; `enable <task>` is the approval.
+  - A note `fanout_parent_missing: <label>` in `list`/`plan` means a `for_each` task's
+    `taxonomy_under` label no longer resolves in the Brain (renamed/removed taxonomy
+    node) — that task currently expands to zero children. Tell the user; fixing it means
+    editing the task's `taxonomy_under` to the node's current label.
 - **Promote.** Turning a proven task instance into a reusable template. Ask the user for
   the new template id (lowercase, dashes, not already in `scribe.py validate`'s
   `templates` list) if they did not give one, then run
-  `scribe.py promote <task> --as <template-id>` and show the written path
+  `scribe.py promote <task> --as <template-id>` and show the written path. If it exits 1
+  because that template id already exists, tell the user and ask before retrying with
+  `--force` (which overwrites the existing template — every instance still pinned to its
+  old version keeps working, but the template file itself resets to version 1).
   (`templates/<template-id>.tmpl.md`, version 1). Tell the user the new template's
   `inputs` come from the task's own template merged with that instance's overrides, and
   that its `params` are generic (`{{param}}`) — no value the promoted instance filled in

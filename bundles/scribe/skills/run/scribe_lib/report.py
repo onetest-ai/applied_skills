@@ -29,6 +29,7 @@ false-stale)."""
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -57,12 +58,39 @@ def merge_counts_for_row(config: Config, task_id: str) -> dict[str, Any] | None:
     return data.get("sections") or {}
 
 
+def elapsed_minutes(config: Config, task_id: str) -> float | None:
+    """Wall-clock minutes since `prepare` stamped `work/<task_id>/started_at`
+    (`pack._stamp_started`), or `None` when that file is absent/unreadable —
+    a task that has never been through `prepare` this run (or ever) records
+    no `minutes`. Real wall-clock time, not `config.now`: `SCRIBE_NOW` is the
+    replay date and never advances within a run, so it cannot measure a
+    single run's duration (task 11, fix round 1, ruling on issue 4a)."""
+    path = config.work_dir / task_id / "started_at"
+    if not path.is_file():
+        return None
+    try:
+        started = datetime.fromisoformat(path.read_text(encoding="utf-8").strip())
+    except ValueError:
+        return None
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    delta_minutes = (datetime.now(timezone.utc) - started).total_seconds() / 60.0
+    return round(max(delta_minutes, 0.0), 1)
+
+
 def append_run(config: Config, entry: dict[str, Any]) -> None:
     """Append one row to the run report — every writer in the codebase
     (`publish_task`, `_resume_journal`, `scribe.py`'s `report --status`) goes
     through this. A row naming a real task (not the synthetic `"_run"`) has
     that task's `merge.json` sections embedded under `"merge"` when present,
-    so the row is self-sufficient for `summary` without touching `work/`."""
+    so the row is self-sufficient for `summary` without touching `work/`.
+
+    It also stamps `minutes` (task 11, fix round 1, ruling on issue 4a) —
+    `elapsed_minutes` since `prepare` — onto that same row, UNLESS the
+    caller already set one (`_resume_journal` and a few call sites pass an
+    explicit `"minutes"`, which wins). This is the one place both required
+    writers (`publish_task` and `scribe.py report --status`, via `record`
+    below) get it, the same way both already get `merge` counts."""
     path = run_report_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
@@ -73,6 +101,10 @@ def append_run(config: Config, entry: dict[str, Any]) -> None:
         merge = merge_counts_for_row(config, task_id)
         if merge is not None:
             row["merge"] = merge
+        if row.get("minutes") is None:
+            minutes = elapsed_minutes(config, task_id)
+            if minutes is not None:
+                row["minutes"] = minutes
 
     rows.append(row)
     path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
@@ -173,4 +205,7 @@ def summary(config: Config, date: str) -> dict[str, Any]:
     return {"date": date, "tasks": tasks, "totals": totals}
 
 
-__all__ = ["run_report_path", "append_run", "merge_counts_for_row", "record", "rows", "last_minutes", "summary"]
+__all__ = [
+    "run_report_path", "append_run", "merge_counts_for_row", "record", "rows",
+    "last_minutes", "elapsed_minutes", "summary",
+]

@@ -201,11 +201,15 @@ def group_membership(config: "Config", task_id: str) -> tuple[str | None, bool |
     return matching[0], enabled
 
 
-def _taxonomy_children(brain_db: Path, label: str) -> list[tuple[str, str]]:
+def _taxonomy_children(brain_db: Path, label: str) -> list[tuple[str, str]] | None:
     """`[(child_id, child_label), ...]` — rows of the Brain's `graph_nodes`
     whose `parent` is the id of the node whose `label` equals `label`,
     opened strictly read-only (`mode=ro`), ordered by id for a deterministic
-    fan-out order."""
+    fan-out order. `None` — never an exception — when no node carries that
+    label: a taxonomy that has been reorganised since a task's `for_each`
+    was written must not brick every command in the project (fix round 1,
+    ruling on issue 2); the caller reports it as a note and expands to zero
+    children instead."""
     if not brain_db.is_file():
         raise ScribeError(f"brain_db not found: {brain_db}")
     con = sqlite3.connect(f"file:{brain_db.as_posix()}?mode=ro", uri=True, timeout=5.0)
@@ -213,7 +217,7 @@ def _taxonomy_children(brain_db: Path, label: str) -> list[tuple[str, str]]:
         con.execute("PRAGMA query_only=ON")
         row = con.execute("SELECT id FROM graph_nodes WHERE label = ?", (label,)).fetchone()
         if row is None:
-            raise ScribeError(f"taxonomy node not found: '{label}'")
+            return None
         parent_id = row[0]
         children = con.execute(
             "SELECT id, label FROM graph_nodes WHERE parent = ? ORDER BY id", (parent_id,)
@@ -223,19 +227,50 @@ def _taxonomy_children(brain_db: Path, label: str) -> list[tuple[str, str]]:
     return [(cid, clabel) for cid, clabel in children]
 
 
-def expand_instances(config: "Config", instances: dict[str, dict[str, Any]], brain_db: Path) -> dict[str, dict[str, Any]]:
+def _sanitize_out_segment(label: str) -> str:
+    """A taxonomy child label used as an `out` path segment must not itself
+    contain a path separator (or `..`) — sanitise rather than let a label
+    silently nest or escape the fan-out parent's `out` dir."""
+    return re.sub(r"[/\\]+", "-", label).strip() or "child"
+
+
+def expand_instances(
+    config: "Config", instances: dict[str, dict[str, Any]], brain_db: Path
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     """Task templates and task instances — fan-out: an instance whose
     frontmatter has `for_each: {taxonomy_under: "<label>"}` becomes one
-    instance per child of that taxonomy node (`<id>[<child-node-id>]`), each
-    with `params.name = <child label>`, `params.tags = [<child label>]` and
-    `out = <out>/<child label>`, and no `for_each` key of its own (so it is
-    an ordinary instance from here on). An instance with no `for_each` is
-    passed through unchanged. Runs AFTER `validate_all`'s required-field /
-    declared-params check on the un-expanded instances — the base instance's
-    own `params` (e.g. just `name`) is what gets checked against the
-    template's declared params; the auto-injected `tags` param is never
-    checked against that declaration."""
+    instance per child of that taxonomy node (`<id>--<child-node-id>` — no
+    brackets: a bracket in an id breaks `[TASK:...]` citation tags and
+    `fnmatch` group globs, fix round 1 ruling on issue 3), each with
+    `params.name = <child label>`, `params.tags = [<child label>]` and
+    `out = <out>/<sanitized child label>`, and no `for_each` key of its own
+    (so it is an ordinary instance from here on). An instance with no
+    `for_each` is passed through unchanged. Runs AFTER `validate_all`'s
+    required-field/declared-params check on the un-expanded instances — the
+    base instance's own `params` (e.g. just `name`) is what gets checked
+    against the template's declared params; the auto-injected `tags` param
+    is never checked against that declaration.
+
+    Fix round 1, ruling on issue 2 — fan-out never creates a task silently:
+    a child that has never been published (no `state.json` at its would-be
+    `out`) AND is not listed in the parent instance's own
+    `approved_children: [node-id, ...]` frontmatter is still expanded, but
+    forced `enabled: false`, and reported in the second return value's
+    `new_fanout_children` (`[{"task", "parent", "node"}, ...]`) — `enable`
+    on that task id is what records the approval (`registry.set_enabled`),
+    not hand-editing a file. A child already published (it has state) stays
+    at whatever `enabled` the parent instance itself carries (default
+    true) regardless of `approved_children` — a fan-out that has already
+    run once is not "new". A `taxonomy_under` label that matches no node in
+    the Brain is not fatal: that instance expands to zero children and is
+    reported in `fanout_parent_missing` (`["<label>", ...]`); `validate_all`
+    must still succeed so `list`/`status` keep working on every OTHER task.
+
+    Returns `(instances, notes)` where `notes` is
+    `{"new_fanout_children": [...], "fanout_parent_missing": [...]}`."""
     result: dict[str, dict[str, Any]] = {}
+    new_fanout_children: list[dict[str, str]] = []
+    fanout_parent_missing: list[str] = []
     for tid, inst in instances.items():
         for_each = inst.get("for_each")
         if not for_each:
@@ -244,19 +279,34 @@ def expand_instances(config: "Config", instances: dict[str, dict[str, Any]], bra
         label = for_each.get("taxonomy_under")
         if not label:
             raise ScribeError(f"{tid}: for_each missing 'taxonomy_under'")
-        for child_id, child_label in _taxonomy_children(brain_db, label):
-            new_id = f"{tid}[{child_id}]"
+        children = _taxonomy_children(brain_db, label)
+        if children is None:
+            fanout_parent_missing.append(label)
+            continue
+        approved = set(inst.get("approved_children") or [])
+        for child_id, child_label in children:
+            new_id = f"{tid}--{child_id}"
             new_inst = dict(inst)
             new_inst.pop("for_each", None)
+            new_inst.pop("approved_children", None)
             new_inst["id"] = new_id
+            new_inst["_fanout_parent"] = tid
+            new_inst["_fanout_node"] = child_id
             params = dict(inst.get("params") or {})
             params["name"] = child_label
             params["tags"] = [child_label]
             new_inst["params"] = params
             base_out = str(inst.get("out") or "")
-            new_inst["out"] = f"{base_out}/{child_label}" if base_out else child_label
+            segment = _sanitize_out_segment(child_label)
+            new_inst["out"] = f"{base_out}/{segment}" if base_out else segment
+
+            already_published = bool(read_state(config, new_inst))
+            if child_id not in approved and not already_published:
+                new_inst["enabled"] = False
+                new_fanout_children.append({"task": new_id, "parent": tid, "node": child_id})
             result[new_id] = new_inst
-    return result
+    notes = {"new_fanout_children": new_fanout_children, "fanout_parent_missing": fanout_parent_missing}
+    return result, notes
 
 
 def _validate_out_paths(config: "Config", instances: dict[str, dict[str, Any]]) -> None:
@@ -420,7 +470,7 @@ def validate_all(config: Config) -> dict[str, Any]:
     if errors:
         raise ScribeError("; ".join(errors))
 
-    instances = expand_instances(config, instances, config.brain_db)
+    instances, fanout_notes = expand_instances(config, instances, config.brain_db)
     _validate_out_paths(config, instances)
 
     edges: dict[str, list[str]] = {}
@@ -438,7 +488,14 @@ def validate_all(config: Config) -> dict[str, Any]:
 
     order = topological_order(edges)
 
-    return {"templates": templates, "instances": instances, "edges": edges, "order": order}
+    return {
+        "templates": templates,
+        "instances": instances,
+        "edges": edges,
+        "order": order,
+        "new_fanout_children": fanout_notes["new_fanout_children"],
+        "fanout_parent_missing": fanout_notes["fanout_parent_missing"],
+    }
 
 
 # ---------------------------------------------------------------------- state --

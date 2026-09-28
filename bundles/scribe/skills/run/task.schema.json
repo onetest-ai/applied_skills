@@ -110,10 +110,15 @@
         "for_each": {
           "type": "object",
           "required": ["taxonomy_under"],
-          "description": "Task templates and task instances — fan-out: this instance becomes one instance per child of the named taxonomy node (Brain graph_nodes), each `<id>[<child-node-id>]` with params.name/params.tags set to the child's label and out nested under the child's label.",
+          "description": "Task templates and task instances — fan-out: this instance becomes one instance per child of the named taxonomy node (Brain graph_nodes), each `<id>--<child-node-id>` (no brackets — a bracket breaks [TASK:] tags and group globs) with params.name/params.tags set to the child's label and out nested under the child's label. A child never published and not yet in the parent's approved_children starts enabled: false.",
           "properties": {
             "taxonomy_under": { "type": "string", "description": "A taxonomy node LABEL (not id); its graph_nodes children become the fan-out instances." }
           }
+        },
+        "approved_children": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Taxonomy node ids of this for_each instance's children a person has approved (via `scribe.py enable <id>--<node-id>`) — only meaningful on a `for_each` instance; written by `registry.set_enabled`, never hand-edited."
         }
       }
     }

@@ -94,6 +94,13 @@ or were skipped).
      failed), and repeat the loop. Re-running `plan --due` after every task is what makes
      a downstream task due once its upstream publishes (`upstream_published`).
 
+  A task past the project's `budget_minutes`/`max_tasks_per_run` (`scribe.toml` `[run]`)
+  is `deferred: true` and `plan --due` never returns it — it stays due, so the loop ends
+  (step 2.2 finds nothing left) once every remaining task is deferred, and the same
+  `--due` sweep tomorrow (or a manual `plan` / `--task <id>`) picks it up. Never start a
+  task yourself because it looked due in a full `scribe.py plan` — only `plan --due`'s
+  `tasks` decides what this loop runs.
+
 **On any failure in steps 3–7** (a command exits 1, or a step below says "fail"): record
 it with `scribe.py report --task <id> --status failed --stage <step> --reason "<the JSON reason>"`
 (unless the failing command was `publish`), leave the published version untouched, and

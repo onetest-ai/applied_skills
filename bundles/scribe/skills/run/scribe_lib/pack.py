@@ -73,6 +73,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -295,6 +296,18 @@ _PER_RUN_FILES = ("next.md", "merge.json", "check-file.json", "check-task.json",
 _PER_RUN_DIRS = ("sections", "render")
 
 
+def _stamp_started(work_dir: Path) -> None:
+    """`work/<task>/started_at` — real wall-clock time (never `config.now`,
+    which is the replay date and does not advance within a run), read back
+    by `report.elapsed_minutes` when `publish`/`report --status` write the
+    task's `minutes` onto its run-report row (task 11, fix round 1, ruling
+    on issue 4a). Overwritten on every `prepare`, including a skipped one's
+    successor once the upstream unblocks — only the most recent `prepare`
+    of the day should count towards that task's elapsed time."""
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (work_dir / "started_at").write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+
+
 def _clear_previous_run(work_dir: Path) -> None:
     for name in _PER_RUN_FILES:
         (work_dir / name).unlink(missing_ok=True)
@@ -314,16 +327,36 @@ def prepare_task(config: Config, task_id: str) -> dict[str, Any]:
     state = read_state(config, instance)
 
     # Upstream-failure isolation (task 11): an upstream task that failed
-    # THIS run's build (a `failed` row in today's run report) leaves nothing
-    # trustworthy to draft downstream from — `prepare` refuses rather than
-    # drafting against stale/partial upstream claims, and touches nothing
-    # (no `_clear_previous_run`, no pack) so a retry of the upstream task
-    # alone, followed by a retry of this one, still finds last run's pack.
+    # THIS run's build leaves nothing trustworthy to draft downstream from —
+    # `prepare` refuses rather than drafting against stale/partial upstream
+    # claims, and touches nothing (no `_clear_previous_run`, no pack) so a
+    # retry of the upstream task alone, followed by a retry of this one,
+    # still finds last run's pack.
+    #
+    # Fix round 1, ruling on issue 5: `append_run` only ever APPENDS
+    # (report.py), so an upstream retried and republished later the same
+    # day leaves BOTH its earlier `failed` row and its later `published` row
+    # in today's report. Blocking on "any failed row exists" left a
+    # same-day retry of the upstream permanently unable to unblock the
+    # dependant. The check now uses only the LATEST row per upstream task —
+    # `failed`, or `skipped` with reason `upstream_failed` (so a failure
+    # propagates transitively through a chain of `prepare` calls, not just
+    # one hop) blocks; `published`/`noop`/anything else allows.
     upstream = edges.get(task_id, [])
     if upstream:
+        latest_by_task: dict[str, dict[str, Any]] = {}
+        for row in report_mod.rows(config):
+            row_task = row.get("task")
+            if row_task and row_task != "_run":
+                latest_by_task[row_task] = row  # later rows overwrite earlier ones
+
+        def _blocks(row: dict[str, Any]) -> bool:
+            if row.get("status") == "failed":
+                return True
+            return row.get("status") == "skipped" and "upstream_failed" in (row.get("reasons") or [])
+
         failed_upstream = sorted(
-            {row.get("task") for row in report_mod.rows(config) if row.get("status") == "failed"}
-            & set(upstream)
+            up for up in upstream if up in latest_by_task and _blocks(latest_by_task[up])
         )
         if failed_upstream:
             return {
@@ -334,6 +367,7 @@ def prepare_task(config: Config, task_id: str) -> dict[str, Any]:
             }
 
     _clear_previous_run(config.work_dir / task_id)
+    _stamp_started(config.work_dir / task_id)
 
     brain_delta = compute_brain_delta(config, state)
     raw_inputs = resolve_instance_inputs(instance, template).get("raw") or {}
