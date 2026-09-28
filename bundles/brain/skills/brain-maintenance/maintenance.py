@@ -253,7 +253,7 @@ def classify_handoff(status: dict[str, Any], profile: dict[str, Any]) -> dict[st
 
     if abort_reasons:
         return {
-            "decision": "abort", "apply": [], "defer": [], "abort_reasons": abort_reasons,
+            "decision": "abort", "apply": [], "apply_actions": [], "defer": [], "abort_reasons": abort_reasons,
             "marts": "none", "deploy": "disabled",
         }
 
@@ -273,14 +273,34 @@ def classify_handoff(status: dict[str, Any], profile: dict[str, Any]) -> dict[st
             return None
         return item.get("relative_path")
 
+    # Review fix round 2, Minor #3: two roots can register the SAME relative_path (an
+    # `import` root and a `mirror` root both watching different trees that happen to
+    # share a filename, say). Keying the seen-set on `relative_path` alone would let a
+    # deferred action in one root silently "cover" — or get silently covered by — an
+    # applied action of the same path in another root. Every dedup and every
+    # `apply`-membership decision below is keyed on `(root_key, relative_path)`, never
+    # `relative_path` alone; `apply_actions` (the actual action dicts, root_key
+    # included) is what `build_apply_plan` filters from now, precisely so it never has
+    # to re-derive this match itself against `relative_path` alone either.
     apply: list[str] = []
+    apply_actions: list[dict[str, Any]] = []
+    seen_apply_keys: set[tuple[Any, str]] = set()
     defer: list[dict[str, Any]] = []
+
+    def _add_apply(item: dict[str, Any], rel: str) -> None:
+        key = (item.get("root_key"), rel)
+        if key in seen_apply_keys:
+            return
+        seen_apply_keys.add(key)
+        apply.append(rel)
+        apply_actions.append(item)
+
     for action in source_plan.get("actions") or []:
         kind = action.get("action")
         if kind in ("add", "content_change", "move"):
             rel = _apply_candidate(action)
-            if rel is not None and rel not in apply:
-                apply.append(rel)
+            if rel is not None:
+                _add_apply(action, rel)
         elif kind == "remove_candidate":
             defer.append({"kind": "remove_candidate", "detail": action})
         elif kind == "missing":
@@ -296,8 +316,8 @@ def classify_handoff(status: dict[str, Any], profile: dict[str, Any]) -> dict[st
         if not isinstance(item, dict):
             continue
         rel = _apply_candidate(item)
-        if rel is not None and rel not in apply:
-            apply.append(rel)
+        if rel is not None:
+            _add_apply(item, rel)
 
     marts = "rebuild_strict" if status.get("reporting_rebuild_required") else "none"
 
@@ -306,8 +326,8 @@ def classify_handoff(status: dict[str, Any], profile: dict[str, Any]) -> dict[st
     deploy = deploy_setting if deployment_enabled else "disabled"
 
     return {
-        "decision": "apply", "apply": apply, "defer": defer, "abort_reasons": [],
-        "marts": marts, "deploy": deploy,
+        "decision": "apply", "apply": apply, "apply_actions": apply_actions, "defer": defer,
+        "abort_reasons": [], "marts": marts, "deploy": deploy,
     }
 
 
@@ -325,14 +345,27 @@ def build_apply_plan(status: dict[str, Any], classification: dict[str, Any]) -> 
     those deferred adds. This function is what makes `./brain source apply --plan
     <this file>` apply only what hand-off actually decided to apply — never a mutation
     itself, just a filtered copy of the read-only plan `status` already carried.
+
+    Uses `classification["apply_actions"]` (the exact action dicts `classify_handoff`
+    put in `apply`, root_key included) directly, rather than re-filtering
+    `status.source_plan.actions` by `relative_path` — review fix round 2, Minor #3: two
+    roots can register the same `relative_path`, and re-matching on `relative_path`
+    alone here would silently re-admit a *different* root's deferred action of the same
+    name that happens to also look structurally safe.
     """
     source_plan = status.get("source_plan") or {}
-    apply_paths = set(classification.get("apply") or [])
-    actions = [
-        dict(item)
-        for item in (source_plan.get("actions") or [])
-        if item.get("action") in ("add", "content_change", "move") and item.get("relative_path") in apply_paths
-    ]
+    apply_actions = classification.get("apply_actions")
+    if apply_actions is None:
+        # Backward-compat fallback for a classification dict that predates
+        # `apply_actions` (e.g. hand-written in a test) — best effort, relative_path
+        # only, same limitation the docstring above describes.
+        apply_paths = set(classification.get("apply") or [])
+        apply_actions = [
+            item
+            for item in (source_plan.get("actions") or [])
+            if item.get("action") in ("add", "content_change", "move") and item.get("relative_path") in apply_paths
+        ]
+    actions = [dict(item) for item in apply_actions if item.get("action") in ("add", "content_change", "move")]
     return {
         "version": source_plan.get("version", 1),
         "created_at": source_plan.get("created_at"),
@@ -509,7 +542,13 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--out")
     p_handoff = sub.add_parser("handoff")
     p_handoff.add_argument("--profile", required=True)
-    p_handoff.add_argument("--status", required=True)
+    p_handoff.add_argument("--status", help="a status JSON from the `status` subcommand")
+    p_handoff.add_argument(
+        "--abort-reason",
+        help="write a decision=abort report directly, without a --status file — for when an "
+        "earlier hand-off step (doctor, status) itself failed before it could produce one; "
+        "mutually exclusive with --status",
+    )
     p_handoff.add_argument("--out", required=True)
     p_handoff.add_argument(
         "--apply-plan",
@@ -520,15 +559,24 @@ def main(argv: list[str] | None = None) -> int:
     try:
         profile = load_profile(Path(args.profile).expanduser().resolve())
         if args.command == "handoff":
-            status_data = json.loads(Path(args.status).expanduser().resolve().read_text(encoding="utf-8"))
-            classification = classify_handoff(status_data, profile["raw"])
+            if bool(args.status) == bool(args.abort_reason):
+                raise ValueError("handoff requires exactly one of --status or --abort-reason")
+            status_data: dict[str, Any] | None = None
+            if args.abort_reason:
+                classification = {
+                    "decision": "abort", "apply": [], "apply_actions": [], "defer": [],
+                    "abort_reasons": [args.abort_reason], "marts": "none", "deploy": "disabled",
+                }
+            else:
+                status_data = json.loads(Path(args.status).expanduser().resolve().read_text(encoding="utf-8"))
+                classification = classify_handoff(status_data, profile["raw"])
             result = {
-                **classification,
+                **{k: v for k, v in classification.items() if k != "apply_actions"},
                 "built_at": _read_built_at(profile["paths"]["db"]),
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
             atomic_json(Path(args.out), result, profile["project"])
-            if args.apply_plan:
+            if args.apply_plan and status_data is not None:
                 apply_plan = build_apply_plan(status_data, classification)
                 atomic_json(Path(args.apply_plan), apply_plan, profile["project"])
             print(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True))

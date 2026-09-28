@@ -83,30 +83,49 @@ def handoff_status(config: "Config") -> dict[str, Any]:
     """Brain hand-off preflight (spec A1): the newest `*.json` report brain-maintenance's
     `handoff` subcommand wrote under `config.brain_handoff_dir`, by file name — the
     directory is dated `<YYYY-MM-DD>.json` per file, so a lexical sort is a chronological
-    one. `stale_brain` is true exactly when the latest hand-off run aborted (nothing was
-    applied): scribe continues against the last good Brain rather than refusing to run,
-    and the caller (`compute_plan`/`publish`) surfaces that instead of hiding it.
+    one. `stale_brain` is true when the latest hand-off run aborted (nothing was applied)
+    OR when there is no report dated today (`config.now`) — scribe continues against the
+    last good Brain rather than refusing to run either way, and the caller
+    (`compute_plan`/`publish`) surfaces that instead of hiding it.
 
-    No `brain_handoff_dir` configured, or the directory has no reports yet, is not an
-    error — it just means this project isn't using hand-off mode (or hasn't yet):
-    `{"latest": None, "decision": None, "stale_brain": False, "reasons": []}`.
+    No `brain_handoff_dir` configured is not an error — it just means this project isn't
+    using hand-off mode: `{"latest": None, "decision": None, "stale_brain": False,
+    "reasons": []}`. But once it IS configured, silence is not evidence of freshness
+    (review fix round 2, Important #1): a directory with no reports yet, a report that
+    cannot be parsed, or a latest report dated before today all mean nobody can say the
+    Brain was refreshed today, and are reported the same way a `decision: "abort"` report
+    is — `reasons: ["no hand-off report for <today>"]` — so scribe's stale-Brain Changes
+    line fires even when the failure was upstream of `handoff` ever running (doctor or
+    `status` itself failing before hand-off could classify anything; see
+    `maintenance.py handoff --abort-reason` for the brain-side half of this fix).
     """
     empty = {"latest": None, "decision": None, "stale_brain": False, "reasons": []}
     handoff_dir = config.brain_handoff_dir
     if not handoff_dir or not handoff_dir.is_dir():
         return empty
+    today = config.now[:10]
+    no_report_reasons = [f"no hand-off report for {today}"]
     reports = sorted(handoff_dir.glob("*.json"))
     if not reports:
-        return empty
+        return {**empty, "stale_brain": True, "reasons": no_report_reasons}
     latest = reports[-1]
     try:
         data = json.loads(latest.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {**empty, "latest": str(latest)}
+        return {**empty, "latest": str(latest), "stale_brain": True, "reasons": no_report_reasons}
     decision = data.get("decision")
+    if decision == "abort":
+        return {
+            "latest": str(latest),
+            "decision": decision,
+            "stale_brain": True,
+            "reasons": data.get("abort_reasons") or [],
+        }
+    if latest.stem < today:
+        return {"latest": str(latest), "decision": decision, "stale_brain": True, "reasons": no_report_reasons}
     return {
         "latest": str(latest),
         "decision": decision,
-        "stale_brain": decision == "abort",
-        "reasons": data.get("abort_reasons") or [],
+        "stale_brain": False,
+        "reasons": [],
     }

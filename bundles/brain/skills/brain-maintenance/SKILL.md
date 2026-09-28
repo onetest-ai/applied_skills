@@ -279,7 +279,25 @@ workflow above makes by asking the user is instead made once, deterministically,
 **In hand-off mode every human stop becomes apply, defer or abort exactly as `handoff`
 classified it; the agent does not re-decide.**
 
-1. Run the doctor (as in "0. Run the doctor" above). Exit 1 → stop; nothing applied.
+**A hand-off run must always leave a report in `ops/handoff/<date>.json`**, even when it
+never reaches step 3 — review fix round 2, Important #1: `scribe:run`'s stale-Brain
+preflight reads only the LATEST file in that directory by name, so a step-0/1/2 failure
+that leaves no report behind is indistinguishable, to scribe, from a Brain that was
+never refreshed for the FIRST time — it silently reads yesterday's (or older) `apply`
+report and treats today's stale Brain as fresh. `handoff --abort-reason "<reason>" --out
+<path>` (below) is exactly for this: it writes a `decision: "abort"` report — same shape,
+same exit code 3 — without needing a `status.json` at all.
+
+1. Run the doctor (as in "0. Run the doctor" above). Exit 1 →
+
+   ```bash
+   "$PY" "$SKILLS/brain-maintenance/maintenance.py" handoff \
+     --profile "$PROJECT/brain-maintenance.toml" \
+     --abort-reason "doctor: <its missing items>" \
+     --out "$PROJECT/ops/handoff/$(date +%Y-%m-%d).json"
+   ```
+
+   then stop; nothing applied.
 2. Produce a fresh status report:
 
    ```bash
@@ -294,8 +312,13 @@ classified it; the agent does not re-decide.**
    rather than stops for). Do **not** apply the interactive workflow's "stop if the
    report contains … ambiguous moves, or unreviewed removal candidates" rule here — that
    rule is for a human running the update by hand. In hand-off mode, continue to step 3
-   regardless of `status`'s exit code; only the `handoff` classification below decides
-   apply vs. abort.
+   regardless of `status`'s exit code, **as long as `.brain-maintenance/runs/status.json`
+   was actually written** — check the file exists before moving on, since exit 2 alone
+   does not distinguish "ready is false" from "the command crashed before writing
+   anything" (a bad profile, an unreadable db, …). If the file was NOT written, that is a
+   real failure: run `handoff --abort-reason "status: <the printed error>" --out
+   "$PROJECT/ops/handoff/$(date +%Y-%m-%d).json"` and stop, the same as step 1; only the
+   `handoff` classification below decides apply vs. abort.
 3. Classify it:
 
    ```bash

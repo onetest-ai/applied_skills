@@ -113,6 +113,109 @@ class HandoffTests(unittest.TestCase):
         r = M.classify_handoff(s, PROFILE)
         self.assertEqual(r["decision"], "apply")
 
+    def test_same_relative_path_two_roots_only_one_deferred(self):
+        """Review fix round 2, Minor #3: two roots can register the SAME
+        relative_path (e.g. two different watched trees that happen to share
+        a filename). Root A's plain `notes.pdf` add is safe; root B's
+        `notes.pdf` add is the ambiguous half of a same-sha add+missing pair
+        under root B specifically. Matching only on `relative_path` would
+        either merge them into one `apply` entry or let root B's deferred add
+        ride along under root A's — `apply` must contain exactly root A's."""
+        s = status(source_plan={"roots": [{"status": "available"}], "duplicate_content": [],
+                                "actions": [
+                                    {"action": "add", "relative_path": "notes.pdf", "sha256": "sA", "root_key": "A"},
+                                    {"action": "add", "relative_path": "notes.pdf", "sha256": "sB", "root_key": "B"},
+                                    {"action": "missing", "relative_path": "old.pdf", "sha256": "sB", "root_key": "B"},
+                                ]},
+                   ambiguous_move_hashes=["sB"])
+        r = M.classify_handoff(s, PROFILE)
+        self.assertEqual(r["apply"], ["notes.pdf"])
+        self.assertEqual(len(r["apply_actions"]), 1)
+        self.assertEqual(r["apply_actions"][0]["root_key"], "A")
+
+
+class HandoffAbortReasonCliTests(unittest.TestCase):
+    """Review fix round 2, Important #1(a): a hand-off run must leave a report
+    behind even when it never gets as far as producing a status.json (doctor
+    failed, or `status` itself crashed) — otherwise scribe's stale-Brain
+    preflight silently reads a stale (or nonexistent) earlier report and
+    reports today's Brain as fresh."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.project = Path(self.tmp.name)
+        (self.project / "docs").mkdir()
+        (self.project / "parsed").mkdir()
+        (self.project / "schema").mkdir()
+        (self.project / ".runs").mkdir()
+        (self.project / "parsed" / "manifest.json").write_text("[]", encoding="utf-8")
+        (self.project / "schema" / "taxonomy.json").write_text("{}\n", encoding="utf-8")
+        (self.project / "brain.toml").write_text(
+            'version = 1\n[sources.roots.docs]\npath = "docs"\nmode = "import"\ninclude = ["**/*.pdf"]\n',
+            encoding="utf-8",
+        )
+        import sqlite3 as _sqlite3
+        _con = _sqlite3.connect(self.project / "schema" / "knowledge.sqlite")
+        _con.execute("CREATE TABLE placeholder(x)")
+        _con.commit()
+        _con.close()
+        self.profile_path = self.project / "brain-maintenance.toml"
+        self.profile_path.write_text('''version = 1
+[project]
+root = "."
+[paths]
+brain_config = "brain.toml"
+db = "schema/knowledge.sqlite"
+parsed = "parsed"
+manifest = "parsed/manifest.json"
+taxonomy = "schema/taxonomy.json"
+runs = ".runs"
+[update]
+root_key = "docs"
+[safety]
+require_strict_sources = true
+require_snapshot = true
+allow_legacy_unlinked_delete = false
+max_deleted_docs = 0
+[deployment]
+enabled = false
+''', encoding="utf-8")
+
+    def test_abort_reason_writes_abort_report_without_a_status_file(self):
+        out = self.project / "ops" / "handoff" / "2026-01-06.json"
+        rc = M.main([
+            "handoff", "--profile", str(self.profile_path),
+            "--abort-reason", "doctor: soffice missing",
+            "--out", str(out),
+        ])
+        self.assertEqual(rc, 3)
+        self.assertTrue(out.is_file())
+        import json as _json
+        data = _json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(data["decision"], "abort")
+        self.assertEqual(data["abort_reasons"], ["doctor: soffice missing"])
+        self.assertNotIn("apply_actions", data)  # internal-only, never persisted
+
+    def test_status_and_abort_reason_are_mutually_exclusive(self):
+        out = self.project / "ops" / "handoff" / "2026-01-06.json"
+        status_path = self.project / ".runs" / "status.json"
+        status_path.write_text("{}", encoding="utf-8")
+        rc = M.main([
+            "handoff", "--profile", str(self.profile_path),
+            "--status", str(status_path), "--abort-reason", "x",
+            "--out", str(out),
+        ])
+        self.assertEqual(rc, 2)
+        self.assertFalse(out.is_file())
+
+    def test_neither_status_nor_abort_reason_is_an_error(self):
+        out = self.project / "ops" / "handoff" / "2026-01-06.json"
+        rc = M.main(["handoff", "--profile", str(self.profile_path), "--out", str(out)])
+        self.assertEqual(rc, 2)
+        self.assertFalse(out.is_file())
+
 
 class ApplyPlanTests(unittest.TestCase):
     def test_apply_plan_contains_only_apply_classified_actions(self):

@@ -192,12 +192,18 @@ def test_merge_puts_stale_brain_note_in_changes_section_so_render_sees_it(tmp_pa
     assert "Brain was not refreshed on 2026-01-05: root_unavailable: docs" in changes
 
 
-def test_merge_omits_stale_brain_note_when_brain_is_fresh(tmp_path):
+def test_merge_omits_stale_brain_note_when_brain_is_fresh(tmp_path, monkeypatch):
     hand_dir = tmp_path / "brain" / "ops" / "handoff"
     write_json(hand_dir / "2026-01-05.json", {"decision": "apply", "abort_reasons": []})
 
     proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"))
     _configure_brain_handoff(proj, hand_dir)
+    # Review fix round 2, Important #1: `handoff_status` now also treats a latest
+    # report dated before today as stale ("no hand-off report for <today>"). Pin
+    # `SCRIBE_NOW` to the report's own date so this test still isolates "decision
+    # was apply" as the thing that keeps the Brain fresh, independent of today's
+    # real wall-clock date.
+    monkeypatch.setenv("SCRIBE_NOW", "2026-01-05")
     config, data = load(proj)
 
     details_body = "Widget details, unchanged. [RAG:555] <!-- c:dddd4444 -->"
