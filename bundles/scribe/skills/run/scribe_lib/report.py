@@ -109,6 +109,14 @@ def append_run(config: Config, entry: dict[str, Any]) -> None:
     that task's `merge.json` sections embedded under `"merge"` when present,
     so the row is self-sufficient for `summary` without touching `work/`.
 
+    Task 12 review, Important #2: a caller that already put `"merge"` on
+    `entry` (`review.approve`/`commit_fresh`, passing the counts frozen at
+    propose time — `pending.json["merge"]` — via `merge_override`) wins;
+    the live `work/<task>/merge.json` lookup below fills it in only when
+    the caller left it out. A stale live `merge.json` (overwritten by a
+    `prepare` that ran while a proposal sat unreviewed) must never replace
+    the frozen counts an approved proposal was reviewed against.
+
     It also stamps `minutes` (task 11, fix round 1, ruling on issue 4a) —
     `elapsed_minutes` since `prepare` — onto that same row, UNLESS the
     caller already set one (`_resume_journal` and a few call sites pass an
@@ -134,9 +142,10 @@ def append_run(config: Config, entry: dict[str, Any]) -> None:
     row = dict(entry)
     task_id = row.get("task")
     if task_id and task_id != "_run":
-        merge = merge_counts_for_row(config, task_id)
-        if merge is not None:
-            row["merge"] = merge
+        if "merge" not in row:
+            merge = merge_counts_for_row(config, task_id)
+            if merge is not None:
+                row["merge"] = merge
         if row.get("minutes") is None and row.get("status") in _MINUTES_STATUSES:
             minutes = elapsed_minutes(config, task_id)
             if minutes is not None:

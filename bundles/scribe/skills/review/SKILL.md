@@ -26,11 +26,15 @@ prints one JSON object; exit 1 carries a `"reason"` — show it to the user.
 
 1. `scribe.py review list` → `pending`, one entry per task with a proposal waiting:
    `task`, `version`, `diff` (a unified diff of the Markdown against the previously
-   published version). If it's empty, tell the user there is nothing to review and stop.
+   published version), `stale` (an intervening publish already moved past the version this
+   proposal was built against — it can no longer be approved as-is). If it's empty, tell
+   the user there is nothing to review and stop.
 2. For each pending entry, show the task, its version, and its diff, then ask the user,
-   one task at a time: approve, reject (ask for a one-line reason), or skip. **Never
-   approve or reject without the user's explicit answer for that specific task** — do not
-   infer a decision from an earlier one, and do not batch multiple tasks under one answer.
+   one task at a time: approve, reject (ask for a one-line reason), or skip. If `stale` is
+   true, say so up front and steer toward reject + re-running `/scribe:run --task <id>`
+   rather than asking to approve something that will just be refused. **Never approve or
+   reject without the user's explicit answer for that specific task** — do not infer a
+   decision from an earlier one, and do not batch multiple tasks under one answer.
 3. Approve → `scribe.py review approve <task>`. This publishes the proposed version
    through the same versioned, journaled path `/scribe:run` uses — `_src/vNNN.md` is
    written and `state.json` advances. Report the result (new version) or, if it refuses

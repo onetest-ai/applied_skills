@@ -356,11 +356,21 @@ def _resume_journal(
     publish, or an earlier `approve`) was rendered or not, so the journal
     must carry its own truth rather than trust a possibly-mismatched
     caller-supplied flag. A pre-task-12 journal (no `no_render` key) keeps
-    using the caller's value, unchanged."""
+    using the caller's value, unchanged.
+
+    Task 12 review, Important #2: `state_snapshot`/`merge_override` (also
+    read from the journal, written by `commit_fresh`) carry a `review.approve`
+    commit's state and run-row `merge` counts, FROZEN at propose time —
+    never recomputed here from `work/<task_id>/` (which may have been
+    overwritten by a `prepare` that ran while the proposal sat unreviewed).
+    Both are `None` for an `auto`-mode journal, which recomputes live from
+    `work/` exactly as before."""
     version = journal["version"]
     prev_version = version - 1
     steps_done = set(journal.get("steps_done") or [])
     no_render = journal.get("no_render", no_render)
+    state_snapshot = journal.get("state_snapshot")
+    merge_override = journal.get("merge_override")
 
     stable_docx = out_dir / f"{instance['title']}.docx"
     stable_pdf = out_dir / f"{instance['title']}.pdf"
@@ -404,11 +414,16 @@ def _resume_journal(
             # or in an earlier attempt) — `written_md` is the one and only
             # source of truth for this journal's text from here on.
             next_text = written_md.read_text(encoding="utf-8")
-            header = parse_header(next_text)
-            new_state, md_sha = _compute_new_state(
-                config, task_id, instance, template, instances, edges, state, version,
-                next_text, header, docx_sha, pdf_sha,
-            )
+            if state_snapshot is not None:
+                new_state = dict(state_snapshot)
+                md_sha = hashlib.sha256(next_text.encode("utf-8")).hexdigest()
+                new_state["published"] = {"docx_sha256": docx_sha, "pdf_sha256": pdf_sha, "md_sha256": md_sha}
+            else:
+                header = parse_header(next_text)
+                new_state, md_sha = _compute_new_state(
+                    config, task_id, instance, template, instances, edges, state, version,
+                    next_text, header, docx_sha, pdf_sha,
+                )
             _write_state(src_dir / "state.json", new_state)
             _mark_step(pending_dir, journal, "write_state")
             steps_done.add("write_state")
@@ -418,7 +433,10 @@ def _resume_journal(
         return _permission_error_result(task_id, exc)
 
     shutil.rmtree(pending_dir, ignore_errors=True)
-    _append_run(config, {"task": task_id, "version": version, "status": "published", "reasons": ["resumed"]})
+    run_row = {"task": task_id, "version": version, "status": "published", "reasons": ["resumed"]}
+    if merge_override is not None:
+        run_row["merge"] = merge_override
+    _append_run(config, run_row)
     return {
         "status": "ok",
         "task": task_id,
@@ -499,6 +517,9 @@ def commit_fresh(
     docx_src: Path,
     pdf_src: Path,
     no_render: bool,
+    *,
+    precomputed_state: dict[str, Any] | None = None,
+    merge_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The journaled atomic commit (A10; PoC m1) — stage `docx_src`/`pdf_src`
     + `next_text` into `_src/.pending/`, then archive_previous, place_new,
@@ -511,7 +532,18 @@ def commit_fresh(
     finishes, regardless of which caller started it.
 
     Caller has already confirmed a leftover journal was resolved (there was
-    none, or it named an older version) — see `resume_leftover_journal`."""
+    none, or it named an older version) — see `resume_leftover_journal`.
+
+    Task 12 review, Important #2: `precomputed_state`/`merge_override` let a
+    caller supply a state (and a run-row `merge` count) already frozen
+    elsewhere — `review.approve` passes the state `publish_task`'s propose
+    branch computed AND STAGED at propose time, never recomputed here from
+    `work/<task_id>/`, which may have been overwritten by a `prepare` that
+    ran while the proposal sat unreviewed. Both ride onto the journal
+    itself (`state_snapshot`/`merge_override`) so a crash mid-commit is
+    resumed with the SAME frozen values, never a live recompute — see
+    `_resume_journal`. `None` (the `auto`-mode default) means "compute live
+    from `work/`, exactly as before task 12"."""
     prev_version = state.get("version") or 0
     stable_docx = out_dir / f"{instance['title']}.docx"
     stable_pdf = out_dir / f"{instance['title']}.pdf"
@@ -528,7 +560,13 @@ def commit_fresh(
     # `publish_task`'s own retry OR `review.approve` — reads the ORIGINAL
     # commit's rendered-ness back, rather than trusting whatever the resume
     # caller happens to pass (see `_resume_journal`'s docstring).
-    journal = {"version": new_version, "steps_done": [], "no_render": no_render}
+    journal = {
+        "version": new_version,
+        "steps_done": [],
+        "no_render": no_render,
+        "state_snapshot": precomputed_state,
+        "merge_override": merge_override,
+    }
 
     try:
         pending_dir.mkdir(parents=True, exist_ok=True)
@@ -561,10 +599,15 @@ def commit_fresh(
         docx_sha = sha256_file(stable_docx) if not no_render and stable_docx.is_file() else None
         pdf_sha = sha256_file(stable_pdf) if not no_render and stable_pdf.is_file() else None
 
-        new_state, md_sha = _compute_new_state(
-            config, task_id, instance, template, instances, edges, state, new_version,
-            next_text, header, docx_sha, pdf_sha,
-        )
+        if precomputed_state is not None:
+            new_state = dict(precomputed_state)
+            md_sha = hashlib.sha256(next_text.encode("utf-8")).hexdigest()
+            new_state["published"] = {"docx_sha256": docx_sha, "pdf_sha256": pdf_sha, "md_sha256": md_sha}
+        else:
+            new_state, md_sha = _compute_new_state(
+                config, task_id, instance, template, instances, edges, state, new_version,
+                next_text, header, docx_sha, pdf_sha,
+            )
         _write_state(src_dir / "state.json", new_state)
         _mark_step(pending_dir, journal, "write_state")
     except PermissionError as exc:
@@ -572,7 +615,10 @@ def commit_fresh(
 
     shutil.rmtree(pending_dir, ignore_errors=True)
 
-    _append_run(config, {"task": task_id, "version": new_version, "status": "published", "reasons": []})
+    run_row = {"task": task_id, "version": new_version, "status": "published", "reasons": []}
+    if merge_override is not None:
+        run_row["merge"] = merge_override
+    _append_run(config, run_row)
     return {
         "status": "ok",
         "task": task_id,
@@ -688,20 +734,49 @@ def publish_task(
             )
         )
         (pending_dir / "diff.md").write_text(diff + "\n", encoding="utf-8")
+
+        # Task 12 review, Important #2: stage everything `approve` will need
+        # to build `state.json` — computed HERE, from `work/<task_id>/` as
+        # it stands right NOW, and frozen. `approve` must never recompute
+        # section fingerprints, tombstones, or brain/raw/upstream snapshots
+        # from `work/`, because a proposal can sit for days while nightly
+        # `prepare` runs keep overwriting `work/<task_id>/` — reading those
+        # live at approve time would record fingerprints/snapshots the
+        # approved Markdown was never actually built from, and the next
+        # `fingerprint` run would then treat genuinely-changed sections as
+        # already covered. `_compute_new_state` is exactly the auto-publish
+        # state builder; calling it here (instead of at approve time) is
+        # the only difference — its output is IDENTICAL in shape to what an
+        # `auto` publish of this same text would write to `_src/state.json`.
+        # `docx_sha`/`pdf_sha` are taken from the render-dir source files
+        # (not yet moved anywhere) — copying preserves bytes, so their sha
+        # equals the eventual staged/stable file's sha.
+        propose_docx_sha = sha256_file(docx_src) if not no_render and docx_src.is_file() else None
+        propose_pdf_sha = sha256_file(pdf_src) if not no_render and pdf_src.is_file() else None
+        state_snapshot, _ = _compute_new_state(
+            config, task_id, instance, template, instances, edges, state, new_version,
+            next_text, header, propose_docx_sha, propose_pdf_sha,
+        )
+        (pending_dir / "state.json").write_text(json.dumps(state_snapshot, indent=2), encoding="utf-8")
+
+        merge_snapshot = merge_counts_for_row(config, task_id)
         (pending_dir / "pending.json").write_text(
             json.dumps(
                 {
                     "task": task_id,
                     "version": new_version,
                     "built_at": header["built_at"],
-                    "merge": merge_counts_for_row(config, task_id),
+                    "merge": merge_snapshot,
                 },
                 indent=2,
             ),
             encoding="utf-8",
         )
 
-        _append_run(config, {"task": task_id, "version": new_version, "status": "pending", "reasons": []})
+        run_row = {"task": task_id, "version": new_version, "status": "pending", "reasons": []}
+        if merge_snapshot is not None:
+            run_row["merge"] = merge_snapshot
+        _append_run(config, run_row)
         return {"status": "pending", "task": task_id, "published": False, "pending_version": new_version}
 
     # -- auto: journaled atomic publish (A10; PoC m1) --

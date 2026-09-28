@@ -2,10 +2,22 @@
 
 `publish_task`'s `propose` mode (`publish.py`) stages a version's Markdown
 + render + diff into `out/<task>/_pending/vNNN/` (`doc.md`, `doc.docx`,
-`doc.pdf`, `diff.md`, `pending.json`: `{task, version, built_at, merge}`)
-without touching `_src`/`state.json`. This module is the only thing that
-turns a staged proposal into a real publish (`approve`) or discards one
-(`reject`) — `list_pending` just reads what is on disk.
+`doc.pdf`, `diff.md`, `pending.json`: `{task, version, built_at, merge}`,
+and `state.json`: the FULL `_src/state.json` this version would get if
+published right now — sections/fingerprints/cited_*/snapshots, computed
+once at propose time by the same `_compute_new_state` an `auto` publish
+uses) without touching `_src`/`state.json`. This module is the only thing
+that turns a staged proposal into a real publish (`approve`) or discards
+one (`reject`) — `list_pending` just reads what is on disk.
+
+**`approve` builds state ONLY from the staged proposal** (review fix round
+1, Important #2), never from `work/<task_id>/` at approval time — a
+proposal can sit for days while nightly `prepare` runs keep overwriting
+`work/<task_id>/`, and reading it live at approve time would record
+fingerprints/snapshots the approved Markdown was never actually built
+from. `state.json` staged in the proposal, and `pending.json["merge"]`,
+are the only inputs `commit_fresh` uses for this commit's `state.json` and
+run-row `merge` counts.
 
 **`approve` commits through the SAME journaled path `publish.py`'s `auto`
 mode uses** (`publish.resume_leftover_journal` / `publish.commit_fresh`,
@@ -62,7 +74,12 @@ def _read_meta(pending_dir: Path) -> dict[str, Any]:
 
 def list_pending(config: Config) -> list[dict[str, Any]]:
     """One row per task with a reviewable proposal: `task`, `version`,
-    `path` (the `_pending/vNNN/` dir), `diff` (the unified diff text)."""
+    `path` (the `_pending/vNNN/` dir), `diff` (the unified diff text),
+    `stale` (review fix round 1, Minor: `True` when an intervening publish
+    has already moved `state.version` past what this proposal was built
+    against — `version != state.version + 1` — the same condition `approve`
+    itself refuses on. Surfaced here so the user learns it before asking to
+    approve, not from `approve`'s refusal)."""
     data = validate_all(config)
     out: list[dict[str, Any]] = []
     for task_id, instance in data["instances"].items():
@@ -72,12 +89,15 @@ def list_pending(config: Config) -> list[dict[str, Any]]:
         meta = _read_meta(pending_dir)
         diff_path = pending_dir / "diff.md"
         diff = diff_path.read_text(encoding="utf-8") if diff_path.is_file() else ""
+        version = meta.get("version")
+        prev_version = read_state(config, instance).get("version") or 0
         out.append(
             {
                 "task": task_id,
-                "version": meta.get("version"),
+                "version": version,
                 "path": str(pending_dir),
                 "diff": diff,
+                "stale": version != prev_version + 1,
             }
         )
     return out
@@ -140,11 +160,37 @@ def approve(config: Config, task_id: str) -> dict[str, Any]:
     header = parse_header(next_text)
     docx_src = pending_dir / "doc.docx"
     pdf_src = pending_dir / "doc.pdf"
-    no_render = not docx_src.is_file()
+    docx_staged, pdf_staged = docx_src.is_file(), pdf_src.is_file()
+    if docx_staged != pdf_staged:
+        # Review fix round 1, Minor: a proposal with one rendered file but
+        # not the other (a prior copy that got interrupted, or on-disk
+        # tampering) must be refused, not silently treated as unrendered
+        # (which would then hit `shutil.copy2` on the missing file inside
+        # `commit_fresh` and raise an uncaught `FileNotFoundError`, never a
+        # clean `failed` result).
+        reason = f"pending proposal for task '{task_id}' is partially staged (docx={docx_staged}, pdf={pdf_staged})"
+        append_run(config, {"task": task_id, "version": None, "status": "failed", "reasons": [reason]})
+        return {"status": "error", "task": task_id, "reason": reason}
+    no_render = not docx_staged
+
+    # Task 12 review, Important #2: `state.json` staged in the proposal
+    # (computed by `publish_task`'s propose branch, AT PROPOSE TIME, from
+    # `work/<task_id>/` as it stood then) is the ONLY source `approve` uses
+    # to build the published `state.json` — never a live recompute from
+    # `work/<task_id>/`, which may hold a different `prepare`'s output by
+    # now. Same for the run row's `merge` counts (`pending.json["merge"]`).
+    state_snapshot_path = pending_dir / "state.json"
+    if not state_snapshot_path.is_file():
+        reason = f"pending proposal for task '{task_id}' is missing its staged state.json — re-propose"
+        append_run(config, {"task": task_id, "version": None, "status": "failed", "reasons": [reason]})
+        return {"status": "error", "task": task_id, "reason": reason}
+    precomputed_state = json.loads(state_snapshot_path.read_text(encoding="utf-8"))
+    merge_override = meta.get("merge")
 
     result = publish_mod.commit_fresh(
         config, task_id, instance, template, instances, edges, out_dir, src_dir, state, version,
         next_text, header, docx_src, pdf_src, no_render,
+        precomputed_state=precomputed_state, merge_override=merge_override,
     )
     if result.get("status") == "ok":
         shutil.rmtree(pending_dir, ignore_errors=True)
@@ -160,10 +206,16 @@ def reject(config: Config, task_id: str, reason: str) -> dict[str, Any]:
     instance = instances[task_id]
 
     pending_dir = _latest_pending_dir(config, instance)
-    version = None
-    if pending_dir is not None:
-        version = _read_meta(pending_dir).get("version")
-        shutil.rmtree(pending_dir, ignore_errors=True)
+    if pending_dir is None:
+        # Review fix round 1, Minor: a mistyped task id, or a proposal
+        # already approved/rejected by someone else, must not write a false
+        # "rejected" audit row for something that was never reviewed.
+        reason_missing = f"no pending proposal for task '{task_id}'"
+        append_run(config, {"task": task_id, "version": None, "status": "failed", "reasons": [reason_missing]})
+        return {"status": "error", "task": task_id, "reason": reason_missing}
+
+    version = _read_meta(pending_dir).get("version")
+    shutil.rmtree(pending_dir, ignore_errors=True)
 
     append_run(
         config,

@@ -561,7 +561,9 @@ def test_publish_auto_moves_old_version_and_keeps_stable_name(tmp_path, monkeypa
 
 def test_publish_propose_does_not_advance_state(tmp_path, monkeypatch):
     monkeypatch.setenv("SCRIBE_NOW", "2026-01-15")
-    proj = setup_mini_project(tmp_path, publish="propose", title="Mini Propose")
+    proj = setup_mini_project(
+        tmp_path, publish="propose", title="Mini Propose", brain_db=fixture_brain_db(tmp_path / "k.sqlite")
+    )
     config, data = load(proj)
     inst = data["instances"]["m1"]
     template = data["templates"]["mini-profile"]
@@ -576,6 +578,15 @@ def test_publish_propose_does_not_advance_state(tmp_path, monkeypatch):
     (work_dir).mkdir(parents=True, exist_ok=True)
     (work_dir / "next.md").write_text(next_text, encoding="utf-8")
 
+    # Task 12 review, Important #2: propose now computes and stages the full
+    # state.json (same `_compute_new_state` an auto publish uses) so approve
+    # never has to re-touch the Brain — that means propose itself resolves
+    # the `[RAG:]` tag's evidence, same as an auto publish would.
+    def fake_evidence(cfg, chunk_id):
+        return {"chunk_id": str(chunk_id), "status": "ok", "text": "New overview text."}
+
+    monkeypatch.setattr(brain_mod, "evidence", fake_evidence)
+
     result = publish_task(config, "m1", inst, template, data["instances"], data["edges"], no_render=True)
     assert result["status"] == "pending"
     assert result["published"] is False
@@ -589,6 +600,9 @@ def test_publish_propose_does_not_advance_state(tmp_path, monkeypatch):
     assert (pending_dir / "diff.md").is_file()
     pending_meta = json.loads((pending_dir / "pending.json").read_text(encoding="utf-8"))
     assert pending_meta["version"] == 2
+
+    staged_state = json.loads((pending_dir / "state.json").read_text(encoding="utf-8"))
+    assert staged_state["sections"]["overview"]["cited_chunks"] == {"1": brain_mod.text_hash("New overview text.")}
     assert not (out_dir / "Mini Propose.docx").exists()
 
 

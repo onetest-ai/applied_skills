@@ -6,12 +6,16 @@ writer — `test_approve_resumes_after_crash` proves a crash mid-`approve` is
 resumable exactly like a crash mid-`auto`-publish. `test_approve_refuses_stale_proposal`
 proves an intervening `auto` publish makes a leftover proposal unapprovable.
 """
+import contextlib
+import io
 import json
 
-from scribe_fixtures import fixture_brain_db, setup_mini_project, load, doc, publish_seed, fake_evidence
+from scribe_fixtures import fixture_brain_db, setup_mini_project, load, doc, publish_seed, fake_evidence, write_json
 from scribe_lib import brain as brain_mod, publish as publish_mod, review
 from scribe_lib.config import read_state
 from scribe_lib.publish import publish_task
+
+import scribe
 
 DETAILS = "D. [RAG:2] <!-- c:bbbb0001 -->"
 
@@ -182,3 +186,135 @@ def test_approve_resumes_after_crash(tmp_path, monkeypatch):
     # The retry resumed the journal directly (never re-reading a possibly
     # different pending proposal) and the original proposal dir is gone too.
     assert review.list_pending(config) == []
+
+
+# ------------------------------------------------------------- fix round 1 --
+
+
+def test_cli_publish_pending_exits_0_and_records_pending_row(tmp_path, monkeypatch):
+    """Review fix round 1, Critical #1: `scribe.py publish` for a
+    propose-mode task must exit 0, not 1 — run/SKILL.md step 7.4 already
+    reads `"published": false` as "this task is done, skip lineage/index",
+    a normal successful outcome. Before the fix, `cmd_publish` exited 1 for
+    anything but `"ok"`, so every propose task in an unattended run was
+    recorded as failed and its dependents starved as `upstream_failed`."""
+    monkeypatch.setattr(brain_mod, "evidence", fake_evidence)
+    proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"), publish="propose")
+    config, data = load(proj)
+    inst = data["instances"]["m1"]
+    publish_seed(
+        config, inst,
+        doc("m1", 1, "Mini m1", {"overview": "Old. [RAG:1] <!-- c:aaaa0001 -->", "details": DETAILS}),
+        1, docx_sha=None,
+    )
+    (config.work_dir / "m1").mkdir(parents=True, exist_ok=True)
+    (config.work_dir / "m1" / "next.md").write_text(
+        doc("m1", 2, "Mini m1", {"overview": "New. [RAG:1] <!-- c:aaaa0001 -->", "details": DETAILS})
+    )
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = scribe.main(["--project", str(proj), "publish", "m1", "--no-render"])
+    assert code == 0
+    out = json.loads(buf.getvalue().strip())
+    assert out["status"] == "pending" and out["published"] is False
+
+    rows = json.loads(next((config.out_root / "_runs").glob("*.json")).read_text(encoding="utf-8"))
+    assert rows[-1]["task"] == "m1" and rows[-1]["status"] == "pending"
+
+
+def test_reject_with_no_pending_proposal_refuses(tmp_path, monkeypatch):
+    """Review fix round 1, Minor: rejecting a task with nothing pending
+    (mistyped id, or already approved/rejected) must not write a false
+    'rejected' audit row."""
+    monkeypatch.setattr(brain_mod, "evidence", fake_evidence)
+    proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"))
+    config, data = load(proj)
+
+    result = review.reject(config, "m1", "nothing to reject")
+    assert result["status"] == "error"
+
+    runs_dir = config.out_root / "_runs"
+    if runs_dir.is_dir():
+        for path in runs_dir.glob("*.json"):
+            rows = json.loads(path.read_text(encoding="utf-8"))
+            assert all(row.get("status") != "rejected" for row in rows)
+
+
+def test_list_pending_flags_a_stale_proposal(tmp_path, monkeypatch):
+    """Review fix round 1, Minor: `list_pending` must flag a proposal made
+    stale by an intervening publish, so the user learns it before asking to
+    approve rather than only from `approve`'s refusal."""
+    config, data, inst, tpl = _proposed(tmp_path, monkeypatch)
+    [p] = review.list_pending(config)
+    assert p["stale"] is False
+
+    # An intervening auto publish moves state.json past v1 -> v2, the same
+    # version the pending proposal targets.
+    publish_seed(
+        config, inst,
+        doc("m1", 2, "Mini m1", {"overview": "Other. [RAG:1] <!-- c:aaaa0001 -->", "details": DETAILS}),
+        2, docx_sha=None,
+    )
+    [p2] = review.list_pending(config)
+    assert p2["stale"] is True
+
+
+def test_approve_builds_state_from_the_staged_proposal_not_live_work(tmp_path, monkeypatch):
+    """Review fix round 1, Important #2: `approve` must build `state.json`
+    (fingerprints, tombstones, merge counts) from what was staged AT
+    PROPOSE TIME, never from `work/<task>/` as it stands at approve time —
+    a proposal can sit through a later `prepare` that overwrites
+    `fingerprint.json`/`base.json`/`merge.json`."""
+    monkeypatch.setattr(brain_mod, "evidence", fake_evidence)
+    proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"), publish="propose")
+    config, data = load(proj)
+    inst, tpl = data["instances"]["m1"], data["templates"]["mini-profile"]
+    publish_seed(
+        config, inst,
+        doc("m1", 1, "Mini m1", {"overview": "Old. [RAG:1] <!-- c:aaaa0001 -->", "details": DETAILS}),
+        1, docx_sha=None,
+    )
+
+    work_dir = config.work_dir / "m1"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    write_json(
+        work_dir / "fingerprint.json",
+        {"sections": {"overview": {"fingerprint": "fp-at-propose"}, "details": {"fingerprint": "fp2-at-propose"}}},
+    )
+    write_json(work_dir / "merge.json", {"sections": {"overview": {"kept": 1}}})
+    (work_dir / "next.md").write_text(
+        doc("m1", 2, "Mini m1", {"overview": "New. [RAG:1] <!-- c:aaaa0001 -->", "details": DETAILS})
+    )
+
+    r = publish_task(config, "m1", inst, tpl, data["instances"], data["edges"], no_render=True)
+    assert r["status"] == "pending"
+
+    pending_dir = config.out_root / inst["out"] / "_pending" / "v002"
+    staged_state = json.loads((pending_dir / "state.json").read_text(encoding="utf-8"))
+    assert staged_state["sections"]["overview"]["fingerprint"] == "fp-at-propose"
+    staged_merge = json.loads((pending_dir / "pending.json").read_text(encoding="utf-8"))["merge"]
+    assert staged_merge == {"overview": {"kept": 1}}
+
+    # A later `prepare` overwrites work/ with DIFFERENT content while the
+    # proposal sits unreviewed.
+    write_json(
+        work_dir / "fingerprint.json",
+        {"sections": {"overview": {"fingerprint": "fp-at-approve-DIFFERENT"}, "details": {"fingerprint": "x"}}},
+    )
+    write_json(work_dir / "merge.json", {"sections": {"overview": {"kept": 999}}})
+    write_json(
+        work_dir / "base.json",
+        {"human_deleted": [{"section": "overview", "normalized": "a ghost tombstone never in the proposal"}]},
+    )
+
+    result = review.approve(config, "m1")
+    assert result["status"] == "ok"
+
+    published_state = read_state(config, inst)
+    assert published_state["sections"]["overview"]["fingerprint"] == "fp-at-propose"
+    assert published_state["human_deleted"] == staged_state["human_deleted"]
+
+    rows = json.loads(next((config.out_root / "_runs").glob("*.json")).read_text(encoding="utf-8"))
+    published_row = next(row for row in rows if row["status"] == "published")
+    assert published_row["merge"] == {"overview": {"kept": 1}}

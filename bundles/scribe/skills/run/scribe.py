@@ -612,7 +612,13 @@ def cmd_publish(config: Config, args: argparse.Namespace) -> int:
     template = templates[template_id]
     result = publish_task(config, args.task, inst, template, instances, edges, no_render=args.no_render)
     _print(result)
-    return 0 if result["status"] == "ok" else 1
+    # `"pending"` (a `publish: propose` task staged into `_pending/` for
+    # review) is a normal, successful outcome — not a failure (task 12
+    # review, Critical #1). run/SKILL.md step 7.4 already reads
+    # `"published": false` as "this task is done, skip lineage/index"; the
+    # exit code must agree, or the unattended run records every propose
+    # task as failed and starves its dependents as `upstream_failed`.
+    return 0 if result["status"] in ("ok", "pending") else 1
 
 
 def cmd_lineage(config: Config, args: argparse.Namespace) -> int:
