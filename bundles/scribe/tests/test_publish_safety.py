@@ -484,3 +484,61 @@ def test_corrupt_journal_version_is_discarded_not_resumed(tmp_path, monkeypatch)
     assert r["status"] == "ok" and r["version"] == 2
     assert not pending_dir.exists()
     assert read_state(config, inst)["version"] == 2
+
+
+def test_empty_but_present_raw_root_freezes_the_raw_lane_end_to_end(tmp_path, monkeypatch):
+    """Final-review I8: an unmounted Linux mount point / SMB share / OneDrive folder
+    mid-reset is a PRESENT, EMPTY directory. With a prior non-empty raw_snapshot that
+    must read as unavailable (same freeze as a missing root, plus `raw_root_empty`),
+    never as every raw file deleted. Mirrors the offline end-to-end test above."""
+    from scribe_lib.basedoc import split_by_section_id
+    import scribe
+
+    monkeypatch.setattr(brain_mod, "evidence", fake_evidence)
+    monkeypatch.setattr(brain_mod, "search", lambda cfg, q, limit, tag: [])
+    proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"))
+    write_text(proj / "raw-replay" / "a.md", "Widget overview: alpha note recorded for the record.\n")
+    config, data = load(proj)
+    inst, tpl = data["instances"]["m1"], data["templates"]["mini-profile"]
+
+    prepare_task(config, "m1")
+    write_text(config.work_dir / "m1" / "sections" / "overview.md", "Widget overview note. [FILE:a.md#p1]\n")
+    write_json(config.work_dir / "m1" / "sections" / "overview.evidence.json",
+               [{"claim_ref": 0, "tag": "[FILE:a.md#p1]", "quote": "alpha note recorded"}])
+    write_text(config.work_dir / "m1" / "sections" / "details.md", DETAILS + "\n")
+    assert check_file_task(config, "m1", inst)["failed"] == []
+    assert merge_task(config, "m1", data["instances"], data["templates"])["noop"] is False
+    assert publish_mod.publish_task(config, "m1", inst, tpl, data["instances"], data["edges"], no_render=True)["status"] == "ok"
+    published_overview = split_by_section_id(
+        (config.out_root / "m1" / "_src" / "v001.md").read_text(encoding="utf-8"))["overview"]
+    snapshot_before = read_state(config, inst)["raw_snapshot"]
+    assert snapshot_before
+
+    # -- the mount point is still there, with nothing in it --
+    shutil.rmtree(config.raw_root)
+    config.raw_root.mkdir()
+    plan_task = next(t for t in scribe.compute_plan(config, data)["tasks"] if t["id"] == "m1")
+    assert "raw_changed" not in plan_task["reasons"]
+    assert {"raw_root_unavailable", "raw_root_empty"} <= set(plan_task["notes"])
+
+    prepare_task(config, "m1")
+    manifest = json.loads((config.work_dir / "m1" / "raw" / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest and manifest[0]["status"] == "ok"
+    fp = json.loads((config.work_dir / "m1" / "fingerprint.json").read_text(encoding="utf-8"))
+    assert "fingerprint_changed" not in fp["sections"]["overview"]["stale_reasons"]
+    assert "raw_file_removed" not in fp["sections"]["overview"]["stale_reasons"]
+    assert {"raw_root_unavailable", "raw_root_empty"} <= set(fp["notes"])
+
+    write_text(config.work_dir / "m1" / "sections" / "overview.md", published_overview)
+    cf2 = check_file_task(config, "m1", inst)
+    assert cf2["failed"] == [], cf2
+    assert "[FILE:a.md#p1]" in (config.work_dir / "m1" / "sections" / "overview.md").read_text(encoding="utf-8")
+    assert read_state(config, inst)["raw_snapshot"] == snapshot_before
+
+
+def test_a_raw_root_that_never_had_files_is_simply_empty(tmp_path):
+    from scribe_lib.config import raw_root_status
+    proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"))
+    config, _ = load(proj)
+    config.raw_root.mkdir(exist_ok=True)
+    assert raw_root_status(config) == "ok"

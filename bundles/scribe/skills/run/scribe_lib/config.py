@@ -718,12 +718,51 @@ def _glob_path_match(rel: str, pattern: str) -> bool:
     return _match(0, 0)
 
 
+def _any_prior_raw_snapshot(config: Config) -> bool:
+    """Whether any task's published/observed `state.json` recorded a non-empty
+    `raw_snapshot` — i.e. this raw root has had files before. Read-only."""
+    if not config.out_root.is_dir():
+        return False
+    for path in config.out_root.rglob("_src/state.json"):
+        try:
+            if json.loads(path.read_text(encoding="utf-8")).get("raw_snapshot"):
+                return True
+        except (OSError, ValueError, AttributeError):
+            continue
+    return False
+
+
+def raw_root_status(config: Config) -> str:
+    """`"ok"`, `"missing"` (the directory is gone: an unmounted /Volumes share), or
+    `"empty"` (final-review I8: the directory exists but holds no file at all while a
+    prior `raw_snapshot` was non-empty — an unmounted Linux mount point, an SMB share
+    whose directory stays behind, a OneDrive folder mid-reset). Both non-ok states
+    freeze the raw lane; a root that has never had files is simply `"ok"` and empty."""
+    root = config.raw_root
+    if not root.is_dir():
+        return "missing"
+    if any(p.is_file() for p in root.rglob("*")):
+        return "ok"
+    return "empty" if _any_prior_raw_snapshot(config) else "ok"
+
+
+def raw_root_notes(config: Config) -> list[str]:
+    """The plan/fingerprint notes for the raw root's state: `raw_root_unavailable` for
+    any outage (every frozen-lane check keys on it), plus `raw_root_empty` for I8's case."""
+    status = raw_root_status(config)
+    if status == "ok":
+        return []
+    return ["raw_root_unavailable"] + (["raw_root_empty"] if status == "empty" else [])
+
+
 def raw_root_available(config: Config) -> bool:
     """Whether the synced raw-replay folder (OneDrive/SharePoint) is mounted
     right now. `False` — offline, not "empty" — must never be read as "every
     raw file was deleted": callers use this to distinguish an unreachable
-    root from a root that genuinely has nothing matching."""
-    return config.raw_root.is_dir()
+    root from a root that genuinely has nothing matching. A root that exists
+    but is suddenly empty after having had files counts as unavailable too
+    (`raw_root_status`, final-review I8)."""
+    return raw_root_status(config) == "ok"
 
 
 def select_raw_files(config: Config, raw_inputs: dict[str, Any]) -> list[Path] | None:

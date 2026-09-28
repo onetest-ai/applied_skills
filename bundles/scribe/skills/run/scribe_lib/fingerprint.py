@@ -126,6 +126,7 @@ from scribe_lib.config import (
     Config,
     parse_template_ref,
     raw_root_available,
+    raw_root_notes,
     read_state,
     read_synced_files,
     resolve_instance_inputs,
@@ -295,10 +296,8 @@ def fingerprint_task(
     # read as "every cited raw file was deleted" — the per-`cited_raw` check
     # below is skipped entirely, and the outage is surfaced as a top-level
     # note instead of a per-section stale reason.
-    raw_available = raw_root_available(config)
-    notes: list[str] = []
-    if not raw_available:
-        notes.append("raw_root_unavailable")
+    notes: list[str] = raw_root_notes(config)
+    raw_available = not notes
 
     # Defense in depth alongside `raw.py`'s freeze of `work/<task>/raw/`
     # (which already keeps `raw.sqlite` — and so `_raw_hits`' query results —

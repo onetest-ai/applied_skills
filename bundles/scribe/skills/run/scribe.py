@@ -42,6 +42,7 @@ from scribe_lib.config import (  # noqa: E402
     group_membership,
     parse_template_ref,
     raw_root_available,
+    raw_root_notes,
     read_brain_identity,
     read_state,
     resolve_instance_inputs,
@@ -243,8 +244,7 @@ def _due_reasons(
     reasons: list[str] = []
     notes: list[str] = []
     cadence = instance.get("cadence", "on-brain-update")
-    if not raw_root_available(config):
-        notes.append("raw_root_unavailable")
+    notes.extend(raw_root_notes(config))
     if not state:
         reasons.append("first_run")
     else:
