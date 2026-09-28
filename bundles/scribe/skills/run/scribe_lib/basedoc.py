@@ -200,6 +200,34 @@ def _section_items(text: str, with_ids: bool) -> list[dict[str, Any]]:
     ]
 
 
+def _strip_table_delimiter_rows(text: str) -> str:
+    """`text` with every GFM table delimiter/alignment row dropped."""
+    return "\n".join(ln for ln in text.splitlines() if not _TABLE_DELIM_LINE_RE.match(ln))
+
+
+def _resave_units(text: str, with_ids: bool) -> list[str]:
+    """`claims.visible_text` of every claim/prose unit in `text`, in order,
+    comments/escapes/quotes/whitespace normalized and table delimiter rows
+    dropped first — code/diagram units are skipped entirely, never compared:
+    a docx round trip cannot recover a fenced diagram's source text (it comes
+    back as an `<img>`/`<figure>` placeholder, `_DIAGRAM_PLACEHOLDER_RE`;
+    Task 6 sources the diagram itself from the previous `_src` instead), so
+    its absence/rewrite must never by itself make a plain re-save look
+    edited. Used only by the resave-detection check in `base_task`, never by
+    the edited-recovery path (which still carries code units through
+    `_carry_claims`/`_render_units` unchanged)."""
+    items = _section_items(_strip_table_delimiter_rows(text), with_ids)
+    out: list[str] = []
+    for u in items:
+        if u["kind"] == "code":
+            continue
+        vt = claims.visible_text(u["text"])
+        if _DIAGRAM_PLACEHOLDER_RE.match(vt.strip()):
+            continue
+        out.append(vt)
+    return out
+
+
 def parse_units(text: str, with_ids: bool) -> list[dict[str, Any]]:
     """[{kind: "para"|"bullet", text, claim_id, sup_ref, origin}] — the paragraphs/
     bullets in `text`, parsed by `claims.parse_blocks` (the one claim parser):
@@ -286,6 +314,23 @@ def _render_units(units: list[dict[str, Any]]) -> str:
 
 
 _ID_ONLY_COMMENT_RE = re.compile(r"<!--\s*c:([0-9a-f]{8})(\s+sup=c:[0-9a-f]{8})?\s*-->\s*$")
+# A GFM table delimiter/alignment row (`| --- | :---: |`) — pandoc is free to
+# change dash counts and add/drop alignment colons on its own round trip; the
+# row never renders as reader-visible text, so it must never make a plain
+# re-save look edited (review fix round 1, Important 1).
+_TABLE_DELIM_LINE_RE = re.compile(r"^\s*\|?(?:\s*:?-{1,}:?\s*\|)*\s*:?-{1,}:?\s*\|?\s*$")
+# What a rendered fenced diagram (a mermaid ```` ```mermaid ```` fence,
+# `render.py` converts it to an embedded PNG before pandoc sees it) comes
+# back as after a docx round trip: pandoc's gfm writer emits an HTML
+# `<figure>...<img .../>...</figure>` block for a captioned image, or a bare
+# `<img>`/Markdown `![alt](path)` for an uncaptioned one. None of these are a
+# fenced code block, so `claims.parse_blocks` would otherwise read one as an
+# ordinary prose unit with no counterpart in the previous `_src` (whose
+# section still holds the literal ```` ```mermaid ```` fence, a "code" unit
+# `_resave_units` already skips) — review fix round 1, Important 1.
+_DIAGRAM_PLACEHOLDER_RE = re.compile(
+    r"^(?:<figure\b.*</figure>|<img\b[^>]*/?>|!\[[^\]]*\]\([^)]*\)(?:\{[^}]*\})?)\s*$", re.DOTALL
+)
 
 
 def _restore_legacy_origins(text: str, lineage_path: Path) -> str:
@@ -379,27 +424,38 @@ def base_task(
             continue
         docx_sections[sid] = sec_body
 
-    prev_sections = split_by_section_id(prev_src.read_text(encoding="utf-8")) if prev_src.is_file() else {}
+    # Restored once here (not just on the unedited/resave paths, review fix
+    # round 1 Important 3): `_carry_claims` below reads `prev.get("origin")`
+    # straight off these units, so an unrestored `prev_sections` silently
+    # drops a legacy `human_modified` origin the moment the NEXT visible
+    # change happens to arrive as a docx edit rather than a redraft.
+    prev_text_restored = (
+        _restore_legacy_origins(prev_src.read_text(encoding="utf-8"), src_dir / f"v{version:03d}.lineage.json")
+        if prev_src.is_file()
+        else ""
+    )
+    prev_sections = split_by_section_id(prev_text_restored)
 
     # A9 / I1: a Word "open and save" (pandoc/Word re-serializes punctuation,
-    # quotes, whitespace) changes the docx's bytes without a human changing
-    # anything a reader would see. If every section reads identically to the
-    # previous published version once comments/escapes/quotes/whitespace are
-    # normalized away, this is not a human edit — fall back to the previous
-    # `_src` text verbatim rather than recording a spurious human_added/
-    # human_modified claim from round-trip noise.
+    # quotes, whitespace, table delimiter rows; a diagram round-trips as an
+    # image, never as recoverable fence text) changes the docx's bytes
+    # without a human changing anything a reader would see. If every
+    # section's claim/prose units read identically to the previous published
+    # version once comments/escapes/quotes/whitespace/table-delimiter noise
+    # are normalized away (code/diagram units skipped — `_resave_units`),
+    # this is not a human edit — fall back to the previous `_src` text
+    # verbatim rather than recording a spurious human_added/human_modified
+    # claim from round-trip noise.
     # The script-owned "Changes in this version" heading is never a template
     # section, so it is always unmatched here — that alone is not a sign of a
     # human edit (every docx recovery sees it, edited or not).
     _real_unmatched = [h for h in unmatched_headings if h.strip().casefold() != "changes in this version"]
     resave_only = not _real_unmatched and all(
-        claims.visible_text(docx_sections.get(sec["id"], "")) == claims.visible_text(prev_sections.get(sec["id"], ""))
+        _resave_units(docx_sections.get(sec["id"], ""), False) == _resave_units(prev_sections.get(sec["id"], ""), True)
         for sec in sections_spec
     )
     if resave_only:
-        text = prev_src.read_text(encoding="utf-8") if prev_src.is_file() else ""
-        text = _restore_legacy_origins(text, src_dir / f"v{version:03d}.lineage.json")
-        base_md_path.write_text(text, encoding="utf-8")
+        base_md_path.write_text(prev_text_restored, encoding="utf-8")
         result = {"base_version": version, "base_edited": False, "human_added": [], "human_modified": []}
         base_json_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
         return result

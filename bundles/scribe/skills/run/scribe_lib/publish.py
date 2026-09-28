@@ -72,26 +72,36 @@ _append_run = append_run
 
 def cited_from_section(config: Config, body: str) -> dict[str, Any]:
     """What a section's merged claims actually cite, keyed by tag kind:
-    `{"cited_chunks": {chunk_id: text_hash|None}, "cited_raw": {path: sha256},
+    `{"cited_chunks": {chunk_id: text_hash|None}, "cited_raw": {path: sha256|None},
     "cited_task_claims": {}}` (renamed from the private `_cited_from_section`,
     now a dict so a later kind — `cited_task_claims`, Task 7 — extends the
     shape without another positional return value). Used by both `publish`
     (recording what a version cites) and `observe` (recomputing a noop's
-    cited_* from the still-published text, spec A9)."""
-    cited_chunks: dict[str, str] = {}
-    cited_raw: dict[str, str] = {}
+    cited_* from the still-published text, spec A9).
+
+    A tag is recorded with a `None` value, never omitted, when its evidence
+    is gone (RAG) or its raw file no longer exists (FILE) — review fix round
+    1, Important 2: `observe` overwrites the prior per-section `cited_*` with
+    this result every run, so a chunk/file that dropped out of the dict
+    entirely would silently stop being checked at all, and `fingerprint.py`
+    would never report `cited_chunk_gone`/`raw_file_removed` for it again.
+    Keeping the key (value `None`) keeps it checked; `fingerprint.py` already
+    treats any non-`ok` evidence as `gone` regardless of the prior hash, and
+    a missing raw file as `removed` regardless of the prior sha."""
+    cited_chunks: dict[str, str | None] = {}
+    cited_raw: dict[str, str | None] = {}
     for block in claims.parse_blocks(body):
         for tag in block.get("tags", []):
             kind, value = claims.parse_tag(tag)
             if kind == "RAG":
                 ev = brain_mod.evidence(config, value)
-                if ev.get("status") == "ok":
-                    cited_chunks[str(value)] = brain_mod.text_hash(ev.get("text", ""))
+                cited_chunks[str(value)] = (
+                    brain_mod.text_hash(ev.get("text", "")) if ev.get("status") == "ok" else None
+                )
             elif kind == "FILE":
                 path = value.split("#", 1)[0]
                 full = config.raw_root / path
-                if full.is_file():
-                    cited_raw[path] = sha256_file(full)
+                cited_raw[path] = sha256_file(full) if full.is_file() else None
     return {"cited_chunks": cited_chunks, "cited_raw": cited_raw, "cited_task_claims": {}}
 
 
