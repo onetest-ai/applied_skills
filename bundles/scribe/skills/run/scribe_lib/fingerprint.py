@@ -170,6 +170,70 @@ def _raw_hits(raw_db: Path, query: str, top_k: int) -> list[dict[str, Any]]:
     return hits
 
 
+def resolve_tags(resolved: dict[str, Any]) -> list[str | None]:
+    """`resolved["brain"]["tags"]` (a resolved instance's `inputs`, i.e.
+    `resolve_instance_inputs`'s return) normalised to `[label, ...]`, or
+    `[None]` (no tag filter) when empty/absent. Shared by `fingerprint_task`
+    and `onboard.coverage` so the two never read this field differently."""
+    tag_field = (resolved.get("brain") or {}).get("tags")
+    if isinstance(tag_field, list) and tag_field:
+        return list(tag_field)
+    if isinstance(tag_field, str) and tag_field:
+        return [tag_field]
+    return [None]
+
+
+def build_searches(tags: list[str | None]) -> list[tuple[str | None, str]]:
+    """Each tag label gets its own tag-filtered search; ALSO always one
+    untagged search (R10), so a chunk not yet classified is still visible.
+    A task with no tags (`tags == [None]`) issues only that one untagged
+    search — unchanged."""
+    searches: list[tuple[str | None, str]] = [(tag, f"tag:{tag}") for tag in tags if tag is not None]
+    searches.append((None, "untagged"))
+    return searches
+
+
+def retrieve_section(
+    config: Config,
+    queries: list[str],
+    searches: list[tuple[str | None, str]],
+    raw_db: Path,
+    *,
+    include_raw: bool,
+) -> tuple[dict[str, dict[str, Any]], dict[str, set[str]], dict[tuple[str, str], dict[str, Any]]]:
+    """The ONE retrieval `fingerprint_task` and `onboard.coverage` share for
+    one section: every query run through every `searches` entry against the
+    Brain (max-score dedup by `chunk_id`, `via` recording which search(es)
+    found it), plus raw FTS hits (`_raw_hits`, this module's own "relevance
+    floor" helper) when `include_raw` — `fingerprint_task` passes
+    `raw_root_available(config)` (m2: never query while the synced folder is
+    reported offline, even though `_raw_hits` would itself just find no
+    `raw.sqlite`); `onboard.coverage` (a stateless preview with no m2
+    freeze/considered-hash concerns of its own) always passes `True`, since
+    `_raw_hits` already no-ops when `raw_db` doesn't exist yet.
+
+    Returns `(brain_hit_map, brain_via_map, raw_hit_map)` exactly as
+    `fingerprint_task` built them inline before this was extracted."""
+    brain_hit_map: dict[str, dict[str, Any]] = {}
+    brain_via_map: dict[str, set[str]] = {}
+    for q in queries:
+        for tag, via in searches:
+            for h in brain_mod.search(config, q, config.top_k, tag):
+                cid = str(h["chunk_id"])
+                existing = brain_hit_map.get(cid)
+                if existing is None or (h.get("score") or 0) > (existing.get("score") or 0):
+                    brain_hit_map[cid] = h
+                brain_via_map.setdefault(cid, set()).add(via)
+
+    raw_hit_map: dict[tuple[str, str], dict[str, Any]] = {}
+    if include_raw:
+        for q in queries:
+            for h in _raw_hits(raw_db, q, config.top_k):
+                raw_hit_map[(h["path"], h["locator"])] = h
+
+    return brain_hit_map, brain_via_map, raw_hit_map
+
+
 def fingerprint_task(
     config: Config,
     task_id: str,
@@ -184,14 +248,8 @@ def fingerprint_task(
     params = instance.get("params") or {}
     sections_spec = (template.get("output") or {}).get("sections") or []
 
-    tag_field = (resolved.get("brain") or {}).get("tags")
-    tags: list[str | None]
-    if isinstance(tag_field, list) and tag_field:
-        tags = list(tag_field)
-    elif isinstance(tag_field, str) and tag_field:
-        tags = [tag_field]
-    else:
-        tags = [None]
+    tags = resolve_tags(resolved)
+    searches = build_searches(tags)
 
     raw_db = config.work_dir / task_id / "raw" / "raw.sqlite"
 
@@ -272,29 +330,9 @@ def fingerprint_task(
         # section: it is never marked stale just because SOME task published.
         is_consuming = "tasks" in (sec.get("lanes") or []) or bool(prior.get("cited_task_claims"))
 
-        # Each tag label gets its own tag-filtered search; a task with tags
-        # ALSO always gets one untagged search per query (R10), so a chunk
-        # not yet classified is still visible. A task with no tags (`tags ==
-        # [None]`) issues only that one untagged search per query — unchanged.
-        searches: list[tuple[str | None, str]] = [(tag, f"tag:{tag}") for tag in tags if tag is not None]
-        searches.append((None, "untagged"))
-
-        brain_hit_map: dict[str, dict[str, Any]] = {}
-        brain_via_map: dict[str, set[str]] = {}
-        for q in queries:
-            for tag, via in searches:
-                for h in brain_mod.search(config, q, config.top_k, tag):
-                    cid = str(h["chunk_id"])
-                    existing = brain_hit_map.get(cid)
-                    if existing is None or (h.get("score") or 0) > (existing.get("score") or 0):
-                        brain_hit_map[cid] = h
-                    brain_via_map.setdefault(cid, set()).add(via)
-
-        raw_hit_map: dict[tuple[str, str], dict[str, Any]] = {}
-        if raw_available:
-            for q in queries:
-                for h in _raw_hits(raw_db, q, config.top_k):
-                    raw_hit_map[(h["path"], h["locator"])] = h
+        brain_hit_map, brain_via_map, raw_hit_map = retrieve_section(
+            config, queries, searches, raw_db, include_raw=raw_available
+        )
 
         considered_brain = sorted(
             (cid, brain_mod.text_hash(h.get("text", ""))) for cid, h in brain_hit_map.items()

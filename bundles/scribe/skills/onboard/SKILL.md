@@ -26,15 +26,16 @@ show it to the user.
 
 1. Run `scribe.py doctor`. Exit 1 → show `reason`/`brain.error` and stop — pandoc/soffice/mermaid
    missing, or the Brain the scripts read (`brain_db`) cannot be opened, are both hard blocks:
-   nothing downstream (coverage, dry run) can be trusted without them.
+   nothing downstream (coverage, dry run) can be trusted without them. Its `raw_root` field
+   (`{"path", "available"}`) is also the raw-replay reachability check — see step 3.
 2. Resolve the Brain by tool surface (contract below) and call `health`; confirm its `about.name`
    matches `doctor`'s `brain` block (same store the scripts and your tools both read) and tell the
    user in one line which Brain you use (`about.name`, `about.goal`).
-3. Confirm the raw-replay folder is reachable: run `scribe.py validate` (exit 1 → show the reason
-   and stop; its `templates` list is the library templates, its `tasks` list is the task ids
-   already taken) and check its top-level `notes` for `raw_root_unavailable`. If present, tell the
-   user the synced folder is offline right now and ask whether to continue anyway (raw evidence in
-   step 4 will read as empty, not "checked and found nothing") or wait.
+3. Read `doctor`'s `raw_root.available` from step 1. If `false`, tell the user the synced folder
+   (`raw_root.path`) is offline right now and ask whether to continue anyway (raw evidence in
+   step 4 will read as empty, not "checked and found nothing") or wait. Then run `scribe.py
+   validate` (exit 1 → show the reason and stop; its `templates` list is the library templates,
+   its `tasks` list is the task ids already taken).
 
 ## 1. Purpose and audience (ask)
 

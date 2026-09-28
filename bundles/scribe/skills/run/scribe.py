@@ -598,6 +598,11 @@ def cmd_doctor(config: Config) -> int:
     brain_ok = "error" not in brain
     if not brain_ok:
         result["status"] = "error"
+    # scribe:onboard's hard gate ("raw root reachable") reads this field —
+    # never `validate`'s (nonexistent) top-level `notes`. Offline is a
+    # normal, non-fatal state elsewhere in this codebase (m2 doctrine), so
+    # it is reported here but never flips `status`/the exit code.
+    result["raw_root"] = {"path": str(config.raw_root), "available": raw_root_available(config)}
     _print(result)
     return 0 if result["all_found"] and brain_ok else 1
 
@@ -715,7 +720,9 @@ def cmd_sections_from_example(config: Config, args: argparse.Namespace) -> int:
 
 def cmd_guard_brain(config: Config, args: argparse.Namespace) -> int:
     brain_toml = _resolve_project_relative(config, args.brain_toml)
-    result = onboard.guard_brain(brain_toml, config.out_root, require=args.require)
+    result = onboard.guard_brain(
+        brain_toml, config.out_root, require=args.require, brain_skills=config.brain_skills
+    )
     _print({"status": "ok", **result})
     return 0
 

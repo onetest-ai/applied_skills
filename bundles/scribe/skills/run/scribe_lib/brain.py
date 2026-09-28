@@ -77,6 +77,17 @@ def evidence(config: Config, chunk_id: str) -> dict[str, Any]:
     return out
 
 
+def list_metrics(config: Config) -> list[dict[str, Any]]:
+    """`list_metrics()["metrics"]` — the Brain's governed metric catalog,
+    read-only. Used only to answer "does this Brain define ANY metric at
+    all" (`onboard.coverage`'s `numbers_available`); never to assert a
+    figure — a number is only ever asserted from `get_metric`, per the Brain
+    contract."""
+    sc = _module(config)
+    result = sc.list_metrics()
+    return result.get("metrics") or []
+
+
 def doc_id_for_raw(rel_path: str) -> str:
     """The Brain's `doc_id` for a raw file, once it is synced — the
     `parse_corpus` slug rule (verified on a real Brain): `/` -> `__`, `.md`
