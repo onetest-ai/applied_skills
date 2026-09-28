@@ -96,11 +96,11 @@
       "properties": {
         "template": { "type": "string", "pattern": "^[A-Za-z0-9_-]+@[0-9]+$" },
         "id": { "type": "string" },
-        "title": { "type": "string", "description": "Document title; also the stable output file name." },
+        "title": { "type": "string", "minLength": 1, "pattern": "^(?![.])(?!.*[.][.])[^/\\\\\\u0000]+$", "description": "Document title; also the stable output file name — so no '/', '\\', '..', NUL, and no leading '.'. On a for_each instance, {{param}}s are substituted per child." },
         "enabled": { "type": "boolean", "default": true },
         "params": { "type": "object" },
         "audience": { "type": "string" },
-        "cadence": { "type": "string", "enum": ["on-brain-update", "daily", "manual"] },
+        "cadence": { "type": "string", "anyOf": [ { "enum": ["on-brain-update", "daily", "manual"] }, { "pattern": "^weekly:(mon|tue|wed|thu|fri|sat|sun)$" } ], "description": "weekly:<dow> is due only on that weekday, once (nothing published or observed yet that day)." },
         "publish": { "type": "string", "enum": ["auto", "propose"] },
         "out": { "type": "string", "description": "Relative dir under out_root. Must resolve under out_root, and no two tasks' out paths may be equal or nest one inside the other." },
         "inputs": {

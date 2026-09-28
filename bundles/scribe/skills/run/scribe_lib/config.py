@@ -31,6 +31,74 @@ PARAM_RE = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")
 REQUIRED_TEMPLATE_FIELDS = {"id", "version", "goal", "params", "inputs", "output"}
 REQUIRED_INSTANCE_FIELDS = {"template", "id", "title", "params", "out"}
 
+# Final-review I3: task.schema.json's instance rules, enforced by hand (no jsonschema
+# dependency — the PoC's choice). A typo such as `publish: proposed` otherwise fell
+# through to auto-publish, and a title is a file name under `out/<task.out>/`.
+PUBLISH_MODES = ("auto", "propose")
+CADENCES = ("on-brain-update", "daily", "manual")
+WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+WEEKLY_RE = re.compile(r"^weekly:(mon|tue|wed|thu|fri|sat|sun)$")
+_INSTANCE_FIELD_TYPES: dict[str, tuple[type, str]] = {
+    "template": (str, "a string"),
+    "id": (str, "a string"),
+    "title": (str, "a string"),
+    "params": (dict, "a mapping"),
+    "out": (str, "a string"),
+    "enabled": (bool, "true or false"),
+    "audience": (str, "a string"),
+    "cadence": (str, "a string"),
+    "publish": (str, "a string"),
+    "inputs": (dict, "a mapping"),
+    "for_each": (dict, "a mapping"),
+    "approved_children": (list, "a list"),
+}
+
+
+def weekly_day(cadence: Any) -> int | None:
+    """`weekly:<dow>` -> 0 (mon) .. 6 (sun), else None."""
+    m = WEEKLY_RE.match(cadence) if isinstance(cadence, str) else None
+    return WEEKDAYS.index(m.group(1)) if m else None
+
+
+def _title_problem(title: str) -> str | None:
+    if not title.strip():
+        return "must not be empty"
+    for bad, what in (("/", "'/'"), ("\\", "'\\'"), ("\x00", "a NUL byte"), ("..", "'..'")):
+        if bad in title:
+            return f"must not contain {what} (it is the published file name)"
+    if title.startswith("."):
+        return "must not start with '.'"
+    return None
+
+
+def instance_field_errors(tid: str, inst: dict[str, Any]) -> list[str]:
+    """Every task.schema.json instance rule beyond the required-field check (types,
+    `publish`/`cadence` enums incl. `weekly:<dow>`, a safe `title`), as messages."""
+    errors: list[str] = []
+    for key, (typ, what) in _INSTANCE_FIELD_TYPES.items():
+        if key in inst and inst[key] is not None and not (
+            isinstance(inst[key], typ) and not (typ is not bool and isinstance(inst[key], bool))
+        ):
+            errors.append(f"{tid}: '{key}' must be {what}, got {inst[key]!r}")
+    if "publish" in inst and inst["publish"] not in PUBLISH_MODES:
+        errors.append(f"{tid}: publish must be one of {list(PUBLISH_MODES)}, got {inst['publish']!r}")
+    cadence = inst.get("cadence")
+    if "cadence" in inst and cadence not in CADENCES and weekly_day(cadence) is None:
+        errors.append(
+            f"{tid}: cadence must be one of {list(CADENCES)} or weekly:<{'|'.join(WEEKDAYS)}>, got {cadence!r}"
+        )
+    if isinstance(inst.get("title"), str):
+        problem = _title_problem(inst["title"])
+        if problem:
+            errors.append(f"{tid}: title {inst['title']!r} {problem}")
+    for_each = inst.get("for_each")
+    if isinstance(for_each, dict) and not isinstance(for_each.get("taxonomy_under"), str):
+        errors.append(f"{tid}: for_each.taxonomy_under must be a string")
+    children = inst.get("approved_children")
+    if isinstance(children, list) and not all(isinstance(c, str) for c in children):
+        errors.append(f"{tid}: approved_children must be a list of strings")
+    return errors
+
 
 class ScribeError(ValueError):
     """A refusal with a human-readable reason. Callers turn this into exit 1.
@@ -303,7 +371,19 @@ def expand_instances(
             new_inst["params"] = params
             base_out = str(inst.get("out") or "")
             segment = _sanitize_out_segment(child_label)
-            new_inst["out"] = f"{base_out}/{segment}" if base_out else segment
+            # Final-review I4: a child's `title` (its published file name and H1) and a
+            # templated `out` get the CHILD's params — copied raw, every child published
+            # `{{name}} profile.docx`. File-name uses see the path-safe label.
+            safe_params = {**params, "name": segment, "tags": [segment]}
+            if PARAM_RE.search(base_out):
+                new_inst["out"] = substitute_params(base_out, safe_params)
+            else:
+                new_inst["out"] = f"{base_out}/{segment}" if base_out else segment
+            title = substitute_params(str(inst.get("title") or ""), safe_params)
+            problem = _title_problem(title)
+            if problem:
+                raise ScribeError(f"{new_id}: fan-out title {title!r} {problem}")
+            new_inst["title"] = title
 
             already_published = bool(read_state(config, new_inst))
             if child_id not in approved and not already_published:
@@ -440,6 +520,10 @@ def validate_all(config: Config) -> dict[str, Any]:
         missing = REQUIRED_INSTANCE_FIELDS - inst.keys()
         if missing:
             errors.append(f"{tid}: instance missing fields {sorted(missing)}")
+            continue
+        field_errors = instance_field_errors(tid, inst)
+        if field_errors:
+            errors.extend(field_errors)
             continue
         try:
             template_id, template_version = parse_template_ref(inst["template"])

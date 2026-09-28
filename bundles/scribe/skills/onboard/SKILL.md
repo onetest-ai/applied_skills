@@ -158,7 +158,8 @@ length constraint. Update the template's `acceptance:` list accordingly.
 ## 7. Operations (ask)
 
 Ask, one at a time: which group (if any, from `scribe.toml`'s `[groups]`), the cadence
-(`on-brain-update`, `daily`, or `manual`), and whether new versions publish automatically (`auto`)
+(`on-brain-update`, `daily`, `weekly:<mon|tue|wed|thu|fri|sat|sun>` — due only on that day — or
+`manual`), and whether new versions publish automatically (`auto`)
 or wait in `_pending/` for review (`propose` — keep this through step 8's trial run regardless of
 the final choice). Update `tasks/<id>.task.md`'s `cadence`/`publish`/`out`, then:
 

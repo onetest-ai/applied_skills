@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,7 @@ from scribe_lib.config import (  # noqa: E402
     load_config,
     docx_edited,
     sha256_file,
+    weekly_day,
     validate_all,
 )
 from scribe_lib.doctor import handoff_status, run_doctor  # noqa: E402
@@ -281,6 +283,17 @@ def _due_reasons(
                 reasons.append("cadence")
 
     due = bool(reasons)
+    weekday = weekly_day(cadence)
+    if weekday is not None:
+        # Final-review I3: `weekly:<dow>` (spec) — due only on that weekday, and only
+        # when nothing was published (`built_at`) or observed (`last_checked`) today;
+        # on any other day a change waits for the next <dow> (unless --task names it).
+        latest = max(state.get("built_at") or "", state.get("last_checked") or "")
+        today = date.fromisoformat(config.now[:10])
+        on_day = today.weekday() == weekday and latest[:10] != config.now[:10]
+        if on_day and "cadence" not in reasons:
+            reasons.append("cadence")
+        due = on_day or (explicit and bool(reasons))
     if cadence == "manual" and not explicit:
         due = False
     if not enabled and not explicit:
