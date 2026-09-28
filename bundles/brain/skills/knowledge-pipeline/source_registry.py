@@ -237,8 +237,8 @@ def is_scribe_artifact(path: Path) -> bool:
                     return False
                 return f'name="{SCRIBE_MARKER}"' in z.read("docProps/custom.xml").decode("utf-8", "replace")
         if suffix == ".pdf":
-            import fitz  # PyMuPDF, already a brain dependency
-            with fitz.open(path) as d:
+            import pymupdf  # PyMuPDF, already a brain dependency
+            with pymupdf.open(path) as d:
                 return f"{SCRIBE_MARKER}=" in ((d.metadata or {}).get("keywords") or "")
         if suffix in (".md", ".markdown", ".txt"):
             with path.open("r", encoding="utf-8", errors="replace") as h:

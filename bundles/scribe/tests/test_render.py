@@ -217,7 +217,7 @@ def test_render_writes_docx_pdf_and_render_json(tmp_path, monkeypatch):
 @pytest.mark.skipif(not pandoc_available, reason="pandoc not installed")
 @pytest.mark.skipif(not soffice_available, reason="soffice/libreoffice not installed")
 def test_rendered_pdf_carries_scribe_marker(tmp_path, monkeypatch):
-    import fitz
+    import pymupdf
 
     config = _config(tmp_path)
     monkeypatch.setattr(brain_mod, "evidence", _fake_evidence)
@@ -231,8 +231,39 @@ def test_rendered_pdf_carries_scribe_marker(tmp_path, monkeypatch):
     result = render_task(config, "t1", instances["t1"], instances)
 
     pdf_path = config.work_dir / "t1" / "render" / result["pdf"]
-    with fitz.open(pdf_path) as d:
+    with pymupdf.open(pdf_path) as d:
         assert "scribe-task=t1" in d.metadata["keywords"]
+
+
+@pytest.mark.skipif(not pandoc_available, reason="pandoc not installed")
+@pytest.mark.skipif(not soffice_available, reason="soffice/libreoffice not installed")
+def test_pdf_stamp_failure_fails_the_render(tmp_path, monkeypatch):
+    """The loop guard depends on every published pdf carrying scribe-task=<id>. A
+    stamp failure must not leave an unmarked pdf behind as if the render succeeded —
+    accept() only reads `ok`, never `errors`, so a silently-unmarked pdf would be
+    publishable and would re-enter the corpus the moment it's copied out of an
+    excluded dir."""
+    config = _config(tmp_path)
+    monkeypatch.setattr(brain_mod, "evidence", _fake_evidence)
+
+    import scribe_lib.render as render_mod
+
+    monkeypatch.setattr(render_mod, "_run_mermaid", lambda mmd, png: (False, "skip diagram in this test"))
+
+    def _boom(pdf_path, task_id):
+        raise RuntimeError("stamp exploded")
+
+    monkeypatch.setattr(render_mod, "_stamp_pdf", _boom)
+    _write_next(config, "t1")
+    instances = {"t1": {"title": "Demo Title"}}
+
+    result = render_task(config, "t1", instances["t1"], instances)
+
+    assert result["ok"] is False
+    assert result["pdf"] is None
+    assert any("stamp" in e for e in result["errors"])
+    pdf_path = config.work_dir / "t1" / "render" / "Demo Title.pdf"
+    assert not pdf_path.is_file()
 
 
 @pytest.mark.skipif(not pandoc_available, reason="pandoc not installed")

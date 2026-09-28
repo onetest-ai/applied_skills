@@ -268,12 +268,12 @@ class LoopGuardTests(SourceRegistryTests):
                                    ("notes.md", "scribe_marker")})
 
     def test_pdf_keyword_marker_is_detected(self):
-        import fitz
+        import pymupdf
         pdf = self.root / "docs" / "p.pdf"
-        d = fitz.open(); d.new_page(); d.set_metadata({"keywords": "scribe-task=t9"}); d.save(pdf)
+        d = pymupdf.open(); d.new_page(); d.set_metadata({"keywords": "scribe-task=t9"}); d.save(pdf)
         self.assertTrue(R.is_scribe_artifact(pdf))
         plain = self.root / "docs" / "q.pdf"
-        d = fitz.open(); d.new_page(); d.save(plain)
+        d = pymupdf.open(); d.new_page(); d.save(plain)
         self.assertFalse(R.is_scribe_artifact(plain))
 
     def test_exclude_must_be_string_array(self):

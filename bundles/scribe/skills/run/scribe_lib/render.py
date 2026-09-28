@@ -152,9 +152,9 @@ def _run_mermaid(mmd_path: Path, png_path: Path) -> tuple[bool, str | None]:
 
 
 def _stamp_pdf(pdf_path: Path, task_id: str) -> None:
-    import fitz
+    import pymupdf
 
-    with fitz.open(pdf_path) as d:
+    with pymupdf.open(pdf_path) as d:
         meta = dict(d.metadata or {})
         meta["keywords"] = f"scribe-task={task_id}"
         d.set_metadata(meta)
@@ -296,8 +296,14 @@ def render_task(
             elif pdf_path.is_file():
                 try:
                     _stamp_pdf(pdf_path, task_id)
-                except Exception as exc:  # pragma: no cover - defensive, mirrors mermaid's never-raise contract
+                except Exception as exc:
+                    # The loop guard depends on every published pdf carrying the
+                    # scribe-task marker — an unmarked pdf is worse than no pdf,
+                    # since it would silently re-enter the corpus once moved out
+                    # of an excluded dir. Remove it so the is_file() gate below
+                    # fails exactly like a missing pdf (ok=False, exit 1).
                     errors.append(f"pdf marker stamp failed: {exc}")
+                    pdf_path.unlink(missing_ok=True)
         except FileNotFoundError:
             errors.append("soffice not found on PATH")
         except subprocess.TimeoutExpired:
