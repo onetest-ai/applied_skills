@@ -78,7 +78,10 @@ section is marked stale with `cited_raw_ingested` — `pack` then offers
 `[RAG:]` candidates from that doc for the drafting agent to re-cite with
 (spec A7). This never runs against the Brain unless some published section
 actually has a `[FILE:]` claim to check, so a task whose brain_db is a dummy
-path in tests is unaffected.
+path in tests is unaffected. A human-origin claim (`origin=human|
+human_modified`) is excluded from `ingested` (fix round 1, Important #2):
+the drafting contract copies a human claim verbatim, so nothing will ever
+re-cite it, and flagging it anyway would keep the section stale every night.
 
 Writes `work/<task>/fingerprint.json`:
 
@@ -360,6 +363,14 @@ def fingerprint_task(
         if published_body:
             for b in claims.parse_blocks(published_body):
                 if not claims.is_claim(b) or not b.get("claim_id"):
+                    continue
+                # A human-authored claim (`origin=human`/`human_modified`) is
+                # never re-cited by the agent — SKILL.md's drafting rule
+                # copies it verbatim, always. Offering it under "Now in the
+                # Brain" would contradict that rule, and marking the section
+                # stale for a claim nothing will ever re-cite would keep it
+                # stale forever (fix round 1, Important #2).
+                if claims.base_claim_origin(b) in claims.HUMAN_ORIGINS:
                     continue
                 for tag in b["tags"]:
                     if not tag.startswith("[FILE:"):

@@ -15,7 +15,12 @@ three checks — `sections_present`, `zero_unverified`, `diagrams_render`):
   same section of `work/<task>/base.md` (a legacy human addition carried
   from an already-published version; see `claims.base_claim_origin`), or it
   is recorded in this run's `work/<task>/base.json` `human_added`/
-  `human_modified`.
+  `human_modified`. Also fails one claim per entry in
+  `work/<task>/check-file.json`'s `needs_quote` (A7 fix round 1): a carried
+  `[FILE:]` claim `check-file` left unresolved for want of a quote has no
+  verified evidence behind it, so the task fails and the published version
+  stays untouched until the agent supplies a quote, re-cites it, or marks it
+  `Not modeled:`.
 - `diagrams_render`: reads `work/<task>/render/render.json` if present
   (`{"ok": bool, "diagrams": [...]}`); if absent, skipped with a note.
 
@@ -73,6 +78,13 @@ def accept_task(config: Config, task_id: str, instance: dict[str, Any], template
     modified_ids, added_norms = _human_exempt_keys(base_json)
     legacy_human = _legacy_human_claims(work_dir)
 
+    check_file_path = work_dir / "check-file.json"
+    check_file_needs_quote = (
+        json.loads(check_file_path.read_text(encoding="utf-8")).get("needs_quote") or []
+        if check_file_path.is_file()
+        else []
+    )
+
     # -- sections_present --
     missing: list[str] = []
     empty: list[str] = []
@@ -111,6 +123,17 @@ def accept_task(config: Config, task_id: str, instance: dict[str, Any], template
             )
             if not exempt:
                 unverified.append({"section": sid, "reason": "no citation tag", "text": block["normalized"][:160]})
+    # A7 fix round 1 (controller ruling): a `[FILE:]` claim `check-file`
+    # reported as `needs_quote` has no verified quote behind it — it is
+    # unverified, same as an uncited claim, and must fail acceptance so the
+    # published version stays untouched until the agent supplies a quote (or
+    # re-cites/marks it `Not modeled:`).
+    for nq in check_file_needs_quote:
+        unverified.append({
+            "section": nq.get("section"),
+            "reason": "needs_quote",
+            "text": f"c:{nq.get('claim')} {nq.get('tag')}",
+        })
     check_zero_unverified = {"passed": not unverified, "claims": unverified}
 
     # -- diagrams_render --

@@ -38,7 +38,25 @@
                           `[RAG:<chunk_id>]` hits from `brain.chunks_for_doc`
                           for that doc — the agent re-cites rather than the
                           claim being silently dropped or left on a stale
-                          `[FILE:]` tag (PoC finding I4).
+                          `[FILE:]` tag (PoC finding I4). A claim whose id is
+                          not found in `base.md` (a person deleted it from
+                          the docx — a `human_deleted` tombstone; still in
+                          the last published `_src` `fingerprint` read
+                          `ingested` from) is skipped, never queried with an
+                          empty string and never offered for re-citing (fix
+                          round 1, Important #1). A human-origin claim
+                          (`origin=human|human_modified`) is never listed
+                          here at all — `fingerprint` excludes it from
+                          `ingested` (fix round 1, Important #2), since the
+                          agent must copy a human claim verbatim and can
+                          never re-cite it, which would otherwise keep the
+                          section stale forever. Every non-human-origin
+                          `[FILE:]` claim in the prior text whose path has no
+                          `cited_raw` state record is also listed under
+                          "Carried [FILE:] claims needing a quote" (fix
+                          round 1, controller ruling on A7's ⚠️) so the agent
+                          adds a quote while drafting instead of discovering
+                          the gap only after `check-file` runs.
 
 If `base` refuses (a section heading renamed or deleted in the docx), prepare
 returns base's `{"status": "failed", "reason": "section_heading_changed", ...}`
@@ -101,6 +119,43 @@ def _collect_upstream_claims(config: Config, instances: dict[str, Any], upstream
     return claims
 
 
+def _carried_file_claims_needing_quote(
+    blocks: list[dict[str, Any]],
+    cited_raw: dict[str, str] | None,
+    exclude_ids: set[str] | None = None,
+) -> list[tuple[dict[str, Any], list[str]]]:
+    """Non-human-origin claims in `blocks` (the prior/base section text) that
+    carry a `[FILE:]` tag with no `cited_raw` state record for its path —
+    the same "no usable evidence to carry forward" case `check-file` reports
+    as `needs_quote`, surfaced here at prepare time (controller ruling on
+    A7's ⚠️, fix round 1) so the agent adds a quote while drafting instead of
+    discovering it only after check-file runs. `exclude_ids` drops any claim
+    already listed under "Now in the Brain" — that claim's fix is to re-cite
+    with `[RAG:]`, not to add a quote for the file it no longer needs to cite.
+    Returns `[(block, [missing tag, ...]), ...]`."""
+    cited_raw = cited_raw or {}
+    exclude_ids = exclude_ids or set()
+    out: list[tuple[dict[str, Any], list[str]]] = []
+    for b in blocks:
+        if not claim_parser.is_claim(b):
+            continue
+        if b.get("claim_id") in exclude_ids:
+            continue
+        if claim_parser.base_claim_origin(b) in claim_parser.HUMAN_ORIGINS:
+            continue
+        missing_tags = []
+        for tag in b["tags"]:
+            if not tag.startswith("[FILE:"):
+                continue
+            _, value = claim_parser.parse_tag(tag)
+            path = value.split("#", 1)[0]
+            if path not in cited_raw:
+                missing_tags.append(tag)
+        if missing_tags:
+            out.append((b, missing_tags))
+    return out
+
+
 def _render_pack_section(
     config: Config,
     sec: dict[str, Any],
@@ -109,6 +164,7 @@ def _render_pack_section(
     info: dict[str, Any],
     upstream_claims: dict[str, str],
     removed: list[str] | None = None,
+    cited_raw: dict[str, str] | None = None,
 ) -> str:
     lines: list[str] = [f"# Section: {sec.get('title', sec['id'])} ({sec['id']})", ""]
     if sec.get("intent"):
@@ -126,7 +182,8 @@ def _render_pack_section(
     lines += ["## Prior text (from base)", ""]
     lines += [prior_text.strip() or "(none — first run or section not present in base)", ""]
 
-    human = [b for b in claim_parser.parse_blocks(prior_text) if claim_parser.base_claim_origin(b) in claim_parser.HUMAN_ORIGINS]
+    prior_blocks = claim_parser.parse_blocks(prior_text)
+    human = [b for b in prior_blocks if claim_parser.base_claim_origin(b) in claim_parser.HUMAN_ORIGINS]
     if human:
         lines += [
             "## Human-authored claims (copy verbatim; never verify, never turn into Not modeled)",
@@ -140,6 +197,15 @@ def _render_pack_section(
     if removed:
         lines += ["## Removed by a person — do not re-add:", ""]
         lines += [f"- {_truncate(text, 160)}" for text in removed]
+        lines.append("")
+
+    ingested_claim_ids = {cid for entry in (info.get("ingested") or []) for cid in entry.get("claims", [])}
+    needs_quote = _carried_file_claims_needing_quote(prior_blocks, cited_raw, ingested_claim_ids)
+    if needs_quote:
+        lines += ["## Carried [FILE:] claims needing a quote", ""]
+        for b, missing_tags in needs_quote:
+            ident = f"c:{b['claim_id']}" if b["claim_id"] else "no id"
+            lines.append(f"- {ident} {', '.join(missing_tags)}: {_truncate(b['content'], 160)}")
         lines.append("")
 
     lines += ["## Evidence", ""]
@@ -177,20 +243,32 @@ def _render_pack_section(
     if ingested:
         prior_claims_by_id = {
             b["claim_id"]: b
-            for b in claim_parser.parse_blocks(prior_text)
+            for b in prior_blocks
             if claim_parser.is_claim(b) and b.get("claim_id")
         }
-        lines += ["## Now in the Brain — re-cite as [RAG:] and keep the claim id:", ""]
+        ingested_lines: list[str] = []
         for entry in ingested:
             doc_id = entry["doc_id"]
             for cid in entry["claims"]:
                 block = prior_claims_by_id.get(cid)
-                claim_text = block["content"] if block else ""
-                lines.append(f"- c:{cid}: {_truncate(claim_text, 160)}")
+                if block is None:
+                    # The claim is in the task's last published `_src` (where
+                    # `ingested` was computed from) but not in `base.md` — a
+                    # person deleted it from the docx (a `human_deleted`
+                    # tombstone). Nothing to re-cite, no query to run:
+                    # `chunks_for_doc(config, doc_id, "")` would raise on an
+                    # empty query, and a tombstoned claim is never offered
+                    # for re-citing anyway (fix round 1, Important #1).
+                    continue
+                claim_text = block["content"]
+                ingested_lines.append(f"- c:{cid}: {_truncate(claim_text, 160)}")
                 for h in brain_mod.chunks_for_doc(config, doc_id, claim_text):
                     tag = f"[RAG:{h['chunk_id']}]"
-                    lines.append(f"  - {tag} {_truncate(h.get('text', ''), EVIDENCE_TRUNCATE)}")
-        lines.append("")
+                    ingested_lines.append(f"  - {tag} {_truncate(h.get('text', ''), EVIDENCE_TRUNCATE)}")
+        if ingested_lines:
+            lines += ["## Now in the Brain — re-cite as [RAG:] and keep the claim id:", ""]
+            lines += ingested_lines
+            lines.append("")
 
     if upstream_claims:
         lines += ["## Upstream claims", ""]
@@ -280,13 +358,16 @@ def prepare_task(config: Config, task_id: str) -> dict[str, Any]:
         if t.get("normalized") and t["normalized"] not in texts:
             texts.append(t["normalized"])
 
+    state_sections = state.get("sections") or {}
     sections_by_id = {s["id"]: s for s in sections_spec}
     for entry in stale_entries:
         sid = entry["section"]
         sec = sections_by_id[sid]
         info = fp_result["sections"].get(sid, {})
+        cited_raw = (state_sections.get(sid) or {}).get("cited_raw") or {}
         content = _render_pack_section(
-            config, sec, template, base_sections.get(sid, ""), info, upstream_claims, removed_by_section.get(sid)
+            config, sec, template, base_sections.get(sid, ""), info, upstream_claims,
+            removed_by_section.get(sid), cited_raw,
         )
         (pack_dir / f"{sid}.pack.md").write_text(content, encoding="utf-8")
 

@@ -133,7 +133,9 @@ the section's intent, `must` rules and lanes, the template's drafting guidance, 
 **prior text** (with each claim's `<!-- c:xxxxxxxx -->` id), the **evidence** (each item
 preceded by the exact tag to cite), notes on cited chunks that changed or disappeared,
 a "Now in the Brain" list for any `[FILE:]` claim whose raw file has since been synced
-into the Brain (spec A7), and upstream tasks' claims tagged `[TASK:<task>#c:<claim id>]`.
+into the Brain (spec A7), a "Carried [FILE:] claims needing a quote" list for any
+carried, non-human `[FILE:]` claim with no recorded evidence to verify it against, and
+upstream tasks' claims tagged `[TASK:<task>#c:<claim id>]`.
 
 Write the section body — no `## ` heading — to `work/<id>/sections/<section>.md`:
 
@@ -156,6 +158,10 @@ Write the section body — no `## ` heading — to `work/<id>/sections/<section>
   upgrades from a raw-file quote to a Brain chunk; pick the candidate chunk that actually
   supports the claim's text, don't just take the first one. Keep the claim's wording and
   `<!-- c:xxxxxxxx -->` id unchanged — this is a re-cite, not a rewrite.
+- **For every claim listed under *Carried [FILE:] claims needing a quote*, add a
+  quote for it to `<section>.evidence.json` while you draft** (see step 4's evidence
+  format below) — it has no recorded evidence `check-file` can verify it against, and
+  `accept` fails the task if it is still unresolved.
 - **Supersede, don't delete.** When new evidence overtakes a prior claim, keep that claim,
   prefix it with `**Superseded (<now>):** ` (the `now` date from `plan`), keep its id
   comment, and add the replacing claim right after it with both sources cited. Never drop
@@ -212,7 +218,8 @@ re-run `$SCRIBE check-file <task>` once; if the quote cannot be found, re-cite i
 `Not modeled:` yourself. This is a carried `[FILE:]` claim with no state record to verify it
 against (never published, or published under a different section) — `check-file` leaves it
 as drafted rather than guessing, so it is on you to supply the quote (or decide it no longer
-holds) before this task can be accepted.
+holds) before this task can be accepted — `accept`'s `zero_unverified` check fails the task
+(published version untouched) while `check-file.json.needs_quote` is non-empty.
 
 Run `$SCRIBE check-task <task>`. It rewrites every `[TASK:up#c:id]` claim whose
 upstream claim is gone or superseded into `Not modeled: upstream claim <up>#c:<id> is
