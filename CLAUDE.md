@@ -111,7 +111,7 @@ These are the things that take several files to see, and that tests pass while v
 
 ## In flight
 
-PR #26 (HTML deck ingestion) has merged, so the invariants above about visual-lane field values and the preamble are load-bearing for `html_capture.py` and the `# fidelity:` line. PR #28 (taxonomy review workbench: review app, decisions log, versioned taxonomy, health review) has also merged. `feat/count-grounded-first-review` builds on it: the first build now adopts the draft taxonomy as provisional, classifies against it, and runs the first human review after classification instead of on the bare draft — see the `PROVISIONAL` and `__no_topic__` invariants above. Check `git log` before assuming this section is current.
+Nothing is in flight: everything through PR #35 has merged — HTML deck ingestion (#26), the taxonomy review workbench (#28), count-grounded first-build review (#31), video meeting ingestion (#29/#30/#33), cheaper VTT/SRT chunks (#34) and **scribe 0.1.0 with brain 0.10.0 (#35)**, so every invariant above is live. Known scribe follow-ups, not yet built: flag a human docx edit that contradicts its own citation; `scribe.py schedule` should create `<project>/logs/` before launchd opens `StandardOutPath` there; a journal resume after an intervening `observe` rewrites older snapshots (conservative, not lossy); a docx edited between `base` and `publish` on the same night is archived without being drafted from. Check `git log` before assuming this section is current.
 
 ## Working on skills
 
