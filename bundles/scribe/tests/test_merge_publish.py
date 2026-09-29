@@ -531,6 +531,93 @@ def test_check_file_is_idempotent_on_a_second_run(tmp_path):
     assert "beta fact. [FILE:note.txt#L2]" in section_after_run2  # still intact, not destroyed
 
 
+# ----------------------------------------------------------------- modality --
+
+def test_check_file_flags_hedged_quote_with_unhedged_claim(tmp_path):
+    """F2: a `[FILE:]` claim whose fresh evidence quote is a guess/question
+    but whose claim text states it as a bare fact must be flagged in
+    `check-file.json.modality` — never rewritten, never failed."""
+    proj = setup_mini_project(tmp_path)
+    config, data = load(proj)
+    work_dir = config.work_dir / "m1"
+    raw_dir = work_dir / "raw"
+    write_text(raw_dir / "note.txt.md", "Maybe we should switch vendors next quarter.\n")
+    write_json(
+        raw_dir / "manifest.json",
+        [{"path": "note.txt", "sha256": "x", "md": "note.txt.md", "status": "ok", "reason": "test"}],
+    )
+    write_text(
+        work_dir / "sections" / "overview.md",
+        "We will switch vendors next quarter. [FILE:note.txt#L1]\n",
+    )
+    write_json(
+        work_dir / "sections" / "overview.evidence.json",
+        [{"claim_ref": 0, "tag": "[FILE:note.txt#L1]", "quote": "Maybe we should switch vendors next quarter."}],
+    )
+
+    result = check_file_task(config, "m1")
+    assert result["modality"] == [
+        {"section": "overview", "claim": None, "tag": "[FILE:note.txt#L1]", "quote_marker": "maybe"}
+    ]
+    # Never rewritten and never counted as a failure — the claim is
+    # unchanged and still passes check-file's ordinary evidence check.
+    assert result["failed"] == []
+    assert result["checked"] == 1 and result["passed"] == 1
+    rewritten = (work_dir / "sections" / "overview.md").read_text(encoding="utf-8")
+    assert "We will switch vendors next quarter. [FILE:note.txt#L1]" in rewritten
+
+
+def test_check_file_does_not_flag_an_attributed_claim(tmp_path):
+    """A claim that already keeps the speaker's modality (attributed to a
+    role, or hedged in its own text) is not flagged even though its quote
+    is a guess/question."""
+    proj = setup_mini_project(tmp_path)
+    config, data = load(proj)
+    work_dir = config.work_dir / "m1"
+    raw_dir = work_dir / "raw"
+    write_text(raw_dir / "note.txt.md", "Maybe we should switch vendors next quarter.\n")
+    write_json(
+        raw_dir / "manifest.json",
+        [{"path": "note.txt", "sha256": "x", "md": "note.txt.md", "status": "ok", "reason": "test"}],
+    )
+    write_text(
+        work_dir / "sections" / "overview.md",
+        "The lead suggested switching vendors next quarter. [FILE:note.txt#L1]\n",
+    )
+    write_json(
+        work_dir / "sections" / "overview.evidence.json",
+        [{"claim_ref": 0, "tag": "[FILE:note.txt#L1]", "quote": "Maybe we should switch vendors next quarter."}],
+    )
+
+    result = check_file_task(config, "m1")
+    assert result["modality"] == []
+
+
+def test_check_file_does_not_flag_an_unhedged_quote(tmp_path):
+    """A plainly-stated quote (no hedge marker, not a question) is never
+    flagged, regardless of how the claim itself is phrased."""
+    proj = setup_mini_project(tmp_path)
+    config, data = load(proj)
+    work_dir = config.work_dir / "m1"
+    raw_dir = work_dir / "raw"
+    write_text(raw_dir / "note.txt.md", "We switched vendors last quarter.\n")
+    write_json(
+        raw_dir / "manifest.json",
+        [{"path": "note.txt", "sha256": "x", "md": "note.txt.md", "status": "ok", "reason": "test"}],
+    )
+    write_text(
+        work_dir / "sections" / "overview.md",
+        "We switched vendors last quarter. [FILE:note.txt#L1]\n",
+    )
+    write_json(
+        work_dir / "sections" / "overview.evidence.json",
+        [{"claim_ref": 0, "tag": "[FILE:note.txt#L1]", "quote": "We switched vendors last quarter."}],
+    )
+
+    result = check_file_task(config, "m1")
+    assert result["modality"] == []
+
+
 # ------------------------------------------------------------------- accept --
 
 def test_accept_flags_uncited_claim_and_missing_section(tmp_path):
@@ -568,6 +655,38 @@ def test_accept_passes_a_clean_document(tmp_path):
     )
     (work_dir).mkdir(parents=True, exist_ok=True)
     (work_dir / "next.md").write_text(next_text, encoding="utf-8")
+
+    inst = data["instances"]["m1"]
+    template = data["templates"]["mini-profile"]
+    result = accept_task(config, "m1", inst, template)
+    assert result["status"] == "ok"
+    assert result["passed"] is True
+
+
+def test_accept_does_not_fail_on_remaining_modality_flags(tmp_path):
+    """F2: `modality` entries left in `check-file.json` after the SKILL's
+    revise-once retry do NOT fail the task — the verifier's `overstated`
+    rule is the gate, not accept. A clean document with a non-empty
+    `modality` list must still pass."""
+    proj = setup_mini_project(tmp_path)
+    config, data = load(proj)
+    work_dir = config.work_dir / "m1"
+    next_text = (
+        "<!-- scribe: task=m1 version=1 built_at=2026-01-01T00:00:00 template=mini-profile@1 base=none -->\n\n"
+        "# Mini m1\n\n"
+        "## Changes in this version {#changes}\n\n- initial\n\n"
+        "## Overview {#overview}\n\nA cited claim. [RAG:1] <!-- c:aaaa0001 -->\n\n"
+        "## Details {#details}\n\nNot modeled: nothing found yet.\n\n"
+    )
+    (work_dir).mkdir(parents=True, exist_ok=True)
+    (work_dir / "next.md").write_text(next_text, encoding="utf-8")
+    write_json(
+        work_dir / "check-file.json",
+        {"checked": 1, "passed": 1, "human_origin_skipped": 0, "failed": [], "needs_quote": [],
+         "raw_offline_notes": [], "modality": [
+             {"section": "overview", "claim": "aaaa0001", "tag": "[FILE:a.md#L1]", "quote_marker": "maybe"}
+         ]},
+    )
 
     inst = data["instances"]["m1"]
     template = data["templates"]["mini-profile"]

@@ -36,7 +36,7 @@ by `check-file`) for every stale section — refusing if one is missing.
 - `work/<task>/merge.json`: `{task, version, noop, sections: {sid: {status:
   "carried"|"drafted", claims_before, claims_after, kept, reworded, recited,
   added, superseded, dropped_by_check, dropped_by_model, suppressed_tombstone,
-  false_stale}}}` (spec A12; PoC finding I7). A base claim no draft claim
+  false_stale, modality_flagged}}}` (spec A12; PoC finding I7). A base claim no draft claim
   matched is `dropped_by_check` when its id or normalized text appears in
   this run's `check-file.json.failed`, `check-task.json.failed` or
   `verifier.json.rejected` (a deterministic check or the verifier is why it's
@@ -51,6 +51,12 @@ by `check-file`) for every stale section — refusing if one is missing.
   matching and counted in `suppressed_tombstone` — the agent may not bring
   back what a person removed. A tombstoned text the base holds again (a person
   re-added it) is not dropped.
+- `modality_flagged` (F2) is this section's count of entries in this run's
+  `check-file.json.modality` (the deterministic hedge pre-check: a `[FILE:]`
+  claim whose fresh transcript quote is a guess/question/proposal but whose
+  own text states it as fact) — counted here for `report --summary`, never
+  a drop and never a reason to fail `accept`; the verifier's `overstated`
+  rule is the actual gate on those claims.
 - Noop (A9): if `next.md`'s content — ignoring the header comment, the Changes
   section, and anything a reader would never see (claim-id/origin comments,
   Markdown backslash escapes, curly vs straight quotes, whitespace runs; see
@@ -172,6 +178,19 @@ def _check_failure_keys(work_dir: Path) -> tuple[set[str], list[str]]:
     return ids, texts
 
 
+def _modality_counts(work_dir: Path) -> dict[str, int]:
+    """F2: `{section: count}` of this run's `check-file.json.modality`
+    entries — the deterministic hedge pre-check's flags, never a drop.
+    Read once per merge and folded into each drafted section's report as
+    `modality_flagged`."""
+    counts: dict[str, int] = {}
+    for entry in _load_json(work_dir / "check-file.json").get("modality") or []:
+        sid = entry.get("section")
+        if sid:
+            counts[sid] = counts.get(sid, 0) + 1
+    return counts
+
+
 def _dropped_by_check(block: dict[str, Any], failed_ids: set[str], failed_texts: list[str]) -> bool:
     claim_id = block.get("claim_id")
     if claim_id and claim_id in failed_ids:
@@ -188,6 +207,7 @@ def _merge_drafted_section(
     tombstoned: set[str] | frozenset[str] = frozenset(),
     failed_ids: set[str] | frozenset[str] = frozenset(),
     failed_texts: tuple[str, ...] = (),
+    modality_flagged: int = 0,
 ) -> dict[str, Any]:
     base_blocks = [b for b in claims.parse_blocks(base_body) if claims.is_claim(b)]
     # A drafted claim a person deleted is dropped before matching — unless the
@@ -245,6 +265,7 @@ def _merge_drafted_section(
         "dropped_by_model": dropped_by_model,
         "suppressed_tombstone": suppressed,
         "false_stale": false_stale,
+        "modality_flagged": modality_flagged,
         "examples": examples,
     }
 
@@ -364,6 +385,7 @@ def merge_task(
     state = read_state(config, instance)
     tombstoned = tombstones(base_json, state)
     failed_ids, failed_texts = _check_failure_keys(work_dir)
+    modality_counts = _modality_counts(work_dir)
 
     sections_dir = work_dir / "sections"
     for sid in sorted(stale_ids):
@@ -383,7 +405,7 @@ def merge_task(
             draft_text = (sections_dir / f"{sid}.md").read_text(encoding="utf-8")
             report = _merge_drafted_section(
                 task_id, sid, base_sections.get(sid, ""), draft_text, tombstoned.get(sid, frozenset()),
-                failed_ids, tuple(failed_texts),
+                failed_ids, tuple(failed_texts), modality_counts.get(sid, 0),
             )
             next_bodies[sid] = report["body"]
             examples_by_section[sid] = report.pop("examples")
@@ -406,6 +428,7 @@ def merge_task(
                 "dropped_by_model": 0,
                 "suppressed_tombstone": 0,
                 "false_stale": False,
+                "modality_flagged": 0,
             }
 
     prev_version = state.get("version") or 0

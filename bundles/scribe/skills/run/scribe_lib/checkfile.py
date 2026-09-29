@@ -48,7 +48,8 @@ claim) and recorded in `work/<task>/check-file.json`:
     {"checked": <int>, "passed": <int>, "human_origin_skipped": <int>,
      "failed": [{"section", "claim_ref", "claim", "normalized", "tag", "reason"}],
      "needs_quote": [{"section", "claim", "tag"}],
-     "raw_offline_notes": [{"section", "claim_ref", "tag"}]}
+     "raw_offline_notes": [{"section", "claim_ref", "tag"}],
+     "modality": [{"section", "claim", "tag", "quote_marker"}]}
 
 `failed`'s `claim` (the block's `claim_id`, `None` for an id-less legacy
 claim) and `normalized` (its normalized text, BEFORE the block is rewritten
@@ -105,7 +106,26 @@ scratch: scanning resets the running index to `N` whenever it hits a
 every subsequent real claim's recomputed index still lines up with the
 `claim_ref`s the sidecar was written against. A second run on unchanged
 inputs changes nothing.
-"""
+
+**F2 — a hedged transcript quote under an unhedged claim is flagged, never
+rewritten.** A meeting transcript's own words often carry a question, a
+guess, a hypothesis or a proposal — and a `[FILE:]` claim that quotes one of
+those but states it as a plain fact silently launders it into a finding.
+`_find_hedge_marker` reads a claim's fresh evidence quote (only a quote
+actually present in `evidence.json` — a carried tag's re-verified-by-hash
+quote is not re-examined here) for a trailing `?` or a documented hedge word
+(`maybe`, `might`, `probably`, ... — see `_HEDGE_MARKERS`); when it finds
+one, `_claim_has_modality_marker` checks whether the claim's own text
+already carries the speaker's modality (`asked`, `suggested`, `whether`,
+`unconfirmed`, ... — see `_CLAIM_MODALITY_MARKERS`). A hedged quote under an
+unhedged claim is appended to `modality` (never rewritten — that's a
+drafting decision, not a deterministic one): `[{"section", "claim", "tag",
+"quote_marker"}]`. `check-file.json`'s top-level shape gains this one key;
+every other field is unchanged. `merge.py` counts these per section as
+`modality_flagged` (not a drop, not a failure) and `accept.py` never reads
+`modality` at all — a claim left flagged after the SKILL's revise-once retry
+does not fail the task; the verifier's `overstated` rejection is the actual
+gate."""
 from __future__ import annotations
 
 import json
@@ -118,6 +138,85 @@ from scribe_lib.basedoc import split_by_section_id
 from scribe_lib.config import Config, raw_root_available, read_state, sha256_file
 
 _CF_MARKER_RE = re.compile(r"<!--\s*cf:(\d+)\s*-->\s*$")
+
+# F2 — deterministic hedge pre-check. A quote carrying one of these (or
+# ending `?`) is a guess/question/proposal/hypothesis in the transcript's own
+# words, not a stated fact. Longest phrases first so `_find_hedge_marker`
+# reports "most likely" rather than the "likely" substring within it.
+_HEDGE_MARKERS = (
+    "most likely", "i think", "i guess", "i believe", "my hypothesis",
+    "should we", "could we", "what if", "not sure",
+    "hypothesis", "maybe", "might", "probably", "possibly", "likely",
+    "perhaps", "assume", "assumption", "tbd",
+)
+
+# A claim whose own text already carries one of these already attributes or
+# hedges the statement (a question mark in the claim itself is handled by
+# the same `?` case as the quote). "hypothes" is deliberately a prefix match
+# (hypothesis/hypothesized/hypothesizing/...).
+_CLAIM_MODALITY_MARKERS = (
+    "according to", "asked", "suggested", "proposed", "unconfirmed",
+    "whether", "may", "might", "possibly", "likely", "reportedly", "said",
+    "believes", "thinks", "question", "hypothes",
+)
+
+
+def _word_re(marker: str) -> re.Pattern[str]:
+    return re.compile(rf"(?<!\w){re.escape(marker)}" + (r"" if marker == "hypothes" else r"(?!\w)"))
+
+
+def _find_hedge_marker(quote: str) -> str | None:
+    """The hedge marker (or `"?"`) found in `quote`, or `None`. Case-
+    insensitive, whole-word; longest phrase wins when more than one marker
+    is present."""
+    text = (quote or "").strip()
+    if text.endswith("?"):
+        return "?"
+    lowered = text.lower()
+    for marker in _HEDGE_MARKERS:
+        if _word_re(marker).search(lowered):
+            return marker
+    return None
+
+
+def _claim_has_modality_marker(text: str) -> bool:
+    """True if the claim's own visible text already keeps the speaker's
+    modality (attributed, hedged, or itself a question)."""
+    lowered = (text or "").strip().lower()
+    if lowered.endswith("?"):
+        return True
+    for marker in _CLAIM_MODALITY_MARKERS:
+        if _word_re(marker).search(lowered):
+            return True
+    return False
+
+
+def _modality_flags(
+    sid: str,
+    claim_idx: int,
+    claim_id: str | None,
+    claim_text: str,
+    file_tags: list[str],
+    evidence_by_key: dict[tuple[int, str], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """F2: for each of the claim's `[FILE:]` tags with a fresh evidence
+    quote, flag (never rewrite) the tag when that quote is hedged but the
+    claim's own text carries no attribution/hedge marker of its own —
+    otherwise the meeting's guess/question/proposal reads as a stated fact.
+    A claim that already keeps the speaker's modality is never flagged, no
+    matter how its quote reads."""
+    if _claim_has_modality_marker(claim_text):
+        return []
+    flags: list[dict[str, Any]] = []
+    for tag in file_tags:
+        entry = evidence_by_key.get((claim_idx, tag))
+        if entry is None:
+            continue
+        marker = _find_hedge_marker(entry.get("quote", ""))
+        if marker is None:
+            continue
+        flags.append({"section": sid, "claim": claim_id, "tag": tag, "quote_marker": marker})
+    return flags
 
 
 def _normalize_ws(text: str) -> str:
@@ -203,6 +302,7 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
     failed: list[dict[str, Any]] = []
     needs_quote: list[dict[str, Any]] = []
     raw_offline_notes: list[dict[str, Any]] = []
+    modality: list[dict[str, Any]] = []
 
     if not sections_dir.is_dir():
         result = {
@@ -213,6 +313,7 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
             "failed": [],
             "needs_quote": [],
             "raw_offline_notes": [],
+            "modality": [],
         }
         (work_dir / "check-file.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
         return result
@@ -244,6 +345,10 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
             file_tags = [t for t in block["tags"] if t.startswith("[FILE:")]
             if not file_tags:
                 continue
+
+            modality.extend(
+                _modality_flags(sid, claim_idx, block["claim_id"], block["text"], file_tags, evidence_by_key)
+            )
 
             base_match = _find_carried_base_claim(base_claims, block)
             if (
@@ -358,6 +463,7 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
         "failed": failed,
         "needs_quote": needs_quote,
         "raw_offline_notes": raw_offline_notes,
+        "modality": modality,
     }
     work_dir.mkdir(parents=True, exist_ok=True)
     (work_dir / "check-file.json").write_text(json.dumps(result, indent=2), encoding="utf-8")

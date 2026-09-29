@@ -55,5 +55,9 @@ scene-setting and get straight to what changed and what's open.
   claim you are summarizing with `[TASK:]`.
 - **Gaps as `Not modeled:`.** If a workstream has nothing to report this
   cycle, say so plainly rather than inventing filler.
+- **Keep the speaker's modality.** A claim drawn from a meeting transcript keeps
+  the speaker's modality: a question, guess, hypothesis or proposal is attributed
+  ("<role> asked whether…", "<role> suggested…") or moved to Open questions, never
+  restated as a finding.
 - **Extend, don't rewrite.** Non-stale sections are carried forward
   byte-for-byte by `merge`; only draft the sections you are handed as stale.

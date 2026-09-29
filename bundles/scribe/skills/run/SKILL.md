@@ -159,6 +159,21 @@ Write the section body — no `## ` heading — to `work/<id>/sections/<section>
   reword, supersede, re-cite or delete one, and never turn one into `Not modeled: …`. It
   needs no `evidence.json` entry (`check-file` skips it). Never write `origin=` into a
   comment yourself — `merge` sets origin only from the prior text and ignores yours.
+- **Keep the speaker's modality.** A `[FILE:]` claim drawn from a meeting transcript must
+  keep the speaker's modality. A question, guess, hypothesis, proposal or plan is written
+  as such and attributed ("<role> asked whether…", "<role> suggested…", "it is
+  unconfirmed whether…") or moved to Open questions; it is never restated as a finding.
+  When the next turn answers or contradicts it, the answer is what the claim reports.
+  Examples:
+  - Transcript: "Maybe we should switch vendors next quarter?" → wrong: "The team will
+    switch vendors next quarter." → right: "The lead asked whether to switch vendors next
+    quarter."
+  - Transcript: "I think the outage was caused by the cache layer." → wrong: "The outage
+    was caused by the cache layer." → right: "The engineer's hypothesis is that the
+    outage was caused by the cache layer."
+  - Transcript: "What if we cut the onboarding flow to three steps?" → wrong: "Onboarding
+    will be cut to three steps." → right: "Cutting onboarding to three steps was proposed
+    and remains unconfirmed" (or moved to Open questions).
 - **Never re-add a claim listed under *Removed by a person* in the pack; the scripts will
   drop it.** A person deleted it from the published document.
 - **For every claim listed under *Now in the Brain*, replace its `[FILE:]` tag with the
@@ -230,6 +245,15 @@ as drafted rather than guessing, so it is on you to supply the quote (or decide 
 holds) before this task can be accepted — `accept`'s `zero_unverified` check fails the task
 (published version untouched) while `check-file.json.needs_quote` is non-empty.
 
+For every entry in `check-file.json.modality` (`{"section", "claim", "tag", "quote_marker"}`
+— a `[FILE:]` claim whose fresh transcript quote is hedged, a guess, a question or a
+proposal, but whose own text states it as fact), revise that one claim once — attribute or
+hedge it, move it to Open questions, or delete it, per the drafting rule in step 4 — then
+re-run `$SCRIBE check-file <task>` once more. Do not loop past this single retry: a
+`modality` entry still present after it does not fail this task (`accept` never reads
+`modality`) and is not rewritten by the script — the verifier's `overstated` rule (step 6)
+is the actual gate on it.
+
 Run `$SCRIBE check-task <task>`. It rewrites every `[TASK:up#c:id]` claim whose
 upstream claim is gone or superseded into `Not modeled: upstream claim <up>#c:<id> is
 no longer published.` and writes `work/<id>/check-task.json`. Do not re-draft the
@@ -249,8 +273,12 @@ Dispatch the `kb:verifier` subagent **once for this task**, with a prompt that:
   citation tag. Skip a human-origin claim only when its text and tags are exactly as in
   the base; a human claim whose citation changed is verified like any other. Check every `[RAG:]`,
   `[MART:]` and `[GRAPH:]` tag. `[FILE:]` tags were checked by `check-file` and `[TASK:]` tags
-  by `check-task` — skip claims that carry only those. Return one line per checked claim, exactly:
-  `CLAIM | <section> | <c:xxxxxxxx id from the claim's trailing comment, or -> | <the claim's first 8 words, verbatim> | verified|unsupported|grain-mismatch|uncited-number | <reason>`
+  by `check-task` for evidence — skip claims that carry only those, EXCEPT: for a `[FILE:]`
+  claim drawn from a meeting transcript, also reject it as `overstated` when the cited
+  passage is a question, guess, hypothesis or proposal but the claim states it as a
+  confirmed fact, or when a later turn in the same passage answers or contradicts it and
+  the claim reports the earlier turn instead. Return one line per checked claim, exactly:
+  `CLAIM | <section> | <c:xxxxxxxx id from the claim's trailing comment, or -> | <the claim's first 8 words, verbatim> | verified|unsupported|grain-mismatch|uncited-number|overstated | <reason>`
   and nothing else on those lines."
 
 If the verifier returns `unverified — no Brain reachable …`, fail the task (stage `verifier`).

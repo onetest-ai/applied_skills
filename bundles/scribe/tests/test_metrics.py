@@ -94,6 +94,33 @@ def test_redraft_with_no_new_content_is_false_stale(tmp_path):
     assert s["overview"]["false_stale"] is True
 
 
+def test_merge_counts_modality_flagged_per_section_and_report_summary_totals_it(tmp_path):
+    """F2: `check-file.json.modality` entries (left by the deterministic
+    hedge pre-check, still present after the SKILL's revise-once retry)
+    are counted per-section as `modality_flagged` in `merge.json`, and
+    `report.summary` totals them across the run — without failing
+    anything (accept/merge never reject on this)."""
+    config, data = _setup(tmp_path)
+    work_dir = config.work_dir / "m1"
+    write_json(work_dir / "check-file.json", {"checked": 1, "passed": 1, "human_origin_skipped": 0,
+        "failed": [], "needs_quote": [], "raw_offline_notes": [], "modality": [
+            {"section": "overview", "claim": "aaaa0001", "tag": "[FILE:a.md#p1]", "quote_marker": "maybe"},
+            {"section": "overview", "claim": None, "tag": "[FILE:b.md#p1]", "quote_marker": "?"},
+        ]})
+    draft(config, "m1", "overview", "Keep me. [RAG:1] <!-- c:aaaa0001 -->\n\nNew. [RAG:4]\n")
+
+    merge_task(config, "m1", data["instances"], data["templates"])
+    s = json.loads((work_dir / "merge.json").read_text())["sections"]
+    assert s["overview"]["modality_flagged"] == 2
+    assert s["details"]["modality_flagged"] == 0  # carried section: nothing flagged in it
+
+    write_json(config.out_root / "_runs" / "2026-03-01.json", [
+        {"task": "m1", "status": "published", "version": 2, "merge": s},
+    ])
+    out = report.summary(config, "2026-03-01")
+    assert out["totals"]["modality_flagged"] == 2
+
+
 def test_report_summary_reads_run_rows(tmp_path):
     proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"))
     config, _ = load(proj)

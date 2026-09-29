@@ -52,6 +52,10 @@ whether a term is well-chosen — just capture how it's actually used.
 - **Never state an inference as a finding.** If you're not sure what an
   acronym expands to, don't guess — write `Not modeled: <acronym> seen but
   not expanded anywhere in evidence`.
+- **Keep the speaker's modality.** A claim drawn from a meeting transcript keeps
+  the speaker's modality: a question, guess, hypothesis or proposal is attributed
+  ("<role> asked whether…", "<role> suggested…") or moved to Open questions, never
+  restated as a finding.
 - **Extend, don't rewrite.** Sections that are not stale are carried
   forward byte-for-byte by the merge step — you never see or touch them.
   Only draft the sections you are handed as stale.

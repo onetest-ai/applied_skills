@@ -103,6 +103,42 @@ def test_run_drafting_forbids_uncited_structure():
         assert token in step4, token
 
 
+def test_run_drafting_keeps_speaker_modality_from_transcripts():
+    """F2: step 4's drafting rule — a guess/question/proposal from a
+    transcript is attributed or moved to Open questions, never restated as
+    a finding."""
+    step4 = _step(RUN_SKILL.read_text(encoding="utf-8"), "### 4.", "### 5.")
+    assert "keep the speaker's modality" in step4
+    for token in ("asked whether", "suggested", "unconfirmed whether"):
+        assert token in step4, token
+    assert "never restated as a finding" in step4 or "it is never restated as a finding" in step4
+
+
+def test_run_check_file_and_verifier_cover_modality(tmp_path):
+    """F2: step 5 documents the revise-once loop over `check-file.json`'s
+    `modality` entries; step 6's verifier dispatch documents the
+    `overstated` rejection for a transcript claim that overstates a
+    question/guess/proposal as fact."""
+    text = RUN_SKILL.read_text(encoding="utf-8")
+    step5 = _step(text, "### 5.", "### 6.")
+    assert "modality" in step5
+
+    step6 = _step(text, "### 6.", "### 7.")
+    assert "overstated" in step6
+
+
+TEMPLATES = sorted((SCRIBE_ROOT / "skills" / "run" / "templates").glob("*.tmpl.md"))
+
+
+@pytest.mark.parametrize("path", TEMPLATES, ids=lambda p: p.stem)
+def test_template_guidance_keeps_speaker_modality(path):
+    """F2: every library template's drafting-guidance body carries the same
+    one-sentence rule about not restating a transcript guess/question as a
+    finding (kept consistent across templates)."""
+    text = path.read_text(encoding="utf-8")
+    assert "speaker's modality" in text
+
+
 def test_every_documented_subcommand_and_flag_exists():
     import subprocess
     import sys
