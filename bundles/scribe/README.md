@@ -157,6 +157,11 @@ silent unattended failure still leaves evidence.
   isn't reachable right now. `prepare` still runs — every `[FILE:]` claim is carried forward
   unchanged with a note (never treated as "checked and found nothing") — but no new raw evidence
   is considered until the folder is back online.
+- **Hidden raw files are ignored.** `select_raw_files` and `raw_root_status` skip any
+  dot-file/dot-directory, macOS AppleDouble `._x` sidecar, Office `~$` lock file, and OS-hidden
+  file under `raw_root` — the same rule the Brain applies to source roots — so a `.DS_Store`
+  left in a synced folder is never selected as evidence, and a folder that holds only such files
+  after previously holding real ones still reads as `"empty"`, not `"ok"`.
 - **Stale Brain.** `doctor`'s `brain_handoff` block reports whether the last hand-off run
   applied, deferred or aborted; a run against a stale Brain still proceeds and the published
   Changes block says so, rather than blocking the whole document on an unrelated Brain-side

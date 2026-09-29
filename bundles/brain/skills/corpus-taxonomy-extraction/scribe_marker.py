@@ -9,15 +9,45 @@ skip marked files and a root's ``exclude`` globs through THIS module, or Scribe'
 output re-enters the Brain as its own evidence (or, in strict source mode, the
 unregistered parsed document blocks every ``brain_sync``).
 
+The same module also gates hidden paths: ``skip_reason`` returns ``"hidden"`` (checked
+before exclude/marker) for a dot-file, a dot-dir anywhere in the relative path, an
+AppleDouble sidecar, an Office lock file, or an OS-hidden file — see ``is_hidden``.
+
 Exists twice and the copies must stay byte-identical
 (``corpus-taxonomy-extraction/`` and ``knowledge-pipeline/``), like ``chunking.py``.
 """
 from __future__ import annotations
 
 import re
+import stat
 from pathlib import Path, PurePosixPath
 
 SCRIBE_MARKER = "scribe-task"
+
+
+def is_hidden(path: Path, rel: str) -> bool:
+    """True when ``rel`` is hidden: any path component (dir or file, relative to the
+    scanned root) starts with ``"."`` (dot-files, dot-dirs, macOS AppleDouble
+    ``._x.pdf``), the file name starts with ``"~$"`` (Office lock/owner files), or the
+    OS marks the file hidden (macOS/BSD ``st_flags & UF_HIDDEN``, Windows
+    ``st_file_attributes & FILE_ATTRIBUTE_HIDDEN``, both only when present). Never
+    raises — an unreadable/missing path is simply not hidden by this check."""
+    try:
+        parts = PurePosixPath(rel).parts
+        if any(part.startswith(".") for part in parts):
+            return True
+        if parts and parts[-1].startswith("~$"):
+            return True
+        st = Path(path).stat()
+        uf_hidden = getattr(stat, "UF_HIDDEN", None)
+        if uf_hidden is not None and (getattr(st, "st_flags", 0) & uf_hidden):
+            return True
+        hidden_attr = getattr(stat, "FILE_ATTRIBUTE_HIDDEN", None)
+        if hidden_attr is not None and (getattr(st, "st_file_attributes", 0) & hidden_attr):
+            return True
+    except Exception:
+        return False
+    return False
 
 
 def is_scribe_artifact(path: Path) -> bool:
@@ -52,7 +82,11 @@ def glob_match(rel: str, pattern: str) -> bool:
 
 
 def skip_reason(path: Path, rel: str, excludes=()) -> str | None:
-    """``"excluded"`` / ``"scribe_marker"`` when the file must not be ingested, else None."""
+    """``"hidden"`` / ``"excluded"`` / ``"scribe_marker"`` when the file must not be
+    ingested, else None. ``"hidden"`` is checked first: a hidden path should never
+    reach exclude-glob or marker logic (or register/parse) at all."""
+    if is_hidden(path, rel):
+        return "hidden"
     if any(glob_match(rel, g) for g in excludes):
         return "excluded"
     if is_scribe_artifact(path):

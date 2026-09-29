@@ -17,10 +17,11 @@ import json
 import os
 import re
 import sqlite3
+import stat
 import tomllib
 from dataclasses import dataclass, field
 from datetime import date
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
@@ -718,6 +719,34 @@ def _glob_path_match(rel: str, pattern: str) -> bool:
     return _match(0, 0)
 
 
+def _is_hidden(path: Path, rel: str) -> bool:
+    """Same hidden-path rule as the Brain's scribe_marker.is_hidden (F1): any path
+    component (dir or file, relative to raw_root) starting with "." (dot-files,
+    dot-dirs, macOS AppleDouble ``._x``), a file name starting with "~$" (Office
+    lock/owner files), or the OS marking the file hidden (macOS/BSD ``st_flags &
+    UF_HIDDEN``, Windows ``st_file_attributes & FILE_ATTRIBUTE_HIDDEN``, both only
+    when present). Never raises. Implemented locally rather than imported from the
+    Brain's scribe_marker.py: scribe must not import brain modules at module level
+    (they need a brain venv this plugin doesn't require). A scribe test pins the
+    same cases as the Brain's so the two rules cannot drift silently."""
+    try:
+        parts = PurePosixPath(rel).parts
+        if any(part.startswith(".") for part in parts):
+            return True
+        if parts and parts[-1].startswith("~$"):
+            return True
+        st = Path(path).stat()
+        uf_hidden = getattr(stat, "UF_HIDDEN", None)
+        if uf_hidden is not None and (getattr(st, "st_flags", 0) & uf_hidden):
+            return True
+        hidden_attr = getattr(stat, "FILE_ATTRIBUTE_HIDDEN", None)
+        if hidden_attr is not None and (getattr(st, "st_file_attributes", 0) & hidden_attr):
+            return True
+    except Exception:
+        return False
+    return False
+
+
 def _any_prior_raw_snapshot(config: Config) -> bool:
     """Whether any task's published/observed `state.json` recorded a non-empty
     `raw_snapshot` — i.e. this raw root has had files before. Read-only."""
@@ -741,7 +770,7 @@ def raw_root_status(config: Config) -> str:
     root = config.raw_root
     if not root.is_dir():
         return "missing"
-    if any(p.is_file() for p in root.rglob("*")):
+    if any(p.is_file() and not _is_hidden(p, p.relative_to(root).as_posix()) for p in root.rglob("*")):
         return "ok"
     return "empty" if _any_prior_raw_snapshot(config) else "ok"
 
@@ -809,6 +838,8 @@ def select_raw_files(config: Config, raw_inputs: dict[str, Any]) -> list[Path] |
         if not p.is_file():
             continue
         rel = p.relative_to(root).as_posix()
+        if _is_hidden(p, rel):
+            continue
         if any(_glob_path_match(rel, pattern) for pattern in globs):
             candidates.add(p)
 

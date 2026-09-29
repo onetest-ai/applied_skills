@@ -537,6 +537,11 @@ mis-scoped. Both walkers apply both guards: `source_registry` at registration an
 files are skipped without a flag, and both skips are listed in `parsed/manifest.json`). If you see a Scribe output folder listed as a normal source in `brain source
 status`, run `guard-brain` again (or add the exclude glob by hand) before the next build.
 
+**Hidden files are always skipped.** Both walkers also skip any dot-file/dot-directory,
+macOS AppleDouble `._x` sidecar, Office `~$` lock file, and OS-hidden file (`reason: "hidden"`
+in `skipped_generated`/`parsed/manifest.json`) — checked before the exclude glob and the
+Scribe marker, so a `.cache/` or `.DS_Store` under a source root never reaches either.
+
 **`meta.built_at`.** Every successful `brain_sync` apply (or seed) UPSERTs an ISO-8601 UTC
 timestamp into the store's `meta` table under `built_at` (`brain_sync.write_built_at`).
 `maintenance.py handoff` copies it verbatim into the `built_at` field of the hand-off report it

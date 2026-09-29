@@ -594,14 +594,24 @@ def main(argv=None):
     consumed = _video_lane_consumed(a.out)
     for root, _, files in os.walk(a.corpus):
         for fn in sorted(files):
-            if fn.startswith(".") or fn.startswith("~$"):
-                continue
             src = os.path.join(root, fn)
             rel = os.path.relpath(src, a.corpus)
+            posix_rel = rel.replace(os.sep, "/")
+            # Checked ahead of the format filter (unlike exclude/scribe-marker below):
+            # a hidden file must never surface in the manifest as a silently-dropped
+            # extension, and a hidden DIRECTORY (.cache/x.pdf) must be skipped even
+            # when the file's own extension is otherwise parseable.
+            if scribe_marker.is_hidden(src, posix_rel):
+                manifest.append({"source": rel, "skipped": True, "method": "hidden", "reason": "hidden"})
+                stale = os.path.join(a.out, rel.replace(os.sep, "__") + ".md")
+                if os.path.exists(stale):
+                    os.remove(stale)
+                print(f"[skip] {'hidden':20} {rel}", file=sys.stderr)
+                continue
             ext = os.path.splitext(fn)[1].lower()
             if ext not in allow:
                 continue
-            reason = scribe_marker.skip_reason(src, rel.replace(os.sep, "/"), a.exclude)
+            reason = scribe_marker.skip_reason(src, posix_rel, a.exclude)
             if reason:
                 # Same predicate source_registry uses, so a file the registry never registers
                 # is never parsed into an unmanaged doc (which strict brain_sync refuses).
