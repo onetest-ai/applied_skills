@@ -118,11 +118,11 @@ def test_tag_to_footnote_body_starts_with_the_tag_verbatim(tmp_path, monkeypatch
     line = "A claim. [RAG:3508352047104733571] and [FILE:notes/meeting.vtt#L120] both cited."
     out = _tags_to_footnotes(line, config, instances)
 
-    assert "^[RAG:3508352047104733571 — CX Compendium, p.19]" in out
-    assert "^[FILE:notes/meeting.vtt#L120 — meeting.vtt, L120]" in out
+    assert "^[RAG:3508352047104733571 ¦ CX Compendium, p.19]" in out
+    assert "^[FILE:notes/meeting.vtt#L120 ¦ meeting.vtt, L120]" in out
     # every footnote body starts with exactly "<KIND>:<value>", no brackets
     for body in ("RAG:3508352047104733571", "FILE:notes/meeting.vtt#L120"):
-        assert f"^[{body} — " in out
+        assert f"^[{body} ¦ " in out
 
 
 def test_multiple_tags_on_one_claim_become_multiple_footnotes(tmp_path, monkeypatch):
@@ -132,7 +132,21 @@ def test_multiple_tags_on_one_claim_become_multiple_footnotes(tmp_path, monkeypa
     line = "Cited twice. [RAG:1] [MART:adjustments@division]"
     out = _tags_to_footnotes(line, config, instances)
     assert out.count("^[") == 2
-    assert "^[MART:adjustments@division — adjustments@division]" in out
+    assert "^[MART:adjustments@division ¦ adjustments@division]" in out
+
+
+def test_tag_body_containing_the_footnote_separator_refuses(tmp_path, monkeypatch):
+    """C1 canary: this cannot happen for any tag this codebase generates,
+    but render must refuse rather than emit a footnote basedoc could
+    misparse."""
+    from scribe_lib.config import ScribeError
+
+    config = _config(tmp_path)
+    monkeypatch.setattr(brain_mod, "evidence", _fake_evidence)
+    instances = {"t1": {"title": "Demo Title"}}
+    line = "Bad tag. [GRAPH:contains ¦ broken bar]"
+    with pytest.raises(ScribeError):
+        _tags_to_footnotes(line, config, instances)
 
 
 def test_task_tag_label_uses_upstream_title_and_claim_id():

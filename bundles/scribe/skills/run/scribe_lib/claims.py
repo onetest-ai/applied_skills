@@ -75,6 +75,18 @@ FENCE_RE = re.compile(r"^```(\S*)\s*$")
 # A draft claim matches an unmatched base claim at this normalized-text similarity.
 MATCH_RATIO = 0.9
 
+# C1 — the separator `render._tags_to_footnotes` writes between a footnote's
+# tag body and its source label (`<TAG BODY> ¦ <source label>`), and
+# `basedoc._extract_footnotes` splits a legacy-format footnote on as a last
+# resort. U+00A6 BROKEN BAR: cannot occur in a `KIND:value` tag body this
+# codebase generates (a `[FILE:<path>#<locator>]` locator is a transcript
+# breadcrumb or `§N`, never this glyph) — unlike the em dash `" — "` the
+# original format used, which a VTT breadcrumb locator (`00:17 — Speaker
+# (cue 1) > ...`) legitimately contains, truncating every such tag on a
+# docx round trip (the F3 review's Critical 1). Shared here so render and
+# basedoc can never drift on the exact separator.
+FOOTNOTE_SEP = "¦"
+
 
 def unescape_tag_body(value: str) -> str:
     """Undo Markdown backslash escapes (`\\_` `\\>` `\\*` `\\#` `\\[` `\\(` `\\)`

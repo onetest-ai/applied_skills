@@ -141,17 +141,23 @@ def test_relocation_and_dedupe_are_idempotent_on_a_second_run(tmp_path):
     after_first = (config.work_dir / "m1" / "sections" / "overview.md").read_text(encoding="utf-8")
 
     second = check_file_task(config, "m1", inst)
-    assert second["relocated"] == []
-    assert second["deduped"] == []
+    # I5 (F3 review fix round 1): `check-file.json` is overwritten each run,
+    # so run 1's fix is carried forward into run 2's result rather than
+    # silently disappearing (`report --summary`'s `locators_fixed` would
+    # otherwise undercount). Run 2 itself does nothing NEW — the file on
+    # disk is unchanged.
+    assert second["relocated"] == first["relocated"]
+    assert second["deduped"] == first["deduped"]
     assert second["checked"] == 1 and second["passed"] == 1
     after_second = (config.work_dir / "m1" / "sections" / "overview.md").read_text(encoding="utf-8")
     assert after_second == after_first
 
 
 def test_ambiguous_relocation_picks_the_first_equally_close_section_and_flags_it(tmp_path):
-    """Two sections equidistant from the named (nonexistent) locator both
-    hold the quote — the earlier one in document order wins, and the entry
-    carries `ambiguous: true` for audit."""
+    """Two sections equidistant from the named locator (which exists but
+    does not hold the quote) both hold the quote — the earlier one in
+    document order wins, and the entry carries `ambiguous: true` for
+    audit."""
     config, data, inst = _setup(tmp_path)
     raw = (
         "## Cue A\n\nThe shared quoted line appears here too.\n\n"
@@ -172,6 +178,105 @@ def test_ambiguous_relocation_picks_the_first_equally_close_section_and_flags_it
     assert entry["from"] == "Cue B"
     assert entry["to"] == "Cue A"
     assert entry["ambiguous"] is True
+
+
+def _seed_three_section_raw(config, task_id, path: str = "f.txt") -> None:
+    text = (
+        "## C1\n\nalpha content here.\n\n"
+        "## C2\n\nbeta content here.\n\n"
+        "## C3\n\ngamma content here.\n"
+    )
+    _seed_raw(config, task_id, path=path, text=text)
+
+
+def test_two_tags_on_one_claim_to_the_same_file_relocate_independently_and_stay_idempotent(tmp_path):
+    """C2 (F3 review fix round 1, Critical 2): a claim citing the SAME file
+    at two different cues must not have relocation confuse one tag's quote
+    for the other's, and must stay stable across repeated runs — the
+    dropped `(claim_ref, path)` fallback used to bounce the second tag
+    between sections (C2 -> C3, then C3 -> C1, then dedupe removed it) on
+    every run."""
+    config, data, inst = _setup(tmp_path)
+    _seed_three_section_raw(config, "m1")
+    draft(
+        config, "m1", "overview",
+        "Two cues cited. [FILE:f.txt#C1] [FILE:f.txt#C2]\n",
+        evidence=[
+            {"claim_ref": 0, "tag": "[FILE:f.txt#C1]", "quote": "alpha content here."},
+            {"claim_ref": 0, "tag": "[FILE:f.txt#C2]", "quote": "gamma content here."},
+        ],
+    )
+
+    first = check_file_task(config, "m1", inst)
+    assert first["relocated"] == [{"section": "overview", "claim": None, "from": "C2", "to": "C3"}]
+    assert first["checked"] == 1 and first["passed"] == 1
+    text1 = (config.work_dir / "m1" / "sections" / "overview.md").read_text(encoding="utf-8")
+    assert "[FILE:f.txt#C1]" in text1 and "[FILE:f.txt#C3]" in text1
+
+    for _ in range(2):
+        again = check_file_task(config, "m1", inst)
+        assert again["relocated"] == first["relocated"]  # carried forward (I5), not re-relocated
+        assert again["checked"] == 1 and again["passed"] == 1
+        text_again = (config.work_dir / "m1" / "sections" / "overview.md").read_text(encoding="utf-8")
+        assert text_again == text1
+
+
+def test_tag_with_no_evidence_entry_fails_even_next_to_a_quoted_sibling(tmp_path):
+    """C3 (F3 review fix round 1, Critical 3): a tag with no `evidence.json`
+    entry of its own fails "missing evidence quote" exactly as before F3 —
+    it must never borrow a sibling tag's quote just because they cite the
+    same file."""
+    config, data, inst = _setup(tmp_path)
+    _seed_three_section_raw(config, "m1")
+    draft(
+        config, "m1", "overview",
+        "Only one cue has evidence. [FILE:f.txt#C1] [FILE:f.txt#C3]\n",
+        evidence=[{"claim_ref": 0, "tag": "[FILE:f.txt#C1]", "quote": "alpha content here."}],
+    )
+
+    result = check_file_task(config, "m1", inst)
+
+    assert result["relocated"] == []
+    assert result["checked"] == 1 and result["passed"] == 0
+    assert result["failed"][0]["reason"] == "missing evidence quote"
+    assert result["failed"][0]["tag"] == "[FILE:f.txt#C3]"
+    rewritten = (config.work_dir / "m1" / "sections" / "overview.md").read_text(encoding="utf-8")
+    assert "Not modeled: missing evidence quote." in rewritten
+
+
+def test_human_claim_with_duplicate_tags_is_never_touched_and_keeps_origin_through_merge(tmp_path):
+    """C4 (F3 review fix round 1, Critical 4): dedupe/relocation must run
+    AFTER the human-origin skip — a human-authored claim (text and tags
+    unchanged from base) is left byte-identical by check-file even when it
+    carries a duplicate tag, and merge still categorizes it `kept` and
+    keeps `origin=human`."""
+    from scribe_lib.merge import merge_task as _merge_task
+    from scribe_fixtures import plan_stale as _plan_stale
+
+    config, data, inst = _setup(tmp_path)
+    _seed_three_section_raw(config, "m1")
+    claim_text = "A human wrote this twice-cited note. [FILE:f.txt#C1] [FILE:f.txt#C1]"
+    work_dir = config.work_dir / "m1"
+    write_text(
+        work_dir / "base.md",
+        f"## Overview {{#overview}}\n\n{claim_text} <!-- c:aaaa0001 origin=human -->\n\n"
+        "## Details {#details}\n\nn/a\n",
+    )
+    draft(config, "m1", "overview", f"{claim_text} <!-- c:aaaa0001 origin=human -->\n")
+
+    result = check_file_task(config, "m1", inst)
+    assert result["human_origin_skipped"] == 1
+    assert result["deduped"] == []
+    assert result["relocated"] == []
+    rewritten = (work_dir / "sections" / "overview.md").read_text(encoding="utf-8")
+    assert rewritten == f"{claim_text} <!-- c:aaaa0001 origin=human -->\n"
+
+    _plan_stale(config, "m1", ["overview"], ["details"])
+    merged = _merge_task(config, "m1", data["instances"], data["templates"])
+    assert merged["sections"]["overview"]["kept"] == 1
+    next_overview = (work_dir / "next.md").read_text(encoding="utf-8")
+    assert "origin=human" in next_overview
+    assert next_overview.count("[FILE:f.txt#C1]") == 2
 
 
 def test_merge_counts_locators_fixed_per_section_and_report_summary_totals_it(tmp_path):

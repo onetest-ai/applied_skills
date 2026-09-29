@@ -435,16 +435,20 @@ def test_check_file_removes_claim_with_absent_quote(tmp_path):
         raw_dir / "manifest.json",
         [{"path": "note.txt", "sha256": "deadbeef", "md": "note.txt.md", "status": "ok", "reason": "test"}],
     )
+    # `note.txt.md` has no headings, so `chunking` folds it into one
+    # section, locator `§1` — the tag below names that section directly so
+    # this test's point (a claim with an absent quote still fails, one with
+    # a real quote still passes) isn't entangled with F3 relocation.
     write_text(
         work_dir / "sections" / "overview.md",
-        "- Widget adjustment recorded in Q1. [FILE:note.txt#L1]\n"
-        "- Widget revenue doubled overnight. [FILE:note.txt#L2]\n",
+        "- Widget adjustment recorded in Q1. [FILE:note.txt#§1]\n"
+        "- Widget revenue doubled overnight. [FILE:note.txt#§1]\n",
     )
     write_json(
         work_dir / "sections" / "overview.evidence.json",
         [
-            {"claim_ref": 0, "tag": "[FILE:note.txt#L1]", "quote": "Widget adjustment recorded in Q1."},
-            {"claim_ref": 1, "tag": "[FILE:note.txt#L2]", "quote": "Widget revenue doubled overnight."},
+            {"claim_ref": 0, "tag": "[FILE:note.txt#§1]", "quote": "Widget adjustment recorded in Q1."},
+            {"claim_ref": 1, "tag": "[FILE:note.txt#§1]", "quote": "Widget revenue doubled overnight."},
         ],
     )
 
@@ -457,12 +461,13 @@ def test_check_file_removes_claim_with_absent_quote(tmp_path):
         "claim_ref": 1,
         "claim": None,
         "normalized": "widget revenue doubled overnight.",
-        "tag": "[FILE:note.txt#L2]",
+        "tag": "[FILE:note.txt#§1]",
         "reason": "quote not found in note.txt",
     }
+    assert result["relocated"] == []
 
     rewritten = (work_dir / "sections" / "overview.md").read_text(encoding="utf-8")
-    assert "Widget adjustment recorded in Q1. [FILE:note.txt#L1]" in rewritten
+    assert "Widget adjustment recorded in Q1. [FILE:note.txt#§1]" in rewritten
     assert "Not modeled: quote not found in note.txt." in rewritten
     assert "Widget revenue doubled overnight" not in rewritten
 
@@ -501,16 +506,19 @@ def test_check_file_is_idempotent_on_a_second_run(tmp_path):
         raw_dir / "manifest.json",
         [{"path": "note.txt", "sha256": "x", "md": "note.txt.md", "status": "ok", "reason": "test"}],
     )
+    # `note.txt.md` has no headings, so `chunking` folds it into one
+    # section, locator `§1` — named directly so this idempotency probe
+    # isn't entangled with F3 relocation.
     write_text(
         work_dir / "sections" / "overview.md",
-        "- A bogus claim with a bad quote. [FILE:note.txt#L1]\n"
-        "- beta fact. [FILE:note.txt#L2]\n",
+        "- A bogus claim with a bad quote. [FILE:note.txt#§1]\n"
+        "- beta fact. [FILE:note.txt#§1]\n",
     )
     write_json(
         work_dir / "sections" / "overview.evidence.json",
         [
-            {"claim_ref": 0, "tag": "[FILE:note.txt#L1]", "quote": "this text is not in the raw file at all"},
-            {"claim_ref": 1, "tag": "[FILE:note.txt#L2]", "quote": "beta fact"},
+            {"claim_ref": 0, "tag": "[FILE:note.txt#§1]", "quote": "this text is not in the raw file at all"},
+            {"claim_ref": 1, "tag": "[FILE:note.txt#§1]", "quote": "beta fact"},
         ],
     )
 
@@ -518,17 +526,19 @@ def test_check_file_is_idempotent_on_a_second_run(tmp_path):
     assert result1["checked"] == 2
     assert result1["passed"] == 1
     assert [f["claim_ref"] for f in result1["failed"]] == [0]
+    assert result1["relocated"] == []
     section_after_run1 = (work_dir / "sections" / "overview.md").read_text(encoding="utf-8")
-    assert "beta fact. [FILE:note.txt#L2]" in section_after_run1
+    assert "beta fact. [FILE:note.txt#§1]" in section_after_run1
     assert "<!-- cf:0 -->" in section_after_run1  # the stable-position marker was written
 
     result2 = check_file_task(config, "m1")
     assert result2["failed"] == []  # nothing NEW fails; the already-resolved claim is not re-checked
     assert result2["checked"] == 1
     assert result2["passed"] == 1
+    assert result2["relocated"] == []
     section_after_run2 = (work_dir / "sections" / "overview.md").read_text(encoding="utf-8")
     assert section_after_run2 == section_after_run1  # byte-for-byte identical — nothing changed
-    assert "beta fact. [FILE:note.txt#L2]" in section_after_run2  # still intact, not destroyed
+    assert "beta fact. [FILE:note.txt#§1]" in section_after_run2  # still intact, not destroyed
 
 
 # ----------------------------------------------------------------- modality --
@@ -548,23 +558,24 @@ def test_check_file_flags_hedged_quote_with_unhedged_claim(tmp_path):
     )
     write_text(
         work_dir / "sections" / "overview.md",
-        "We will switch vendors next quarter. [FILE:note.txt#L1]\n",
+        "We will switch vendors next quarter. [FILE:note.txt#§1]\n",
     )
     write_json(
         work_dir / "sections" / "overview.evidence.json",
-        [{"claim_ref": 0, "tag": "[FILE:note.txt#L1]", "quote": "Maybe we should switch vendors next quarter."}],
+        [{"claim_ref": 0, "tag": "[FILE:note.txt#§1]", "quote": "Maybe we should switch vendors next quarter."}],
     )
 
     result = check_file_task(config, "m1")
     assert result["modality"] == [
-        {"section": "overview", "claim": None, "claim_ref": 0, "tag": "[FILE:note.txt#L1]", "quote_marker": "maybe"}
+        {"section": "overview", "claim": None, "claim_ref": 0, "tag": "[FILE:note.txt#§1]", "quote_marker": "maybe"}
     ]
     # Never rewritten and never counted as a failure — the claim is
     # unchanged and still passes check-file's ordinary evidence check.
     assert result["failed"] == []
     assert result["checked"] == 1 and result["passed"] == 1
+    assert result["relocated"] == []
     rewritten = (work_dir / "sections" / "overview.md").read_text(encoding="utf-8")
-    assert "We will switch vendors next quarter. [FILE:note.txt#L1]" in rewritten
+    assert "We will switch vendors next quarter. [FILE:note.txt#§1]" in rewritten
 
 
 def test_check_file_does_not_flag_an_attributed_claim(tmp_path):
@@ -663,19 +674,20 @@ def test_check_file_ignores_a_marker_word_that_only_appears_in_the_cited_path(tm
     )
     write_text(
         work_dir / "sections" / "overview.md",
-        "We will switch vendors next quarter. [FILE:2026-may-12 sync.txt#L1]\n",
+        "We will switch vendors next quarter. [FILE:2026-may-12 sync.txt#§1]\n",
     )
     write_json(
         work_dir / "sections" / "overview.evidence.json",
-        [{"claim_ref": 0, "tag": "[FILE:2026-may-12 sync.txt#L1]",
+        [{"claim_ref": 0, "tag": "[FILE:2026-may-12 sync.txt#§1]",
           "quote": "Maybe we should switch vendors next quarter."}],
     )
 
     result = check_file_task(config, "m1")
     assert result["modality"] == [
         {"section": "overview", "claim": None, "claim_ref": 0,
-         "tag": "[FILE:2026-may-12 sync.txt#L1]", "quote_marker": "maybe"}
+         "tag": "[FILE:2026-may-12 sync.txt#§1]", "quote_marker": "maybe"}
     ]
+    assert result["relocated"] == []
 
 
 def test_check_file_does_not_flag_a_human_authored_claim(tmp_path):

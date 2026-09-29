@@ -13,12 +13,23 @@ Three passes over the Document Markdown source, in this order:
    reader treats it as literal text instead of dropping it as raw inline
    HTML (m3) — see `_escape_angles_outside_tags`.
 3. **Tags -> pandoc footnotes.** Each `[RAG:...]`/`[MART:...]`/`[GRAPH:...]`/
-   `[FILE:...]`/`[TASK:...]` becomes `^[<TAG BODY> — <source label>]`, where
-   `<TAG BODY>` is `KIND:value` verbatim (no brackets) — this is the exact
-   inverse of `basedoc._extract_footnotes`/`_reinsert_tags`, which
-   splits a recovered footnote's text on the same `" — "` (em dash) and
-   reinserts everything before it, wrapped in `[]`, as the tag. Several tags
-   on one claim -> several footnotes, one per tag, in order.
+   `[FILE:...]`/`[TASK:...]` becomes `^[<TAG BODY> ¦ <source label>]` (`¦` =
+   `claims.FOOTNOTE_SEP`, U+00A6 BROKEN BAR), where `<TAG BODY>` is
+   `KIND:value` verbatim (no brackets). `_tags_to_footnotes` refuses (raises
+   `ScribeError`) if a tag body itself contains that glyph — it cannot,
+   for any tag this codebase generates, so this is a canary, not a real
+   code path. C1 (F3 review, Critical 1): the separator used to be `" — "`
+   (an em dash), which a VTT `[FILE:]` locator legitimately contains
+   (`00:17 — Speaker (cue 1) > 03:26 — ...`), so `basedoc._extract_footnotes`
+   splitting the recovered footnote text on the first `" — "` truncated
+   every such tag to its first timestamp on a docx round trip, collapsing
+   distinct cues of the same file into duplicate tags. `basedoc` now
+   recovers the tag body primarily by matching the footnote text against
+   the previous version's own tag bodies (present regardless of which
+   separator rendered it), falling back to splitting on `" ¦ "`, and only
+   as a last resort on the legacy `" — "` for a docx rendered before this
+   fix. Several tags on one claim -> several footnotes, one per tag, in
+   order.
 4. **Mermaid fences -> images.** A ` ```mermaid ` fence is written to
    `render/diagrams/<section>-<n>.mmd` (n = 1-based, per section id seen so
    far this render; the doc's own H1 before any `## Title {#id}` heading
@@ -191,8 +202,15 @@ def _tags_to_footnotes(text: str, config: Config, instances: dict[str, Any]) -> 
     def _sub(m: re.Match[str]) -> str:
         kind, value = m.group(1), claims.unescape_tag_body(m.group(2))
         tag_body = f"{kind}:{value}"
+        if claims.FOOTNOTE_SEP in tag_body:
+            # Cannot happen for any tag body this codebase generates (see
+            # module docstring, C1) — refuse rather than silently emit a
+            # footnote `basedoc` could misparse.
+            raise ScribeError(
+                f"tag body contains the footnote separator {claims.FOOTNOTE_SEP!r}: {tag_body!r}"
+            )
         label = _footnote_label(config, instances, kind, value)
-        return f"^[{_md_literal(tag_body)} — {_md_literal(label)}]"
+        return f"^[{_md_literal(tag_body)} {claims.FOOTNOTE_SEP} {_md_literal(label)}]"
 
     return claims.TAG_RE.sub(_sub, text)
 

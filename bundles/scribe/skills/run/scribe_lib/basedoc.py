@@ -22,11 +22,22 @@ base has to be recovered from it:
      tracked insertions are accepted, tracked deletions and Word comments
      dropped.
   2. Footnote -> tag: a citation tag was rendered (by `render`) as a
-     footnote whose text begins with the tag, e.g. `RAG:123 — <source label>`
-     (tag = the footnote text up to the first " — "). Each `[^N]` reference is
+     footnote whose text begins with the tag, e.g. `RAG:123 ¦ <source label>`
+     (`¦` = `claims.FOOTNOTE_SEP`, U+00A6 BROKEN BAR). Each `[^N]` reference is
      replaced by ` [<tag>]` at its point of use; footnote *definitions* are
      dropped once absorbed. Tag bodies are unescaped (pandoc's gfm writer
-     backslash-escapes `_`, `>`, `*`, ... in footnote text).
+     backslash-escapes `_`, `>`, `*`, ... in footnote text). C1 (F3 review,
+     Critical 1): the tag body is recovered by (1) the longest tag body from
+     the PREVIOUS published version (`_src/vNNN.md`, every section) that is a
+     prefix of the footnote text — the robust path, since that text is
+     exactly what `render` wrote from those same tags regardless of which
+     separator it used; else (2) splitting on `" ¦ "` (current format); else
+     (3) splitting on the first `" — "` (legacy format, before this fix —
+     an em dash a VTT breadcrumb locator can legitimately contain, which is
+     why (1)/(2) are tried first: splitting *that* on `" — "` truncates a
+     `[FILE:<path>#00:17 — Speaker (cue 1) > 03:26 — ...>]` tag to its first
+     timestamp, colliding distinct cues of the same file into one tag).
+     See `_recover_tag_body`.
   3. Headings -> section ids: pandoc's docx round-trip does not preserve the
      `{#section-id}` attribute, so a level-2 heading is matched to a section by
      TITLE (params substituted; case- and whitespace-insensitive). Every H2
@@ -113,8 +124,41 @@ def _docx_to_gfm(path: Path) -> str:
     return proc.stdout
 
 
-def _extract_footnotes(gfm: str) -> tuple[str, dict[str, str]]:
-    """Split gfm into (body without footnote definitions, {num: tag})."""
+def _known_tag_bodies(prev_text: str) -> frozenset[str]:
+    """Every tag body (`KIND:value`, no brackets, unescaped) cited anywhere
+    in the previous published version — the recovery set `_recover_tag_body`
+    matches a footnote's text against first, since that text is exactly
+    what `render` wrote from one of these tags."""
+    return frozenset(t[1:-1] for t in claims.tags_in(prev_text))
+
+
+def _recover_tag_body(text: str, known_tag_bodies: frozenset[str]) -> str:
+    """C1 (F3 review, Critical 1): recover a footnote's tag body from its
+    (already-unescaped) text, in order:
+      1. the LONGEST body in `known_tag_bodies` that is a prefix of `text` —
+         robust regardless of which separator rendered it, and the only path
+         that survives a tag body (e.g. a VTT breadcrumb locator) containing
+         either separator itself;
+      2. else split on `" ¦ "` (`claims.FOOTNOTE_SEP`, current format);
+      3. else split on the first `" — "` (legacy format, before this fix).
+    """
+    best: str | None = None
+    for body in known_tag_bodies:
+        if text.startswith(body) and (best is None or len(body) > len(best)):
+            best = body
+    if best is not None:
+        return best
+    sep = f" {claims.FOOTNOTE_SEP} "
+    if sep in text:
+        return text.split(sep, 1)[0].strip()
+    return text.split(" — ", 1)[0].strip()
+
+
+def _extract_footnotes(gfm: str, known_tag_bodies: frozenset[str] = frozenset()) -> tuple[str, dict[str, str]]:
+    """Split gfm into (body without footnote definitions, {num: tag}).
+    `known_tag_bodies` — every tag body cited in the previous published
+    version (`_known_tag_bodies`) — drives `_recover_tag_body`'s primary
+    recovery path."""
     lines = gfm.splitlines()
     defs: dict[str, str] = {}
     body_lines: list[str] = []
@@ -128,7 +172,8 @@ def _extract_footnotes(gfm: str) -> tuple[str, dict[str, str]]:
                 if lines[j].strip():
                     rest += " " + lines[j].strip()
                 j += 1
-            defs[num] = claims.unescape_tag_body(rest.split(" — ", 1)[0].strip())
+            text = claims.unescape_tag_body(rest.strip())
+            defs[num] = _recover_tag_body(text, known_tag_bodies)
             i = j
             continue
         body_lines.append(lines[i])
@@ -552,7 +597,7 @@ def base_task(
         return _unedited()
 
     gfm = _docx_to_gfm(docx_path)
-    body, footnote_defs = _extract_footnotes(gfm)
+    body, footnote_defs = _extract_footnotes(gfm, _known_tag_bodies(prev_text_restored))
     body = _reinsert_tags(body, footnote_defs)
 
     params = instance.get("params") or {}

@@ -175,3 +175,43 @@ def test_text_under_the_title_before_the_first_section_is_refused(tmp_path):
     config, data, inst, tpl = _setup(tmp_path)
     _edited_docx(config.out_root / "m1" / "Mini m1.docx", OV, DT, preamble="Draft - do not circulate.\n\n")
     _assert_structure_refused(config, base_task(config, "m1", inst, tpl), ["text before the first section"])
+
+
+def test_vtt_locator_with_em_dash_survives_a_docx_edit_and_two_cues_stay_distinct(tmp_path):
+    """C1 (F3 review, Critical 1): a `[FILE:]` locator that itself contains
+    ` — ` (a VTT breadcrumb, `00:17 — Speaker (cue 1) > 03:26 — Speaker (cue
+    2)`) is recovered intact from an edited docx — not truncated to its
+    first timestamp — because `_recover_tag_body`'s primary path matches
+    the footnote text against the PREVIOUS published version's own tag
+    bodies (`_known_tag_bodies`), regardless of which separator the
+    footnote used. Two distinct cues of the same file therefore stay two
+    distinct tags, not one duplicated tag."""
+    loc1 = "00:17 — Tatiana Milova (cue 1) > 03:26 — Viachaslau Hurski (cue 31)"
+    loc2 = "03:40 — Tatiana Milova (cue 32) > 05:12 — Viachaslau Hurski (cue 40)"
+    tag1 = f"[FILE:transcript.vtt#{loc1}]"
+    tag2 = f"[FILE:transcript.vtt#{loc2}]"
+
+    proj = setup_mini_project(tmp_path, brain_db=fixture_brain_db(tmp_path / "k.sqlite"))
+    config, data = load(proj)
+    inst, tpl = data["instances"]["m1"], data["templates"]["mini-profile"]
+    v1_overview = f"First cue. {tag1} <!-- c:aaaa0001 -->\n\nSecond cue, same file. {tag2} <!-- c:aaaa0002 -->"
+    publish_seed(
+        config, inst, doc("m1", 1, "Mini m1", {"overview": v1_overview, "details": V1_DETAILS}), 1,
+        docx_sha="sha-at-publish",
+    )
+
+    # A docx round trip escapes the tag body's own punctuation (pandoc's gfm
+    # writer would too) — spelled out here with the LEGACY " — " separator
+    # (the worst case: this is exactly what a docx rendered before this fix
+    # would still contain), so the fix is proven against the format that
+    # actually caused the defect, not just the new one.
+    _edited_docx(
+        config.out_root / "m1" / "Mini m1.docx",
+        f"First cue.^[FILE:transcript.vtt#{loc1} — transcript.vtt, {loc1}]\n\n"
+        f"Second cue, same file.^[FILE:transcript.vtt#{loc2} — transcript.vtt, {loc2}]",
+        DT,
+    )
+    base_task(config, "m1", inst, tpl)
+    base_md = (config.work_dir / "m1" / "base.md").read_text(encoding="utf-8")
+    assert tag1 in base_md
+    assert tag2 in base_md

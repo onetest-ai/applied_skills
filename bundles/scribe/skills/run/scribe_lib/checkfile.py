@@ -111,29 +111,51 @@ inputs changes nothing.
 
 **F3 — a `[FILE:]` tag's locator is corrected to the section that actually
 holds its fresh quote, and an exact-duplicate tag on the same claim is
-removed.** Both run once per claim, before the pass/fail decision below, and
-only touch a tag that has a fresh `evidence.json` quote — a carried tag
-(sha-verified, no fresh quote) is never relocated or deduped away from a
-matching duplicate check, because `_lookup_evidence` (which resolves an
-entry by exact tag, falling back to the claim's `(claim_idx, path)` so a
-tag already relocated on an earlier run still finds its original quote
-entry — evidence.json is never rewritten) returns nothing for it. `_dedupe_
-file_tags` removes every `[FILE:]` occurrence after the first with the
-IDENTICAL tag string (path AND locator), recording each removal in
+removed.** Both run once per claim, once the claim is known NOT to be a
+human-authored one left exactly as drafted (C4, F3 review fix round 1,
+Critical 4 — dedupe/relocation run AFTER the human-origin skip above, on
+the claim exactly as the human wrote it; running them first would strip a
+human's own duplicate tag before that comparison and make the claim fall
+through to "missing evidence quote" instead of being skipped, and even
+when it survives, merge would then see a `recited` category and drop its
+`origin=human`). Before the pass/fail decision below, and only touching a
+tag that has a fresh `evidence.json` quote — a carried tag (sha-verified,
+no fresh quote) is never relocated or deduped away from a matching
+duplicate check, since it has no entry in `evidence_by_key`. `evidence_by_
+key` is looked up by the EXACT `(claim_idx, tag)` key ONLY (C2/C3, F3
+review fix round 1, Critical 2/3 — never a `(claim_idx, path)` fallback: a
+claim that cites the same file at two different cues must never have one
+cue's quote silently verify the other, and a tag with no evidence entry of
+its own must still fail "missing evidence quote" exactly as before F3).
+`_dedupe_file_tags` removes every `[FILE:]` occurrence after the first with
+the IDENTICAL tag string (path AND locator), recording each removal in
 `deduped: [{"section", "claim", "tag"}]`. `_relocate_file_tags` then, for
 each remaining `[FILE:]` tag with a quote, re-derives the parsed raw file's
 sections the SAME way `raw.py` built `raw.sqlite` (`chunking.section_
 records`, locator = `breadcrumb_path` or `§<ordinal>`) and checks whether
-the quote is in the section the tag names; if not, but the quote IS in
-exactly one other section, the tag's locator is rewritten to it; several
-equally-close matches (by section-index distance from the named locator)
-rewrite to the first in document order and add `"ambiguous": true` to the
-`relocated` entry (`[{"section", "claim", "from", "to"}]`). A quote found
-in no section at all is left alone and falls through to fail exactly as
-before ("quote not found in `<path>`"). Because a correctly-relocated tag's
-named section already holds the quote, a second run is a no-op — nothing is
-re-relocated or re-deduped. `report.py`'s `report --summary` totals both as
-`locators_fixed` (relocated + deduped), same style as `modality_flagged`.
+the quote is in the section the tag names; if not — including when the
+tag's locator names no section this parse produced AT ALL (C1(c)) — but the
+quote IS in exactly one section, the tag's locator is rewritten to it;
+several equally-close matches (by section-index distance from the named
+locator, or all equally near when the locator named no section) rewrite to
+the first in document order and add `"ambiguous": true` to the `relocated`
+entry (`[{"section", "claim", "from", "to"}]`). A quote found in no section
+at all is left alone and falls through to fail exactly as before ("quote
+not found in `<path>`"). When a tag IS relocated, its `evidence_by_key`
+entry is re-keyed to the new tag and the entry's own `"tag"` field
+rewritten to match, and the section's `evidence.json` is rewritten to
+disk — so a later run's exact-tag lookup still finds the same quote under
+the tag as it now reads, without any path-based guessing (this is what
+C2/C3's exact-only lookup needs to stay idempotent). Because a
+correctly-relocated tag's named section already holds the quote, a second
+run makes no further change to it. `report.py`'s `report --summary` totals
+both as `locators_fixed` (relocated + deduped), same style as
+`modality_flagged` — I5 (F3 review fix round 1): since `check-file.json` is
+overwritten on every run, `_merge_dedup` carries an earlier run's
+`relocated`/`deduped` entries (from THIS same prepare cycle — `prepare`
+clears `check-file.json` between actual cycles) forward into this run's
+result, so a fix made on an earlier, now-idempotent-and-silent run is
+still counted.
 
 **F2 — a hedged transcript quote under an unhedged claim is flagged, never
 rewritten.** A meeting transcript's own words often carry a question, a
@@ -417,45 +439,43 @@ def _file_sections(config: Config, raw_text: str) -> list[tuple[str, str]]:
     ]
 
 
-def _lookup_evidence(
-    claim_idx: int, tag: str, evidence_by_key: dict[tuple[int, str], dict[str, Any]],
-    evidence_by_path: dict[tuple[int, str], dict[str, Any]],
-) -> dict[str, Any] | None:
-    """The `evidence.json` entry for this claim's tag: by exact (claim_idx,
-    tag) first, else by (claim_idx, path) — the fallback that keeps a
-    relocated tag's entry findable on a second run, since `evidence.json`
-    itself is never rewritten (it still names the ORIGINAL locator)."""
-    entry = evidence_by_key.get((claim_idx, tag))
-    if entry is not None:
-        return entry
-    try:
-        _, value = claims.parse_tag(tag)
-    except ValueError:
-        return None
-    return evidence_by_path.get((claim_idx, value.split("#", 1)[0]))
-
-
 def _relocate_file_tags(
     config: Config,
     sid: str,
     block: dict[str, Any],
     claim_idx: int,
     evidence_by_key: dict[tuple[int, str], dict[str, Any]],
-    evidence_by_path: dict[tuple[int, str], dict[str, Any]],
     manifest: dict[str, dict[str, Any]],
     raw_dir: Path,
     relocated: list[dict[str, Any]],
-) -> bool:
+) -> tuple[bool, bool]:
     """F3: rewrite a `[FILE:]` tag's locator to the section that actually
     contains its fresh evidence quote, when the section it currently names
-    does not. Mutates `block` in place; appends to `relocated`. Returns
-    whether anything changed. Never touches a tag with no fresh quote (a
-    carried tag, verified by sha not text) or a quote that is found nowhere
-    in the parsed raw file at all — that still fails, unchanged, in the
-    normal check below."""
-    changed = False
+    does not (or names no section at all — C1(c), F3 review fix round 1:
+    relocated to the containing/nearest section rather than left alone,
+    since there is no section it names that could hold the quote, so the
+    drafted locator is simply wrong, not merely displaced). Mutates `block`
+    in place; appends to `relocated`. Returns `(block_changed,
+    evidence_changed)`.
+
+    C2/C3 (F3 review fix round 1, Critical 2/3): looks up a tag's quote by
+    the EXACT (claim_idx, tag) key ONLY — never falling back to another tag
+    on the same path — so a tag with no evidence entry of its own never
+    borrows a sibling tag's quote (a claim that cites the same file twice,
+    at two different cues, must not have one cue's quote silently verify
+    the other). When a tag IS relocated, its `evidence_by_key` entry is
+    re-keyed to the NEW tag and the entry's own `"tag"` field is rewritten
+    to match (the caller persists this to `evidence.json`), so a later run's
+    exact-tag lookup still finds the same quote under the tag as it now
+    reads — this is what makes relocation idempotent without a path
+    fallback. Never touches a tag with no fresh quote (a carried tag,
+    verified by sha not text) or a quote that is found nowhere in the
+    parsed raw file at all — that still fails, unchanged, in the normal
+    check below."""
+    block_changed = False
+    evidence_changed = False
     for tag in [t for t in block["tags"] if t.startswith("[FILE:")]:
-        entry = _lookup_evidence(claim_idx, tag, evidence_by_key, evidence_by_path)
+        entry = evidence_by_key.get((claim_idx, tag))
         quote = (entry or {}).get("quote") or ""
         if not quote:
             continue
@@ -471,21 +491,20 @@ def _relocate_file_tags(
         sects = _file_sections(config, raw_md_path.read_text(encoding="utf-8"))
         norm_quote = _normalize_ws(quote)
         named_idx = next((i for i, (loc, _) in enumerate(sects) if loc == locator), None)
-        if named_idx is None:
-            # The drafted locator doesn't match any section this parse
-            # produced at all (a hand-written/legacy locator, or a raw file
-            # with no headings at all so `chunking` folds it into one
-            # `§1` section under a different name) — there is no "section
-            # it names" to check against, so leave it for the ordinary
-            # full-text quote check below rather than guessing.
-            continue
-        if norm_quote in _normalize_ws(sects[named_idx][1]):
+        if named_idx is not None and norm_quote in _normalize_ws(sects[named_idx][1]):
             continue  # already in the section it names
         matches = [i for i, (_, body) in enumerate(sects) if norm_quote in _normalize_ws(body)]
         if not matches:
             continue  # nowhere in the parsed file — falls through to fail as before
-        best = min(abs(i - named_idx) for i in matches)
-        candidates = [i for i in matches if abs(i - named_idx) == best]
+        # `named_idx is None` (the locator names no section at all) picks
+        # the nearest by treating every match as equally near (first in
+        # document order), flagged ambiguous along with the rest when it
+        # isn't the only one.
+        if named_idx is not None:
+            best = min(abs(i - named_idx) for i in matches)
+            candidates = [i for i in matches if abs(i - named_idx) == best]
+        else:
+            candidates = matches
         new_locator = sects[candidates[0]][0]
         if new_locator == locator:
             continue
@@ -495,8 +514,43 @@ def _relocate_file_tags(
             entry_out["ambiguous"] = True
         relocated.append(entry_out)
         _refresh_block_from_raw(block, _replace_tag_in_raw(block["raw"], tag, new_tag))
-        changed = True
-    return changed
+        block_changed = True
+        del evidence_by_key[(claim_idx, tag)]
+        entry["tag"] = new_tag
+        evidence_by_key[(claim_idx, new_tag)] = entry
+        evidence_changed = True
+    return block_changed, evidence_changed
+
+
+def _load_prev_check_file(work_dir: Path) -> dict[str, Any]:
+    path = work_dir / "check-file.json"
+    if not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+
+def _merge_dedup(
+    prev: list[dict[str, Any]], new: list[dict[str, Any]], key_fields: tuple[str, ...]
+) -> list[dict[str, Any]]:
+    """`prev + new`, deduped by `key_fields`, prev entries first — I5 (F3
+    review fix round 1): a re-run within the same prepare cycle overwrites
+    `check-file.json`, so a fix an earlier run in this cycle already made
+    (and which this run's idempotent re-check therefore finds nothing new
+    to do) must be carried forward or `report --summary`'s `locators_fixed`
+    undercounts it. `prepare` clears `check-file.json` between actual
+    cycles, so this never accumulates across nights."""
+    seen: set[tuple[Any, ...]] = set()
+    out: list[dict[str, Any]] = []
+    for entry in prev + new:
+        key = tuple(entry.get(k) for k in key_fields)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(entry)
+    return out
 
 
 def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -507,6 +561,7 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
     base_claims_by_section = _base_claims_by_section(work_dir)
     state_sections = (read_state(config, instance).get("sections") or {}) if instance else {}
     raw_available = raw_root_available(config)
+    prev_result = _load_prev_check_file(work_dir)
 
     checked = 0
     passed = 0
@@ -540,16 +595,7 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
         # Keyed on the unescaped tag, like `block["tags"]`: the agent may copy an
         # escaped tag (`\_`, `\>` from a docx round trip) from the prior text.
         evidence_by_key = {(e["claim_ref"], claims.unescape_tags(e["tag"])): e for e in evidence}
-        # F3 — a fallback key by (claim_ref, path), ignoring locator: once a
-        # tag is relocated, evidence.json still names its ORIGINAL locator,
-        # so an exact-tag lookup on a later run would miss it entirely.
-        evidence_by_path: dict[tuple[int, str], dict[str, Any]] = {}
-        for e in evidence:
-            try:
-                _, value = claims.parse_tag(claims.unescape_tags(e["tag"]))
-            except ValueError:
-                continue
-            evidence_by_path.setdefault((e["claim_ref"], value.split("#", 1)[0]), e)
+        evidence_dirty = False
         base_claims = base_claims_by_section.get(sid, [])
         cited_raw = (state_sections.get(sid) or {}).get("cited_raw") or {}
 
@@ -572,24 +618,16 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
             if not file_tags:
                 continue
 
-            # F3 — dedupe exact-duplicate [FILE:] tags, then relocate any
-            # remaining tag whose named section doesn't hold its fresh
-            # quote to the section that does. Both run before base-claim
-            # matching: a carried tag is untouched by relocation (no fresh
-            # evidence quote to check it against) and a duplicate carried
-            # tag is still a duplicate.
-            new_raw, removed_tags = _dedupe_file_tags(block["raw"])
-            if removed_tags:
-                _refresh_block_from_raw(block, new_raw)
-                for tag in removed_tags:
-                    deduped.append({"section": sid, "claim": block["claim_id"], "tag": tag})
-                changed = True
-            if _relocate_file_tags(
-                config, sid, block, claim_idx, evidence_by_key, evidence_by_path, manifest, raw_dir, relocated,
-            ):
-                changed = True
-            file_tags = [t for t in block["tags"] if t.startswith("[FILE:")]
-
+            # C4 (F3 review fix round 1, Critical 4): the human-origin skip
+            # runs BEFORE dedupe/relocation, on the claim exactly as
+            # drafted — a human-authored claim (text AND tags unchanged
+            # from base) is never touched by check-file at all, dedupe and
+            # relocation included. Running dedupe first would strip a
+            # human's own duplicate tag before this comparison, making the
+            # claim no longer match its base claim's `claim_key` and fall
+            # through to a "missing evidence quote" rewrite instead of
+            # being skipped — destroying a human-authored claim and, when
+            # it survives, stripping its `origin=human` at merge.
             base_match = _find_carried_base_claim(base_claims, block)
             if (
                 base_match is not None
@@ -599,15 +637,25 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
                 human_skipped += 1
                 continue
 
-            # F3 — resolved once (exact tag, else by path — see
-            # `_lookup_evidence`) so a relocated tag's quote is found by
-            # both the modality pre-check below and the per-tag verify
-            # loop, on this run and any later one.
-            resolved_evidence = {
-                (claim_idx, t): _lookup_evidence(claim_idx, t, evidence_by_key, evidence_by_path)
-                for t in file_tags
-            }
-            resolved_evidence = {k: v for k, v in resolved_evidence.items() if v is not None}
+            # F3 — dedupe exact-duplicate [FILE:] tags, then relocate any
+            # remaining tag whose named section doesn't hold its fresh
+            # quote to the section that does. A carried (non-human) tag is
+            # untouched by relocation (no fresh evidence quote to check it
+            # against).
+            new_raw, removed_tags = _dedupe_file_tags(block["raw"])
+            if removed_tags:
+                _refresh_block_from_raw(block, new_raw)
+                for tag in removed_tags:
+                    deduped.append({"section": sid, "claim": block["claim_id"], "tag": tag})
+                changed = True
+            block_relocated, tags_evidence_changed = _relocate_file_tags(
+                config, sid, block, claim_idx, evidence_by_key, manifest, raw_dir, relocated,
+            )
+            if block_relocated:
+                changed = True
+            if tags_evidence_changed:
+                evidence_dirty = True
+            file_tags = [t for t in block["tags"] if t.startswith("[FILE:")]
 
             # Fix round 1, Minor: computed here (a human-authored claim is
             # never flagged — the `continue` above already skipped it) but
@@ -616,7 +664,7 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
             # this run needs no modality flag, and a `needs_quote` claim has
             # no evidence entry to judge yet.
             pending_modality = _modality_flags(
-                sid, claim_idx, block["claim_id"], block["normalized"], file_tags, resolved_evidence
+                sid, claim_idx, block["claim_id"], block["normalized"], file_tags, evidence_by_key
             )
 
             # A7/I4 — a claim that is carried forward byte-for-byte (same
@@ -656,7 +704,7 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
                         break
                     continue
 
-                entry = resolved_evidence.get((claim_idx, tag))
+                entry = evidence_by_key.get((claim_idx, tag))
                 if entry is None:
                     if claim_fully_carried:
                         pending_quote_tag = tag
@@ -715,6 +763,22 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
         if changed:
             rendered = [(b, b["raw"]) for b in blocks]
             section_path.write_text(claims.render_blocks(rendered), encoding="utf-8")
+
+        if evidence_dirty:
+            # C2 (F3 review fix round 1, Critical 2) — persist a relocated
+            # tag's renamed `evidence.json` entry, so a later run's
+            # exact-tag lookup finds it under the tag as it now reads.
+            (sections_dir / f"{sid}.evidence.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
+
+    # I5 (F3 review fix round 1): carry forward an earlier run's
+    # `relocated`/`deduped` entries from THIS same prepare cycle — this
+    # run's own idempotent re-check finds nothing left to fix for a tag an
+    # earlier run in the cycle already relocated/deduped, so without this
+    # merge `locators_fixed` would undercount every cycle that needed the
+    # prescribed check-file re-run (SKILL.md steps 5's `needs_quote`/
+    # `modality` retries).
+    relocated = _merge_dedup(prev_result.get("relocated") or [], relocated, ("section", "claim", "from", "to"))
+    deduped = _merge_dedup(prev_result.get("deduped") or [], deduped, ("section", "claim", "tag"))
 
     result = {
         "task": task_id,

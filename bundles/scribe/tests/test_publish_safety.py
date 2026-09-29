@@ -154,11 +154,11 @@ def test_offline_raw_root_freezes_the_raw_lane_end_to_end(tmp_path, monkeypatch)
     prepare_task(config, "m1")
     write_text(
         config.work_dir / "m1" / "sections" / "overview.md",
-        "Widget overview note. [FILE:a.md#p1]\n",
+        "Widget overview note. [FILE:a.md#§1]\n",
     )
     write_json(
         config.work_dir / "m1" / "sections" / "overview.evidence.json",
-        [{"claim_ref": 0, "tag": "[FILE:a.md#p1]", "quote": "alpha note recorded"}],
+        [{"claim_ref": 0, "tag": "[FILE:a.md#§1]", "quote": "alpha note recorded"}],
     )
     write_text(config.work_dir / "m1" / "sections" / "details.md", DETAILS + "\n")
     cf1 = check_file_task(config, "m1", inst)
@@ -173,7 +173,7 @@ def test_offline_raw_root_freezes_the_raw_lane_end_to_end(tmp_path, monkeypatch)
     published_overview = split_by_section_id(
         (config.out_root / "m1" / "_src" / "v001.md").read_text(encoding="utf-8")
     )["overview"]
-    assert "[FILE:a.md#p1]" in published_overview
+    assert "[FILE:a.md#§1]" in published_overview
 
     raw_inputs = resolve_instance_inputs(inst, tpl).get("raw") or {}
     snapshot_before = raw_snapshot(config, raw_inputs)
@@ -198,7 +198,7 @@ def test_offline_raw_root_freezes_the_raw_lane_end_to_end(tmp_path, monkeypatch)
     assert cf2["failed"] == [], cf2
     assert cf2["raw_offline_notes"], cf2
     section_text = (config.work_dir / "m1" / "sections" / "overview.md").read_text(encoding="utf-8")
-    assert "[FILE:a.md#p1]" in section_text
+    assert "[FILE:a.md#§1]" in section_text
 
     # The published state's raw_snapshot is untouched — the ACTUAL value,
     # not merely "still a dict" (Important #1's third failure mode).
@@ -393,11 +393,11 @@ def test_offline_publish_carries_the_prior_cited_raw_sha_instead_of_writing_null
     prepare_task(config, "m1")
     write_text(
         config.work_dir / "m1" / "sections" / "overview.md",
-        "Widget overview note. [FILE:a.md#p1]\n",
+        "Widget overview note. [FILE:a.md#§1]\n",
     )
     write_json(
         config.work_dir / "m1" / "sections" / "overview.evidence.json",
-        [{"claim_ref": 0, "tag": "[FILE:a.md#p1]", "quote": "alpha note recorded"}],
+        [{"claim_ref": 0, "tag": "[FILE:a.md#§1]", "quote": "alpha note recorded"}],
     )
     write_text(config.work_dir / "m1" / "sections" / "details.md", DETAILS + "\n")
     cf1 = check_file_task(config, "m1", inst)
@@ -416,7 +416,7 @@ def test_offline_publish_carries_the_prior_cited_raw_sha_instead_of_writing_null
     published_overview = split_by_section_id(
         (config.out_root / "m1" / "_src" / "v001.md").read_text(encoding="utf-8")
     )["overview"]
-    assert "[FILE:a.md#p1]" in published_overview
+    assert "[FILE:a.md#§1]" in published_overview
 
     # -- raw root removed; a genuine v2 (details changes, overview carries) --
     shutil.rmtree(config.raw_root)
@@ -441,7 +441,7 @@ def test_offline_publish_carries_the_prior_cited_raw_sha_instead_of_writing_null
     merged2 = merge_task(config, "m1", data["instances"], data["templates"])
     assert merged2["noop"] is False
     next_sections2 = split_by_section_id((config.work_dir / "m1" / "next.md").read_text(encoding="utf-8"))
-    assert "[FILE:a.md#p1]" in next_sections2["overview"]  # carried claim survived merge too
+    assert "[FILE:a.md#§1]" in next_sections2["overview"]  # carried claim survived merge too
 
     published2 = publish_mod.publish_task(config, "m1", inst, tpl, data["instances"], data["edges"], no_render=True)
     assert published2["status"] == "ok" and published2["version"] == 2, published2
@@ -466,7 +466,7 @@ def test_offline_publish_carries_the_prior_cited_raw_sha_instead_of_writing_null
     cf3 = check_file_task(config, "m1", inst)
     assert cf3["failed"] == [], cf3
     section_text3 = (config.work_dir / "m1" / "sections" / "overview.md").read_text(encoding="utf-8")
-    assert "[FILE:a.md#p1]" in section_text3  # still not rewritten
+    assert "[FILE:a.md#§1]" in section_text3  # still not rewritten
 
 
 def test_corrupt_journal_version_is_discarded_not_resumed(tmp_path, monkeypatch):
@@ -502,9 +502,9 @@ def test_empty_but_present_raw_root_freezes_the_raw_lane_end_to_end(tmp_path, mo
     inst, tpl = data["instances"]["m1"], data["templates"]["mini-profile"]
 
     prepare_task(config, "m1")
-    write_text(config.work_dir / "m1" / "sections" / "overview.md", "Widget overview note. [FILE:a.md#p1]\n")
+    write_text(config.work_dir / "m1" / "sections" / "overview.md", "Widget overview note. [FILE:a.md#§1]\n")
     write_json(config.work_dir / "m1" / "sections" / "overview.evidence.json",
-               [{"claim_ref": 0, "tag": "[FILE:a.md#p1]", "quote": "alpha note recorded"}])
+               [{"claim_ref": 0, "tag": "[FILE:a.md#§1]", "quote": "alpha note recorded"}])
     write_text(config.work_dir / "m1" / "sections" / "details.md", DETAILS + "\n")
     assert check_file_task(config, "m1", inst)["failed"] == []
     assert merge_task(config, "m1", data["instances"], data["templates"])["noop"] is False
@@ -532,7 +532,7 @@ def test_empty_but_present_raw_root_freezes_the_raw_lane_end_to_end(tmp_path, mo
     write_text(config.work_dir / "m1" / "sections" / "overview.md", published_overview)
     cf2 = check_file_task(config, "m1", inst)
     assert cf2["failed"] == [], cf2
-    assert "[FILE:a.md#p1]" in (config.work_dir / "m1" / "sections" / "overview.md").read_text(encoding="utf-8")
+    assert "[FILE:a.md#§1]" in (config.work_dir / "m1" / "sections" / "overview.md").read_text(encoding="utf-8")
     assert read_state(config, inst)["raw_snapshot"] == snapshot_before
 
 
