@@ -1,0 +1,9 @@
+{
+  "id": "scribe",
+  "title": "Scribe — living documents over a Brain",
+  "description": "Scheduled, versioned, lineage-tracked documents built from a Brain and a synced folder.",
+  "kind": "skills-bundle",
+  "targets": ["claude"],
+  "entrypoint": "run",
+  "skills": ["onboard", "run", "tasks", "review"]
+}

@@ -46,3 +46,6 @@ retrieval-results.html
 
 # JetBrains IDE
 .idea/
+
+# Local, never-committed denylist of client names for the scribe template check
+bundles/scribe/tests/.denylist.local

@@ -17,6 +17,7 @@ import sqlite3
 import sys
 from collections import Counter
 from contextlib import closing
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -68,7 +69,7 @@ def load_profile(path: Path) -> dict[str, Any]:
         raw = tomllib.load(handle)
     if not isinstance(raw, dict):
         raise ValueError("maintenance profile must be a TOML table")
-    allowed = {"version", "project", "paths", "runtime", "update", "classification", "marts", "verification", "safety", "deployment"}
+    allowed = {"version", "project", "paths", "runtime", "update", "classification", "marts", "verification", "safety", "deployment", "handoff"}
     unknown = set(raw) - allowed
     if unknown:
         raise ValueError("unknown profile section(s): " + ", ".join(sorted(unknown)))
@@ -133,10 +134,13 @@ def load_profile(path: Path) -> dict[str, Any]:
         secrets = deployment.get("secret_env", [])
         if not isinstance(secrets, list) or not all(isinstance(x, str) and re.fullmatch(r"[A-Z_][A-Z0-9_]*", x) for x in secrets):
             raise ValueError("deployment.secret_env must contain environment-variable names")
+    handoff = _section(raw, "handoff", {"deploy"})
+    if "deploy" in handoff and handoff["deploy"] not in ("hold", "auto"):
+        raise ValueError("handoff.deploy must be 'hold' or 'auto'")
     return {"raw": raw, "profile": path.resolve(), "project": project, "paths": resolved,
             "root_key": root_key, "safety": safety, "deployment": deployment,
             "deployment_paths": deployment_paths, "classification": classification,
-            "marts": marts, "verification": verification}
+            "marts": marts, "verification": verification, "handoff": handoff}
 
 
 def _load_module(name: str, path: Path):
@@ -208,6 +212,181 @@ def taxonomy_review_status(taxonomy_path: Path) -> dict[str, Any]:
     return {"current_json": (tax_dir / "current.json").is_file(), "latest_review": latest,
             "submitted_unapplied": [r for r in submitted if r not in applied], "pending_reclassify": pending,
             "provisional": (tax_dir / "PROVISIONAL").is_file()}
+
+
+def classify_handoff(status: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+    """Pure classification of a `status` JSON (as `build_status`/`maintenance.py status`
+    produces) into apply / defer / abort for unattended hand-off mode. Never touches disk
+    or mutates anything — the agent in the SKILL executes the actual apply/defer/abort.
+
+    `profile` here is the raw TOML-shaped dict (`load_profile(...)["raw"]`): top-level
+    `deployment`/`handoff` tables, exactly as a profile file declares them.
+    """
+    abort_reasons: list[str] = []
+    source_plan = status.get("source_plan") or {}
+    for root in source_plan.get("roots") or []:
+        if root.get("status") == "root_unavailable":
+            abort_reasons.append(f"root_unavailable: {root.get('root_key', '?')}")
+    counts = status.get("source_action_counts") or {}
+    if counts.get("corrupt"):
+        abort_reasons.append(f"corrupt: {counts['corrupt']}")
+    blocked = (status.get("parsed_delta") or {}).get("blocked_missing_parsed") or []
+    if blocked:
+        abort_reasons.append(f"blocked_missing_parsed: {len(blocked)}")
+    if (status.get("taxonomy_review") or {}).get("provisional"):
+        abort_reasons.append("taxonomy_provisional")
+    strict_error = status.get("strict_source_error")
+    if strict_error:
+        abort_reasons.append(f"strict_source_error: {strict_error}")
+    # build_status's other safety blockers (deletion policy, an invalid manifest, parsed
+    # documents with no registered source, an empty required retrieval lane, ...) have no
+    # human to stop for in hand-off mode, so any of them must abort too — the only
+    # blockers hand-off explicitly resolves itself are the two it defers below
+    # (`remove_candidate`/`missing` actions and ambiguous moves).
+    deferred_blockers = {"source_actions_need_human_resolution", "ambiguous_source_move"}
+    for blocker in status.get("blockers") or []:
+        if blocker in deferred_blockers:
+            continue
+        reason = f"blocker: {blocker}"
+        if reason not in abort_reasons:
+            abort_reasons.append(reason)
+
+    if abort_reasons:
+        return {
+            "decision": "abort", "apply": [], "apply_actions": [], "defer": [], "abort_reasons": abort_reasons,
+            "marts": "none", "deploy": "disabled",
+        }
+
+    # An `add` that shares its sha256 with an ambiguous-move pair (a same-hash
+    # add+missing `build_status` could not collapse into a single unambiguous `move`)
+    # or with a duplicate-content group must never be applied just because "add" is
+    # itself a structurally safe action — it is already reported under `defer`, and
+    # applying it anyway would mint the duplicate source identity `build_status`'s own
+    # comment says maintenance must stop to prevent.
+    excluded_shas = {h for h in (status.get("ambiguous_move_hashes") or []) if h}
+    for d in source_plan.get("duplicate_content") or []:
+        if d.get("sha256"):
+            excluded_shas.add(d["sha256"])
+
+    def _apply_candidate(item: dict[str, Any]) -> str | None:
+        if item.get("action") == "add" and item.get("sha256") in excluded_shas:
+            return None
+        return item.get("relative_path")
+
+    # Review fix round 2, Minor #3: two roots can register the SAME relative_path (an
+    # `import` root and a `mirror` root both watching different trees that happen to
+    # share a filename, say). Keying the seen-set on `relative_path` alone would let a
+    # deferred action in one root silently "cover" — or get silently covered by — an
+    # applied action of the same path in another root. Every dedup and every
+    # `apply`-membership decision below is keyed on `(root_key, relative_path)`, never
+    # `relative_path` alone; `apply_actions` (the actual action dicts, root_key
+    # included) is what `build_apply_plan` filters from now, precisely so it never has
+    # to re-derive this match itself against `relative_path` alone either.
+    apply: list[str] = []
+    apply_actions: list[dict[str, Any]] = []
+    seen_apply_keys: set[tuple[Any, str]] = set()
+    defer: list[dict[str, Any]] = []
+
+    def _add_apply(item: dict[str, Any], rel: str) -> None:
+        key = (item.get("root_key"), rel)
+        if key in seen_apply_keys:
+            return
+        seen_apply_keys.add(key)
+        apply.append(rel)
+        apply_actions.append(item)
+
+    for action in source_plan.get("actions") or []:
+        kind = action.get("action")
+        if kind in ("add", "content_change", "move"):
+            rel = _apply_candidate(action)
+            if rel is not None:
+                _add_apply(action, rel)
+        elif kind == "remove_candidate":
+            defer.append({"kind": "remove_candidate", "detail": action})
+        elif kind == "missing":
+            defer.append({"kind": "missing", "detail": action})
+
+    for h in status.get("ambiguous_move_hashes") or []:
+        defer.append({"kind": "ambiguous_move", "detail": h})
+
+    for d in source_plan.get("duplicate_content") or []:
+        defer.append({"kind": "duplicate_content", "detail": d})
+
+    for item in status.get("narrative_work") or []:
+        if not isinstance(item, dict):
+            continue
+        rel = _apply_candidate(item)
+        if rel is not None:
+            _add_apply(item, rel)
+
+    marts = "rebuild_strict" if status.get("reporting_rebuild_required") else "none"
+
+    deployment_enabled = bool((profile.get("deployment") or {}).get("enabled", False))
+    deploy_setting = (profile.get("handoff") or {}).get("deploy", "hold")
+    deploy = deploy_setting if deployment_enabled else "disabled"
+
+    return {
+        "decision": "apply", "apply": apply, "apply_actions": apply_actions, "defer": defer,
+        "abort_reasons": [], "marts": marts, "deploy": deploy,
+    }
+
+
+def build_apply_plan(status: dict[str, Any], classification: dict[str, Any]) -> dict[str, Any]:
+    """A `source_registry` plan (same header shape `source_registry.build_plan`/`cmd_plan`
+    write: `version`, `created_at`, `config_sha256`, `roots`, `actions`,
+    `duplicate_content`, `skipped_generated`) filtered to exactly the actions
+    `classify_handoff` put in `apply` — never the deferred ones.
+
+    `source_registry.cmd_apply` treats every `add`/`content_change`/`move` action in
+    whatever plan file it is given as structurally safe and applies it; it has no
+    subset flag and cannot itself tell an unambiguous add from the add-half of an
+    ambiguous-move or duplicate-content group `classify_handoff` deferred. Handing it a
+    freshly regenerated plan (or the raw `status.source_plan`) would silently re-include
+    those deferred adds. This function is what makes `./brain source apply --plan
+    <this file>` apply only what hand-off actually decided to apply — never a mutation
+    itself, just a filtered copy of the read-only plan `status` already carried.
+
+    Uses `classification["apply_actions"]` (the exact action dicts `classify_handoff`
+    put in `apply`, root_key included) directly, rather than re-filtering
+    `status.source_plan.actions` by `relative_path` — review fix round 2, Minor #3: two
+    roots can register the same `relative_path`, and re-matching on `relative_path`
+    alone here would silently re-admit a *different* root's deferred action of the same
+    name that happens to also look structurally safe.
+    """
+    source_plan = status.get("source_plan") or {}
+    apply_actions = classification.get("apply_actions")
+    if apply_actions is None:
+        # Backward-compat fallback for a classification dict that predates
+        # `apply_actions` (e.g. hand-written in a test) — best effort, relative_path
+        # only, same limitation the docstring above describes.
+        apply_paths = set(classification.get("apply") or [])
+        apply_actions = [
+            item
+            for item in (source_plan.get("actions") or [])
+            if item.get("action") in ("add", "content_change", "move") and item.get("relative_path") in apply_paths
+        ]
+    actions = [dict(item) for item in apply_actions if item.get("action") in ("add", "content_change", "move")]
+    return {
+        "version": source_plan.get("version", 1),
+        "created_at": source_plan.get("created_at"),
+        "config_sha256": source_plan.get("config_sha256"),
+        "roots": source_plan.get("roots", []),
+        "actions": actions,
+        "duplicate_content": source_plan.get("duplicate_content", []),
+        "skipped_generated": source_plan.get("skipped_generated", []),
+    }
+
+
+def _read_built_at(db_path: Path) -> str | None:
+    """`meta.built_at`, read-only, or `None` when the db or the key is absent."""
+    if not db_path.is_file():
+        return None
+    with closing(sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)) as con:
+        try:
+            row = con.execute("SELECT value FROM meta WHERE key = 'built_at'").fetchone()
+        except sqlite3.OperationalError:
+            return None
+    return row[0] if row else None
 
 
 def build_status(profile: dict[str, Any]) -> dict[str, Any]:
@@ -361,9 +540,47 @@ def main(argv: list[str] | None = None) -> int:
         p = sub.add_parser(name)
         p.add_argument("--profile", required=True)
         p.add_argument("--out")
+    p_handoff = sub.add_parser("handoff")
+    p_handoff.add_argument("--profile", required=True)
+    p_handoff.add_argument("--status", help="a status JSON from the `status` subcommand")
+    p_handoff.add_argument(
+        "--abort-reason",
+        help="write a decision=abort report directly, without a --status file — for when an "
+        "earlier hand-off step (doctor, status) itself failed before it could produce one; "
+        "mutually exclusive with --status",
+    )
+    p_handoff.add_argument("--out", required=True)
+    p_handoff.add_argument(
+        "--apply-plan",
+        help="also write a source_registry plan filtered to exactly the apply-classified "
+        "actions, for `./brain source apply --plan <this file>`",
+    )
     args = ap.parse_args(argv)
     try:
         profile = load_profile(Path(args.profile).expanduser().resolve())
+        if args.command == "handoff":
+            if bool(args.status) == bool(args.abort_reason):
+                raise ValueError("handoff requires exactly one of --status or --abort-reason")
+            status_data: dict[str, Any] | None = None
+            if args.abort_reason:
+                classification = {
+                    "decision": "abort", "apply": [], "apply_actions": [], "defer": [],
+                    "abort_reasons": [args.abort_reason], "marts": "none", "deploy": "disabled",
+                }
+            else:
+                status_data = json.loads(Path(args.status).expanduser().resolve().read_text(encoding="utf-8"))
+                classification = classify_handoff(status_data, profile["raw"])
+            result = {
+                **{k: v for k, v in classification.items() if k != "apply_actions"},
+                "built_at": _read_built_at(profile["paths"]["db"]),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            atomic_json(Path(args.out), result, profile["project"])
+            if args.apply_plan and status_data is not None:
+                apply_plan = build_apply_plan(status_data, classification)
+                atomic_json(Path(args.apply_plan), apply_plan, profile["project"])
+            print(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True))
+            return 0 if result["decision"] == "apply" else 3
         if args.command == "validate-profile":
             result = {"status": "ok", "version": VERSION, "project": str(profile["project"]), "root_key": profile["root_key"]}
         else:

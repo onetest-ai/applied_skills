@@ -518,6 +518,55 @@ sequenceDiagram
 
 ---
 
+## Working with Scribe
+
+[`scribe`](../scribe/README.md) is the third `applied-ai` plugin: it drafts scheduled,
+versioned, cited docx/pdf documents from this Brain plus a synced raw-evidence folder. Three
+things a Brain maintainer should know about it:
+
+**The loop guard.** A published Scribe document must never come back in as source material —
+that would let the Brain cite its own generated prose as if it were evidence. Scribe's
+`scribe:onboard` skill runs `scribe.py guard-brain --brain-toml <this project>/brain.toml`,
+which adds an `exclude` glob to the source root that contains the task's output folder.
+Underneath, every Scribe-generated file also carries a machine-readable marker — a
+`scribe-task` custom property in a docx/pptx/xlsx, a `scribe-task=<id>` PDF keyword, or a
+`<!-- scribe:...` first line in a Markdown/text file — and `scribe_marker.is_scribe_artifact`
+checks it as a second, independent guard even if the `exclude` glob is ever missing or
+mis-scoped. Both walkers apply both guards: `source_registry` at registration and
+`parse_corpus.py` at parsing (pass the root's `exclude` globs as repeatable `--exclude`; marked
+files are skipped without a flag, and both skips are listed in `parsed/manifest.json`). If you see a Scribe output folder listed as a normal source in `brain source
+status`, run `guard-brain` again (or add the exclude glob by hand) before the next build.
+
+**Hidden files are always skipped.** Both walkers also skip any dot-file/dot-directory,
+macOS AppleDouble `._x` sidecar, Office `~$` lock file, and OS-hidden file (`reason: "hidden"`
+in `skipped_generated`/`parsed/manifest.json`) — checked before the exclude glob and the
+Scribe marker, so a `.cache/` or `.DS_Store` under a source root never reaches either.
+
+**`meta.built_at`.** Every successful `brain_sync` apply (or seed) UPSERTs an ISO-8601 UTC
+timestamp into the store's `meta` table under `built_at` (`brain_sync.write_built_at`).
+`maintenance.py handoff` copies it verbatim into the `built_at` field of the hand-off report it
+writes (`_read_built_at`, `maintenance.py`), and Scribe's `doctor.brain_handoff.stale_brain`
+reads it (read-only) as a cross-check: the **latest report** must be dated today (its own
+`created_at`, else its file name `ops/handoff/<YYYY-MM-DD>.json`) and not `abort`, and a
+`decision: "apply"` report also needs `meta.built_at` dated no earlier than the report — the
+report is written before the apply runs, so an apply that then failed reads as stale
+(`brain not rebuilt after hand-off`). The hand-off runbook also overwrites that day's report
+with an abort when any step after classification fails.
+
+**The hand-off runbook.** For an unattended nightly chain (`scribe.py schedule` prints the cron
+line / launchd plist for this), `brain-maintenance` exposes `maintenance.py handoff`: it reads
+`build_status`'s already-computed plan and classifies it into `apply` (safe additions/changes it
+applies immediately), `defer` (ambiguous moves, unreviewed removals — left for a human), and
+`abort` (a corrupt source, a blocked parsed delta, a provisional taxonomy, or any other safety
+blocker — nothing is applied, and Scribe is told to draft against the last good snapshot rather
+than stop). It never makes a taxonomy decision, never tombstones or force-deploys anything, and
+always leaves a dated report behind — even on a `doctor`/`status` failure, via `--abort-reason` —
+so the *absence* of a report is never mistaken for a fresh Brain by whatever reads it next. See
+`bundles/brain/skills/brain-maintenance/SKILL.md`'s "Unattended hand-off mode" section for the
+full step-by-step.
+
+---
+
 ## Why local SQLite + Obsidian (and not a server)
 
 - **Portable** — one file. Moves to `.dsh` / Claude / Copilot / Codex / CI with a copy; no service to stand up, no auth to manage.

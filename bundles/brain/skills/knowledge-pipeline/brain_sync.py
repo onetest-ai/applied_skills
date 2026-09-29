@@ -111,6 +111,16 @@ def write_meta(c, db):
     return goal, audience, drift
 
 
+def write_built_at(c, now: str | None = None) -> str:
+    """UPSERT meta.built_at (ISO-8601 UTC). Scribe and hand-off mode read it as 'the Brain
+    finished a build'."""
+    ensure_meta(c)
+    value = now or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    c.execute("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+              ("built_at", value))
+    return value
+
+
 def enforce_goal(goal, drift, *, require, context):
     """Governance gate. Always flags goal DRIFT (reshapes taxonomy). Empty goal = an
     ungoverned store (no analytical scope recorded): warn, or — under `require` — refuse
@@ -477,7 +487,7 @@ def cmd_apply(a):
                       (doc, m["sha"], m["bytes"], m["mtime"], ts, sid))
         goal, audience, drift = write_meta(c, a.db)   # apply is a publish path: re-assert governance
         dates = apply_dates(c, a.parsed, a.manifest, supersede_before)
-        print(f"dates: dated {dates['dated']}, superseded {dates['superseded']}, reactivated {dates['reactivated']}")
+        write_built_at(c)
         c.commit()
     except Exception as e:
         c.rollback(); c.close()
@@ -531,12 +541,6 @@ def cmd_seed(a):
         print("❌ meta.goal is empty (seed): refusing to seed an ungoverned store "
               "(--require-goal). Write goal.txt and re-run.", file=sys.stderr)
         sys.exit(3)
-    # Read and validate the cutoff up front, before any indexing work (mirrors cmd_apply).
-    try:
-        supersede_before = read_supersede_before(a.db)
-    except ValueError as e:
-        print(f"❌ invalid brain.toml (seed): {e}", file=sys.stderr)
-        sys.exit(2)
     import knowledge_index as K
     c = K.connect(a.db)
     K._ensure_schema(c, a.dim)  # migrate legacy brain_sync documents→synced_files if needed
@@ -551,7 +555,8 @@ def cmd_seed(a):
                   (doc, m["sha"], m["bytes"], m["mtime"], ts, sid))
     goal, audience, drift = write_meta(c, a.db)
     dates = apply_dates(c, a.parsed, a.manifest, supersede_before)
-    print(f"dates: dated {dates['dated']}, superseded {dates['superseded']}, reactivated {dates['reactivated']}")
+    write_built_at(c)
+
     c.commit()
     print(f"seeded documents with {len(now)} doc hashes -> {a.db}"
           + (f" ({len(unmanaged)} unmanaged)" if unmanaged else ""))

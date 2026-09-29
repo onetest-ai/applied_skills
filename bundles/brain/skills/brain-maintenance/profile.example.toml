@@ -49,6 +49,10 @@ require_snapshot = true
 allow_legacy_unlinked_delete = false
 max_deleted_docs = 0
 
+[handoff]
+# Unattended maintenance (hand-off mode). "hold" never redeploys a hosted MCP on its own.
+deploy = "hold"
+
 [deployment]
 enabled = false
 # When enabled, these must exist inside the project. The adapter must be executable and
