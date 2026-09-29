@@ -239,8 +239,10 @@ def get_metric(
     )
     with _readonly_connection() as con:
         rows = [dict(row) for row in con.execute(query, params)]
-    truncated = len(rows) > limit
-    rows = rows[:limit]
+        truncated = len(rows) > limit
+        rows = rows[:limit]
+        if rows and "fact_versions" in _present_tables(con):
+            _attach_versions(con, spec["family"], spec["metric"], rows)
     return {
         "status": "ok" if rows else "not_modeled",
         "metric": name,
@@ -252,8 +254,42 @@ def get_metric(
         "rows": rows,
         "row_count": len(rows),
         "truncated": truncated,
-        "guidance": "Every value is computed from facts; cite source_file and state grain/entity/month.",
+        "guidance": "Every value is computed from facts; cite source_file and state grain/entity/month. "
+                    "A row with other_reported_values was reported differently by another file: "
+                    "restated=true means a later report revised it (quote the current value, name the "
+                    "earlier one and its source_file when comparing periods or reconciling reports); "
+                    "conflicting=true means reports of the same period disagree -- give both with both "
+                    "citations, never pick one silently.",
     }
+
+
+def _attach_versions(con: sqlite3.Connection, family: str, metric: str, rows: list[dict[str, Any]]) -> None:
+    """Mark rows whose metric-month other files reported with a different value.
+
+    build_marts keeps the newest report in `facts` and every other distinct value in
+    `fact_versions`; a Brain built before that table existed simply has no marks."""
+    versions: dict[tuple, list[dict[str, Any]]] = {}
+    for v in con.execute(
+        "SELECT grain, entity, month, value, source_file, reported_in, is_current FROM fact_versions "
+        "WHERE family = ? AND metric = ?", (family, metric)
+    ):
+        versions.setdefault((v["grain"], v["entity"], v["month"]), []).append(dict(v))
+    for row in rows:
+        found = versions.get((row["grain"], row["entity"], row["month"]))
+        if not found:
+            continue
+        current = next((v for v in found if v["is_current"]), None)
+        others = [{"value": v["value"], "source_file": v["source_file"], "reported_in": v["reported_in"]}
+                  for v in found if not v["is_current"]]
+        if not others:
+            continue
+        cur_in = current["reported_in"] if current else None
+        row["reported_in"] = cur_in
+        row["other_reported_values"] = others
+        if cur_in and all(o["reported_in"] and o["reported_in"] < cur_in for o in others):
+            row["restated"] = True
+        else:
+            row["conflicting"] = True
 
 
 def search_knowledge(

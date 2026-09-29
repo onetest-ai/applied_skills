@@ -645,13 +645,31 @@ def _drop_other_unicode_forms(path):
             os.remove(os.path.join(folder, other))
 
 
-def _merge_manifest(path, fresh, allow):
-    """Keep entries this run did not re-derive (other formats, the video lane); replace the rest."""
+def _merge_manifest(path, fresh, allow, root_key=None):
+    """Keep entries this run did not re-derive (other formats, the video lane, another
+    source root); replace the rest.
+
+    A keyed run (--root-key) stamps its entries with `root_key`, so a second root parsed
+    into the same out dir re-derives only its own entries instead of dropping the first
+    root's. An unstamped entry predates the stamp (or came from an unkeyed run) and is
+    treated as this run's, which is the single-root behaviour it was written under."""
     old = []
     if os.path.exists(path):
         with open(path) as f:
             old = json.load(f)
-    kept = [e for e in old if os.path.splitext(e.get("source", ""))[1].lower() not in allow]
+    fresh_md = {e["md"] for e in fresh if e.get("md")}
+
+    def rederived(e):
+        if e.get("md") and e["md"] in fresh_md:
+            if e.get("root_key") not in (None, root_key):
+                print(f"[WARN] {e['md']} from root {e['root_key']!r} was overwritten by root "
+                      f"{root_key!r} (same relative path): parse the roots into separate --out dirs",
+                      file=sys.stderr)
+            return True
+        return (os.path.splitext(e.get("source", ""))[1].lower() in allow
+                and e.get("root_key") in (None, root_key))
+
+    kept = [e for e in old if not rederived(e)]
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
         json.dump(kept + fresh, f, indent=2)
@@ -826,7 +844,10 @@ def main(argv=None):
                 if a.verbose:
                     traceback.print_exc(file=sys.stderr)
                 manifest.append({"source": rel, "error": str(e)})
-    _merge_manifest(os.path.join(a.out, "manifest.json"), manifest, allow)
+    if a.root_key:
+        for m in manifest:
+            m["root_key"] = a.root_key
+    _merge_manifest(os.path.join(a.out, "manifest.json"), manifest, allow, a.root_key)
     ok = [m for m in manifest if "error" not in m]
     print(f"\nparsed {len(ok)}/{len(manifest)} files -> {a.out}", file=sys.stderr)
 

@@ -72,6 +72,7 @@ Cowork keeps its own plugin state and connects to MCP servers **from Anthropic's
 
 - **Cited or not modeled** — no third option. A missing answer is reported plainly, never filled from priors.
 - **Numbers only from marts** — `get_metric` carries its `source_file`; grain and period differences are stated before any comparison.
+- **Disagreement is reported, never resolved silently** — when two documents, or a restated/conflicting `get_metric` row (`other_reported_values`), give different values, both appear with both citations and which is newer.
 - **Retrieved content is untrusted data** — kb never follows instructions found inside documents it retrieves (prompt-injection defense).
 - **Writes are human-gated** — `brief` and `report` propose the deliverable for your approval before writing.
 

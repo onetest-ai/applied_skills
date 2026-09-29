@@ -29,10 +29,11 @@ doc (pdf / pptx via soffice→pdf)
 Writes `<assets>/<slug>/p<NN>.png`, `p<NN>.txt` (PyMuPDF text layer), `p<NN>.tables.md` (extracted grids), and `pages.json` (per-page `img_sha`, `text_len`, `n_drawings`, `n_tables`, `flagged`, `why`). The `<slug>` is derived from the **full source-relative `--doc` path** (each path component kebab-cased, joined by `__`), so same-named files in different folders no longer collide; a bare filename slugs exactly as before. **Migration:** a brain whose assets were rendered under the old basename-only slugs will not match the new slugs — re-render the affected documents (the `page_render` VLM cache is keyed by `img_sha`, so unchanged pages are not re-transcribed) or keep the old asset dirs until the next rebuild. A page is flagged visual (→ VLM) when the text layer likely misses the meaning: **thin text with no extracted table** (`why=thin-text`), **many drawings** (`why=dense-draw`, a timeline/diagram even with fragmented labels), or a **lighter diagram with modest text** (`why=diagram`). Image-area `cover` is NOT used (full-bleed backgrounds make it meaningless); a pure data table we already extracted is NOT flagged (we have the grid). Thresholds are tunable per corpus; `--all` forces every page. PPTX/DOCX → PDF via LibreOffice `soffice` first. On a representative sample this flags ~15–25% of deck pages (vs ~80% before tuning).
 
 ### 2. Transcribe — Sonnet VISION subagents
-Instantiate `vision_prep.py` to batch the **flagged, uncached** pages (image path + any extracted table + page context) with instructions, then dispatch vision subagents (model: sonnet) that read each page image and emit faithful structured Markdown → `result_<k>.json` keyed by `img_sha`. Cache by `img_sha` and prompt version (a page whose rendered image is unchanged is not re-transcribed unless its medium's prompt changed).
+Instantiate `vision_prep.py` to batch the **flagged, uncached** pages (image path + any extracted table + page context) with instructions, then dispatch vision subagents (model: sonnet) that read each page image and emit faithful structured Markdown → `result_<k>.json` keyed by `img_sha`. Cache by `img_sha` and prompt version (a page whose rendered image is unchanged is not re-transcribed unless its medium's prompt changed). Tell each subagent to keep any scratch or helper file under its own private directory (e.g. `<run>/scratch/<agent-id>/`), never a shared `/tmp` path: parallel agents otherwise overwrite each other's helper scripts.
 
 ### 3. Assemble — `vision_assemble.py`
-`vision_assemble.py --render-dir <assets>/<slug> --out <parsed>/<doc>.md [--results <dir>] [--db <db>]`
+`vision_assemble.py --render-dir <assets>/<slug> --out <parsed>/<doc>.md [--results <dir>] [--db <db>] [--source <root-relative path>]`
+`--source` writes the same `# SOURCE:`/`# method: visual-parse`/`# fidelity: full` preamble `parse_corpus.py` writes, so agents reading the parsed file see the real source instead of a slug; `chunking.strip_preamble` removes it, so chunks and chunk ids do not change. Adding it to an already-assembled document changes that file's bytes, so `brain_sync` re-embeds and reclassifies it once.
 Per page in order: the VLM Markdown (flagged) or the text layer (text page), under a `## p<NN> · <title>` heading with the image marker. Internal `#`/`##` are demoted; deeper VLM headings and max-size splitting may still yield multiple downstream chunks for one page, all inheriting its image. Writes the `page_render` cache when `--db` is given. Extracted `p<NN>.tables.md` grids remain factual asset sidecars (served by `get_evidence`) and are not appended to parsed Markdown.
 
 ## HTML decks — the capture step
@@ -148,7 +149,19 @@ time, each frame carrying its image marker and every interval it was on screen.
 2. a Microsoft Teams transcript `.docx` in the same folder whose **first line is the
    recording's file name without extension** — Teams names the transcript after the
    meeting (`Acme_ Billing.docx`), not after the recording, so it is paired by its title.
-   If two `.docx` files claim the same recording, `probe` stops (exit 1) instead of guessing.
+   If two `.docx` files claim the same recording (a re-downloaded copy such as
+   `Sep 14 Discovery Session w_Vendor _ Billing.docx` next to `Discovery Session w_Vendor _ Billing.docx`),
+   the one whose file name matches the meeting name (rule 3's comparison) wins; with no
+   single such match `probe` stops (exit 1) instead of guessing;
+3. for a Teams recording name, `<Meeting>-YYYYMMDD_HHMM[SS][UTC]-Meeting Recording.mp4`: a
+   transcript named `<Meeting>` (`Weekly Ops-20260925_1429UTC-Meeting Recording.mp4` +
+   `Weekly Ops.vtt`), else `<Meeting>-YYYYMMDD` (1:1 calls keep the date:
+   `Meeting with Dana Rivers-20260916.vtt`), in the rule-1 extension priority — first by exact
+   name, then ignoring case and every non-alphanumeric character, because Teams sanitises
+   punctuation differently in the two names (`Discovery Session wVendor  Billing-…` ↔
+   `Discovery Session w_Vendor _ Billing.docx`). A date decoration is never stripped
+   (`Sep 18 …` is another week's meeting). Two matches of one kind, or several recordings
+   of that meeting in the folder, stop `probe` (exit 1) — pair each with `--transcript-file`.
 
 For any other transcript, pass it explicitly: `probe … --transcript-file <path>` (a `.vtt`,
 `.srt` or Teams `.docx`; it cannot be combined with `--transcript asr|none`). A `.docx` that
@@ -191,8 +204,16 @@ VC=<skills>/visual-parse/video_capture.py
 #    review_result_pNN.json; give it its page number, never the whole batch)
 #    (skip when review-prep prints "nothing to review")
 "$PY" $VC assemble --probe <project>/video/<slug>/probe.json --render-dir <project>/assets/<slug> \
-    --results <run>/vision --review <run>/review --parsed <project>/parsed --db <db>
+    --results <run>/vision --review <run>/review --parsed <project>/parsed --db <db> \
+    --fold-interjections 20 --pack-turns 1000
 ```
+`--fold-interjections 20 --pack-turns 1000` are the transcript options `parse_corpus` uses for
+`.vtt`/`.srt` (same semantics): a turn under 20 chars ("Oops, sure.") joins the previous turn
+as `[Speaker: text]`, and consecutive turns share one section up to 1,000 chars. Without them
+every speaker turn is its own section and chunk — one 28-recording corpus produced 8,530
+sections with a median of 151 chars. Frames always stay their own sections; nothing is folded
+or packed across a frame. Both default to 0 (off), which keeps an existing doc byte-identical;
+turning them on for an already-indexed recording re-chunks that recording on the next sync.
 `<run>` is any empty working directory for this pass (e.g. `<project>/runs/<date>-<slug>`);
 use a fresh one per pass: stale `batch_*.json`/`result_*.json` files are loaded too. Each vision
 subagent writes its `result_<k>.json` next to its `batch_<k>.json` and must answer every
@@ -280,6 +301,12 @@ a parity or golden failure. VLM output varies run to run: compare several runs p
 **Tuning.** `frames --min-hold` (seconds a frame must stay, default 3), `--diff` (cut
 threshold, 0.08), `--still` (stillness, 0.015 — raise it if slides with a live cursor are
 missed), `--max-per-min` (6), `--max-frames` (300).
+
+**Unextractable frames.** In a variable-frame-rate file (typically a `.mov`), `ffmpeg -ss` near
+the end can decode nothing. `frames` retries up to 2 s earlier; if still nothing, it drops that
+frame with a warning, keeps `pNN` numbering contiguous, and lists the drop under
+`frames_unextractable` in `pages.json` (counted in the assemble manifest entry). The rest of
+the recording is kept.
 
 ### Privacy position — partially mitigated
 

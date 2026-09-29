@@ -15,7 +15,7 @@ Usage:
                      [--results <vlm results dir>] [--db K.sqlite]  # cache source(s)
                      [--assets-rel <slug>]   # prefix used in the image marker
 """
-import argparse, glob, json, os, re, sqlite3, sys
+import argparse, glob, json, os, re, sqlite3, sys, unicodedata
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vision_prep import PROMPT_VERSION  # noqa: E402  (same skill directory)
@@ -96,6 +96,9 @@ def main():
     ap.add_argument("--out", required=True, help="output parsed .md path")
     ap.add_argument("--results"); ap.add_argument("--db")
     ap.add_argument("--assets-rel", help="prefix for the image marker (default: the render-dir basename)")
+    ap.add_argument("--source", help="the document's source-root-relative path; writes parse_corpus's "
+                                     "`# SOURCE:`/`# method:`/`# fidelity:` preamble (chunking strips it, so "
+                                     "chunks are unchanged). Omitted: no preamble, output as before")
     a = ap.parse_args()
     pages = json.load(open(os.path.join(a.render_dir, "pages.json")))
     assets_rel = a.assets_rel or pages.get("slug") or os.path.basename(a.render_dir.rstrip("/"))
@@ -140,7 +143,13 @@ def main():
         title = title or f"Page {n}"
         out.append(f"## p{n:02d} · {title}\n{img_marker}\n\n" + "\n\n".join(bodies) + "\n")
 
-    open(a.out, "w").write("\n".join(out))
+    doc = "\n".join(out)
+    if a.source:
+        # NFC like every path crossing registry <-> parse <-> sync; exact parse_corpus shape,
+        # which is the only preamble chunking.strip_preamble removes.
+        doc = (f"# SOURCE: {unicodedata.normalize('NFC', a.source)}\n# method: visual-parse\n"
+               f"# fidelity: full\n\n{doc}")
+    open(a.out, "w").write(doc)
     nflag = sum(p["flagged"] for p in pages["pages"])
     print(f"assembled {len(pages['pages'])} pages ({nflag} visual) -> {a.out}"
           + (f"  [{missing} visual pages still need VLM transcription]" if missing else ""))

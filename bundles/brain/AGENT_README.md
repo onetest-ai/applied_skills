@@ -403,7 +403,7 @@ Report:
 - classification coverage and assignments;
 - graph node/edge counts;
 - related edges;
-- facts and marts audit status;
+- facts and marts audit status (including `restatements`/`collisions` in `marts/build_audit.json` — review collisions: they mean a family config reads one figure twice);
 - vault notes, if exported;
 - smoke-query result.
 

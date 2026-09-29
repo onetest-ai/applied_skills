@@ -171,21 +171,69 @@ def _safe_rel(value):
     return p.as_posix()
 
 
-def manifest_links(parsed, manifest=None, root_key=None):
-    path = Path(manifest) if manifest else Path(parsed) / "manifest.json"
-    if not path.is_file() or not root_key:
-        return {}
+def _as_list(v):
+    if v is None:
+        return []
+    return list(v) if isinstance(v, (list, tuple)) else [v]
+
+
+def manifest_sets(parsed, manifest=None, root_key=None):
+    """[(manifest path, doc-id prefix, root key)] for the --manifest/--root-key given.
+
+    Both flags repeat and pair in order (one parse manifest per source root). A manifest
+    inside a subdir of --parsed (parsed/docs/manifest.json) names its `md` relative to
+    that subdir, so its doc ids get the subdir as prefix; one at --parsed's top, or stored
+    outside it entirely (a hand-kept copy), keeps `md` relative to --parsed as before."""
+    manifests, keys = _as_list(manifest), _as_list(root_key)
+    if len(manifests) > 1 and keys and len(keys) != len(manifests):
+        raise ValueError(f"--manifest and --root-key pair in order: got {len(manifests)} "
+                         f"manifest(s) and {len(keys)} root key(s)")
+    if len(manifests) <= 1 and len(keys) > 1:
+        raise ValueError("more than one --root-key needs one --manifest to pair with each")
+    if not manifests:
+        manifests = [None]
+    keys = keys or [None] * len(manifests)
+    root = Path(parsed).resolve()
+    out = []
+    for m, k in zip(manifests, keys):
+        path = Path(m) if m else Path(parsed) / "manifest.json"
+        prefix = ""
+        try:
+            rel = path.resolve().parent.relative_to(root)
+            prefix = "" if rel == Path(".") else rel.as_posix() + "/"
+        except ValueError:
+            pass   # outside --parsed: md stays relative to --parsed (legacy copies)
+        out.append((path, prefix, k))
+    return out
+
+
+def _manifest_entries(path):
+    if not path.is_file():
+        return None
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, list):
         raise ValueError("parse manifest must be a JSON array")
+    return data
+
+
+def manifest_links(parsed, manifest=None, root_key=None):
+    """doc_id -> (root_key, source). An entry's own `root_key` stamp (parse_corpus
+    --root-key) wins over the CLI key, so one shared manifest can span several roots.
+    Links are built only in registry mode (some --root-key given), as before."""
+    if not _as_list(root_key):
+        return {}
     links = {}
-    for item in data:
-        if not isinstance(item, dict) or item.get("error") or not item.get("md") or not item.get("source"):
+    for path, prefix, key in manifest_sets(parsed, manifest, root_key):
+        data = _manifest_entries(path)
+        if data is None:
             continue
-        doc_id, source = _safe_rel(item["md"]), _safe_rel(item["source"])
-        if doc_id in links:
-            raise ValueError(f"duplicate parsed document in manifest: {doc_id}")
-        links[doc_id] = (root_key, source)
+        for item in data:
+            if not isinstance(item, dict) or item.get("error") or not item.get("md") or not item.get("source"):
+                continue
+            doc_id, source = prefix + _safe_rel(item["md"]), _safe_rel(item["source"])
+            if doc_id in links:
+                raise ValueError(f"duplicate parsed document in manifest: {doc_id}")
+            links[doc_id] = (item.get("root_key") or key, source)
     return links
 
 
@@ -245,19 +293,17 @@ def _doc_id_for(rel):
 def superseded_docs(parsed, manifest, now):
     """Transcript docs retired by the video lane: the manifest says the sidecar was
     consumed-by-video AND the consuming video's parsed doc exists. Anything else stays blocked."""
-    path = Path(manifest) if manifest else Path(parsed) / "manifest.json"
-    if not path.is_file():
-        return set()
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, list):
-        return set()
-    video_md = {e["source"]: e["md"] for e in data if isinstance(e, dict) and e.get("md") and e.get("source")}
     out = set()
-    for e in data:
-        if isinstance(e, dict) and e.get("method") == "consumed-by-video" and e.get("source"):
-            md = video_md.get(e.get("consumed_by"))
-            if md and md in now:
-                out.add(_doc_id_for(e["source"]))
+    for path, prefix, _key in manifest_sets(parsed, manifest):
+        data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+        if not isinstance(data, list):
+            continue
+        video_md = {e["source"]: e["md"] for e in data if isinstance(e, dict) and e.get("md") and e.get("source")}
+        for e in data:
+            if isinstance(e, dict) and e.get("method") == "consumed-by-video" and e.get("source"):
+                md = video_md.get(e.get("consumed_by"))
+                if md and prefix + md in now:
+                    out.add(prefix + _doc_id_for(e["source"]))
     return out
 
 
@@ -372,12 +418,12 @@ def apply_dates(c, parsed, manifest, before):
     than an existing non-null `valid_to` on that chunk.
     """
     _ensure_date_superseded(c)
-    path = Path(manifest) if manifest else Path(parsed) / "manifest.json"
     dates = {}
-    if path.is_file():
-        for e in json.loads(path.read_text(encoding="utf-8")):
-            if isinstance(e, dict) and e.get("md") and e.get("event_date"):
-                dates[e["md"]] = e["event_date"]
+    for path, prefix, _key in manifest_sets(parsed, manifest):
+        if path.is_file():
+            for e in json.loads(path.read_text(encoding="utf-8")):
+                if isinstance(e, dict) and e.get("md") and e.get("event_date"):
+                    dates[prefix + e["md"]] = e["event_date"]
     out = {"dated": 0, "superseded": 0, "reactivated": 0}
     for src, d in dates.items():
         out["dated"] += c.execute(
@@ -594,8 +640,13 @@ def main():
             p.add_argument("--model", default="BAAI/bge-small-en-v1.5")
             p.add_argument("--dim", type=int, default=384)
             p.add_argument("--max-chars", type=int, default=1200)
-            p.add_argument("--manifest", help="parse manifest (default: <parsed>/manifest.json)")
-            p.add_argument("--root-key", help="source registry root key for manifest source paths")
+            p.add_argument("--manifest", action="append",
+                           help="parse manifest (default: <parsed>/manifest.json); repeat once per "
+                                "source root, paired in order with --root-key. A manifest in a subdir "
+                                "of --parsed names its md relative to that subdir")
+            p.add_argument("--root-key", action="append",
+                           help="source registry root key for manifest source paths (repeatable, "
+                                "paired with --manifest; an entry's own root_key stamp wins)")
             p.add_argument("--strict-sources", action="store_true", help="reject parsed docs not linked to active registered sources")
         if name in ("seed", "apply"):
             p.add_argument("--require-goal", action="store_true",

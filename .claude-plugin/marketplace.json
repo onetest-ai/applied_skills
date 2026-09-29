@@ -3,26 +3,26 @@
   "owner": { "name": "onetest-ai", "url": "https://github.com/onetest-ai" },
   "metadata": {
     "description": "Applied AI marketplace: the Brain knowledge engine, the kb knowledge-worker plugin, and Scribe living documents.",
-    "version": "0.10.0"
+    "version": "0.11.0"
   },
   "plugins": [
     {
       "name": "brain",
       "source": "./bundles/brain",
       "description": "Build, maintain, and deploy the Brain: a local, truthful knowledge engine (RAG + taxonomy graph + deterministic marts) over docs + spreadsheets, served via a governed MCP.",
-      "version": "0.10.0"
+      "version": "0.11.0"
     },
     {
       "name": "kb",
       "source": "./bundles/kb",
       "description": "Knowledge-worker companion over the Brain: cited answers and Markdown deliverables.",
-      "version": "0.3.1"
+      "version": "0.4.0"
     },
     {
       "name": "scribe",
       "source": "./bundles/scribe",
       "description": "Living documents over the Brain: scheduled, versioned, cited docx/pdf with claim-level lineage.",
-      "version": "0.1.0"
+      "version": "0.1.1"
     }
   ]
 }

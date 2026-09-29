@@ -389,9 +389,11 @@ def main():
             nexts = []
             if res.get("out"):
                 tax_dir = os.path.dirname(res["out"])
+                queue = os.path.join(tax_dir, "work", "reclassify.json")
                 nexts.append(f"build_graph.py --taxonomy {os.path.join(tax_dir, CURRENT)} --db <db>; then "
-                             f"reclassify the chunk ids in {os.path.join(tax_dir, 'work', 'reclassify.json')} "
-                             f"(classify_prep --chunks … → agents → classify_write --reclassify-done …)")
+                             f"reclassify the chunk ids in {queue} "
+                             f"(classify_prep --chunks <those ids> → agents → classify_write.py --db <db> "
+                             f"--results <a fresh classify/reclassify-v<N> dir> --reclassify-done {queue})")
             if res.get("tags_file"):
                 nexts.append(f"classify_write.py --db <db> --results {os.path.dirname(res['tags_file'])} --merge")
             if nexts:

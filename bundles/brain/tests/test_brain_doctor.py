@@ -169,6 +169,11 @@ class DoctorDocxTranscriptTests(unittest.TestCase):
         case("ambiguous", lambda d: (mk(d / "A.docx", self.STEM, "5m", self.TURNS),
                                      mk(d / "B.docx", self.STEM, "5m", self.TURNS)), "ambiguous")
         case("nothing", lambda d: None, None)
+        case("meeting-vtt", lambda d: (d / "Sync wAcme  Plan.vtt").write_text("WEBVTT\n"), "Sync wAcme  Plan.vtt")
+        case("meeting-notes-docx", lambda d: mk(d / "Sync wAcme  Plan.docx", "Agenda", "x", []), None)
+        case("meeting-shared", lambda d: ((d / "Sync wAcme  Plan.vtt").write_text("WEBVTT\n"),
+                                          (d / "Sync wAcme  Plan-20260112_150400-Meeting Recording.mp4")
+                                          .write_bytes(b"v")), "ambiguous")
         case("notes-then-title", lambda d: (mk(d / f"{self.STEM}.docx", "Agenda", "x", []),
                                             mk(d / "Acme_ Plan.docx", self.STEM, "5m", self.TURNS)),
              "Acme_ Plan.docx")

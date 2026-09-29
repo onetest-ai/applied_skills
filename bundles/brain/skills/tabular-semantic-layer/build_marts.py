@@ -5,6 +5,10 @@ the families JSON. Never loads a whole workbook into memory (openpyxl read_only)
 
 Output long schema:
   facts(family, metric, grain, entity, month, value:double, source_file)
+  fact_versions(family, metric, grain, entity, month, value, source_file, reported_in, is_current)
+    -- every distinct value of a metric-month that files DISAGREE on: a restatement (a later
+       report changed it) or a conflict (reports of the same month differ). `facts` holds the
+       newest report's value; the others are kept here, never dropped (see build_audit.json).
 
 Usage:
   build_marts.py --root <reporting dir> --config <families.json> --out-dir <dir>
@@ -35,6 +39,57 @@ def month_from_filename(fn, default_year=2026):
     ym = re.search(r"20(2\d)", fn)
     if ym: yr = int("20"+ym.group(1))
     return f"{yr}-{found:02d}" if found else None
+
+def report_month(path):
+    """The month a file REPORTS (its vintage), from its name; None when undated."""
+    return month_from_filename(os.path.basename(path))
+
+def vintage_key(path):
+    """Oldest report first, so "last wins" means the newest report, not the
+    alphabetically last file name ("May ..." sorts after "August ...")."""
+    return (report_month(path) or "", os.path.basename(path))
+
+KEY = ["family", "metric", "grain", "entity", "month"]
+
+def restatements(df, vintage):
+    """Metric-months whose reported value CHANGED between files (a restatement), and
+    metric-months one file reports twice with different values (a collision: a loader
+    or config problem, not a vintage). `df` is in file order (oldest report first), so
+    the last row per key is the value `facts` keeps.
+    Returns (fact_versions rows, restatement audit entries, collision audit entries)."""
+    import pandas as pd
+    cols = KEY + ["value", "source_file", "reported_in", "is_current"]
+    if df.empty:
+        return pd.DataFrame(columns=cols), [], []
+    d = df.copy()
+    d["_r"] = d["value"].round(9)
+    d = d[d.groupby(KEY)["_r"].transform("nunique") > 1]
+    collisions = [dict(zip(KEY, key)) | {"source_file": key_f,
+                                         "values": sorted(g["value"].unique().tolist())}
+                  for (*key, key_f), g in d.groupby(KEY + ["source_file"], sort=True)
+                  if g["_r"].nunique() > 1]
+    # one value per file (its last, as `facts` would take it), then per key the files in order
+    d = d.drop_duplicates(subset=KEY + ["source_file"], keep="last")
+    versions, restated = [], []
+    for key, g in d.groupby(KEY, sort=True):
+        if g["_r"].nunique() < 2:
+            continue                    # disagreement was only inside one file: a collision
+        cur = g.iloc[-1]
+        # each earlier value once, cited to the first file that reported it
+        earlier = g[g["_r"] != cur["_r"]].drop_duplicates(subset=["_r"], keep="first")
+        for _, r in earlier.iterrows():
+            versions.append(list(key) + [r["value"], r["source_file"], vintage.get(r["source_file"]), 0])
+        versions.append(list(key) + [cur["value"], cur["source_file"], vintage.get(cur["source_file"]), 1])
+        # restated = a LATER report changed the figure; conflict = reports of the same
+        # (or an unknown) month disagree -- two sources, neither one newer
+        cur_v = vintage.get(cur["source_file"])
+        kind = ("restated" if cur_v and all(vintage.get(f) and vintage.get(f) < cur_v
+                                            for f in earlier["source_file"]) else "conflict")
+        restated.append(dict(zip(KEY, key)) | {
+            "kind": kind,
+            "current": {"value": cur["value"], "source_file": cur["source_file"]},
+            "earlier": [{"value": r["value"], "source_file": r["source_file"]} for _, r in earlier.iterrows()]})
+    return pd.DataFrame(versions, columns=cols), restated, collisions
 
 def norm(s):
     return re.sub(r"\s+", " ", str(s or "").strip().lower())
@@ -125,12 +180,21 @@ def load_tolerant_sheet(rows, family, month, dim_candidates, measures, dim_map, 
         cells = [norm(c) for c in row]
         if not any(any(header_matches(c, ms) for c in cells) for ms in measures.values()):
             continue
+        present = []   # (grain, col) for every dim candidate in this header, config order
         for grain, cands in dim_candidates.items():
-            for cand in cands:
-                if norm(cand) in cells:
-                    hdr_i, matched_grain, dcol = i, grain, cells.index(norm(cand)); break
-            if hdr_i is not None: break
-        if hdr_i is not None: break
+            col = next((cells.index(norm(c)) for c in cands if norm(c) in cells), None)
+            if col is not None:
+                present.append((grain, col))
+        if not present:
+            continue
+        # Several dim columns (a branch table that also carries its Region): key the rows
+        # by the column that IDENTIFIES them -- the most distinct values -- not by the
+        # first candidate in config order, which would fold every branch into its region.
+        def distinct(col):
+            return len({str(r[col]).strip() for r in rows[i+1:] if col < len(r) and is_dim_value(r[col])})
+        best = max(range(len(present)), key=lambda k: (distinct(present[k][1]), -k))
+        hdr_i, (matched_grain, dcol) = i, present[best]
+        break
     if hdr_i is None:
         return [], {"reason": "no header row with a dim candidate + a measure"}
     header = rows[hdr_i]
@@ -400,6 +464,7 @@ def main():
     os.makedirs(a.out_dir, exist_ok=True)
 
     all_facts = []
+    vintage = {}   # source_file -> the month that file reports
     audit = []   # one row per (file, unit): status ok|partial|zero|benign|error + reason
     # per-family substrings for files that are EXPECTED to yield nothing (redundant/legacy)
     benign = {f["name"]: [p.lower() for p in f.get("allow_zero", [])] for f in cfg["families"]}
@@ -417,14 +482,16 @@ def main():
                       "status": status, "reason": diag.get("reason")})
 
     for fam in cfg["families"]:
-        files = sorted(glob.glob(os.path.join(a.root, fam["glob"])))
-        if fam["layout"] == "matrix_month_cols" and files:   # snapshot holds full history
-            files = [max(files, key=lambda p: month_from_filename(os.path.basename(p)) or "")]
+        # oldest report first: on a duplicate metric-month the newest report wins. Every
+        # snapshot (matrix_month_cols) is read, not just the newest -- an older one's
+        # figures are what a later snapshot may restate, and they are kept as vintages.
+        files = sorted(glob.glob(os.path.join(a.root, fam["glob"])), key=vintage_key)
         if not files:
             audit.append({"family": fam["name"], "file": None, "unit": "-", "facts": 0,
                           "status": "zero", "reason": f"glob matched no files: {fam['glob']}"})
         for fp in files:
             fn = os.path.basename(fp)
+            vintage[fn] = report_month(fp)
             fam["_month"] = month_from_filename(fn) if fam["month_from"] == "filename" else None
             try:
                 wb = openpyxl.load_workbook(fp, read_only=True, data_only=True)
@@ -465,6 +532,7 @@ def main():
     # write parquet + sqlite `facts`
     import pandas as pd, sqlite3
     df = pd.DataFrame(all_facts, columns=["family","metric","grain","entity","month","value","source_file"])
+    versions, restated, collisions = restatements(df, vintage)
     df = df.drop_duplicates(subset=["family","metric","grain","entity","month"], keep="last").reset_index(drop=True)
 
     df = apply_rollups(df, cfg, a.config)
@@ -479,6 +547,8 @@ def main():
     con = sqlite3.connect(db)
     df.to_sql("facts", con, if_exists="replace", index=False)
     con.execute("CREATE INDEX IF NOT EXISTS idx_facts ON facts(family, metric, grain, entity, month)")
+    versions.to_sql("fact_versions", con, if_exists="replace", index=False)   # always: no stale vintages
+    con.execute("CREATE INDEX IF NOT EXISTS idx_fact_versions ON fact_versions(family, metric, grain, entity, month)")
     con.commit(); con.close()
 
     # audit summary — silent skips are made LOUD here
@@ -489,8 +559,10 @@ def main():
         json.dump({"summary": {"units": len(audit),
                                "ok": sum(1 for x in audit if x["status"]=="ok"),
                                "partial": len(partials), "benign": len(benigns),
-                               "zero_or_error": len(zeros)},
-                   "audit": audit}, f, indent=2)
+                               "zero_or_error": len(zeros), "restated": sum(r["kind"] == "restated" for r in restated),
+                               "conflicts": sum(r["kind"] == "conflict" for r in restated),
+                               "collisions": len(collisions)},
+                   "audit": audit, "restatements": restated, "collisions": collisions}, f, indent=2)
     print(f"TOTAL {len(df)} facts -> SQLite: {db} (table: facts)" + (f"  [+parquet {pq}]" if pq else ""), file=sys.stderr)
     if len(df):
         cov = df.groupby(["family","grain"]).agg(
@@ -529,6 +601,23 @@ def main():
     if zeros:
         print(f"\n❌ {len(zeros)} ZERO-FACT units — a globbed file yielded NOTHING (likely a silent gap):", file=sys.stderr)
         for x in zeros: print(f"   - {x['family']}/{x['unit']} [{x['file']}]: {x['reason']}", file=sys.stderr)
+    if restated:
+        n_re = sum(r["kind"] == "restated" for r in restated)
+        print(f"\n⚠️  {len(restated)} metric-month(s) where FILES DISAGREE ({n_re} RESTATED by a later "
+              f"report, {len(restated)-n_re} CONFLICTING reports of the same month); facts keeps the "
+              f"newest/last, the other values are in fact_versions:", file=sys.stderr)
+        for r in restated[:20]:
+            was = ", ".join(f"{e['value']:g} [{e['source_file']}]" for e in r["earlier"])
+            print(f"   - [{r['kind']}] {r['family']}/{r['metric']}/{r['entity']} {r['month']}: "
+                  f"{r['current']['value']:g} [{r['current']['source_file']}] (was {was})", file=sys.stderr)
+        if len(restated) > 20: print(f"   … {len(restated)-20} more in build_audit.json", file=sys.stderr)
+    if collisions:
+        print(f"\n⚠️  {len(collisions)} COLLISION(s) — one file reports a metric-month twice with "
+              f"different values; the last read wins (check the family's sheets/measures):", file=sys.stderr)
+        for c in collisions[:10]:
+            print(f"   - {c['family']}/{c['metric']}/{c['entity']} {c['month']} [{c['source_file']}]: "
+                  f"{', '.join(f'{v:g}' for v in c['values'])}", file=sys.stderr)
+        if len(collisions) > 10: print(f"   … {len(collisions)-10} more in build_audit.json", file=sys.stderr)
     print(f"\naudit -> {os.path.join(a.out_dir,'build_audit.json')}", file=sys.stderr)
     if a.strict and (zeros or partials or viols):
         print(f"\nSTRICT: failing build ({len(zeros)} zero/error, {len(partials)} partial, "

@@ -152,23 +152,108 @@ def title_claims(video: Path) -> list[str]:
             and not n.startswith((".", "~$")) and _docx_title(video.parent / n) == video.stem]
 
 
-def sidecar_of(video: Path) -> Path | None:
-    """The transcript video_capture.find_sidecar would pick: a same-stem .vtt/.srt/.docx
-    (in that priority, extension case-insensitive; a .docx only if it reads as a Teams
-    transcript), else the ONE .docx whose first paragraph is the video's stem. Two title
-    claims -> None (probe refuses; run_checks names the conflict)."""
+# = video_capture._TEAMS_REC/_TEAMS_TIME (pinned by test): "<Meeting>-20260925_1429UTC-Meeting
+# Recording" pairs with "<Meeting>.vtt", or "<Meeting>-20260916.vtt" for a 1:1 call.
+_TEAMS_REC = re.compile(r"-\d{8}_\d{4,6}(?:UTC)?-Meeting[ _]Recording$", re.I)
+_TEAMS_TIME = re.compile(r"_\d{4,6}(?:UTC)?-Meeting[ _]Recording$", re.I)
+
+
+def meeting_stem(stem: str) -> str | None:
+    """The meeting name a Teams recording stem carries (= video_capture.meeting_stem)."""
+    m = _TEAMS_REC.search(stem)
+    return stem[:m.start()] if m and m.start() > 0 else None
+
+
+def dated_meeting_stem(stem: str) -> str | None:
+    """= video_capture.dated_meeting_stem: only the time tail stripped."""
+    return stem[:_TEAMS_TIME.search(stem).start()] if meeting_stem(stem) else None
+
+
+def name_key(s: str) -> str:
+    """= video_capture.name_key: casefolded alphanumerics only."""
+    import unicodedata
+    return "".join(ch for ch in unicodedata.normalize("NFKC", s).casefold() if ch.isalnum())
+
+
+def _transcript_names(parent: Path, names: list[str], ext: str) -> list[str]:
+    return [n for n in names if os.path.splitext(n)[1].lower() == ext and not n.startswith((".", "~$"))
+            and (ext != ".docx" or _docx_has_turns(parent / n))]
+
+
+def _same_stem(parent: Path, names: list[str], stem: str) -> Path | None:
+    for ext in SIDECAR_EXT:
+        for n in names:
+            if os.path.splitext(n)[0] == stem and os.path.splitext(n)[1].lower() == ext:
+                if ext == ".docx" and not _docx_has_turns(parent / n):
+                    continue
+                return parent / n
+    return None
+
+
+def _meeting_keys(stem: str) -> list[str]:
+    return [name_key(m) for m in (meeting_stem(stem), dated_meeting_stem(stem)) if m] or [name_key(stem)]
+
+
+def meeting_claims(video: Path) -> list[str]:
+    """Recordings next to the video that belong to the same Teams meeting (itself included);
+    empty for a non-Teams name."""
+    meeting = meeting_stem(video.stem)
+    if not meeting:
+        return []
     try:
         names = sorted(os.listdir(video.parent))
     except OSError:
-        return None
-    for ext in SIDECAR_EXT:
-        for n in names:
-            if os.path.splitext(n)[0] == video.stem and os.path.splitext(n)[1].lower() == ext:
-                if ext == ".docx" and not _docx_has_turns(video.parent / n):
-                    continue
-                return video.parent / n
+        return []
+    return [n for n in names if os.path.splitext(n)[1].lower() in VIDEO_EXT
+            and (o := meeting_stem(os.path.splitext(n)[0])) and name_key(o) == name_key(meeting)]
+
+
+def pairing(video: Path) -> tuple[Path | None, str | None]:
+    """(transcript, None) as video_capture.find_sidecar would pick it, (None, conflict) where
+    probe would refuse, (None, None) when there is none. See find_sidecar for the rules."""
+    try:
+        names = sorted(os.listdir(video.parent))
+    except OSError:
+        return None, None
+    hit = _same_stem(video.parent, names, video.stem)
+    if hit:
+        return hit, None
     claims = title_claims(video)
-    return video.parent / claims[0] if len(claims) == 1 else None
+    if len(claims) > 1:
+        keys = _meeting_keys(video.stem)
+        named = [n for n in claims if name_key(os.path.splitext(n)[0]) in keys]
+        if len(named) != 1:
+            return None, f"{video.name} is claimed by {', '.join(claims)}"
+        claims = named
+    if claims:
+        return video.parent / claims[0], None
+    for form in (meeting_stem, dated_meeting_stem):
+        m = form(video.stem)
+        if not m:
+            continue
+        hit = _same_stem(video.parent, names, m)
+        if not hit:
+            for ext in SIDECAR_EXT:
+                keyed = [n for n in _transcript_names(video.parent, names, ext)
+                         if name_key(os.path.splitext(n)[0]) == name_key(m)]
+                if len(keyed) > 1:
+                    return None, f"{video.name} matches {', '.join(keyed)}"
+                if keyed:
+                    hit = video.parent / keyed[0]
+                    break
+        if hit:
+            recs = [n for n in names if os.path.splitext(n)[1].lower() in VIDEO_EXT
+                    and (o := form(os.path.splitext(n)[0])) and name_key(o) == name_key(m)]
+            if len(recs) > 1:
+                return None, f"recordings {', '.join(recs)} share one meeting transcript {hit.name}"
+            return hit, None
+    return None, None
+
+
+def sidecar_of(video: Path) -> Path | None:
+    """The transcript video_capture.find_sidecar would pick; None where it would refuse
+    (run_checks names the conflict) or find nothing."""
+    return pairing(video)[0]
 
 
 def has_sidecar(video: Path) -> bool:
@@ -284,10 +369,9 @@ def run_checks(scan: dict, *, config: str | None = None, need: tuple[str, ...] =
     w_detail = f"binary: {wb or 'missing'}; model: {model or 'not configured'}"
     if model and not model_ok:
         w_detail += " (file not found)"
-    conflicts = [(v, c) for v in bare if len(c := title_claims(v)) > 1]
-    for v, c in conflicts:
-        w_detail += (f"; transcript conflict: {v.name} is claimed by {', '.join(c)} — pick one with "
-                     "video_capture.py probe --transcript-file")
+    conflicts = sorted({c for v in bare if (c := pairing(v)[1])})
+    for c in conflicts:
+        w_detail += f"; transcript conflict: {c} — pair it with video_capture.py probe --transcript-file"
     w_install = (install_hint("whisper-cli") + "; " if not wb else "") + \
         ("" if model_ok else "choose a model: brain_doctor.py whisper-models, then set-whisper-model")
     add("whisper-cli", wb and model_ok, bool(bare),
