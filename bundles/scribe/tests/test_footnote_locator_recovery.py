@@ -73,6 +73,19 @@ def test_recover_tag_body_prefers_the_longest_known_body_over_any_split():
     assert _recover_tag_body(footnote_text, frozenset()) == f"FILE:transcript.vtt#00:17"
 
 
+def test_recover_tag_body_known_prefix_handles_a_body_containing_the_separator_itself():
+    """Minor (F3 re-review): `render._tags_to_footnotes` no longer refuses a
+    tag body containing `claims.FOOTNOTE_SEP` itself (e.g. a `[FILE:]`
+    locator that is a raw document's heading breadcrumb containing `¦`) — it
+    writes the footnote regardless. The known-prefix recovery path is exact
+    for it: the previous version's own tag body is the longest prefix of the
+    footnote text no matter how many separators that body itself contains."""
+    body = "GRAPH:contains ¦ broken bar"
+    footnote_text = f"{body} ¦ some label"
+    known = frozenset({body})
+    assert _recover_tag_body(footnote_text, known) == body
+
+
 def test_recover_tag_body_splits_on_the_current_separator_when_no_known_body_matches():
     """Case (2): a current-format footnote (¦), no matching known body —
     the em-dash-safe split."""
@@ -86,6 +99,19 @@ def test_recover_tag_body_falls_back_to_legacy_em_dash_split_for_a_plain_tag():
     and no em dash inside the tag body itself) still parses exactly as
     before this fix."""
     assert _recover_tag_body("RAG:1 — doc, Intro", frozenset()) == "RAG:1"
+
+
+def test_recover_tag_body_known_prefix_requires_a_boundary_after_the_match():
+    """Minor (F3 re-review): a known tag body that is merely a STRING
+    prefix of a longer, unrelated tag body must not win — `known={"RAG:1"}`
+    against `"RAG:12 ¦ x"` must NOT return the truncated `"RAG:1"`; the
+    remainder after any matched prefix must be empty or start with the
+    separator (` ¦ ` / ` — `), after optional whitespace."""
+    assert _recover_tag_body("RAG:12 ¦ x", frozenset({"RAG:1"})) == "RAG:12"
+
+    # A correct, longer match still wins over a shorter false-prefix match.
+    known = frozenset({"RAG:1", "RAG:12"})
+    assert _recover_tag_body("RAG:12 ¦ x", known) == "RAG:12"
 
 
 def test_known_tag_bodies_collects_every_tag_across_every_section():

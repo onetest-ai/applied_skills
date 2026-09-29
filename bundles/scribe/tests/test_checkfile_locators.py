@@ -279,6 +279,37 @@ def test_human_claim_with_duplicate_tags_is_never_touched_and_keeps_origin_throu
     assert next_overview.count("[FILE:f.txt#C1]") == 2
 
 
+def test_carried_claim_with_duplicate_tag_is_needs_quote_not_missing_evidence(tmp_path):
+    """Minor (F3 re-review): `claim_fully_carried` must be computed from the
+    claim AS DRAFTED, before dedupe strips a duplicate `[FILE:]` tag —
+    otherwise a non-human claim carried forward unchanged (base claim has
+    the same duplicate tag, no `cited_raw` record for the path, no fresh
+    evidence quote) is misrouted from `needs_quote` to a `Not modeled:
+    missing evidence quote` failure just because dedupe already removed the
+    duplicate from the block being compared against base."""
+    config, data, inst = _setup(tmp_path)
+    _seed_three_section_raw(config, "m1")
+    claim_text = "A carried note, cited twice. [FILE:f.txt#C1] [FILE:f.txt#C1]"
+    work_dir = config.work_dir / "m1"
+    write_text(
+        work_dir / "base.md",
+        f"## Overview {{#overview}}\n\n{claim_text} <!-- c:aaaa0001 -->\n\n"
+        "## Details {#details}\n\nn/a\n",
+    )
+    # No state.json is seeded, so `cited_raw` is empty for every section —
+    # the tag has no usable "carried" record, and no evidence.json entry
+    # gives it a fresh quote either: this must land in needs_quote, not
+    # failed.
+    draft(config, "m1", "overview", f"{claim_text} <!-- c:aaaa0001 -->\n")
+
+    result = check_file_task(config, "m1", inst)
+
+    assert result["deduped"] == [{"section": "overview", "claim": "aaaa0001", "tag": "[FILE:f.txt#C1]"}]
+    assert result["failed"] == []
+    assert result["needs_quote"] == [{"section": "overview", "claim": "aaaa0001", "tag": "[FILE:f.txt#C1]"}]
+    assert result["checked"] == 0
+
+
 def test_merge_counts_locators_fixed_per_section_and_report_summary_totals_it(tmp_path):
     config, data, inst = _setup(tmp_path)
     work_dir = config.work_dir / "m1"

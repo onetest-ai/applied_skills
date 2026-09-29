@@ -135,18 +135,18 @@ def test_multiple_tags_on_one_claim_become_multiple_footnotes(tmp_path, monkeypa
     assert "^[MART:adjustments@division ¦ adjustments@division]" in out
 
 
-def test_tag_body_containing_the_footnote_separator_refuses(tmp_path, monkeypatch):
-    """C1 canary: this cannot happen for any tag this codebase generates,
-    but render must refuse rather than emit a footnote basedoc could
-    misparse."""
-    from scribe_lib.config import ScribeError
-
+def test_tag_body_containing_the_footnote_separator_still_renders(tmp_path, monkeypatch):
+    """Minor (F3 re-review): a `[FILE:]` locator is a raw document's heading
+    breadcrumb, so a source heading containing `claims.FOOTNOTE_SEP` (`¦`)
+    must not raise and block that task's publish every night — render
+    writes the footnote anyway (base's known-prefix recovery is exact for
+    such a tag; see test_footnote_locator_recovery.py)."""
     config = _config(tmp_path)
     monkeypatch.setattr(brain_mod, "evidence", _fake_evidence)
     instances = {"t1": {"title": "Demo Title"}}
     line = "Bad tag. [GRAPH:contains ¦ broken bar]"
-    with pytest.raises(ScribeError):
-        _tags_to_footnotes(line, config, instances)
+    out = _tags_to_footnotes(line, config, instances)
+    assert "^[GRAPH:contains ¦ broken bar ¦ " in out
 
 
 def test_task_tag_label_uses_upstream_title_and_claim_id():

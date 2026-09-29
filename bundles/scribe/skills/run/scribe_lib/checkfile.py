@@ -629,9 +629,19 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
             # being skipped — destroying a human-authored claim and, when
             # it survives, stripping its `origin=human` at merge.
             base_match = _find_carried_base_claim(base_claims, block)
+            # Minor (F3 re-review): snapshot the claim's key AS DRAFTED,
+            # before dedupe/relocation below can mutate `block["tags"]` (a
+            # duplicate tag dedupe removes). `claim_fully_carried` (used
+            # further down) must compare against this snapshot, not the
+            # post-dedupe block — a non-human claim carried forward with a
+            # duplicate tag has a base claim whose tags still include the
+            # duplicate, so comparing the ALREADY-deduped block against it
+            # would spuriously mismatch and misroute the claim to "missing
+            # evidence quote" instead of "carried"/"needs_quote".
+            drafted_claim_key = claims.claim_key(block)
             if (
                 base_match is not None
-                and claims.claim_key(base_match) == claims.claim_key(block)
+                and claims.claim_key(base_match) == drafted_claim_key
                 and claims.base_claim_origin(base_match) in claims.HUMAN_ORIGINS
             ):
                 human_skipped += 1
@@ -673,9 +683,11 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
             # or published under a different section) and no fresh quote is
             # reported under `needs_quote`, not silently rewritten to
             # `Not modeled:` — the PoC (I4) dropped exactly this case instead
-            # of asking for a quote.
+            # of asking for a quote. Compared against `drafted_claim_key`
+            # (captured above, before dedupe/relocation), not the current
+            # (possibly already-deduped) block — see that snapshot's comment.
             claim_fully_carried = (
-                base_match is not None and claims.claim_key(base_match) == claims.claim_key(block)
+                base_match is not None and claims.claim_key(base_match) == drafted_claim_key
             )
 
             reason: str | None = None

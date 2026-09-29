@@ -141,10 +141,23 @@ def _recover_tag_body(text: str, known_tag_bodies: frozenset[str]) -> str:
          either separator itself;
       2. else split on `" ¦ "` (`claims.FOOTNOTE_SEP`, current format);
       3. else split on the first `" — "` (legacy format, before this fix).
+
+    Minor (F3 re-review): step (1) requires a boundary after the matched
+    prefix — the remainder of `text` must be empty or start with (optional
+    whitespace then) the current separator `" ¦ "` or the legacy `" — "`.
+    Without this, a known body that is merely a STRING prefix of a longer,
+    unrelated tag body wins by being shorter and matching first — e.g.
+    `known_tag_bodies={"RAG:1"}` against `"RAG:12 ¦ x"` would otherwise
+    return `"RAG:1"`, truncating a real `RAG:12` citation.
     """
     best: str | None = None
     for body in known_tag_bodies:
-        if text.startswith(body) and (best is None or len(body) > len(best)):
+        if not text.startswith(body):
+            continue
+        rest = text[len(body):]
+        if rest and not re.match(r"^\s*(¦|—)", rest):
+            continue
+        if best is None or len(body) > len(best):
             best = body
     if best is not None:
         return best
