@@ -123,7 +123,12 @@ PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-
 #     If the corpus has meeting recordings, run 1m (below) BEFORE 1b: a Teams transcript .docx is
 #     then consumed by its recording instead of being converted by soffice as an ordinary document.
 "$PY" .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf,md,markdown,txt,html,htm \
-  --registry-db "$DB" --root-key <root-key>
+  --registry-db "$DB" --root-key <root-key> \
+  --exclude '<glob>'   # repeat per brain.toml exclude glob
+#     Both parse passes (1a and 1b): pass each glob in the root's brain.toml `exclude` list as
+#     `--exclude '<glob>'` (repeatable) — source_registry never registers an excluded file, so a
+#     parsed doc for one is unmanaged and --strict-sources refuses it. Scribe-marked files are
+#     skipped without a flag; both skips are recorded in the manifest with a `reason`.
 #     HTML with no browser degrades to DOM text (fidelity: degraded) via the same command; an
 #     HTML deck needs a browser to capture — see the visual-parse capture step below.
 # 1v. VISUAL/diagram/table pages (slide decks, flows, timelines) — the visual-parse skill:

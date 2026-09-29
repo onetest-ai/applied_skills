@@ -577,7 +577,14 @@ def main(argv=None):
                     help="VTT/SRT: group consecutive turns into one section up to N chars (default: 0 = off)")
     ap.add_argument("--verbose", action="store_true",
                     help="print the full traceback for a file that fails to parse (default: one line per file)")
+    ap.add_argument("--exclude", action="append", default=[], metavar="GLOB",
+                    help="corpus-relative glob to skip (repeatable; pass the source root's brain.toml "
+                         "`exclude` globs). Scribe-marked files are always skipped.")
     a = ap.parse_args(argv)
+    # The loop guard's shared predicate (byte-identical copy in knowledge-pipeline/),
+    # loaded here rather than at import time: scribe loads this module by file path.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import scribe_marker
     if bool(a.registry_db) != bool(a.root_key):
         ap.error("--registry-db and --root-key go together")
     registered = registered_paths(a.registry_db, a.root_key) if a.registry_db else None
@@ -587,12 +594,32 @@ def main(argv=None):
     consumed = _video_lane_consumed(a.out)
     for root, _, files in os.walk(a.corpus):
         for fn in sorted(files):
-            if fn.startswith(".") or fn.startswith("~$"):
-                continue
             src = os.path.join(root, fn)
             rel = os.path.relpath(src, a.corpus)
+            posix_rel = rel.replace(os.sep, "/")
+            # Checked ahead of the format filter (unlike exclude/scribe-marker below):
+            # a hidden file must never surface in the manifest as a silently-dropped
+            # extension, and a hidden DIRECTORY (.cache/x.pdf) must be skipped even
+            # when the file's own extension is otherwise parseable.
+            if scribe_marker.is_hidden(src, posix_rel):
+                manifest.append({"source": rel, "skipped": True, "method": "hidden", "reason": "hidden"})
+                stale = os.path.join(a.out, rel.replace(os.sep, "__") + ".md")
+                if os.path.exists(stale):
+                    os.remove(stale)
+                print(f"[skip] {'hidden':20} {rel}", file=sys.stderr)
+                continue
             ext = os.path.splitext(fn)[1].lower()
             if ext not in allow:
+                continue
+            reason = scribe_marker.skip_reason(src, posix_rel, a.exclude)
+            if reason:
+                # Same predicate source_registry uses, so a file the registry never registers
+                # is never parsed into an unmanaged doc (which strict brain_sync refuses).
+                manifest.append({"source": rel, "skipped": True, "method": reason, "reason": reason})
+                stale = os.path.join(a.out, rel.replace(os.sep, "__") + ".md")
+                if os.path.exists(stale):
+                    os.remove(stale)
+                print(f"[skip] {reason:20} {rel}", file=sys.stderr)
                 continue
             if rel.replace(os.sep, "/") in consumed:
                 # The video lane already owns this transcript (see _video_lane_consumed).

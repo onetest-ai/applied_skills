@@ -170,11 +170,22 @@ at the default 1200 max-chars): 2,978 chunks total.
 # Files not registered as active sources (e.g. a copy `source plan` marked skip_duplicate) are skipped as `unregistered`.
 "$PY" "$SKILLS/corpus-taxonomy-extraction/parse_corpus.py" --corpus <root> --out parsed/ --formats vtt,srt --merge-cues 10 \
   --fold-interjections 20 --pack-turns 1000 \
-  --registry-db "$DB" --root-key <root-key>
+  --registry-db "$DB" --root-key <root-key> \
+  --exclude '<glob 1>' --exclude '<glob 2>'
 # Pass 2 — narrative docs
 "$PY" "$SKILLS/corpus-taxonomy-extraction/parse_corpus.py" --corpus <root> --out parsed/ --formats pptx,docx,pdf,md,markdown,txt,html,htm \
-  --registry-db "$DB" --root-key <root-key>
+  --registry-db "$DB" --root-key <root-key> \
+  --exclude '<glob 1>' --exclude '<glob 2>'
 ```
+
+**Pass every glob in that root's `brain.toml` `exclude` list to both passes, one `--exclude`
+per glob** (omit the flag when the root has no `exclude`). `source_registry` never registers
+an excluded file, so a parsed doc for one is an unmanaged document that makes
+`--strict-sources` (step 4) refuse the whole update. Scribe-marked files (a `scribe-task`
+docx/pdf property or a `<!-- scribe:` first line) are skipped by `parse_corpus` without any
+flag; both kinds of skip are recorded in `parsed/manifest.json` with `reason: "excluded"` or
+`reason: "scribe_marker"`.
+
 
 **Adopting `--fold-interjections`/`--pack-turns` on an existing Brain changes every
 speaker-named transcript's parsed bytes once.** Like the `# fidelity:` header above, turning
@@ -304,6 +315,111 @@ Persist reports under the profile's configured `paths.runs` directory (default e
 ```
 
 After interruption, inspect these artifacts and current source/store state. Re-plan instead of assuming the last command completed.
+
+## Unattended hand-off mode
+
+A headless run (`claude -p "/brain:brain-maintenance handoff" --permission-mode bypassPermissions`,
+e.g. from `scribe.py schedule`) has no human to ask, so every judgment call the interactive
+workflow above makes by asking the user is instead made once, deterministically, by
+`maintenance.py handoff` — a pure classification over the `status` report, never a mutation.
+**In hand-off mode every human stop becomes apply, defer or abort exactly as `handoff`
+classified it; the agent does not re-decide.**
+
+**A hand-off run must always leave a report in `ops/handoff/<date>.json`**, even when it
+never reaches step 3 — review fix round 2, Important #1: `scribe:run`'s stale-Brain
+preflight reads only the LATEST file in that directory by name, so a step-0/1/2 failure
+that leaves no report behind is indistinguishable, to scribe, from a Brain that was
+never refreshed for the FIRST time — it silently reads yesterday's (or older) `apply`
+report and treats today's stale Brain as fresh. `handoff --abort-reason "<reason>" --out
+<path>` (below) is exactly for this: it writes a `decision: "abort"` report — same shape,
+same exit code 3 — without needing a `status.json` at all.
+
+1. Run the doctor (as in "0. Run the doctor" above). Exit 1 →
+
+   ```bash
+   "$PY" "$SKILLS/brain-maintenance/maintenance.py" handoff \
+     --profile "$PROJECT/brain-maintenance.toml" \
+     --abort-reason "doctor: <its missing items>" \
+     --out "$PROJECT/ops/handoff/$(date +%Y-%m-%d).json"
+   ```
+
+   then stop; nothing applied.
+2. Produce a fresh status report:
+
+   ```bash
+   "$PY" "$SKILLS/brain-maintenance/maintenance.py" status \
+     --profile "$PROJECT/brain-maintenance.toml" \
+     --out "$PROJECT/.brain-maintenance/runs/status.json"
+   ```
+
+   **Exit 2 here is expected and normal in hand-off mode** — `status` exits 2 whenever
+   `ready` is false, which is also true every time there is a mere `remove_candidate` or
+   an ambiguous move (both are `blockers`, and both are exactly what hand-off defers
+   rather than stops for). Do **not** apply the interactive workflow's "stop if the
+   report contains … ambiguous moves, or unreviewed removal candidates" rule here — that
+   rule is for a human running the update by hand. In hand-off mode, continue to step 3
+   regardless of `status`'s exit code, **as long as `.brain-maintenance/runs/status.json`
+   was actually written** — check the file exists before moving on, since exit 2 alone
+   does not distinguish "ready is false" from "the command crashed before writing
+   anything" (a bad profile, an unreadable db, …). If the file was NOT written, that is a
+   real failure: run `handoff --abort-reason "status: <the printed error>" --out
+   "$PROJECT/ops/handoff/$(date +%Y-%m-%d).json"` and stop, the same as step 1; only the
+   `handoff` classification below decides apply vs. abort.
+3. Classify it:
+
+   ```bash
+   "$PY" "$SKILLS/brain-maintenance/maintenance.py" handoff \
+     --profile "$PROJECT/brain-maintenance.toml" \
+     --status "$PROJECT/.brain-maintenance/runs/status.json" \
+     --out "$PROJECT/ops/handoff/$(date +%Y-%m-%d).json" \
+     --apply-plan "$PROJECT/.brain-maintenance/runs/handoff-apply-plan.json"
+   ```
+
+   Exit 3 → `decision: "abort"`: stop here. Nothing was applied. `scribe:run`'s stale-Brain
+   preflight reads this file next.
+4. Exit 0 → apply only the actions listed in `handoff.json.apply`. `--apply-plan` above
+   wrote a `source_registry`-shaped plan containing exactly those actions (never a
+   deferred ambiguous-move or duplicate-content add, even though "add" is itself a
+   structurally safe action type — see `classify_handoff`'s docstring); run:
+
+   ```bash
+   ./brain source apply --plan "$PROJECT/.brain-maintenance/runs/handoff-apply-plan.json"
+   ```
+
+   never `./brain source apply` against a freshly regenerated plan or the raw
+   `status.json.source_plan` — either would re-include the deferred adds. Then
+   render/visual-parse and parsed-store `update` for the same set (steps 3–4 above), then
+   `./brain update parsed ... --out "$PROJECT"`, which is what writes `meta.built_at` via
+   `brain_sync apply`.
+
+   **If any step from here on fails** (source apply, parsing, `update parsed`,
+   classification, marts), overwrite today's report so it no longer says `apply`, then stop:
+
+   ```bash
+   "$PY" "$SKILLS/brain-maintenance/maintenance.py" handoff \
+     --profile "$PROJECT/brain-maintenance.toml" \
+     --abort-reason "<step>: <the printed error>" \
+     --out "$PROJECT/ops/handoff/$(date +%Y-%m-%d).json"
+   ```
+
+   Use the same dated path step 3 wrote. Left alone, an `apply` report with a failed apply
+   behind it reads to `scribe:run` as a fresh Brain. (Scribe also cross-checks
+   `meta.built_at` against an `apply` report's date, but the abort report is what names the
+   failure.)
+5. Classify the resulting new chunks against the **current** taxonomy only — no taxonomy
+   changes in hand-off mode. Health items (untagged chunks, missing descriptions, …) stay
+   queued for the human review app; do not run the review workbench unattended.
+6. When `handoff.json.marts == "rebuild_strict"`, rebuild marts with `--strict`. On
+   failure, keep the old marts and record the error in the report; do not fall back to a
+   non-strict rebuild.
+7. Never tombstone a source and never answer a question in this mode. Every item in
+   `handoff.json.defer` (`remove_candidate`, `missing`, `ambiguous_move`,
+   `duplicate_content`) stays exactly as classified, in the report, for a human to resolve
+   later — it is not applied, not discarded, not re-decided.
+8. Deploy only when `handoff.json.deploy == "auto"` (`[handoff].deploy` in the profile,
+   default `"hold"`); `"hold"` never redeploys a hosted MCP revision on its own, even after
+   a clean apply — follow "8. Plan and deploy through the project profile" above, still
+   gated on local verification.
 
 ## Non-negotiable safety rules
 

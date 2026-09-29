@@ -617,4 +617,50 @@ End with a concise report containing:
 7. verification result and known gaps;
 8. exact project paths for `knowledge.sqlite`, taxonomy, parsed corpus, assets, and vault.
 
+## Working with Scribe
+
+If this project also runs `scribe` (`bundles/scribe`) against this Brain, three things carry
+across the plugin boundary:
+
+- **Loop guard.** Before a build/rebuild, check `brain.toml`'s source roots for a Scribe output
+  folder (`scribe:onboard`'s `guard-brain` adds an `exclude` glob for it automatically). Never
+  hand-remove that exclude without confirming with whoever owns the Scribe project — reversing
+  it lets a published document re-enter the corpus as source material. `scribe_marker.
+  is_scribe_artifact` also skips any file carrying the `scribe-task` marker as a second,
+  independent guard. `source_registry` and `parse_corpus.py` both apply both guards — pass the
+  root's `exclude` globs to `parse_corpus.py` as repeatable `--exclude`, or an excluded file is
+  parsed into an unmanaged doc that `--strict-sources` refuses.
+- **`meta.built_at`.** `brain_sync`'s apply (or seed) step UPSERTs this on every successful
+  build/refresh. Don't write to `meta.built_at` from anywhere except `brain_sync.write_built_at`.
+  `maintenance.py handoff` copies it into the `built_at` field of the report it writes, and
+  Scribe's `doctor.brain_handoff.stale_brain` reads it too (read-only): the latest report must
+  be dated today (its `created_at`, else its **file name**) and not `abort`, and an `apply`
+  report needs `meta.built_at` dated no earlier than the report — an apply that failed after
+  the report was written reads as stale (`brain not rebuilt after hand-off`). On any failure
+  after step 3 of the hand-off, overwrite today's report with `handoff --abort-reason`.
+- **Unattended hand-off mode.** `brain-maintenance`'s `maintenance.py handoff` subcommand (see
+  its own `SKILL.md`, "Unattended hand-off mode") is what a nightly cron/launchd chain
+  (`scribe.py schedule`) runs before `/scribe:run --due`. The profile is a **TOML** file
+  (`--profile brain-maintenance.toml`, not JSON), and `--out` **must** be a dated
+  `ops/handoff/<YYYY-MM-DD>.json` path — Scribe's preflight (`doctor.py`) finds the latest report
+  by lexically sorting `*.json` in `brain_handoff_dir` and reads it as stale unless its filename
+  stem is today's date, so a fixed name like `handoff-report.json` would sort after every dated
+  report and never register as fresh OR as stale:
+  ```bash
+  "$PY" "$SKILLS/brain-maintenance/maintenance.py" status --profile brain-maintenance.toml \
+    --out "$PROJECT/.brain-maintenance/runs/status.json"
+  "$PY" "$SKILLS/brain-maintenance/maintenance.py" handoff --profile brain-maintenance.toml \
+    --status "$PROJECT/.brain-maintenance/runs/status.json" \
+    --out "$PROJECT/ops/handoff/$(date +%Y-%m-%d).json"
+  # or, when status itself couldn't be produced (e.g. a source root is offline):
+  "$PY" "$SKILLS/brain-maintenance/maintenance.py" handoff --profile brain-maintenance.toml \
+    --abort-reason "root_unavailable: <root>" --out "$PROJECT/ops/handoff/$(date +%Y-%m-%d).json"
+  ```
+  `handoff` classifies the plan into `apply`/`defer`/`abort` (the `decision` field; a stale
+  provisional taxonomy, a blocked parsed delta, a strict-source error, or an unreachable root all
+  abort), never resolves a taxonomy ambiguity or force-deploys, and mutates the source registry
+  only via a separate `source apply --plan <path>` built from `--apply-plan`'s output — those
+  stay a human's job (or this exact chain) in the next interactive session. The Scribe project's
+  `scribe.toml` `brain_handoff_dir` must point at this same `ops/handoff` directory.
+
 Do not say “incremental update complete” if only `brain_sync apply` ran while changed visual sources were never rendered and assembled.

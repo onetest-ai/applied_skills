@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://onetest-ai.example/scribe/task.schema.json",
+  "title": "Scribe task template + instance frontmatter",
+  "description": "Documented contract for `*.tmpl.md` (template) and `*.task.md` (instance) YAML frontmatter. scribe.py hand-validates against these rules (see scribe_lib/config.py:validate_all); this file is the source of truth for what that code checks.",
+  "oneOf": [
+    { "$ref": "#/$defs/template" },
+    { "$ref": "#/$defs/instance" }
+  ],
+  "$defs": {
+    "template": {
+      "type": "object",
+      "required": ["id", "version", "goal", "params", "inputs", "output"],
+      "properties": {
+        "id": { "type": "string", "description": "Template id, e.g. 'subsystem-profile'." },
+        "version": { "type": "integer", "minimum": 1 },
+        "goal": { "type": "string" },
+        "params": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Names of params an instance must supply, e.g. [name, tags, aliases]."
+        },
+        "inputs": {
+          "type": "object",
+          "properties": {
+            "brain": {
+              "type": "object",
+              "properties": {
+                "tags": {
+                  "description": "Taxonomy LABELS (not ids) to filter search_knowledge by, or {{tags}}.",
+                  "anyOf": [{ "type": "array", "items": { "type": "string" } }, { "type": "string" }]
+                }
+              }
+            },
+            "raw": {
+              "type": "object",
+              "properties": {
+                "match": {
+                  "description": "Case-insensitive substrings matched against raw file path or text; empty = all selected files.",
+                  "anyOf": [{ "type": "array", "items": { "type": "string" } }, { "type": "string" }]
+                },
+                "globs": { "type": "array", "items": { "type": "string" } },
+                "exclude": { "type": "array", "items": { "type": "string" } }
+              }
+            },
+            "prior": { "type": "string", "enum": ["latest"] },
+            "tasks": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Upstream task ids this template depends on (may be overridden per-instance)."
+            }
+          }
+        },
+        "output": {
+          "type": "object",
+          "required": ["formats", "versioning", "sections"],
+          "properties": {
+            "formats": { "type": "array", "items": { "enum": ["docx", "pdf"] } },
+            "versioning": { "type": "string", "enum": ["extend"] },
+            "sections": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "title"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "title": { "type": "string" },
+                  "kind": { "type": "string", "enum": ["diagram"] },
+                  "intent": { "type": "string" },
+                  "queries": { "type": "array", "items": { "type": "string" } },
+                  "lanes": {
+                    "type": "array",
+                    "items": { "type": "string", "description": "e.g. narrative, numbers, or 'temporal?'." }
+                  },
+                  "must": { "type": "array", "items": { "type": "string" } }
+                }
+              }
+            }
+          }
+        },
+        "acceptance": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["check"],
+            "properties": {
+              "check": { "type": "string", "enum": ["sections_present", "zero_unverified", "diagrams_render"] }
+            }
+          }
+        }
+      }
+    },
+    "instance": {
+      "type": "object",
+      "required": ["template", "id", "title", "params", "out"],
+      "properties": {
+        "template": { "type": "string", "pattern": "^[A-Za-z0-9_-]+@[0-9]+$" },
+        "id": { "type": "string" },
+        "title": { "type": "string", "minLength": 1, "pattern": "^(?![.])(?!.*[.][.])[^/\\\\\\u0000]+$", "description": "Document title; also the stable output file name — so no '/', '\\', '..', NUL, and no leading '.'. On a for_each instance, {{param}}s are substituted per child." },
+        "enabled": { "type": "boolean", "default": true },
+        "params": { "type": "object" },
+        "audience": { "type": "string" },
+        "cadence": { "type": "string", "anyOf": [ { "enum": ["on-brain-update", "daily", "manual"] }, { "pattern": "^weekly:(mon|tue|wed|thu|fri|sat|sun)$" } ], "description": "weekly:<dow> is due only on that weekday, once (nothing published or observed yet that day)." },
+        "publish": { "type": "string", "enum": ["auto", "propose"] },
+        "out": { "type": "string", "description": "Relative dir under out_root. Must resolve under out_root, and no two tasks' out paths may be equal or nest one inside the other." },
+        "inputs": {
+          "type": "object",
+          "description": "Deep-merged over the template's inputs; e.g. inputs.raw.exclude, inputs.tasks."
+        },
+        "for_each": {
+          "type": "object",
+          "required": ["taxonomy_under"],
+          "description": "Task templates and task instances — fan-out: this instance becomes one instance per child of the named taxonomy node (Brain graph_nodes), each `<id>--<child-node-id>` (no brackets — a bracket breaks [TASK:] tags and group globs) with params.name/params.tags set to the child's label and out nested under the child's label. A child never published and not yet in the parent's approved_children starts enabled: false.",
+          "properties": {
+            "taxonomy_under": { "type": "string", "description": "A taxonomy node LABEL (not id); its graph_nodes children become the fan-out instances." }
+          }
+        },
+        "approved_children": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Taxonomy node ids of this for_each instance's children a person has approved (via `scribe.py enable <id>--<node-id>`) — only meaningful on a `for_each` instance; written by `registry.set_enabled`, never hand-edited."
+        }
+      }
+    }
+  }
+}

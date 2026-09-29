@@ -31,8 +31,11 @@ import sys
 import tempfile
 import unicodedata
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import scribe_marker  # noqa: E402  (byte-identical copy in corpus-taxonomy-extraction/)
 
 try:
     import tomllib
@@ -43,6 +46,7 @@ SCHEMA_VERSION = 1
 ROOT_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 SOURCE_KINDS = {"narrative", "reporting"}
 ROOT_MODES = {"import", "mirror", "managed"}
+SCRIBE_MARKER = scribe_marker.SCRIBE_MARKER
 
 
 def utcnow() -> str:
@@ -115,7 +119,10 @@ def load_config(path: Path) -> dict[str, Any]:
         includes = spec.get("include", ["**/*"])
         if not isinstance(includes, list) or not all(isinstance(x, str) for x in includes):
             raise ValueError(f"source root {key} include must be a string array")
-        out["roots"][key] = {"path": root.resolve(), "mode": mode, "include": includes}
+        excludes = spec.get("exclude", [])
+        if not isinstance(excludes, list) or not all(isinstance(x, str) for x in excludes):
+            raise ValueError(f"source root {key} exclude must be a string array")
+        out["roots"][key] = {"path": root.resolve(), "mode": mode, "include": includes, "exclude": excludes}
     return out
 
 
@@ -222,15 +229,24 @@ def register(con: sqlite3.Connection, root_key: str, rel: str, path: Path, *, so
     return dict(con.execute("SELECT * FROM sources WHERE source_id=?", (sid,)).fetchone())
 
 
-def iter_files(root: Path, includes: list[str]) -> dict[str, Path]:
+is_scribe_artifact = scribe_marker.is_scribe_artifact
+_glob_match = scribe_marker.glob_match
+
+
+def iter_files(root: Path, includes: list[str], excludes: list[str] | tuple = ()) -> tuple[dict[str, Path], list[dict[str, str]]]:
     found: dict[str, Path] = {}
+    skipped: dict[str, str] = {}
     for pattern in includes:
         for p in root.glob(pattern):
             if not p.is_file() or p.is_symlink():
                 continue
             rel = normalize_rel(p.relative_to(root).as_posix())
+            reason = scribe_marker.skip_reason(p, rel, excludes)
+            if reason:
+                skipped[rel] = reason
+                continue
             found[rel] = _resolved_inside(root, rel)
-    return dict(sorted(found.items()))
+    return dict(sorted(found.items())), [{"relative_path": r, "reason": w} for r, w in sorted(skipped.items())]
 
 
 def config_fingerprint(path: Path) -> str:
@@ -243,7 +259,7 @@ def build_plan(con: sqlite3.Connection, config: dict[str, Any], root_filter: str
         if root_filter not in config["roots"]:
             raise ValueError(f"unknown source root: {root_filter}")
         rows = [r for r in rows if r["root_key"] == root_filter]
-    roots_out, actions = [], []
+    roots_out, actions, skipped_generated = [], [], []
     # Same content (SHA-256) present at multiple live paths — the classic
     # SharePoint/OneDrive/Drive sync artifact that would register (and render +
     # embed) the same document several times. Only the canonical copy is added;
@@ -257,7 +273,8 @@ def build_plan(con: sqlite3.Connection, config: dict[str, Any], root_filter: str
         if not root.is_dir():
             roots_out.append({"root_key": key, "mode": spec["mode"], "status": "root_unavailable"})
             continue
-        disk = iter_files(root, spec["include"])
+        disk, skipped = iter_files(root, spec["include"], spec.get("exclude", []))
+        skipped_generated.extend({"root_key": key, **item} for item in skipped)
         roots_out.append({"root_key": key, "mode": spec["mode"], "status": "available", "files": len(disk)})
         missing = set(registered) - set(disk)
         new = set(disk) - set(registered)
@@ -299,7 +316,8 @@ def build_plan(con: sqlite3.Connection, config: dict[str, Any], root_filter: str
                   for digest, paths in sorted(present_by_sha.items()) if len(paths) > 1]
     actions = _skip_duplicates(actions, [g["paths"] for g in duplicates], {(r["root_key"], r["relative_path"]) for r in rows})
     return {"version": 1, "created_at": utcnow(), "config_sha256": config_fingerprint(config["path"]),
-            "roots": roots_out, "actions": actions, "duplicate_content": duplicates}
+            "roots": roots_out, "actions": actions, "duplicate_content": duplicates,
+            "skipped_generated": skipped_generated}
 
 
 def _skip_duplicates(actions: list[dict[str, object]], duplicate_paths: list[list[dict[str, str]]],

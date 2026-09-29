@@ -71,6 +71,12 @@
         "max_deleted_docs": {"type": "integer", "minimum": 0}
       }
     },
+    "handoff": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "deploy": {"enum": ["hold", "auto"]}
+      }
+    },
     "deployment": {
       "type": "object", "additionalProperties": false,
       "properties": {
