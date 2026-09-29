@@ -39,7 +39,7 @@ sys.path.insert(0, HERE)
 sys.path.append(os.path.join(os.path.dirname(HERE), "knowledge-index"))  # chunking.py, as indexed
 
 _FRAME_H = re.compile(r"^## .*\(frame p(\d+)\)\s*$")
-_CUE_H = re.compile(r"^## .*\(cue \d+\)\s*$")
+_CUE_H = re.compile(r"^## .*\((?:cue \d+|cues \d+–\d+)\)\s*$")  # one turn, or a --pack-turns pack
 _COMMENT = re.compile(r"<!--.*?-->", re.S)
 # a described caption overlay ("live-caption bar reads…", "Caption spoken: …"), not any text
 # that happens to contain the word (a slide's "caption block", a CMS field)

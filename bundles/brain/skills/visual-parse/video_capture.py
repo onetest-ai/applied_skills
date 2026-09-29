@@ -33,6 +33,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -449,6 +450,64 @@ def rel_under(path: str, root: str) -> str | None:
     return rp.replace(os.sep, "/")
 
 
+# Teams names a recording "<Meeting>-20260925_1429UTC-Meeting Recording.mp4" and its
+# transcript "<Meeting>.vtt" — or, for a 1:1 call, "<Meeting>-20260916.vtt" (date kept) —
+# and sanitises punctuation differently in the two names ("wVendor  Billing" vs
+# "w_Vendor _ Billing"). Copied into brain_doctor (pinned by test).
+_TEAMS_REC = re.compile(r"-\d{8}_\d{4,6}(?:UTC)?-Meeting[ _]Recording$", re.I)
+_TEAMS_TIME = re.compile(r"_\d{4,6}(?:UTC)?-Meeting[ _]Recording$", re.I)
+
+
+def meeting_stem(stem: str) -> str | None:
+    """The meeting name a Teams recording stem carries, or None for any other name."""
+    m = _TEAMS_REC.search(stem)
+    return stem[:m.start()] if m and m.start() > 0 else None
+
+
+def dated_meeting_stem(stem: str) -> str | None:
+    """A Teams recording stem with only the time tail stripped (`<Meeting>-YYYYMMDD`)."""
+    return stem[:_TEAMS_TIME.search(stem).start()] if meeting_stem(stem) else None
+
+
+def name_key(s: str) -> str:
+    """Casefolded alphanumerics only: what survives both of Teams' sanitisations."""
+    return "".join(ch for ch in unicodedata.normalize("NFKC", s).casefold() if ch.isalnum())
+
+
+def _transcript_names(d: str, names: list[str], ext: str) -> list[str]:
+    return [n for n in names if os.path.splitext(n)[1].lower() == ext and not n.startswith((".", "~$"))
+            and (ext != ".docx" or _is_teams_transcript(os.path.join(d, n)))]
+
+
+def _same_stem(d: str, names: list[str], stem: str) -> str | None:
+    """First `stem`.vtt/.srt/.docx in `d` (extension case-insensitive, real spelling); a
+    .docx only if it reads as a Teams transcript."""
+    for ext in SIDECAR_EXT:
+        for n in names:
+            if os.path.splitext(n)[0] == stem and os.path.splitext(n)[1].lower() == ext:
+                if ext == ".docx" and not _is_teams_transcript(os.path.join(d, n)):
+                    continue  # same-name notes/agenda, or unreadable: not a transcript
+                return os.path.join(d, n)
+    return None
+
+
+def _same_key(d: str, names: list[str], key: str) -> str | None:
+    """The transcript whose name_key is `key`, by extension priority; two of the winning
+    extension -> ValueError."""
+    for ext in SIDECAR_EXT:
+        hits = [n for n in _transcript_names(d, names, ext) if name_key(os.path.splitext(n)[0]) == key]
+        if len(hits) > 1:
+            raise ValueError(f"{len(hits)} transcripts match the meeting name: {', '.join(hits)} — "
+                             "pick one with --transcript-file")
+        if hits:
+            return os.path.join(d, hits[0])
+    return None
+
+
+def _meeting_keys(stem: str) -> list[str]:
+    return [name_key(m) for m in (meeting_stem(stem), dated_meeting_stem(stem)) if m] or [name_key(stem)]
+
+
 def find_sidecar(video: str) -> str | None:
     """The recording's transcript, by the first rule that matches:
     1. same stem, extension case-insensitive, priority .vtt, .srt, .docx (real spelling);
@@ -456,22 +515,43 @@ def find_sidecar(video: str) -> str | None:
        same-name agenda or an unreadable file is skipped (probe warns about the latter);
     2. a .docx in the same directory whose first paragraph (docx_title) is exactly the
        video's stem — Teams names the transcript after the meeting, not the recording.
-    More than one .docx claiming the video by title -> ValueError (no guessing)."""
+       Several such claims (a re-downloaded copy) are settled by the one whose name matches
+       the meeting (rule 3's key), else refused;
+    3. for a Teams recording stem (`<Meeting>-YYYYMMDD_HHMM[SS][UTC]-Meeting Recording`):
+       rule 1 on `<Meeting>`, then on `<Meeting>-YYYYMMDD`, then the transcript whose
+       name_key equals either one's (Teams sanitises punctuation differently in the two names).
+    Ambiguity -> ValueError (no guessing): two unsettled title claims, two same-key
+    transcripts of one kind, or a meeting transcript several recordings would share."""
     d, base = os.path.split(os.path.abspath(video))
     stem = os.path.splitext(base)[0]
     names = sorted(os.listdir(d))
-    for ext in SIDECAR_EXT:
-        for n in names:
-            if os.path.splitext(n)[0] == stem and os.path.splitext(n)[1].lower() == ext:
-                if ext == ".docx" and not _is_teams_transcript(os.path.join(d, n)):
-                    continue  # same-name notes/agenda, or unreadable: not a transcript
-                return os.path.join(d, n)
+    hit = _same_stem(d, names, stem)
+    if hit:
+        return hit
     claims = [n for n in names if os.path.splitext(n)[1].lower() == ".docx"
               and not n.startswith((".", "~$")) and docx_title(os.path.join(d, n)) == stem]
     if len(claims) > 1:
-        raise ValueError(f"{len(claims)} .docx files claim {base} as their recording by title: "
-                         f"{', '.join(claims)} — pick one with --transcript-file")
-    return os.path.join(d, claims[0]) if claims else None
+        keys = _meeting_keys(stem)
+        named = [n for n in claims if name_key(os.path.splitext(n)[0]) in keys]
+        if len(named) != 1:
+            raise ValueError(f"{len(claims)} .docx files claim {base} as their recording by title: "
+                             f"{', '.join(claims)} — pick one with --transcript-file")
+        claims = named
+    if claims:
+        return os.path.join(d, claims[0])
+    for form in (meeting_stem, dated_meeting_stem):
+        m = form(stem)
+        if not m:
+            continue
+        hit = _same_stem(d, names, m) or _same_key(d, names, name_key(m))
+        if hit:
+            recs = [n for n in names if os.path.splitext(n)[1].lower() in VIDEO_EXT
+                    and (o := form(os.path.splitext(n)[0])) and name_key(o) == name_key(m)]
+            if len(recs) > 1:
+                raise ValueError(f"{len(recs)} recordings of meeting '{m}' would share "
+                                 f"{os.path.basename(hit)}: {', '.join(recs)} — pick one with --transcript-file")
+            return hit
+    return None
 
 
 def unreadable_docx(d: str) -> list[str]:
@@ -515,9 +595,24 @@ def read_low_frames(video: str):
     return np.frombuffer(raw, np.uint8).reshape(-1, LOW_H, LOW_W).astype(np.float32) / 255.0
 
 
-def extract_frame(video: str, t: float, png: str) -> None:
-    run_quiet([need_tool("ffmpeg"), "-v", "error", "-y", "-ss", f"{t:.3f}", "-i", video,
-               "-frames:v", "1", "-vf", "scale='min(1920,iw)':-2", png], "ffmpeg", video)
+FRAME_RETRY_BACKOFF = (0.0, 0.5, 1.0, 2.0)  # seconds before the chosen timestamp
+
+
+def extract_frame(video: str, t: float, png: str) -> bool:
+    """Write the frame at `t` (or, failing that, a little earlier) to `png`; False when
+    none of the tries produced an image. A variable-frame-rate file can make `-ss` near
+    the end decode nothing while ffmpeg still exits 0 under -v error."""
+    for back in FRAME_RETRY_BACKOFF:
+        at = max(t - back, 0.0)
+        run_quiet([need_tool("ffmpeg"), "-v", "error", "-y", "-ss", f"{at:.3f}", "-i", video,
+                   "-frames:v", "1", "-vf", "scale='min(1920,iw)':-2", png], "ffmpeg", video)
+        if os.path.exists(png) and os.path.getsize(png) > 0:
+            return True
+        if at == 0.0:
+            break
+    if os.path.exists(png):
+        os.remove(png)
+    return False
 
 
 def swap_dir(new: str, target: str) -> None:
@@ -644,10 +739,14 @@ def cmd_frames(a) -> int:
     try:
         duration, _ = ffprobe(video)
         kept, capped = select_frames(read_low_frames(video), **params)
-        pages = []
-        for n, q in enumerate(kept, 1):
+        pages, unextractable = [], []
+        for q in kept:
+            n = len(pages) + 1  # numbering stays contiguous when a frame is dropped
             png = os.path.join(work, f"p{n:02d}.png")
-            extract_frame(video, min(q["key"] + 0.5, max(duration - 0.1, 0.0)), png)
+            t = min(q["key"] + 0.5, max(duration - 0.1, 0.0))
+            if not extract_frame(video, t, png):
+                unextractable.append({"t": round(t, 3), "t_start": q["t_start"], "t_end": q["t_end"]})
+                continue
             open(os.path.join(work, f"p{n:02d}.txt"), "w").close()
             pages.append({"page": n, "image": f"{slug}/p{n:02d}.png", "img_sha": sha_file(png),
                           "text_len": 0, "n_drawings": 0, "n_tables": 0, "img_cover": 0.0,
@@ -655,11 +754,16 @@ def cmd_frames(a) -> int:
                           "t_start": q["t_start"], "t_end": q["t_end"], "shown_at": q["shown_at"]})
         doc = {"doc": os.path.basename(video), "slug": slug, "dpi": None, "medium": "video",
                "duration": duration, "frames_key": key, "frames_capped": capped, "pages": pages}
+        if unextractable:
+            doc["frames_unextractable"] = unextractable
         atomic_write(os.path.join(work, "pages.json"), json.dumps(doc, indent=2) + "\n")
         swap_dir(work, outdir)
     except BaseException:  # includes die()'s SystemExit
         shutil.rmtree(work, ignore_errors=True)
         raise
+    for u in unextractable:
+        print(f"warning: {rel}: no image decodable near {fmt_hms(u['t'])} (variable frame rate?) — "
+              f"frame for {fmt_hms(u['t_start'])}–{fmt_hms(u['t_end'])} dropped", file=sys.stderr)
     print(f"{rel}: {len(pages)} key frame(s), slug={slug} -> {outdir}" + ("  [capped at --max-frames]" if capped else ""))
     return 0
 
@@ -702,25 +806,85 @@ def flatten_headings(md: str) -> str:
     return "\n".join(out)
 
 
-def render_doc(source: str, method: str, slug: str, turns: list[dict], frames: list[tuple]) -> str:
+def fold_interjections(turns: list[dict], min_chars: int) -> list[dict]:
+    """parse_corpus._fold_interjections semantics (pinned by test): a turn shorter than
+    min_chars joins the previous turn inline as "[Speaker: text]"; the first turn is kept;
+    min_chars <= 0 returns a copy unchanged."""
+    if min_chars <= 0:
+        return [dict(t) for t in turns]
+    out: list[dict] = []
+    for t in turns:
+        if out and len(t["text"]) < min_chars:
+            said = f"{t['speaker']}: {t['text']}" if t["speaker"] else t["text"]
+            out[-1] = {**out[-1], "text": f"{out[-1]['text']} [{said}]"}
+        else:
+            out.append(dict(t))
+    return out
+
+
+def pack_turns(turns: list[dict], max_chars: int) -> list[list[dict]]:
+    """parse_corpus._pack_turns semantics: consecutive turns (any speaker) share one pack
+    while its rendered size (the "HH:MM:SS Speaker: text" lines) stays within max_chars; an
+    oversized turn is a pack alone; max_chars <= 0 is one pack per turn."""
+    if max_chars <= 0:
+        return [[t] for t in turns]
+    packs: list[list[dict]] = []
+    cur: list[dict] = []
+    size = 0
+    for t in turns:
+        n = len(fmt_hms(t["start"])) + 1 + (len(t["speaker"]) + 2 if t["speaker"] else 0) + len(t["text"]) + 2
+        if cur and size + n > max_chars:
+            packs.append(cur)
+            cur, size = [], 0
+        cur.append(t)
+        size += n
+    if cur:
+        packs.append(cur)
+    return packs
+
+
+def render_doc(source: str, method: str, slug: str, turns: list[dict], frames: list[tuple],
+               fold: int = 0, pack: int = 0) -> str:
+    """Turns and frames interleaved by time. fold/pack apply within each run of turns between
+    two frames, so a frame is never folded into or packed with transcript. With both 0 every
+    turn is its own `(cue N)` section, as always; a multi-turn pack is `(cues a–b)` with one
+    "HH:MM:SS Speaker: text" paragraph per turn and no speaker marker."""
     items = [(t["start"], 0, t) for t in turns] + [(p["t_start"], 1, (p, md)) for p, md in frames]
     items.sort(key=lambda x: (x[0], x[1]))
     out = [f"# SOURCE: {source}\n# method: {method}\n# fidelity: full\n"]
     seq = 0
+    run: list[dict] = []
+
+    def flush():
+        nonlocal seq
+        for grp in pack_turns(fold_interjections(run, fold), pack):
+            first = seq + 1
+            seq += len(grp)
+            if len(grp) == 1:
+                t = grp[0]
+                sp = t["speaker"]
+                who = f" — {sp}" if sp else ""
+                marker = f"<!-- speaker: {sp} -->\n\n" if sp else ""
+                out.append(f"## {fmt_hms(t['start'])}{who} (cue {seq})\n\n{marker}{t['text']}\n")
+            else:
+                body = "\n\n".join(f"{fmt_hms(t['start'])} {t['speaker']}: {t['text']}" if t["speaker"]
+                                    else f"{fmt_hms(t['start'])} {t['text']}" for t in grp)
+                out.append(f"## {fmt_hms(grp[0]['start'])}–{fmt_hms(grp[-1]['start'])} "
+                           f"(cues {first}–{seq})\n\n{body}\n")
+        run.clear()
+
     for _t, kind, obj in items:
         if kind == 0:
-            seq += 1
-            sp = obj["speaker"]
-            who = f" — {sp}" if sp else ""
-            marker = f"<!-- speaker: {sp} -->\n\n" if sp else ""
-            out.append(f"## {fmt_hms(obj['start'])}{who} (cue {seq})\n\n{marker}{obj['text']}\n")
+            run.append(obj)
         else:
+            flush()
             p, md = obj
             n = p["page"]
             shown = ", ".join(f"{fmt_hms(s)}–{fmt_hms(e)}" for s, e in p["shown_at"])
             out.append(f"## {fmt_hms(p['t_start'])} · {title_of(md, n)} (frame p{n:02d})\n\n"
                        f"<!-- image: {slug}/p{n:02d}.png -->\n<!-- on-screen: {shown} -->\n\n"
                        f"{flatten_headings(md.strip())}\n")
+    flush()
     return "\n".join(out)
 
 
@@ -1165,13 +1329,15 @@ def cmd_assemble(a) -> int:
     duplicates = sum(1 for p in pages_doc["pages"] if p.get("dropped") == "duplicate")
     rel = probe["source"]
     text = render_doc(rel, method, pages_doc["slug"],
-                      merge_turns(cues, a.merge_cues), kept)
+                      merge_turns(cues, a.merge_cues), kept, a.fold_interjections, a.pack_turns)
     atomic_write(os.path.join(a.parsed, doc_name(rel)), text)
     inputs = [rel] + ([probe["sidecar_source"]] if probe.get("sidecar_source") else [])
     entries = [{"source": rel, "md": doc_name(rel), "method": "video-lane", "transcript": probe["transcript"],
                 "inputs": inputs, "frames_kept": len(kept), "frames_dropped_no_content": dropped,
                 "frames_dropped_duplicate": duplicates,
                 "frames_capped": bool(pages_doc.get("frames_capped")), "warnings": probe.get("warnings", [])}]
+    if pages_doc.get("frames_unextractable"):
+        entries[0]["frames_unextractable"] = len(pages_doc["frames_unextractable"])
     if probe.get("sidecar_source"):
         entries.append({"source": probe["sidecar_source"], "skipped": True,
                         "method": "consumed-by-video", "consumed_by": rel})
@@ -1295,6 +1461,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--manifest", help="default: <parsed>/manifest.json")
     s.add_argument("--db", help="knowledge.sqlite — read/write the page_render cache")
     s.add_argument("--merge-cues", type=int, default=10)
+    s.add_argument("--fold-interjections", type=int, default=0, metavar="N",
+                   help="fold a turn shorter than N chars into the previous turn as [Speaker: text] "
+                        "(parse_corpus semantics; 0 = off; recommended 20)")
+    s.add_argument("--pack-turns", type=int, default=0, metavar="N",
+                   help="group consecutive turns into one section up to N chars; frames stay their own "
+                        "sections (parse_corpus semantics; 0 = off; recommended 1000)")
     s.add_argument("--content-dup", type=float, default=0.8,
                    help="drop a frame whose transcription shares >= this share of its words with an "
                         "earlier kept frame (0 disables; recomputed on every run)")

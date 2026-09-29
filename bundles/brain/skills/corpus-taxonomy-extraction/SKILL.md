@@ -46,7 +46,7 @@ DB=schema/knowledge.sqlite                   # the store (BRAIN.md's $DB)
 
 With no venv, use `uv run --with-requirements <bundle>/requirements.txt python` in place of `"$PY"` (for example `bundles/brain/requirements.txt` in a checkout). Parsing needs `pymupdf` and `openpyxl`, and `.pptx`/`.docx` also need LibreOffice `soffice` (a system dependency). The review, merge, graph and classify scripts (`taxonomy_review.py`, `review_server.py`, `taxonomy_merge.py`, `build_graph.py`, `classify_prep.py`, `classify_write.py`) are stdlib only. They never load `sqlite-vec` and never touch the vector table, so any Python 3.9+ runs them.
 
-The map, adjudication, judge and fix steps assume a subagent mechanism with a model override (e.g. Sonnet). On another harness, use a Sonnet-class model that can read a file and write JSON. Nothing corpus-specific is hardcoded: the goal string and arguments drive everything.
+The map, adjudication, judge and fix steps assume a subagent mechanism with a model override (e.g. Sonnet). On another harness, use a Sonnet-class model that can read a file and write JSON. Nothing corpus-specific is hardcoded: the goal string and arguments drive everything. Every dispatch (map, adjudication, classification, health fixes, refine) tells the subagent to keep any scratch or helper file under its own private directory (e.g. `<run>/scratch/<agent-id>/`), never a shared `/tmp` path: parallel agents otherwise overwrite each other's helper scripts.
 
 ## Pipeline (map → reduce → judge → emit)
 

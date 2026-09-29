@@ -136,9 +136,8 @@ artifact to reuse across runs the way a PDF/PPTX page does — re-run the visual
 step (`html_segments.js` → `html_capture.py plan` → screenshots → `html_capture.py assemble`)
 against the current page for a changed HTML source, exactly as if it were new. A parsed
 document whose header reads `fidelity: degraded` means no browser was available at the run
-that ingested it: text-only, DOM-derived, no images, no VLM transcription. No code writes a
-`fidelity: full` marker — `vision_assemble.py` writes the captured Markdown with no preamble
-at all. So "upgrading" a source is really re-capturing it through the full-fidelity path,
+that ingested it: text-only, DOM-derived, no images, no VLM transcription. `vision_assemble.py` writes
+the captured Markdown with no preamble unless given `--source` (then `fidelity: full`). So "upgrading" a source is really re-capturing it through the full-fidelity path,
 which REPLACES the degraded parsed document with one that carries no `fidelity: degraded`
 line, rather than any script rewriting a header in place. If a browser (or browser-capable
 provider) is available on this maintenance pass, re-run that source through the capture path;
@@ -149,12 +148,14 @@ a permanent state.
 transcript, or both can change independently — so what to re-run depends on which changed.
 See `visual-parse` → "Meeting recordings" for the full per-recording command sequence
 (`probe` / `transcribe` / `frames` / `vision_prep` → 🤖 → `review-prep` → 🤖 one blind reader per review item →
-`assemble --review` / `forget`).
+`assemble --review` / `forget`). Pass `assemble` the same `--fold-interjections 20 --pack-turns 1000`
+on every run of a recording: changing them re-chunks it, and dropping them on a later run
+splits it back into one section per speaker turn.
 
 | What changed | Re-run |
 |---|---|
 | Video content | `probe`, `transcribe` (only if `probe.json` says `asr`), `frames`, VLM pass, `review-prep` + one blind reader per item, `assemble --review` |
-| Sidecar `.vtt`/`.srt`/`.docx` (incl. a Teams `.docx` paired by its title) changed or added | `probe`, `assemble --db <db>` (frames unchanged: the stored review verdicts still apply). First update of a recording assembled before 0.9.2 (no stored verdicts): `review-prep --db <db>`, one blind reader per item, then `assemble --review` |
+| Sidecar `.vtt`/`.srt`/`.docx` (incl. a Teams `.docx` paired by its title, or a `<Meeting>.vtt` paired with its `<Meeting>-…-Meeting Recording` video) changed or added | `probe`, `assemble --db <db>` (frames unchanged: the stored review verdicts still apply). First update of a recording assembled before 0.9.2 (no stored verdicts): `review-prep --db <db>`, one blind reader per item, then `assemble --review` |
 | Sidecar removed | `probe`, `transcribe`, `assemble` |
 | Video removed | `./brain source remove <source-id> --yes` (tombstone), then `video_capture.py forget` |
 

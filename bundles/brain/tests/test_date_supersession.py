@@ -20,7 +20,7 @@ def store(tmp_path):
     (parsed / "manifest.json").write_text(json.dumps(
         [{"source": md[:-3], "md": md, "method": "x", "event_date": d, "date_source": s}
          for md, (d, s) in DOCS.items()]))
-    c = sqlite3.connect(":memory:"); c.row_factory = sqlite3.Row
+    c = K.connect(":memory:"); c.row_factory = sqlite3.Row   # vec0 needs sqlite_vec loaded
     K._ensure_schema(c, 384)
     for i, md in enumerate(DOCS):
         for j in range(2):

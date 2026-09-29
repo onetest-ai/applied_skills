@@ -941,7 +941,10 @@ FAMILIES="$PROJECT/schema/families.$(basename $SOURCES).json"
    ```
    The output shows `TOTAL N facts -> SQLite` on stderr. Below it: a coverage table
    (family, grain, fact count, month count, entity count) and any `⚠ PARTIAL` or
-   `❌ ZERO` warnings.
+   `❌ ZERO` warnings. A `FILES DISAGREE` block lists metric-months that workbooks report
+   differently (`restated` by a later report, or a same-month `conflict`; the other values
+   are kept in `fact_versions`); a `COLLISION` block lists one file reporting a figure
+   twice — fix that family's sheets/measures before trusting it.
 
 2. Verify the `facts` table is populated:
    ```bash

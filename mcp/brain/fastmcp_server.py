@@ -43,7 +43,9 @@ for an open question get_question_status rather than trusting the newest retriev
 a conflicted result has no current value until a supersedes/retracts relation resolves it.
 
 Honesty: a status=not_modeled result is a valid "no data" answer -- report the gap, don't
-guess. On an error result (isError=true), follow its how_to_fix and retry with corrected
+guess. When evidence disagrees -- two documents, or a get_metric row with
+other_reported_values (restated or conflicting) -- give both values with both citations, say
+which is newer, and never silently pick one. On an error result (isError=true), follow its how_to_fix and retry with corrected
 arguments. limit is 1-100; for more coverage make multiple narrower calls (split by metric,
 grain, or range) rather than one oversized request.
 

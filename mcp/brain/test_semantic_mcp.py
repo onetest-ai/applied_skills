@@ -128,6 +128,30 @@ class SemanticCoreTests(FixtureCase):
         with self.assertRaises(ValueError):
             core.get_metric("revenue", limit=101)
 
+    def test_metric_rows_carry_other_reported_values(self):
+        # a Brain built before fact_versions existed: rows are unchanged, no flag
+        plain = core.get_metric("revenue", grain="overall")["rows"][0]
+        self.assertNotIn("restated", plain)
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.executescript("""
+                CREATE TABLE fact_versions(family TEXT, metric TEXT, grain TEXT, entity TEXT, month TEXT,
+                                           value REAL, source_file TEXT, reported_in TEXT, is_current INT);
+                INSERT INTO fact_versions VALUES
+                  ('commercial','revenue','overall','All','2024-01', 90.0,'jan.xlsx','2024-01',0),
+                  ('commercial','revenue','overall','All','2024-01',100.0,'report.xlsx','2024-02',1);
+            """)
+        result = core.get_metric("revenue", grain="overall")
+        row = result["rows"][0]
+        self.assertEqual(row["value"], 100.0)
+        self.assertEqual(row["reported_in"], "2024-02")
+        self.assertEqual(row["other_reported_values"],
+                         [{"value": 90.0, "source_file": "jan.xlsx", "reported_in": "2024-01"}])
+        self.assertTrue(row["restated"])
+        self.assertIn("other_reported_values", result["guidance"])
+        # rows without versions stay plain
+        regional = core.get_metric("revenue", grain="region")["rows"][0]
+        self.assertNotIn("restated", regional)
+
     def test_database_is_read_only(self):
         with core._readonly_connection() as con, self.assertRaises(sqlite3.OperationalError):
             con.execute("INSERT INTO facts VALUES('x','x','x','x','x',1,'x')")
