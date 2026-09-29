@@ -59,10 +59,12 @@ what {{name}} talks to.
   in it should be traceable to something said in the Overview or Usage
   sections (which do carry citations).
 - **Numbers only from `get_metric` or a quoted "reported in `<file>`".**
-- **Keep the speaker's modality.** A claim drawn from a meeting transcript keeps
-  the speaker's modality: a question, guess, hypothesis or proposal is attributed
-  ("<role> asked whether…", "<role> suggested…") or moved to Open questions, never
-  restated as a finding.
+- **Keep the speaker's modality.** A claim whose evidence is conversational — a
+  `[FILE:]` transcript passage or a `[RAG:]` chunk from a transcript source — keeps
+  the speaker's modality: a question, guess, hypothesis, proposal or plan is
+  attributed ("<role> asked whether…", "<role> suggested…") rather than restated as
+  a finding; when a later turn answers or contradicts it, the answer is what the
+  claim reports.
 - **Extend, don't rewrite.** Non-stale sections are carried forward
   byte-for-byte by `merge`; only draft the sections you are handed as stale.
 - Keep node/edge labels in the diagram short — this renders to both docx and

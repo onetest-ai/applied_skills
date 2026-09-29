@@ -104,27 +104,54 @@ def test_run_drafting_forbids_uncited_structure():
 
 
 def test_run_drafting_keeps_speaker_modality_from_transcripts():
-    """F2: step 4's drafting rule — a guess/question/proposal from a
-    transcript is attributed or moved to Open questions, never restated as
-    a finding."""
+    """F2 (fix round 1, Important #1): step 4's drafting rule — a
+    guess/question/proposal from a transcript is attributed or moved to
+    Open questions, never restated as a finding — and is scoped to ANY
+    conversational evidence, not just `[FILE:]`: a `[RAG:]` chunk from a
+    transcript source is covered too, so #10/#15-style claims (cited
+    `[RAG:]`) are in scope."""
     step4 = _step(RUN_SKILL.read_text(encoding="utf-8"), "### 4.", "### 5.")
     assert "keep the speaker's modality" in step4
+    assert "conversational" in step4
+    assert "[RAG:]" in step4 and "[FILE:]" in step4
     for token in ("asked whether", "suggested", "unconfirmed whether"):
         assert token in step4, token
     assert "never restated as a finding" in step4 or "it is never restated as a finding" in step4
 
 
-def test_run_check_file_and_verifier_cover_modality(tmp_path):
-    """F2: step 5 documents the revise-once loop over `check-file.json`'s
-    `modality` entries; step 6's verifier dispatch documents the
-    `overstated` rejection for a transcript claim that overstates a
-    question/guess/proposal as fact."""
+def test_run_check_file_modality_loop_revises_in_place_only(tmp_path):
+    """F2 (fix round 1, Important #3, controller ruling — binding): the
+    revise-once loop over `check-file.json.modality` may only reword a
+    flagged claim IN PLACE (same position, same tags, same evidence.json
+    entry). It must never delete or move a claim in this loop — `claim_ref`
+    is positional, so a delete/move would shift every later claim's index
+    and the re-run would wipe them as `missing evidence quote`. The "move
+    to Open questions" escape hatch from step 4's drafting rule is
+    explicitly NOT offered here."""
     text = RUN_SKILL.read_text(encoding="utf-8")
     step5 = _step(text, "### 5.", "### 6.")
     assert "modality" in step5
+    assert "in place" in step5
+    assert "Do not delete the claim and do not move it" in step5
+    assert "move it to Open questions" not in step5
+    assert "or delete it" not in step5
 
-    step6 = _step(text, "### 6.", "### 7.")
+
+def test_run_verifier_dispatch_gives_paths_and_scope_for_file_modality(tmp_path):
+    """F2 (fix round 1, Important #1 and #4): step 6's verifier dispatch
+    documents the `overstated` rejection for ANY conversational claim
+    (`[FILE:]` or transcript-sourced `[RAG:]`), and passes the paths the
+    verifier needs to resolve a `[FILE:]` tag's cited passage and read the
+    turns that follow it: each stale section's `evidence.json`,
+    `raw/manifest.json`, and the raw dir itself."""
+    step6 = _step(RUN_SKILL.read_text(encoding="utf-8"), "### 6.", "### 7.")
     assert "overstated" in step6
+    assert "conversational" in step6
+    assert "[RAG:]" in step6
+    assert "evidence.json" in step6
+    assert "raw/manifest.json" in step6
+    assert "raw/" in step6
+    assert "turns that follow" in step6
 
 
 TEMPLATES = sorted((SCRIBE_ROOT / "skills" / "run" / "templates").glob("*.tmpl.md"))
@@ -132,11 +159,14 @@ TEMPLATES = sorted((SCRIBE_ROOT / "skills" / "run" / "templates").glob("*.tmpl.m
 
 @pytest.mark.parametrize("path", TEMPLATES, ids=lambda p: p.stem)
 def test_template_guidance_keeps_speaker_modality(path):
-    """F2: every library template's drafting-guidance body carries the same
-    one-sentence rule about not restating a transcript guess/question as a
-    finding (kept consistent across templates)."""
+    """F2 (fix round 1, Important #1): every library template's
+    drafting-guidance body carries the same one-sentence rule, scoped to
+    any conversational evidence (`[FILE:]` or `[RAG:]`) — matching step 4's
+    SKILL.md rule rather than disagreeing with it."""
     text = path.read_text(encoding="utf-8")
     assert "speaker's modality" in text
+    assert "conversational" in text
+    assert "[RAG:]" in text and "[FILE:]" in text
 
 
 def test_every_documented_subcommand_and_flag_exists():

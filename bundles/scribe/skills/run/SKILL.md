@@ -159,11 +159,15 @@ Write the section body — no `## ` heading — to `work/<id>/sections/<section>
   reword, supersede, re-cite or delete one, and never turn one into `Not modeled: …`. It
   needs no `evidence.json` entry (`check-file` skips it). Never write `origin=` into a
   comment yourself — `merge` sets origin only from the prior text and ignores yours.
-- **Keep the speaker's modality.** A `[FILE:]` claim drawn from a meeting transcript must
-  keep the speaker's modality. A question, guess, hypothesis, proposal or plan is written
-  as such and attributed ("<role> asked whether…", "<role> suggested…", "it is
-  unconfirmed whether…") or moved to Open questions; it is never restated as a finding.
-  When the next turn answers or contradicts it, the answer is what the claim reports.
+- **Keep the speaker's modality.** Any claim whose evidence is conversational — a
+  `[FILE:]` passage from a meeting transcript, or a `[RAG:]` chunk from a transcript
+  source (its `get_evidence`/`search_knowledge` result names a `.vtt`/`.srt` file, or the
+  chunk is plainly speaker-turn text) — must keep the speaker's modality. A question,
+  guess, hypothesis, proposal or plan is written as such and attributed ("<role> asked
+  whether…", "<role> suggested…", "it is unconfirmed whether…") or moved to Open
+  questions; it is never restated as a finding. When the next turn answers or
+  contradicts it, the answer is what the claim reports. This applies equally to a
+  `[RAG:]`-cited transcript chunk and a `[FILE:]`-cited raw transcript passage.
   Examples:
   - Transcript: "Maybe we should switch vendors next quarter?" → wrong: "The team will
     switch vendors next quarter." → right: "The lead asked whether to switch vendors next
@@ -245,14 +249,24 @@ as drafted rather than guessing, so it is on you to supply the quote (or decide 
 holds) before this task can be accepted — `accept`'s `zero_unverified` check fails the task
 (published version untouched) while `check-file.json.needs_quote` is non-empty.
 
-For every entry in `check-file.json.modality` (`{"section", "claim", "tag", "quote_marker"}`
-— a `[FILE:]` claim whose fresh transcript quote is hedged, a guess, a question or a
-proposal, but whose own text states it as fact), revise that one claim once — attribute or
-hedge it, move it to Open questions, or delete it, per the drafting rule in step 4 — then
-re-run `$SCRIBE check-file <task>` once more. Do not loop past this single retry: a
-`modality` entry still present after it does not fail this task (`accept` never reads
-`modality`) and is not rewritten by the script — the verifier's `overstated` rule (step 6)
-is the actual gate on it.
+For every entry in `check-file.json.modality` (`{"section", "claim", "claim_ref", "tag",
+"quote_marker"}` — a `[FILE:]` claim whose fresh transcript quote is hedged, a guess, a
+question or a proposal, but whose own text states it as fact), revise that one claim
+**in place, once, and only in place**: reword it to attribute or hedge it (per the
+drafting rule in step 4), keeping it at the same position in the section with the same
+tags and the same `evidence.json` entry. **Do not delete the claim and do not move it**
+— not even to Open questions — in this loop: `evidence.json`'s `claim_ref` is a
+positional index, so removing or relocating a claim shifts every later claim's index out
+of alignment with the sidecar, and the re-run below would then rewrite those unrelated,
+perfectly good claims to `Not modeled: missing evidence quote` (see `checkfile.py`'s
+idempotency note). If a flagged claim cannot be honestly supported even once attributed
+or hedged, leave it exactly as drafted — do not touch it — and let the verifier (step 6)
+judge it; its `overstated` rejection is what turns an unsupportable one into
+`Not modeled:`, through the existing rejection flow, without touching any other claim's
+position. Once you've revised what you can in place, re-run `$SCRIBE check-file <task>`
+once more. Do not loop past this single retry: a `modality` entry still present after it
+does not fail this task (`accept` never reads `modality`) — the verifier's `overstated`
+rule (step 6) is the actual gate on it.
 
 Run `$SCRIBE check-task <task>`. It rewrites every `[TASK:up#c:id]` claim whose
 upstream claim is gone or superseded into `Not modeled: upstream claim <up>#c:<id> is
@@ -266,18 +280,30 @@ Dispatch the `kb:verifier` subagent **once for this task**, with a prompt that:
 - names the Brain: "Verify against the Brain served by MCP server `<server name>` (about.name `<name>`)";
 - lists the absolute paths of every `work/<id>/sections/*.md` you wrote in step 4, and of
   `work/<id>/base.md` (the prior text, one `## Title {#<section>}` heading per section);
+- also lists, for judging `[FILE:]` claims' modality: the absolute path of every
+  `work/<id>/sections/<sid>.evidence.json` you wrote (the fresh quote for each `[FILE:]`
+  tag), `work/<id>/raw/manifest.json`, and the absolute path of `work/<id>/raw/` itself —
+  and says how to resolve one: "`manifest.json` is a JSON array of `{"path", "md", ...}`;
+  a `[FILE:<path>#<locator>]` tag's cited passage is inside `work/<id>/raw/<md>` (the
+  `md` field for that `path`) — read the quote from `<sid>.evidence.json` (or the pack's
+  evidence text) to find it there, then read the turns that follow it in that same file
+  before judging whether a later turn answers or contradicts it";
 - says: "Each paragraph or `- ` bullet is one claim; skip fenced code blocks and blocks
   whose text, after any leading `- `, starts with `Not modeled:`. Human-authored claims
   are every block whose trailing comment contains `origin=human` or
   `origin=human_modified`, and every block with neither a `<!-- c:… -->` comment nor a
   citation tag. Skip a human-origin claim only when its text and tags are exactly as in
   the base; a human claim whose citation changed is verified like any other. Check every `[RAG:]`,
-  `[MART:]` and `[GRAPH:]` tag. `[FILE:]` tags were checked by `check-file` and `[TASK:]` tags
-  by `check-task` for evidence — skip claims that carry only those, EXCEPT: for a `[FILE:]`
-  claim drawn from a meeting transcript, also reject it as `overstated` when the cited
-  passage is a question, guess, hypothesis or proposal but the claim states it as a
-  confirmed fact, or when a later turn in the same passage answers or contradicts it and
-  the claim reports the earlier turn instead. Return one line per checked claim, exactly:
+  `[MART:]` and `[GRAPH:]` tag as usual (unsupported/grain-mismatch/uncited-number).
+  `[FILE:]` tags were checked for evidence by `check-file` and `[TASK:]` tags by
+  `check-task` — skip a claim that carries only those for THAT reason, EXCEPT: judge
+  modality on any claim whose evidence is conversational, whether cited `[FILE:]` from a
+  raw transcript passage (resolved as above) or `[RAG:]` from a Brain chunk whose
+  `get_evidence`/`search_knowledge` result names a `.vtt`/`.srt` source or is plainly
+  speaker-turn text — reject such a claim as `overstated` when the cited passage (plus
+  the turns that follow it) is a question, guess, hypothesis or proposal but the claim
+  states it as a confirmed fact, or when a later turn answers or contradicts it and the
+  claim reports the earlier turn instead. Return one line per checked claim, exactly:
   `CLAIM | <section> | <c:xxxxxxxx id from the claim's trailing comment, or -> | <the claim's first 8 words, verbatim> | verified|unsupported|grain-mismatch|uncited-number|overstated | <reason>`
   and nothing else on those lines."
 

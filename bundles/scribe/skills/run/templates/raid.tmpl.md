@@ -56,10 +56,12 @@ can act on without cross-referencing the others.
   but nobody named is worth flagging — write it as an open question inside
   the Risks section (`Not modeled: whether <X> was actually raised as a
   risk`), not as a confirmed entry.
-- **Keep the speaker's modality.** A claim drawn from a meeting transcript keeps
-  the speaker's modality: a question, guess, hypothesis or proposal is attributed
-  ("<role> asked whether…", "<role> suggested…") or moved to Open questions, never
-  restated as a finding.
+- **Keep the speaker's modality.** A claim whose evidence is conversational — a
+  `[FILE:]` transcript passage or a `[RAG:]` chunk from a transcript source — keeps
+  the speaker's modality: a question, guess, hypothesis, proposal or plan is
+  attributed ("<role> asked whether…", "<role> suggested…") rather than restated as
+  a finding; when a later turn answers or contradicts it, the answer is what the
+  claim reports.
 - **Extend, don't rewrite.** Sections that are not stale are carried
   forward byte-for-byte by the merge step — you never see or touch them.
   Only draft the sections you are handed as stale.

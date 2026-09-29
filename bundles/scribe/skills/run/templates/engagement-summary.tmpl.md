@@ -64,10 +64,12 @@ alone; assume the reader skims.
 - Keep Headline findings to the two or three claims that would change a
   decision if wrong; let By the numbers and Value signals carry supporting
   detail.
-- **Keep the speaker's modality.** A claim drawn from a meeting transcript keeps
-  the speaker's modality: a question, guess, hypothesis or proposal is attributed
-  ("<role> asked whether…", "<role> suggested…") or moved to Open questions, never
-  restated as a finding.
+- **Keep the speaker's modality.** A claim whose evidence is conversational — a
+  `[FILE:]` transcript passage or a `[RAG:]` chunk from a transcript source — keeps
+  the speaker's modality: a question, guess, hypothesis, proposal or plan is
+  attributed ("<role> asked whether…", "<role> suggested…") rather than restated as
+  a finding; when a later turn answers or contradicts it, the answer is what the
+  claim reports.
 - **Extend, don't rewrite.** Sections that are not stale are carried
   forward byte-for-byte by the merge step — you never see or touch them.
   Only draft the sections you are handed as stale.

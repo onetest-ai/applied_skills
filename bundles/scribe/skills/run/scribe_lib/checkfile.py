@@ -49,7 +49,7 @@ claim) and recorded in `work/<task>/check-file.json`:
      "failed": [{"section", "claim_ref", "claim", "normalized", "tag", "reason"}],
      "needs_quote": [{"section", "claim", "tag"}],
      "raw_offline_notes": [{"section", "claim_ref", "tag"}],
-     "modality": [{"section", "claim", "tag", "quote_marker"}]}
+     "modality": [{"section", "claim", "claim_ref", "tag", "quote_marker"}]}
 
 `failed`'s `claim` (the block's `claim_id`, `None` for an id-less legacy
 claim) and `normalized` (its normalized text, BEFORE the block is rewritten
@@ -117,15 +117,32 @@ quote is not re-examined here) for a trailing `?` or a documented hedge word
 (`maybe`, `might`, `probably`, ... — see `_HEDGE_MARKERS`); when it finds
 one, `_claim_has_modality_marker` checks whether the claim's own text
 already carries the speaker's modality (`asked`, `suggested`, `whether`,
-`unconfirmed`, ... — see `_CLAIM_MODALITY_MARKERS`). A hedged quote under an
-unhedged claim is appended to `modality` (never rewritten — that's a
-drafting decision, not a deterministic one): `[{"section", "claim", "tag",
-"quote_marker"}]`. `check-file.json`'s top-level shape gains this one key;
-every other field is unchanged. `merge.py` counts these per section as
-`modality_flagged` (not a drop, not a failure) and `accept.py` never reads
-`modality` at all — a claim left flagged after the SKILL's revise-once retry
-does not fail the task; the verifier's `overstated` rejection is the actual
-gate."""
+`unconfirmed`, ... — see `_CLAIM_MODALITY_MARKERS`) — matched against
+`block["normalized"]` (tags and the claim-id comment already stripped),
+never `block["text"]`: the raw text ends with its `[FILE:path#loc]` tag, so
+matching the untouched text makes the trailing-`?` case dead and lets a word
+inside the cited PATH (a transcript named after a date, e.g.
+`2026-may-12 sync.vtt`, contains `may`) suppress every flag for every claim
+citing it (fix round 1, Important #2). A hedged quote under an unhedged
+claim is appended to `modality` (never rewritten — that's a drafting
+decision, not a deterministic one): `[{"section", "claim", "claim_ref",
+"tag", "quote_marker"}]` (`claim_ref` — the positional index `merge.json`'s
+`dropped_by_*` accounting also uses — locates a freshly drafted claim, whose
+`claim` is `None` until `merge` assigns an id). `check-file.json`'s
+top-level shape gains this one key; every other field is unchanged. A
+human-authored claim is never flagged (skipped before the check runs), and
+a claim this same run rewrites to `Not modeled:` or leaves in
+`needs_quote` is never flagged either — only a claim that PASSES check-file
+gets its flags merged into `modality` (fix round 1, Minor). `merge.py`
+counts these per section as `modality_flagged` (not a drop, not a failure)
+and `accept.py` never reads `modality` at all — a claim left flagged after
+the SKILL's revise-once retry does not fail the task; the verifier's
+`overstated` rejection is the actual gate. The deterministic pre-check
+itself stays `[FILE:]`-only (only those claims carry a fresh quote to
+examine); the SKILL's drafting rule and the verifier's `overstated` clause
+are scoped wider, to any claim whose evidence is conversational
+(`[FILE:]` or a `[RAG:]` chunk from a transcript source) — see
+`skills/run/SKILL.md` steps 4 and 6."""
 from __future__ import annotations
 
 import json
@@ -195,7 +212,7 @@ def _modality_flags(
     sid: str,
     claim_idx: int,
     claim_id: str | None,
-    claim_text: str,
+    claim_normalized: str,
     file_tags: list[str],
     evidence_by_key: dict[tuple[int, str], dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -204,8 +221,17 @@ def _modality_flags(
     claim's own text carries no attribution/hedge marker of its own —
     otherwise the meeting's guess/question/proposal reads as a stated fact.
     A claim that already keeps the speaker's modality is never flagged, no
-    matter how its quote reads."""
-    if _claim_has_modality_marker(claim_text):
+    matter how its quote reads.
+
+    `claim_normalized` MUST be `block["normalized"]` (`claims.normalize_text`
+    with tags already stripped), never `block["text"]`: a raw claim's text
+    ends with its `[FILE:...]` tag, so matching against it makes the
+    trailing-`?` check dead (the tag always comes last) and lets a word
+    inside the cited PATH — a transcript is routinely named after a date,
+    e.g. `2026-may-12 sync.vtt` — suppress every flag for every claim citing
+    it (fix round 1, Important #2). `normalized` has the tag gone entirely,
+    so only the claim's own prose can suppress a flag."""
+    if _claim_has_modality_marker(claim_normalized):
         return []
     flags: list[dict[str, Any]] = []
     for tag in file_tags:
@@ -215,7 +241,9 @@ def _modality_flags(
         marker = _find_hedge_marker(entry.get("quote", ""))
         if marker is None:
             continue
-        flags.append({"section": sid, "claim": claim_id, "tag": tag, "quote_marker": marker})
+        flags.append(
+            {"section": sid, "claim": claim_id, "claim_ref": claim_idx, "tag": tag, "quote_marker": marker}
+        )
     return flags
 
 
@@ -346,10 +374,6 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
             if not file_tags:
                 continue
 
-            modality.extend(
-                _modality_flags(sid, claim_idx, block["claim_id"], block["text"], file_tags, evidence_by_key)
-            )
-
             base_match = _find_carried_base_claim(base_claims, block)
             if (
                 base_match is not None
@@ -358,6 +382,16 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
             ):
                 human_skipped += 1
                 continue
+
+            # Fix round 1, Minor: computed here (a human-authored claim is
+            # never flagged — the `continue` above already skipped it) but
+            # only merged into `modality` once the claim is known to PASS
+            # (below) — a claim check-file itself rewrites to `Not modeled:`
+            # this run needs no modality flag, and a `needs_quote` claim has
+            # no evidence entry to judge yet.
+            pending_modality = _modality_flags(
+                sid, claim_idx, block["claim_id"], block["normalized"], file_tags, evidence_by_key
+            )
 
             # A7/I4 — a claim that is carried forward byte-for-byte (same
             # `claim_key`: text AND tags unchanged) but has no usable
@@ -429,6 +463,7 @@ def check_file_task(config: Config, task_id: str, instance: dict[str, Any] | Non
             checked += 1
             if reason is None:
                 passed += 1
+                modality.extend(pending_modality)
                 continue
 
             failed.append(

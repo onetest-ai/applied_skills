@@ -557,7 +557,7 @@ def test_check_file_flags_hedged_quote_with_unhedged_claim(tmp_path):
 
     result = check_file_task(config, "m1")
     assert result["modality"] == [
-        {"section": "overview", "claim": None, "tag": "[FILE:note.txt#L1]", "quote_marker": "maybe"}
+        {"section": "overview", "claim": None, "claim_ref": 0, "tag": "[FILE:note.txt#L1]", "quote_marker": "maybe"}
     ]
     # Never rewritten and never counted as a failure — the claim is
     # unchanged and still passes check-file's ordinary evidence check.
@@ -615,6 +615,126 @@ def test_check_file_does_not_flag_an_unhedged_quote(tmp_path):
     )
 
     result = check_file_task(config, "m1")
+    assert result["modality"] == []
+
+
+def test_check_file_flags_a_claim_ending_in_a_bare_question_mark(tmp_path):
+    """Fix round 1, Important #2(a): the claim-side marker check must match
+    against tag-stripped text (`block["normalized"]`), not `block["text"]`
+    — the raw claim text always ends with its `[FILE:...]` tag, which made
+    the trailing-`?` branch dead for every `[FILE:]` claim."""
+    proj = setup_mini_project(tmp_path)
+    config, data = load(proj)
+    work_dir = config.work_dir / "m1"
+    raw_dir = work_dir / "raw"
+    write_text(raw_dir / "note.txt.md", "Maybe we should switch vendors next quarter.\n")
+    write_json(
+        raw_dir / "manifest.json",
+        [{"path": "note.txt", "sha256": "x", "md": "note.txt.md", "status": "ok", "reason": "test"}],
+    )
+    write_text(
+        work_dir / "sections" / "overview.md",
+        "Will we switch vendors next quarter? [FILE:note.txt#L1]\n",
+    )
+    write_json(
+        work_dir / "sections" / "overview.evidence.json",
+        [{"claim_ref": 0, "tag": "[FILE:note.txt#L1]", "quote": "Maybe we should switch vendors next quarter."}],
+    )
+
+    result = check_file_task(config, "m1")
+    # The claim itself ends in `?` — that already keeps the speaker's
+    # modality (it's phrased as a question), so it is NOT flagged.
+    assert result["modality"] == []
+
+
+def test_check_file_ignores_a_marker_word_that_only_appears_in_the_cited_path(tmp_path):
+    """Fix round 1, Important #2(b): a word from `_CLAIM_MODALITY_MARKERS`
+    ("may") appearing only inside the cited file's PATH (a transcript named
+    after a date) must never suppress the flag — only the claim's own prose
+    counts."""
+    proj = setup_mini_project(tmp_path)
+    config, data = load(proj)
+    work_dir = config.work_dir / "m1"
+    raw_dir = work_dir / "raw"
+    write_text(raw_dir / "2026-may-12 sync.txt.md", "Maybe we should switch vendors next quarter.\n")
+    write_json(
+        raw_dir / "manifest.json",
+        [{"path": "2026-may-12 sync.txt", "sha256": "x", "md": "2026-may-12 sync.txt.md", "status": "ok", "reason": "test"}],
+    )
+    write_text(
+        work_dir / "sections" / "overview.md",
+        "We will switch vendors next quarter. [FILE:2026-may-12 sync.txt#L1]\n",
+    )
+    write_json(
+        work_dir / "sections" / "overview.evidence.json",
+        [{"claim_ref": 0, "tag": "[FILE:2026-may-12 sync.txt#L1]",
+          "quote": "Maybe we should switch vendors next quarter."}],
+    )
+
+    result = check_file_task(config, "m1")
+    assert result["modality"] == [
+        {"section": "overview", "claim": None, "claim_ref": 0,
+         "tag": "[FILE:2026-may-12 sync.txt#L1]", "quote_marker": "maybe"}
+    ]
+
+
+def test_check_file_does_not_flag_a_human_authored_claim(tmp_path):
+    """Fix round 1, Minor: a human-authored claim (skipped before the hedge
+    pre-check even runs) is never flagged, even though its quote would
+    otherwise match."""
+    proj = setup_mini_project(tmp_path)
+    config, data = load(proj)
+    work_dir = config.work_dir / "m1"
+    raw_dir = work_dir / "raw"
+    write_text(raw_dir / "note.txt.md", "Maybe we should switch vendors next quarter.\n")
+    write_json(
+        raw_dir / "manifest.json",
+        [{"path": "note.txt", "sha256": "x", "md": "note.txt.md", "status": "ok", "reason": "test"}],
+    )
+    claim_text = "We will switch vendors next quarter. [FILE:note.txt#L1]"
+    (work_dir / "base.md").write_text(
+        f"## Overview {{#overview}}\n\n{claim_text} <!-- c:aaaa0001 origin=human -->\n", encoding="utf-8",
+    )
+    write_text(
+        work_dir / "sections" / "overview.md",
+        f"{claim_text} <!-- c:aaaa0001 origin=human -->\n",
+    )
+    # No evidence.json entry — a human claim needs none, and is skipped
+    # before the hedge pre-check would even look for one.
+
+    result = check_file_task(config, "m1")
+    assert result["human_origin_skipped"] == 1
+    assert result["modality"] == []
+
+
+def test_check_file_does_not_flag_a_claim_it_rewrites_to_not_modeled(tmp_path):
+    """Fix round 1, Minor: a claim check-file itself rewrites to
+    `Not modeled:` this run (its quote isn't found) never appears in
+    `modality`, even though its quote would otherwise match the hedge
+    pre-check."""
+    proj = setup_mini_project(tmp_path)
+    config, data = load(proj)
+    work_dir = config.work_dir / "m1"
+    raw_dir = work_dir / "raw"
+    write_text(raw_dir / "note.txt.md", "Some unrelated raw content.\n")
+    write_json(
+        raw_dir / "manifest.json",
+        [{"path": "note.txt", "sha256": "x", "md": "note.txt.md", "status": "ok", "reason": "test"}],
+    )
+    # A claim whose evidence quote is hedged but whose quote text is never
+    # actually found in the raw file — check-file rewrites it to
+    # `Not modeled:` this run, so it must not also show up in `modality`.
+    write_text(
+        work_dir / "sections" / "overview.md",
+        "We will switch vendors next quarter. [FILE:note.txt#L1]\n",
+    )
+    write_json(
+        work_dir / "sections" / "overview.evidence.json",
+        [{"claim_ref": 0, "tag": "[FILE:note.txt#L1]", "quote": "Maybe we should switch vendors next quarter."}],
+    )
+
+    result = check_file_task(config, "m1")
+    assert result["failed"] and result["failed"][0]["tag"] == "[FILE:note.txt#L1]"
     assert result["modality"] == []
 
 
