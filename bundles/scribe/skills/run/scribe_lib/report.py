@@ -13,7 +13,7 @@ aggregation `scribe.py report --summary` prints.
 never got that far) and embeds its `sections` dict under `"merge"` before
 writing the row. That is the ONE place a task's per-section
 `kept/reworded/recited/added/superseded/dropped_by_check/dropped_by_model/
-false_stale/modality_flagged` counts (`merge._merge_drafted_section`) reach
+false_stale/modality_flagged/locators_fixed` counts (`merge._merge_drafted_section`) reach
 the run report —
 `publish_task`'s "published" row and `scribe.py report --status`'s row both
 get it automatically, simply by calling `append_run` last, after `merge` has
@@ -38,7 +38,7 @@ from scribe_lib.config import Config
 
 _SECTION_COUNT_KEYS = (
     "kept", "reworded", "recited", "added", "superseded", "dropped_by_check", "dropped_by_model",
-    "modality_flagged",
+    "modality_flagged", "locators_fixed",
 )
 
 # `append_run` only stamps `minutes` for these — post-`prepare` outcomes

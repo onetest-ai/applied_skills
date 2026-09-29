@@ -154,6 +154,25 @@ def test_run_verifier_dispatch_gives_paths_and_scope_for_file_modality(tmp_path)
     assert "turns that follow" in step6
 
 
+def test_run_drafting_notes_locator_precision():
+    """F3: step 4 tells the agent to cite the section/cue that actually
+    holds the quoted text, and that a wrong locator gets fixed by
+    check-file rather than left to the agent to catch."""
+    step4 = _step(RUN_SKILL.read_text(encoding="utf-8"), "### 4.", "### 5.")
+    assert "actually contains the quoted text" in step4
+    assert "check-file" in step4
+
+
+def test_run_check_file_documents_relocated_and_deduped_locators():
+    """F3: step 5 documents that check-file corrects a `[FILE:]` tag's
+    locator and removes an exact-duplicate tag, and that the agent must not
+    revert either fix."""
+    step5 = _step(RUN_SKILL.read_text(encoding="utf-8"), "### 5.", "### 6.")
+    assert "check-file.json.relocated" in step5
+    assert "check-file.json.deduped" in step5
+    assert "not something to revert" in step5 or "leave" in step5
+
+
 TEMPLATES = sorted((SCRIBE_ROOT / "skills" / "run" / "templates").glob("*.tmpl.md"))
 
 

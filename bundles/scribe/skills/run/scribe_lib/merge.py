@@ -57,6 +57,11 @@ by `check-file`) for every stale section — refusing if one is missing.
   own text states it as fact) — counted here for `report --summary`, never
   a drop and never a reason to fail `accept`; the verifier's `overstated`
   rule is the actual gate on those claims.
+- `locators_fixed` (F3) is this section's count of this run's `check-file.
+  json.relocated` plus `check-file.json.deduped` entries — a `[FILE:]` tag's
+  locator corrected to the section that actually holds its quote, or an
+  exact-duplicate tag removed. Same style as `modality_flagged`: counted
+  here for `report --summary` only, never a drop.
 - Noop (A9): if `next.md`'s content — ignoring the header comment, the Changes
   section, and anything a reader would never see (claim-id/origin comments,
   Markdown backslash escapes, curly vs straight quotes, whitespace runs; see
@@ -191,6 +196,20 @@ def _modality_counts(work_dir: Path) -> dict[str, int]:
     return counts
 
 
+def _locators_fixed_counts(work_dir: Path) -> dict[str, int]:
+    """F3: `{section: count}` of this run's `check-file.json.relocated` plus
+    `check-file.json.deduped` entries — a corrected `[FILE:]` locator or a
+    removed exact-duplicate tag, never a drop. Folded into each drafted
+    section's report as `locators_fixed`, same style as `_modality_counts`."""
+    counts: dict[str, int] = {}
+    check_file = _load_json(work_dir / "check-file.json")
+    for entry in (check_file.get("relocated") or []) + (check_file.get("deduped") or []):
+        sid = entry.get("section")
+        if sid:
+            counts[sid] = counts.get(sid, 0) + 1
+    return counts
+
+
 def _dropped_by_check(block: dict[str, Any], failed_ids: set[str], failed_texts: list[str]) -> bool:
     claim_id = block.get("claim_id")
     if claim_id and claim_id in failed_ids:
@@ -208,6 +227,7 @@ def _merge_drafted_section(
     failed_ids: set[str] | frozenset[str] = frozenset(),
     failed_texts: tuple[str, ...] = (),
     modality_flagged: int = 0,
+    locators_fixed: int = 0,
 ) -> dict[str, Any]:
     base_blocks = [b for b in claims.parse_blocks(base_body) if claims.is_claim(b)]
     # A drafted claim a person deleted is dropped before matching — unless the
@@ -266,6 +286,7 @@ def _merge_drafted_section(
         "suppressed_tombstone": suppressed,
         "false_stale": false_stale,
         "modality_flagged": modality_flagged,
+        "locators_fixed": locators_fixed,
         "examples": examples,
     }
 
@@ -386,6 +407,7 @@ def merge_task(
     tombstoned = tombstones(base_json, state)
     failed_ids, failed_texts = _check_failure_keys(work_dir)
     modality_counts = _modality_counts(work_dir)
+    locators_fixed_counts = _locators_fixed_counts(work_dir)
 
     sections_dir = work_dir / "sections"
     for sid in sorted(stale_ids):
@@ -406,6 +428,7 @@ def merge_task(
             report = _merge_drafted_section(
                 task_id, sid, base_sections.get(sid, ""), draft_text, tombstoned.get(sid, frozenset()),
                 failed_ids, tuple(failed_texts), modality_counts.get(sid, 0),
+                locators_fixed_counts.get(sid, 0),
             )
             next_bodies[sid] = report["body"]
             examples_by_section[sid] = report.pop("examples")
@@ -429,6 +452,7 @@ def merge_task(
                 "suppressed_tombstone": 0,
                 "false_stale": False,
                 "modality_flagged": 0,
+                "locators_fixed": 0,
             }
 
     prev_version = state.get("version") or 0

@@ -225,6 +225,10 @@ with `Not modeled:`. The quote must be copied
 character for character from the pack's evidence text (or from the parsed file named by
 that path's `md` entry in `work/<id>/raw/manifest.json`);
 `check-file` rejects anything else (and never include the ` …` the pack adds to a truncated passage).
+**Cite the cue or section that actually contains the quoted text** — not the meeting's start
+time or an earlier cue you copied out of habit; `check-file` (step 5) will correct a wrong
+locator for you, but a `#<locator>` you write from scratch should already point at the right
+place.
 
 **A carried `[FILE:]` claim needs no new quote.** A claim you kept verbatim from the prior
 text — same section, same wording, same trailing `<!-- c:xxxxxxxx -->` id — is recognized by
@@ -239,7 +243,11 @@ find into `Not modeled: <reason>. <!-- cf:<n> -->` and writes `work/<id>/check-f
 Human-authored claims are skipped (counted in `human_origin_skipped`), but only while their
 text and tags are unchanged from the base; a human claim whose wording or citation changed
 is checked like any other. Do not re-draft
-the rewritten claims.
+the rewritten claims. It also corrects a `[FILE:]` tag's `#<locator>` to the section that
+actually holds its quote when the one you wrote doesn't (`check-file.json.relocated`), and
+removes an exact-duplicate `[FILE:]` tag on the same claim (`check-file.json.deduped`) —
+these are deterministic fixes, not something to revert: leave a corrected locator or a
+removed duplicate exactly as `check-file` left it.
 
 For every claim in `check-file.json.needs_quote`, add its quote to `<sid>.evidence.json` and
 re-run `$SCRIBE check-file <task>` once; if the quote cannot be found, re-cite it or mark it
