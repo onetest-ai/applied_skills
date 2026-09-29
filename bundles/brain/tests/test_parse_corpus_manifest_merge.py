@@ -73,6 +73,19 @@ class ManifestMergeTests(unittest.TestCase):
         self.assertFalse((self.out / "talk.vtt.md").exists())
         self.assertIn("talk.MP4", man)  # the video-lane entry itself survives
 
+    def test_video_lane_entry_consumes_sidecar_with_decomposed_name(self):
+        # video_capture records inputs as spelled on disk; an NFD sidecar name must still
+        # match parse_corpus's NFC-normalised path (the form source_registry stores).
+        import unicodedata
+        nfd = unicodedata.normalize("NFD", "café")
+        (self.corpus / (nfd + ".vtt")).write_text((self.corpus / "talk.vtt").read_text())
+        (self.corpus / (nfd + ".mp4")).write_bytes(b"v")
+        self._video_lane(nfd + ".mp4")
+        man = self._run("--formats", "vtt,srt", "--merge-cues", "10")
+        nfc = unicodedata.normalize("NFC", "café")
+        self.assertEqual(man[nfc + ".vtt"]["method"], "consumed-by-video")
+        self.assertFalse(any(p.name.startswith(nfc) and p.name.endswith(".vtt.md") for p in self.out.iterdir()))
+
     def test_video_lane_entry_removes_stale_parsed_doc(self):
         self._run("--formats", "vtt,srt", "--merge-cues", "10")
         self.assertTrue((self.out / "talk.vtt.md").exists())
