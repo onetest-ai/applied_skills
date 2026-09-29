@@ -51,6 +51,46 @@ include = ["**/*.pdf"]
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_duplicate_copies_become_skip_duplicate_with_first_path_canonical(self):
+        (self.root / "docs" / "a b.pdf").write_bytes(b"same")
+        (self.root / "docs" / "a_b.pdf").write_bytes(b"same")
+        con = R.connect(str(self.db))
+        try:
+            plan = R.build_plan(con, R.load_config(self.config))
+        finally:
+            con.close()
+        acts = {a["relative_path"]: a for a in plan["actions"]}
+        self.assertEqual(acts["a b.pdf"]["action"], "add")
+        self.assertEqual(acts["a_b.pdf"]["action"], "skip_duplicate")
+        self.assertEqual(acts["a_b.pdf"]["duplicate_of"], {"root_key": "docs", "relative_path": "a b.pdf"})
+
+    def test_copy_of_an_already_registered_file_is_skipped(self):
+        (self.root / "docs" / "z.pdf").write_bytes(b"same")
+        con = R.connect(str(self.db))
+        try:
+            R.register(con, "docs", "z.pdf", self.root / "docs" / "z.pdf")
+            (self.root / "docs" / "a.pdf").write_bytes(b"same")
+            plan = R.build_plan(con, R.load_config(self.config))
+        finally:
+            con.close()
+        acts = {a["relative_path"]: a["action"] for a in plan["actions"]}
+        self.assertEqual(acts, {"a.pdf": "skip_duplicate"})
+
+    def test_apply_registers_only_the_canonical_copy(self):
+        (self.root / "docs" / "a b.pdf").write_bytes(b"same")
+        (self.root / "docs" / "a_b.pdf").write_bytes(b"same")
+        con = R.connect(str(self.db))
+        try:
+            plan = R.build_plan(con, R.load_config(self.config))
+        finally:
+            con.close()
+        plan_path = self.root / "plan.json"
+        plan_path.write_text(json.dumps(plan))
+        R.cmd_apply(Namespace(plan=str(plan_path), db=str(self.db), config=str(self.config)))
+        with sqlite3.connect(self.db) as con:
+            rels = [r[0] for r in con.execute("SELECT relative_path FROM sources WHERE state='active'")]
+        self.assertEqual(rels, ["a b.pdf"])
+
     def test_relative_roots_survive_project_move_and_registry_has_no_blobs(self):
         cfg = R.load_config(self.config)
         self.assertEqual(cfg["roots"]["docs"]["path"], (self.root / "docs").resolve())

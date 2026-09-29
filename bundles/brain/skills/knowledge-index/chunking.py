@@ -25,6 +25,9 @@ def derive_title(title, body):
             return " ".join(s.split()[:10])[:70]
     return t or "Section"
 
+_SPEAKER_ONLY = re.compile(r"^(\s*<!--\s*speaker:.*?-->\s*)+$")
+
+
 def section_records(md, max_chars=1600):
     _s = md.strip()
     if _s.startswith("{\"") or _s.startswith("[{"):
@@ -35,7 +38,13 @@ def section_records(md, max_chars=1600):
     md = strip_preamble(md)
     heading = re.compile(r"^#{1,6}\s+(.*\S)\s*$")
     blocks, title, buf, level = [], None, [], 0
-    hierarchy = []
+    # Stack of (level, title) for the currently-open headings, outermost first. On a
+    # heading of level L, every entry with level >= L is popped before pushing — so
+    # consecutive same-level headings (e.g. two ## sections in a row) become SIBLINGS,
+    # not parent/child. A bare `hierarchy[:level-1]` slice (the old code) instead kept
+    # whatever title last occupied that slot, so every ## section after the first
+    # inherited the FIRST ## title ever seen as its parent_heading/breadcrumb_path.
+    stack = []
     breadcrumb, parent = "", ""
     for ln in md.splitlines():
         m = heading.match(ln)
@@ -44,10 +53,12 @@ def section_records(md, max_chars=1600):
                 blocks.append((title, "\n".join(buf).strip(), parent, breadcrumb))
             level = len(ln) - len(ln.lstrip("#"))
             title = re.sub(r"\[page (\d+)\]", r"Page \1", m.group(1)).strip()
-            hierarchy = hierarchy[: level - 1]
-            hierarchy.append(title)
-            breadcrumb = " > ".join(hierarchy)
-            parent = hierarchy[-2] if len(hierarchy) > 1 else ""
+            while stack and stack[-1][0] >= level:
+                stack.pop()
+            stack.append((level, title))
+            titles = [t for _, t in stack]
+            breadcrumb = " > ".join(titles)
+            parent = titles[-2] if len(titles) > 1 else ""
             buf = []
         else:
             buf.append(ln)
@@ -58,7 +69,7 @@ def section_records(md, max_chars=1600):
     # via its per-source old_ids-minus-new_ids cascade (chunks, chunk_topics, graph_edges).
     # The only residual risk: if classify_write.py ran before re-indexing, its chunk_topics
     # rows for dropped sections remain until classify_write runs again on the updated DB.
-    blocks = [(t, b, p, bc) for t, b, p, bc in blocks if b]
+    blocks = [(t, b, p, bc) for t, b, p, bc in blocks if b and not _SPEAKER_ONLY.match(b)]
     if not blocks:
         blocks = [(None, md.strip(), "", "")]
     out = []
@@ -68,12 +79,12 @@ def section_records(md, max_chars=1600):
         paras = [para for para in re.split(r"\n\s*\n", b) if para.strip()]
         cur, part = "", 1
         for para in paras:
-            if len(cur) + len(para) + 2 > max_chars and cur:
+            if len(cur) + len(para) + 2 > max_chars and cur and not _SPEAKER_ONLY.match(cur):
                 base = derive_title(t, cur)
                 out.append({"title": f"{base} (part {part})", "body": cur.strip(), "parent_heading": p, "breadcrumb_path": bc}); cur = para; part += 1
             else:
                 cur = (cur + "\n\n" + para) if cur else para
-        if cur.strip():
+        if cur.strip() and not _SPEAKER_ONLY.match(cur):
             base = derive_title(t, cur)
             out.append({"title": f"{base} (part {part})" if part > 1 else base, "body": cur.strip(), "parent_heading": p, "breadcrumb_path": bc})
     return out

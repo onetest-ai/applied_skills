@@ -17,7 +17,7 @@ When the user wants to **create a brain** / "get started" / doesn't yet have a p
 - **Goal** — the single analytical goal that scopes everything (the noise filter). *"What are you trying to get out of this corpus?"* (e.g. "optimize call-center operations and introduce an AI workforce"). Don't proceed without it — it drives taxonomy + demotion.
 - **Name** — *"What should this Brain be called?"* (e.g. "ACME Contact Centre"). **Optional** — an anonymous Brain is fully functional. It's what a client shows when several Brains are connected (server identity, tool-description prefix), so worth asking for whenever the user will likely have more than one Brain around. Written to `name.txt`.
 - **Audience** — *"Who will consume the KB — which roles/personas?"* (e.g. "call-center ops managers and workforce planners"). Optional but valuable: it's a secondary lens that refines taxonomy emphasis and drives how the `kb` plugin sets answer altitude/vocabulary and authored-artifact tone/depth. Distinct from the deployment target (that's distribution/infra). Recorded in `brain.toml` `[project].audience`.
-- **Docs** — folder of narrative documents (PDF/PPTX/DOCX) and/or transcripts (VTT/SRT). VTT/SRT corpora require `--merge-cues N` at parse time (see Build step 1a).
+- **Docs** — folder of narrative documents (PDF/PPTX/DOCX) and/or transcripts (VTT/SRT). VTT/SRT corpora require `--merge-cues N` at parse time; recommended: `--formats vtt,srt --merge-cues 10 --fold-interjections 20 --pack-turns 1000` (see Build step 1a).
 - **Reporting** — folder of the numeric workbooks (XLSX/XLSM), if any. May be the same folder or none (then the numbers lane stays empty — that's fine).
 - **Project dir** — where the brain + configs live (default: `./<name>-brain`).
 - **Source-root semantics** — for each supplied folder decide with the user:
@@ -71,7 +71,7 @@ Deps are torch-free (docling retired) and modest (~200 MB); `.pptx/.docx` also n
 ./brain source apply --plan source_plan.json
 ```
 
-**Dedupe by content before applying.** Folders synced from SharePoint/OneDrive/Drive routinely expose the *same file* at several relative paths (old flat layout + a nested "from Client…" hierarchy). Each distinct path becomes its own `source_id` and would be rendered and embedded again. The plan's **`duplicate_content`** array groups any SHA-256 that appears at more than one live path — review it with the user and keep a single canonical path (prefer the authoritative one) before `apply`; it is advisory and never auto-collapsed.
+**Dedupe by content before applying.** Folders synced from SharePoint/OneDrive/Drive routinely expose the *same file* at several relative paths (old flat layout + a nested "from Client…" hierarchy). Each distinct path becomes its own `source_id` and would be rendered and embedded again. The plan's **`duplicate_content`** array groups any SHA-256 that appears at more than one live path, and every copy except the canonical one is a `skip_duplicate` action (`duplicate_of` names the canonical path: the registered copy if there is one, else the first path in sort order). `apply` registers only the canonical copy, and the parse step skips the rest as `unregistered`. Show the groups to the user; to make another copy canonical, `source adopt` it first. Never edit the plan by hand.
 
 For a deliberately selected single file use `source adopt --root <key> <relative-path>`. For a chat attachment use `source import <temporary-path> --root incoming --provenance '{...}'`. During the first full build, link final parsed documents to registry sources using `brain_sync.py seed --root-key <key> --manifest <parsed>/manifest.json --strict-sources`; for a visual pipeline that emits its own manifest, require the same `{source, md}` mapping. If multiple narrative roots feed one parsed corpus, generate one unambiguous combined manifest or seed them separately without overwriting prior links.
 
@@ -102,14 +102,29 @@ PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-
 # 1a. parse transcripts → Markdown (VTT/SRT corpora — use --merge-cues to join same-speaker cues into speaker turns):
 #     WARNING: omitting --merge-cues produces one chunk per cue (~50-100 chars each), which agents
 #     classify as empty [] and retrieval quality degrades severely. Always pass --merge-cues N > 1 for VTT/SRT.
+#     Recommended: --fold-interjections 20 --pack-turns 1000 as well.
+#       --fold-interjections N folds a turn shorter than N chars ("Mhm.", "Three.") into the
+#       previous turn as "[Speaker: text]" instead of giving it its own chunk.
+#       --pack-turns N groups consecutive turns (any speaker) into one section up to N chars,
+#       one "MM:SS Speaker: text" paragraph per turn — so a short answer stays next to its
+#       question in one chunk. Keep N below the indexer's --max-chars (default 1200), or a pack
+#       gets split into "(part N)" chunks that each carry the whole range heading and cue span.
+#       Measured on one corpus (77 VTT/SRT files, these flags, indexed at the default 1200
+#       max-chars): 2,978 chunks total.
 #     Recordings' sidecars need no flag: once video_capture.py assemble has produced a recording's
 #     doc, it retires the transcript's doc, and later runs skip that .vtt/.srt/.docx on their own
 #     (keyed on the video-lane manifest entry's `inputs`).
-"$PY" .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats vtt,srt --merge-cues 10
+#     --registry-db/--root-key: only files registered as active sources are parsed; any other file
+#     (e.g. a byte-identical copy the registry skipped) is recorded as `method: unregistered`.
+"$PY" .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats vtt,srt --merge-cues 10 \
+  --fold-interjections 20 --pack-turns 1000 \
+  --registry-db "$DB" --root-key <root-key>
 # 1b. parse narrative docs → Markdown. TEXT pages via pymupdf (torch-free):
 #     If the corpus has meeting recordings, run 1m (below) BEFORE 1b: a Teams transcript .docx is
 #     then consumed by its recording instead of being converted by soffice as an ordinary document.
-"$PY" .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf,md,markdown,txt,html,htm
+"$PY" .../corpus-taxonomy-extraction/parse_corpus.py --corpus <docs> --out <project>/parsed --formats pptx,docx,pdf,md,markdown,txt,html,htm \
+  --registry-db "$DB" --root-key <root-key> \
+  --exclude '<glob>'   # repeat per brain.toml exclude glob
 #     Both parse passes (1a and 1b): pass each glob in the root's brain.toml `exclude` list as
 #     `--exclude '<glob>'` (repeatable) — source_registry never registers an excluded file, so a
 #     parsed doc for one is unmanaged and --strict-sources refuses it. Scribe-marked files are
@@ -155,9 +170,9 @@ PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-
 # 5. per-section taxonomy tags — SONNET AGENTS (meaning is agentic), not a script. Classifying
 #    against the provisional taxonomy, agents may answer ["__no_topic__"] for a chunk with no topic
 #    at all (filler/boilerplate/off-goal) — a valid, complete verdict, stored in chunk_verdicts:
-"$PY" .../corpus-taxonomy-extraction/classify_prep.py --db "$DB" --taxonomy <project>/taxonomy/current.json --out <project>/classify --batches 25
-#    --batches controls chunks-per-agent: too few batches → agent hits context limit and writes nothing.
-#    Rule of thumb: ceil(total_chunks / 1000) batches. Default 25 handles corpora up to ~25k chunks safely.
+"$PY" .../corpus-taxonomy-extraction/classify_prep.py --db "$DB" --taxonomy <project>/taxonomy/current.json --out <project>/classify
+#    Batches are capped at 150 chunks / 60 KB (--max-chunks, --max-bytes) so one agent's reply stays under the
+#    32K output-token limit and its batch is read in one Read; --batches only sets a minimum.
 #    Agents write result_k.json into the SAME <project>/classify/ dir as the batch files (not a subdir).
 #    → dispatch N Sonnet subagents: each reads classify/{instructions,vocab,batch_k}.md/json → writes classify/result_k.json
 "$PY" .../corpus-taxonomy-extraction/classify_write.py --db "$DB" --results <project>/classify   # -> chunk_topics + graph 'about' edges
@@ -186,7 +201,8 @@ PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-
 #    store (empty meta.goal); a changed goal is flagged as GOAL DRIFT (it reshapes the
 #    whole taxonomy). `apply` (publish path) also refreshes meta, so a build can't ship
 #    ungoverned. Inspect the recorded goal/audience anytime with `./brain about`.
-"$PY" .../knowledge-pipeline/brain_sync.py seed --db "$DB" --parsed <project>/parsed --require-goal
+"$PY" .../knowledge-pipeline/brain_sync.py seed --db "$DB" --parsed <project>/parsed --require-goal \
+  --manifest <project>/parsed/manifest.json --root-key <root-key> --strict-sources
 ```
 Chunk ids are deterministic (`f(source, section-ordinal)`), so an unchanged document with unchanged section boundaries keeps its ids across rebuilds. During an update, changed documents are delete-then-reindexed and their new chunk ids are explicitly reclassified; unchanged documents keep their tags/graph edges.
 Result: one `knowledge.sqlite` — `chunks`/`chunks_fts`/`chunks_vec` (a chunk = a section = an Obsidian note), `chunk_topics` (real per-section taxonomy tags via Sonnet agents), `facts` (marts), `graph_nodes`/`graph_edges` (taxonomy vertices + `subclass_of` + `about` edges to chunks). Check the `build_marts` audit (`--strict` in CI). The vault is generated from the store, so notes, retrieval chunks, tags, and graph all reference the same ids.
@@ -202,9 +218,12 @@ Read `bundles/brain/AGENT_README.md` for the authoritative source-to-store updat
 
 ```bash
 # After changed sources have gone through render → vision_prep → agents → vision_assemble:
-"$PY" .../knowledge-pipeline/brain_sync.py plan  --db "$DB" --parsed <project>/parsed
+"$PY" .../knowledge-pipeline/brain_sync.py plan  --db "$DB" --parsed <project>/parsed \
+  --manifest <project>/parsed/manifest.json --root-key <root-key> --strict-sources
 # show/approve the delta; plan ensures `documents` exists, so validate the DB path first
-"$PY" .../knowledge-pipeline/brain_sync.py apply --db "$DB" --parsed <project>/parsed --out <project>
+"$PY" .../knowledge-pipeline/brain_sync.py apply --db "$DB" --parsed <project>/parsed --out <project> \
+  --manifest <project>/parsed/manifest.json --root-key <root-key> --strict-sources
+# --strict-sources refuses a parsed doc with no active registered source (e.g. a skipped duplicate)
 # apply snapshots first and writes sync_plan.json; preserve the snapshot for rollback
 
 # Use a fresh result directory; scripts do not clean stale result_*.json:
