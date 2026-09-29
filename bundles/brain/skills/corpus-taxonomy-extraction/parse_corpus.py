@@ -759,11 +759,11 @@ def main(argv=None):
     consumed = _video_lane_consumed(a.out)
     for root, _, files in os.walk(a.corpus):
         for fn in sorted(files):
-            if fn.startswith(".") or fn.startswith("~$"):
-                continue
             src = os.path.join(root, fn)
-            rel = os.path.relpath(src, a.corpus)
-            osix_rel = rel.replace(os.sep, "/")
+            # NFC, as source_registry stores it: macOS keeps a name in the form it was written,
+            # so an NFD name would miss its registry row and the manifest link in brain_sync.
+            rel = unicodedata.normalize("NFC", os.path.relpath(src, a.corpus))
+            posix_rel = rel.replace(os.sep, "/")
             # Checked ahead of the format filter (unlike exclude/scribe-marker below):
             # a hidden file must never surface in the manifest as a silently-dropped
             # extension, and a hidden DIRECTORY (.cache/x.pdf) must be skipped even
@@ -775,15 +775,9 @@ def main(argv=None):
                     os.remove(stale)
                 print(f"[skip] {'hidden':20} {rel}", file=sys.stderr)
                 continue
-            # NFC, as source_registry stores it: macOS keeps a name in the form it was written,
-            # so an NFD name would miss its registry row and the manifest link in brain_sync.
-            rel = unicodedata.normalize("NFC", os.path.relpath(src, a.corpus))
-
-            rel = os.path.relpath(src, a.corpus)
             ext = os.path.splitext(fn)[1].lower()
             if ext not in allow:
                 continue
-
             reason = scribe_marker.skip_reason(src, posix_rel, a.exclude)
             if reason:
                 # Same predicate source_registry uses, so a file the registry never registers

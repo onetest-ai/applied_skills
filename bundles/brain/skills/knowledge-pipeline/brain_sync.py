@@ -487,6 +487,7 @@ def cmd_apply(a):
                       (doc, m["sha"], m["bytes"], m["mtime"], ts, sid))
         goal, audience, drift = write_meta(c, a.db)   # apply is a publish path: re-assert governance
         dates = apply_dates(c, a.parsed, a.manifest, supersede_before)
+        print(f"dates: dated {dates['dated']}, superseded {dates['superseded']}, reactivated {dates['reactivated']}")
         write_built_at(c)
         c.commit()
     except Exception as e:
@@ -541,6 +542,12 @@ def cmd_seed(a):
         print("❌ meta.goal is empty (seed): refusing to seed an ungoverned store "
               "(--require-goal). Write goal.txt and re-run.", file=sys.stderr)
         sys.exit(3)
+    # Read and validate the cutoff up front, before any indexing work (mirrors cmd_apply).
+    try:
+        supersede_before = read_supersede_before(a.db)
+    except ValueError as e:
+        print(f"❌ invalid brain.toml (seed): {e}", file=sys.stderr)
+        sys.exit(2)
     import knowledge_index as K
     c = K.connect(a.db)
     K._ensure_schema(c, a.dim)  # migrate legacy brain_sync documents→synced_files if needed
@@ -555,6 +562,7 @@ def cmd_seed(a):
                   (doc, m["sha"], m["bytes"], m["mtime"], ts, sid))
     goal, audience, drift = write_meta(c, a.db)
     dates = apply_dates(c, a.parsed, a.manifest, supersede_before)
+    print(f"dates: dated {dates['dated']}, superseded {dates['superseded']}, reactivated {dates['reactivated']}")
     write_built_at(c)
 
     c.commit()
