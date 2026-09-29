@@ -25,7 +25,7 @@ Usage:
   brain_sync.py apply  --db K.sqlite --parsed <dir> [--out <workdir>] [--no-snapshot]
   brain_sync.py rollback --db K.sqlite
 """
-import argparse, glob, hashlib, json, os, shutil, sqlite3, sys, time
+import argparse, glob, hashlib, json, os, re, shutil, sqlite3, sys, time
 from pathlib import Path
 
 try:
@@ -308,6 +308,112 @@ def delta(c, parsed, *, mutate_schema=True, manifest=None):
                  "superseded_by_video": sorted(superseded)}
 
 
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def read_supersede_before(db):
+    """`brain.toml` next to the project (<project>/brain.toml), key
+    [corpus].supersede_before. Absent file or key -> None. Malformed value -> ValueError."""
+    toml_path = Path(db).resolve().parent.parent / "brain.toml"
+    if not toml_path.is_file():
+        return None
+    value = (tomllib.loads(toml_path.read_text(encoding="utf-8")).get("corpus") or {}).get("supersede_before")
+    if value in (None, ""):
+        return None
+    if not _DATE.match(str(value)):
+        raise ValueError(f"brain.toml [corpus].supersede_before must be YYYY-MM-DD, got {value!r}")
+    return str(value)
+
+
+def _ensure_date_superseded(c):
+    """`date_superseded` tracks individual CHUNK ids (not sources): a source can have a
+    mix of chunks manually superseded (`knowledge_index.py supersede`) and chunks still
+    ACTIVE, and only the ids this feature itself marked may ever be re-marked or
+    reactivated — a manual mark must survive any number of cutoff cycles untouched.
+
+    A pre-existing per-source table (only possible from this branch's own earlier,
+    unreleased builds) is MIGRATED, not simply dropped: a chunk of a recorded source
+    counts as provably ours only when it is currently `status='SUPERSEDED'` with
+    `valid_to` equal to that source's recorded cutoff — that is exactly what this
+    feature would have written, so it is safe to carry forward. A chunk of the same
+    source superseded at some other valid_to (a manual mark) is left out and stays
+    untouched forever after, exactly as if it had never been in the old table. Dropping
+    without migrating would silently orphan real auto-marks: they would stay SUPERSEDED
+    forever with no record telling `apply_dates` it may reactivate them, indistinguishable
+    from a manual mark — a straight violation of "undo only our own marks"."""
+    if _has(c, "date_superseded"):
+        cols = {r[1] for r in c.execute("PRAGMA table_info(date_superseded)")}
+        if "chunk_id" not in cols:
+            old_rows = list(c.execute("SELECT source, cutoff FROM date_superseded"))
+            migrated = []
+            for src, cutoff in old_rows:
+                migrated += [(r[0], src, cutoff) for r in c.execute(
+                    "SELECT id FROM chunks WHERE source=? AND status='SUPERSEDED' AND valid_to=?",
+                    (src, cutoff))]
+            c.execute("DROP TABLE date_superseded")
+            c.execute("CREATE TABLE date_superseded("
+                      "chunk_id INTEGER PRIMARY KEY, source TEXT NOT NULL, cutoff TEXT NOT NULL)")
+            if migrated:
+                c.executemany("INSERT OR REPLACE INTO date_superseded VALUES(?,?,?)", migrated)
+            return
+    c.execute("CREATE TABLE IF NOT EXISTS date_superseded("
+              "chunk_id INTEGER PRIMARY KEY, source TEXT NOT NULL, cutoff TEXT NOT NULL)")
+
+
+def apply_dates(c, parsed, manifest, before):
+    """Copy exact document dates onto chunks; hide (never delete) exact-dated docs older
+    than `before`. Only CHUNK ids recorded in date_superseded are ever re-marked or
+    re-activated — a chunk superseded by hand (`knowledge_index.py supersede`) is never
+    in that table, so it is never touched here in either direction.
+
+    `event_date`/`valid_from` are copied onto a chunk only when its `event_date` is
+    still NULL (never clobber a date `knowledge_index._document_dates` already derived
+    from the chunk's own text), and never when doing so would set `valid_from` later
+    than an existing non-null `valid_to` on that chunk.
+    """
+    _ensure_date_superseded(c)
+    path = Path(manifest) if manifest else Path(parsed) / "manifest.json"
+    dates = {}
+    if path.is_file():
+        for e in json.loads(path.read_text(encoding="utf-8")):
+            if isinstance(e, dict) and e.get("md") and e.get("event_date"):
+                dates[e["md"]] = e["event_date"]
+    out = {"dated": 0, "superseded": 0, "reactivated": 0}
+    for src, d in dates.items():
+        out["dated"] += c.execute(
+            "UPDATE chunks SET event_date=?, valid_from=? WHERE source=? AND event_date IS NULL "
+            "AND (valid_to IS NULL OR ? <= valid_to)", (d, d, src, d)).rowcount
+    # Reactivate only chunk ids this feature previously marked, and only once their doc
+    # no longer qualifies (no cutoff, a later date, or the cutoff moved past it).
+    tracked = list(c.execute("SELECT chunk_id, source FROM date_superseded").fetchall())
+    for chunk_id, src in tracked:
+        d = dates.get(src)
+        if not (before and d and d < before):
+            out["reactivated"] += c.execute(
+                "UPDATE chunks SET status='ACTIVE', valid_to=NULL WHERE id=?", (chunk_id,)).rowcount
+            c.execute("DELETE FROM date_superseded WHERE chunk_id=?", (chunk_id,))
+    if before:
+        for src, d in dates.items():
+            if d >= before:
+                continue
+            active_ids = [r[0] for r in c.execute(
+                "SELECT id FROM chunks WHERE source=? AND status='ACTIVE'", (src,))]
+            tracked_ids = [r[0] for r in c.execute(
+                "SELECT chunk_id FROM date_superseded WHERE source=?", (src,))]
+            ids = sorted(set(active_ids) | set(tracked_ids))
+            if not ids:
+                continue
+            # Mark/refresh valid_to on every id we own for this source (idempotent on a
+            # repeat run), but count only the transitions that were actually ACTIVE now —
+            # a re-run over already-tracked ids must report 0 newly superseded.
+            c.executemany("UPDATE chunks SET status='SUPERSEDED', valid_to=? WHERE id=?",
+                           [(before, i) for i in ids])
+            c.executemany("INSERT OR REPLACE INTO date_superseded VALUES(?,?,?)",
+                           [(i, src, before) for i in ids])
+            out["superseded"] += len(active_ids)
+    return out
+
+
 def cmd_plan(a):
     db = Path(a.db).expanduser().resolve()
     if not db.is_file():
@@ -338,6 +444,14 @@ def cmd_apply(a):
         print("❌ meta.goal is empty (apply): refusing to publish an ungoverned store "
               "(--require-goal). Write goal.txt and re-run.", file=sys.stderr)
         sys.exit(3)
+    # Read and validate the cutoff up front, before any embedding/publish work — a
+    # malformed brain.toml must refuse cleanly rather than run the whole apply and only
+    # then fail while writing dates.
+    try:
+        supersede_before = read_supersede_before(a.db)
+    except ValueError as e:
+        print(f"❌ invalid brain.toml (apply): {e}", file=sys.stderr)
+        sys.exit(2)
     if not a.no_snapshot and os.path.exists(a.db):
         snap = f"{a.db}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
         shutil.copy2(a.db, snap)
@@ -372,6 +486,8 @@ def cmd_apply(a):
             c.execute("INSERT OR REPLACE INTO synced_files(doc_id,sha,bytes,mtime,updated_at,source_id) VALUES(?,?,?,?,?,?)",
                       (doc, m["sha"], m["bytes"], m["mtime"], ts, sid))
         goal, audience, drift = write_meta(c, a.db)   # apply is a publish path: re-assert governance
+        dates = apply_dates(c, a.parsed, a.manifest, supersede_before)
+        print(f"dates: dated {dates['dated']}, superseded {dates['superseded']}, reactivated {dates['reactivated']}")
         write_built_at(c)
         c.commit()
     except Exception as e:
@@ -426,6 +542,12 @@ def cmd_seed(a):
         print("❌ meta.goal is empty (seed): refusing to seed an ungoverned store "
               "(--require-goal). Write goal.txt and re-run.", file=sys.stderr)
         sys.exit(3)
+    # Read and validate the cutoff up front, before any indexing work (mirrors cmd_apply).
+    try:
+        supersede_before = read_supersede_before(a.db)
+    except ValueError as e:
+        print(f"❌ invalid brain.toml (seed): {e}", file=sys.stderr)
+        sys.exit(2)
     import knowledge_index as K
     c = K.connect(a.db)
     K._ensure_schema(c, a.dim)  # migrate legacy brain_sync documents→synced_files if needed
@@ -439,7 +561,10 @@ def cmd_seed(a):
         c.execute("INSERT OR REPLACE INTO synced_files(doc_id,sha,bytes,mtime,updated_at,source_id) VALUES(?,?,?,?,?,?)",
                   (doc, m["sha"], m["bytes"], m["mtime"], ts, sid))
     goal, audience, drift = write_meta(c, a.db)
+    dates = apply_dates(c, a.parsed, a.manifest, supersede_before)
+    print(f"dates: dated {dates['dated']}, superseded {dates['superseded']}, reactivated {dates['reactivated']}")
     write_built_at(c)
+
     c.commit()
     print(f"seeded documents with {len(now)} doc hashes -> {a.db}"
           + (f" ({len(unmanaged)} unmanaged)" if unmanaged else ""))

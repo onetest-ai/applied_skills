@@ -159,6 +159,13 @@ def cmd_scaffold(a):
         # Record the consumption model chosen at onboarding so downstream steps and
         # the operator guide (BRAIN.md/AGENTS.md) don't have to be reshaped later.
         lines += ["", "[deployment]", f"target = {json.dumps(a.deploy_target)}"]
+        # Commented scaffold for date-aware retrieval: uncommenting activates
+        # brain_sync's supersede-before cutoff (see read_supersede_before in
+        # brain_sync.py). Left commented, the block is inert and the file still
+        # parses as valid TOML.
+        lines += ["", "# [corpus]",
+                  '# supersede_before = "YYYY-MM-DD"  '
+                  '# hide (never delete) exact-dated docs older than this']
         config.write_text("\n".join(lines) + "\n")
 
     # drop the self-discovering launcher at the project root so nothing hardcodes
@@ -215,7 +222,8 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
         step9_body_lines.append(name_note)
     step9_body_lines.append(
         f'"$PY" "{Path(__file__).resolve().parent/"brain_sync.py"}" seed --db "$DB" '
-        f'--parsed "{proj/"parsed"}" --require-goal'
+        f'--parsed "{proj/"parsed"}" --require-goal '
+        f'--manifest "{proj/"parsed"/"manifest.json"}" --root-key docs --strict-sources'
     )
     step9_body = "\n".join(step9_body_lines)
     step9 = "\n" + textwrap.indent(step9_body, "    ") + "\n"
@@ -311,13 +319,15 @@ def _plan_text(proj, corpus, db, docs, reporting, fam, met, goal, deploy_target=
     #      consecutive turns into one section up to N chars, one "MM:SS Speaker: text" paragraph
     #      per turn — keep N below the indexer's --max-chars (default 1200). Measured on one
     #      corpus (77 VTT/SRT files, these flags, indexed at 1200 max-chars): 2,978 chunks total.
-    "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats vtt,srt --merge-cues 10 --fold-interjections 20 --pack-turns 1000
+    "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats vtt,srt --merge-cues 10 --fold-interjections 20 --pack-turns 1000 \\
+      --registry-db "$DB" --root-key docs   # only active registered sources (skips skip_duplicate copies)
 
     # 1b · parse narrative docs → Markdown (pymupdf text; visual pages via visual-parse)
     #      If the corpus has meeting recordings, run step 1m (below) BEFORE this step, so a
     #      Teams transcript .docx is consumed by its recording rather than parsed by soffice.
     #      md/markdown/txt pass through untouched — already-Markdown corpora need no conversion.
-    "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats pptx,docx,pdf,md,markdown,txt
+    "$PY" "{CTE/'parse_corpus.py'}" --corpus "{docs_s}" --out "{proj/'parsed'}" --formats pptx,docx,pdf,md,markdown,txt \\
+      --registry-db "$DB" --root-key docs
 
     # 1m · meeting recordings (.mp4/.mov/…) — the visual-parse "Meeting recordings" lane
     #      (run it BEFORE 1b when the corpus has recordings):

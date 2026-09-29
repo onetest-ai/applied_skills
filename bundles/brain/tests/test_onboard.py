@@ -63,6 +63,28 @@ class OnboardSourceConfigTests(unittest.TestCase):
             self.assertIn("ops managers", plan)
             self.assertIn("Audience", plan)
 
+    def test_scaffold_writes_commented_supersede_before_block(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            docs = root / "docs"; docs.mkdir()
+            project = root / "brain"
+            result = subprocess.run([
+                sys.executable, str(SCRIPT), "scaffold",
+                "--project", str(project), "--goal", "test goal",
+                "--docs", str(docs),
+            ], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            config = (project / "brain.toml").read_text()
+            self.assertIn(
+                '# [corpus]\n'
+                '# supersede_before = "YYYY-MM-DD"  '
+                '# hide (never delete) exact-dated docs older than this',
+                config,
+            )
+            # The commented block must not break TOML parsing.
+            import tomllib
+            tomllib.loads(config)
+
     def test_run_script_includes_fact_intake_stage(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -81,6 +103,26 @@ class OnboardSourceConfigTests(unittest.TestCase):
             # fact intake runs after narrative indexing/classify, before verify.
             self.assertLess(plan.index("classify_write.py"), plan.index("fact_prep.py"))
             self.assertLess(plan.index("fact_write.py"), plan.index("verify --db"))
+
+    def test_run_script_parses_registered_sources_only_and_seeds_strictly(self):
+        # SKILL.md's first-build flow: parse only active registered sources and link every
+        # parsed doc to one, or skipped duplicates are parsed, indexed and classified anyway.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            docs = root / "docs"; docs.mkdir()
+            project = root / "brain"
+            result = subprocess.run([sys.executable, str(SCRIPT), "scaffold", "--project", str(project),
+                                     "--goal", "g", "--docs", str(docs)], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            plan = (project / "BRAIN.md").read_text().replace("\\\n", " ")  # join continued commands
+            parse_lines = [l for l in plan.splitlines() if "parse_corpus.py" in l and "--corpus" in l]
+            self.assertTrue(parse_lines)
+            for line in parse_lines:
+                self.assertIn('--registry-db "$DB" --root-key docs', line)
+            seed = [l for l in plan.splitlines() if "brain_sync.py" in l and " seed " in l]
+            self.assertEqual(len(seed), 1)
+            self.assertIn(f'--manifest "{project.resolve() / "parsed" / "manifest.json"}"', seed[0])
+            self.assertIn("--root-key docs --strict-sources", seed[0])
 
     def test_run_script_reviews_taxonomy_and_builds_from_current(self):
         with tempfile.TemporaryDirectory() as td:

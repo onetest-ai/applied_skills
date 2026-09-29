@@ -258,7 +258,7 @@ def get_metric(
 
 def search_knowledge(
     query: str, limit: int = 5, as_of: str | None = None,
-    latest_only: bool = False, source_contains: str | None = None,
+    latest_only: bool = True, source_contains: str | None = None,
     tag: str | None = None, tag_boost: str | None = None,
 ) -> dict[str, Any]:
     """Hybrid BM25+vector retrieval for narrative evidence, never authoritative figures."""
@@ -271,18 +271,21 @@ def search_knowledge(
         sys.path.insert(0, index_dir)
     import knowledge_index as knowledge
 
-    # Filters (as_of/latest_only/source_contains/tag/tag_boost) need the extended
-    # knowledge.search signature. An older bundled knowledge-index only accepts
-    # (con, model, query, limit); calling it with filters would raise an opaque arity
-    # TypeError. Detect capability by parameter name and fail with a clear, actionable
-    # message instead — this is a real "can't do that here", not an internal crash.
+    # Filters (as_of/source_contains/tag/tag_boost) need the extended knowledge.search
+    # signature. An older bundled knowledge-index only accepts (con, model, query, limit);
+    # calling it with filters would raise an opaque arity TypeError. Detect capability by
+    # parameter name and fail with a clear, actionable message instead — this is a real
+    # "can't do that here", not an internal crash. latest_only is excluded from this
+    # explicit-filter check: it now defaults to True, so an unsupported index or a store
+    # built before chunk lifecycle metadata existed must degrade quietly rather than turn
+    # every default search into an error (there is no way to tell "default True" apart
+    # from an explicit True at this point, so both degrade the same way).
     requested = [n for n, v in (
-        ("as_of", as_of), ("latest_only", latest_only), ("source_contains", source_contains),
+        ("as_of", as_of), ("source_contains", source_contains),
         ("tag", tag), ("tag_boost", tag_boost),
     ) if v]
-    supports_filters = {"as_of", "source_contains", "tag"}.issubset(
-        inspect.signature(knowledge.search).parameters
-    )
+    search_params = inspect.signature(knowledge.search).parameters
+    supports_filters = {"as_of", "source_contains", "tag"}.issubset(search_params)
     if requested and not supports_filters:
         raise ValueError(
             "This Brain's index does not support search filters "
@@ -290,8 +293,16 @@ def search_knowledge(
             "version that supports filtered search."
         )
     with _readonly_connection(vectors=True) as con:
-        if requested:
-            result = knowledge.search(con, knowledge.DEFAULT_MODEL, query, limit, as_of, latest_only, source_contains, tag, tag_boost)
+        effective_latest_only = latest_only
+        if effective_latest_only:
+            if "latest_only" not in search_params:
+                effective_latest_only = False
+            else:
+                chunk_cols = {row[1] for row in con.execute("PRAGMA table_info(chunks)")}
+                if "status" not in chunk_cols:
+                    effective_latest_only = False
+        if requested or effective_latest_only:
+            result = knowledge.search(con, knowledge.DEFAULT_MODEL, query, limit, as_of, effective_latest_only, source_contains, tag, tag_boost)
         else:
             result = knowledge.search(con, knowledge.DEFAULT_MODEL, query, limit)
     hits = [

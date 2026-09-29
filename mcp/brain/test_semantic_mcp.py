@@ -183,6 +183,121 @@ class SemanticCoreTests(FixtureCase):
             core.search_knowledge("alpha", 1, source_contains="Transcript")
         self.assertEqual(seen["source_contains"], "Transcript")
 
+    def _status_aware_module(self):
+        """A fake knowledge_index whose search() filters by status/valid_from/valid_to the
+        way the real bundled module does (including its column-capability guards), without
+        needing the FTS/vector infrastructure the real module relies on."""
+        def search(con, model, query, limit, as_of=None, latest_only=False,
+                    source_contains=None, tag=None, tag_boost=None):
+            cols = {row[1] for row in con.execute("PRAGMA table_info(chunks)")}
+            if as_of and not {"valid_from", "valid_to"}.issubset(cols):
+                raise ValueError("as-of search requires re-indexing once to add temporal chunk metadata")
+            if latest_only and "status" not in cols:
+                raise ValueError("latest-only search requires re-indexing once to add chunk lifecycle metadata")
+            out = []
+            for row in con.execute("SELECT * FROM chunks ORDER BY id"):
+                row = dict(row)
+                if query.lower() not in (row.get("text") or "").lower():
+                    continue
+                status = row.get("status") if "status" in cols else None
+                valid_from = row.get("valid_from") if "valid_from" in cols else None
+                valid_to = row.get("valid_to") if "valid_to" in cols else None
+                if as_of:
+                    if valid_from and as_of < valid_from:
+                        continue
+                    if valid_to and as_of >= valid_to:
+                        continue
+                elif latest_only:
+                    if (status or "ACTIVE") != "ACTIVE":
+                        continue
+                out.append({"id": row["id"], "source": row["source"], "title": row.get("title"),
+                            "score": 1.0, "text": row["text"], "status": status})
+            return {"results": out[:limit]}
+        return types.SimpleNamespace(DEFAULT_MODEL="fake", search=search)
+
+    def _lifecycle_db(self, root: Path) -> Path:
+        db = root / "lifecycle.sqlite"
+        with sqlite3.connect(db) as con:
+            con.executescript(
+                """
+                CREATE TABLE chunks(id INTEGER PRIMARY KEY, source TEXT, ord INT, title TEXT,
+                                     text TEXT, sha TEXT, image TEXT, status TEXT,
+                                     valid_from TEXT, valid_to TEXT);
+                """
+            )
+            con.executemany(
+                "INSERT INTO chunks(id, source, ord, title, text, sha, status, valid_from, valid_to) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                [
+                    (1, "old.md", 0, "Policy v1", "policy evidence old",
+                     "old", "SUPERSEDED", "2023-01-01", "2024-01-01"),
+                    (2, "new.md", 0, "Policy v2", "policy evidence new",
+                     "new", "ACTIVE", "2024-01-01", None),
+                ],
+            )
+        return db
+
+    def _ro_for(self, db: Path):
+        def ro(*, vectors=False):
+            con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
+            con.row_factory = sqlite3.Row
+            return con
+        return ro
+
+    def test_search_hides_superseded_by_default(self):
+        db = self._lifecycle_db(Path(self.temp.name))
+        with patch.dict(sys.modules, {"knowledge_index": self._status_aware_module()}), \
+                patch.object(core, "_readonly_connection", self._ro_for(db)):
+            default_hits = core.search_knowledge("policy", 5)["hits"]
+            self.assertEqual([h["source"] for h in default_hits], ["new.md"])
+
+            both_hits = core.search_knowledge("policy", 5, latest_only=False)["hits"]
+            self.assertEqual(sorted(h["source"] for h in both_hits), ["new.md", "old.md"])
+
+            as_of_hits = core.search_knowledge("policy", 5, as_of="2023-06-01")["hits"]
+            self.assertEqual([h["source"] for h in as_of_hits], ["old.md"])
+
+    def test_search_identical_with_no_superseded_rows(self):
+        root = Path(self.temp.name)
+        db = root / "no_superseded.sqlite"
+        with sqlite3.connect(db) as con:
+            con.executescript(
+                """
+                CREATE TABLE chunks(id INTEGER PRIMARY KEY, source TEXT, ord INT, title TEXT,
+                                     text TEXT, sha TEXT, image TEXT, status TEXT,
+                                     valid_from TEXT, valid_to TEXT);
+                """
+            )
+            con.executemany(
+                "INSERT INTO chunks(id, source, ord, title, text, sha, status) VALUES(?,?,?,?,?,?,?)",
+                [
+                    (1, "a.md", 0, "A", "policy evidence a", "a", "ACTIVE"),
+                    (2, "b.md", 0, "B", "policy evidence b", "b", "ACTIVE"),
+                ],
+            )
+        with patch.dict(sys.modules, {"knowledge_index": self._status_aware_module()}), \
+                patch.object(core, "_readonly_connection", self._ro_for(db)):
+            default_hits = core.search_knowledge("policy", 5)["hits"]
+            explicit_hits = core.search_knowledge("policy", 5, latest_only=False)["hits"]
+            self.assertEqual(
+                sorted(h["source"] for h in default_hits),
+                sorted(h["source"] for h in explicit_hits),
+            )
+
+    def test_search_default_does_not_error_on_store_without_status_column(self):
+        # A store built before chunk lifecycle metadata existed has no `status` column.
+        # The new latest_only=True default must degrade gracefully (return normal results)
+        # rather than turn every search on an old store into an error.
+        def ro(*, vectors=False):
+            con = sqlite3.connect(f"file:{self.fx['db'].as_posix()}?mode=ro", uri=True)
+            con.row_factory = sqlite3.Row
+            return con
+        with patch.dict(sys.modules, {"knowledge_index": self._status_aware_module()}), \
+                patch.object(core, "_readonly_connection", ro):
+            result = core.search_knowledge("alpha", 1)
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["hits"][0]["source"], "a.md")
+
     def test_chunk_id_survives_as_string_for_precision(self):
         # A 63-bit int64 chunk id (sha256-derived) exceeds JS's 2**53 safe range, so it
         # must be emitted AND accepted as a string; otherwise a float64 JSON client (e.g.

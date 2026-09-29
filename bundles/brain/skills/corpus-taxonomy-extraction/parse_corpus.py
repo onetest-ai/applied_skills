@@ -18,7 +18,7 @@ Usage:
 A file that cannot be parsed is reported in one `[ERR] <file>: <reason>` line and an
 `error` manifest entry; pass --verbose for the full traceback.
 """
-import argparse, json, os, shutil, sqlite3, subprocess, sys, tempfile, warnings, traceback
+import argparse, datetime, json, os, re, shutil, sqlite3, subprocess, sys, tempfile, unicodedata, warnings, traceback
 from pathlib import Path
 warnings.filterwarnings("ignore")
 
@@ -441,6 +441,159 @@ def _clean_cue_text(text):
     return " ".join(cleaned.split())
 
 
+_CONTENT_DATE_PATTERNS = [
+    # ISO: 2023-10-24 or 2023_10_24
+    re.compile(r"(?<!\d)(20\d{2})[-_](\d{2})[-_](\d{2})(?!\d)"),
+    # US short: 10/24/2023
+    re.compile(r"(?<!\d)(\d{1,2})/(\d{1,2})/(20\d{2})(?!\d)"),
+    # European: 28-05-2024 or 28.05.2024
+    re.compile(r"(?<!\d)(\d{1,2})[-.](\d{2})[-.](20\d{2})(?!\d)"),
+    # Written month: October 24, 2023 or Oct 24 2023
+    re.compile(
+        r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+        r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|"
+        r"Dec(?:ember)?)[,.\s]+(\d{1,2})[,.\s]+(20\d{2})",
+        re.I,
+    ),
+]
+_MONTH_MAP = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+
+def _valid(y, m, d):
+    if not (2000 <= y <= 2035):
+        return False
+    try:
+        datetime.date(y, m, d)
+    except ValueError:
+        return False
+    return True
+
+
+_VERSION_WORDS = {"v", "ver", "ver.", "version", "rev", "rev.", "release", "build"}
+_VERSION_TOKEN = re.compile(r"([A-Za-z]+\.?)\s*$")
+
+
+def _rejected_as_version_or_chained(text, start, end, part_a, part_b):
+    """True when a dotted numeric date match looks like a version number rather than a
+    date: directly preceded by a letter or a version word in the preceding token,
+    directly followed by another dotted number (part of a longer run like 1.2.3.4), or
+    both halves of the match are single digits (e.g. 2.1.22) — ambiguous with a version,
+    so it stays undated rather than guessed. A bare preceding "<digit>." (e.g. the "v2."
+    in "Proposal.v2.08.24.2026") is NOT by itself a reason to reject."""
+    if start > 0 and text[start - 1].isalpha():
+        return True
+    token = _VERSION_TOKEN.search(text[:start])
+    if token and token.group(1).lower() in _VERSION_WORDS:
+        return True
+    if end < len(text) - 1 and text[end] == "." and text[end + 1].isdigit():
+        return True
+    if len(part_a) == 1 and len(part_b) == 1:
+        return True
+    return False
+
+
+def _content_date(text, today):
+    """Return YYYY-MM-DD from the first date found in the first 2000 chars, or None.
+
+    Takes the FIRST match by position (title-slide date), not the minimum — minimum
+    would pick data citations (e.g. 'as of December 31, 2023') over the document's own
+    date. Handles ISO (2023-10-24), US short (10/24/2023), European (28-05-2024), and
+    written-month (October 24, 2023 / February 27, 2025) formats.
+
+    If the FIRST date by position is `>= today` it is not the document's date — it is an
+    auto-updating field (a Word DATE/PRINTDATE field rendered as the conversion day) —
+    so the whole text is treated as undated rather than falling through to a later date
+    by position (a body citation like "as of December 31, 2023" is not the document's
+    own date either). Fail-safe direction: skip, never guess.
+    """
+    sample = text[:2000]
+    # Collect all matches with their position so we return the earliest in the text
+    hits = []
+    for i, pat in enumerate(_CONTENT_DATE_PATTERNS):
+        for m in pat.finditer(sample):
+            g = m.groups()
+            try:
+                if i == 0:                       # ISO: YYYY-MM-DD
+                    y, mo, d = int(g[0]), int(g[1]), int(g[2])
+                elif i == 1:                     # US short: MM/DD/YYYY
+                    mo, d, y = int(g[0]), int(g[1]), int(g[2])
+                elif i == 2:                     # European: DD.MM.YYYY (dotted numeric)
+                    if _rejected_as_version_or_chained(sample, m.start(), m.end(), g[0], g[1]):
+                        continue
+                    d, mo, y = int(g[0]), int(g[1]), int(g[2])
+                else:                            # written month
+                    mo = _MONTH_MAP[g[0][:3].lower()]
+                    d, y = int(g[1]), int(g[2])
+                if _valid(y, mo, d):
+                    hits.append((m.start(), y, mo, d))
+            except (ValueError, KeyError):
+                continue
+    if not hits:
+        return None
+    # Earliest by position = title-slide date, not a body citation. If that first date is
+    # on or after today, the text is undated — never consult a later date by position.
+    _, y, mo, d = min(hits, key=lambda h: h[0])
+    iso = f"{y:04d}-{mo:02d}-{d:02d}"
+    return None if iso >= today else iso
+
+
+_TEXT_DATED = {".pdf", ".pptx", ".docx", ".html", ".htm", ".md", ".markdown", ".txt"}
+_FILENAME_PATTERNS = [
+    (re.compile(r"(?<!\d)(20\d{2})[-_]?(\d{2})[-_]?(\d{2})(?!\d)"), "ymd"),
+    (re.compile(r"^(\d{2})(\d{2})(\d{2})\b"), "yymmdd"),
+    (re.compile(r"(?<!\d)(\d{1,2})\.(\d{1,2})\.(20\d{2})(?!\d)"), "mdy4"),
+    (re.compile(r"(?<!\d)(\d{1,2})\.(\d{1,2})\.(\d{2})(?!\d)"), "mdy2"),
+]
+
+
+def _filename_date(basename):
+    """Return YYYY-MM-DD from a full date anywhere in the filename, or None.
+
+    Only whole dates count: YYYYMMDD/ISO variants, a leading YYMMDD, MM.DD.YYYY and
+    M.D.YY/MM.DD.YY. Month-name-only or year-only filenames (no runnable day+month+year
+    triple) return None rather than guessing — see exact_date's docstring.
+    """
+    stem = os.path.splitext(basename)[0]
+    for pat, kind in _FILENAME_PATTERNS:
+        for m in pat.finditer(stem):
+            if kind in ("mdy4", "mdy2") and _rejected_as_version_or_chained(
+                    stem, m.start(), m.end(), m.group(1), m.group(2)):
+                continue
+            g = [int(x) for x in m.groups()]
+            y, mo, d = {"ymd": (g[0], g[1], g[2]), "yymmdd": (2000 + g[0], g[1], g[2]),
+                        "mdy4": (g[2], g[0], g[1]), "mdy2": (2000 + g[2], g[0], g[1])}[kind]
+            if _valid(y, mo, d):
+                return f"{y:04d}-{mo:02d}-{d:02d}"
+    return None
+
+
+def exact_date(text, basename, ext, today=None):
+    """Exact document date: first full date in the text (documents only), else a full date
+    in the filename. Partial or absent dates return (None, "none") — never guessed.
+
+    Content dates are only trusted for genuine document formats (`_TEXT_DATED`): a
+    transcript's spoken dates and a spreadsheet's cell dates are not the document's own
+    date, so `.vtt/.srt/.xlsx/.xlsm/.csv/.json` skip content extraction entirely.
+
+    A text date on or after `today` (the day of parsing) is an auto-updating field —
+    e.g. a Word DATE/PRINTDATE field rendered by LibreOffice as the conversion day —
+    not the document's own date, so it is skipped in favor of the next date by position;
+    if none remains, this falls back to the filename like any other undated document.
+    `today` is "YYYY-MM-DD"; `None` means the real current local date.
+    """
+    if today is None:
+        today = datetime.date.today().isoformat()
+    if ext.lower() in _TEXT_DATED:
+        t = _content_date(text, today)
+        if t:
+            return t, "text"
+    f = _filename_date(basename)
+    return (f, "filename") if f else (None, "none")
+
+
 def _parse_text(path):
     """Markdown/plain text -> itself. Markdown IS the parsed-store format, so a
     pre-processed corpus needs no conversion — only the standard `# SOURCE:`
@@ -474,10 +627,22 @@ def _video_lane_consumed(out):
             continue
         video = e["source"].replace(os.sep, "/")
         for inp in e.get("inputs") or []:
-            inp = str(inp).replace(os.sep, "/")
+            inp = unicodedata.normalize("NFC", str(inp).replace(os.sep, "/"))  # main() compares NFC paths
             if inp != video:
                 consumed[inp] = video
     return consumed
+
+
+def _drop_other_unicode_forms(path):
+    """Remove a file whose name differs from `path`'s only in Unicode form (an NFD name left by
+    an older parse). macOS matches names regardless of form, so rewriting would keep the old
+    name and brain_sync's glob would disagree with the NFC manifest; elsewhere it is a stale twin."""
+    folder, name = os.path.split(path)
+    if name.isascii() or not os.path.isdir(folder):  # an ASCII name has only one form
+        return
+    for other in os.listdir(folder):
+        if other != name and unicodedata.normalize("NFC", other) == name:
+            os.remove(os.path.join(folder, other))
 
 
 def _merge_manifest(path, fresh, allow):
@@ -595,7 +760,9 @@ def main(argv=None):
     for root, _, files in os.walk(a.corpus):
         for fn in sorted(files):
             src = os.path.join(root, fn)
-            rel = os.path.relpath(src, a.corpus)
+            # NFC, as source_registry stores it: macOS keeps a name in the form it was written,
+            # so an NFD name would miss its registry row and the manifest link in brain_sync.
+            rel = unicodedata.normalize("NFC", os.path.relpath(src, a.corpus))
             posix_rel = rel.replace(os.sep, "/")
             # Checked ahead of the format filter (unlike exclude/scribe-marker below):
             # a hidden file must never surface in the manifest as a silently-dropped
@@ -621,6 +788,7 @@ def main(argv=None):
                     os.remove(stale)
                 print(f"[skip] {reason:20} {rel}", file=sys.stderr)
                 continue
+
             if rel.replace(os.sep, "/") in consumed:
                 # The video lane already owns this transcript (see _video_lane_consumed).
                 manifest.append({"source": rel, "skipped": True, "method": "consumed-by-video",
@@ -644,11 +812,14 @@ def main(argv=None):
                     continue
                 safe = rel.replace(os.sep, "__") + ".md"
                 outp = os.path.join(a.out, safe)
+                _drop_other_unicode_forms(outp)
                 with open(outp, "w") as f:
                     f.write(f"# SOURCE: {rel}\n# method: {method}\n# fidelity: "
                             f"{'degraded' if method == 'pymupdf-html' else 'full'}\n\n{md}")
+                d, ds = exact_date(md, fn, ext)
                 manifest.append({"source": rel, "md": safe, "method": method,
-                                 "chars": len(md), "size_mb": round(os.path.getsize(src)/1e6, 2)})
+                                 "chars": len(md), "size_mb": round(os.path.getsize(src)/1e6, 2),
+                                 "event_date": d, "date_source": ds})
                 print(f"[ok] {method:20} {len(md):>8} chars  {rel}", file=sys.stderr)
             except Exception as e:
                 print(f"[ERR] {rel}: {e}", file=sys.stderr)

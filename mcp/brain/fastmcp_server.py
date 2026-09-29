@@ -335,7 +335,7 @@ def search_knowledge(
     query: Annotated[str | None, SkipValidation, Field(description="Required non-empty natural-language narrative question or concept")] = None,
     limit: Annotated[int, SkipValidation, Field(description=_LIMIT_DESCRIPTION)] = 5,
     as_of: Annotated[str | None, SkipValidation, Field(description="Optional ISO event-time cutoff")] = None,
-    latest_only: Annotated[bool, SkipValidation, Field(description="Exclude chunks marked SUPERSEDED")] = False,
+    latest_only: Annotated[bool, SkipValidation, Field(description="Exclude chunks marked SUPERSEDED (default). Pass as_of for history.")] = True,
     source_contains: Annotated[str | None, SkipValidation, Field(description="Optional literal source-path substring")] = None,
     tag: Annotated[str | None, SkipValidation, Field(description="Optional exact taxonomy tag")] = None,
     tag_boost: Annotated[str | None, SkipValidation, Field(description="Optional taxonomy tag for RRF score boost (does not exclude untagged chunks)")] = None,
