@@ -114,10 +114,11 @@ class RestatementTests(unittest.TestCase):
 
     def test_same_file_disagreement_is_a_collision_not_a_restatement(self):
         import pandas as pd
-        df = pd.DataFrame([("f", "m", "g", "e", "2026-03", 1.0, "a.xlsx"),
-                           ("f", "m", "g", "e", "2026-03", 2.0, "a.xlsx")],
-                          columns=B.KEY + ["value", "source_file"])
-        versions, restated, collisions = B.restatements(df, {"a.xlsx": "2026-03"})
+        df = pd.DataFrame([("f", "m", "g", "e", "2026-03", 1.0, "a.xlsx", 1),
+                           ("f", "m", "g", "e", "2026-03", 2.0, "a.xlsx", 2)],
+                          columns=B.KEY + ["value", "source_file", "_row"])
+        df, collisions, _ = B.resolve_collisions(df, [{"name": "f"}])
+        versions, restated = B.restatements(df, {"a.xlsx": "2026-03"})
         self.assertEqual((len(versions), restated), (0, []))
         self.assertEqual(collisions[0]["values"], [1.0, 2.0])
 

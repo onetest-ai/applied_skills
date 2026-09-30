@@ -4,13 +4,18 @@ Used by knowledge-index (RAG chunks) AND corpus-taxonomy-extraction/to_obsidian
 (vault notes) so a retrieval chunk is exactly the note a human sees. Keep the copies
 in the two skills identical.
 
-section_records(md, max_chars) -> list[dict]
+section_records(md, max_chars) -> list[dict]  (title, body, parent_heading, breadcrumb_path, ord)
 sections(md, max_chars) -> list[(title, body)] (compatibility wrapper)
   Split at Markdown headings / '[page N]' markers; oversized sections split by
   paragraph; titles derived from the first substantive line when a heading is
   missing or useless ('Page N'). Falls back to paragraph-merge for heading-less docs.
 """
 import re
+
+# Bump when a change here alters the records for UNCHANGED Markdown: knowledge_index
+# folds it into each document's cache key so a re-index re-chunks every document
+# (surviving chunks keep their id and embedding hash, so nothing is re-embedded).
+CHUNKER_VERSION = "2"   # 2: image-only sections folded into the next record
 
 def strip_preamble(md):
     return re.sub(r"\A# SOURCE:.*\n(# method:.*\n)?(# fidelity:.*\n)?\n?", "", md)
@@ -26,6 +31,29 @@ def derive_title(title, body):
     return t or "Section"
 
 _SPEAKER_ONLY = re.compile(r"^(\s*<!--\s*speaker:.*?-->\s*)+$")
+_IMAGE_ONLY = re.compile(r"^(\s*<!--\s*image:.*?-->\s*)+$")
+_IMAGE = re.compile(r"<!--\s*image:.*?-->")
+
+
+def _fold_image_only(recs):
+    """Drop records whose body is only an image marker, moving the marker onto the next
+    record that has none (the index already hands the last page image to following
+    sections, so image assignment is unchanged). Every record keeps `ord` = its position
+    BEFORE the drop: chunk ids are sha256(source, ord), so only the empty chunks' ids go.
+    A trailing image-only record (nothing after it to carry the image) is kept."""
+    for i, r in enumerate(recs):
+        r["ord"] = i
+    last_real = max((i for i, r in enumerate(recs) if not _IMAGE_ONLY.match(r["body"])), default=-1)
+    out, carry = [], None
+    for i, r in enumerate(recs):
+        if i < last_real and _IMAGE_ONLY.match(r["body"]):
+            carry = _IMAGE.findall(r["body"])[-1]
+            continue
+        if carry and not _IMAGE.search(r["body"]):
+            r["body"] = f"{carry}\n\n{r['body']}"
+        carry = None
+        out.append(r)
+    return out
 
 
 def section_records(md, max_chars=1600):
@@ -87,7 +115,7 @@ def section_records(md, max_chars=1600):
         if cur.strip() and not _SPEAKER_ONLY.match(cur):
             base = derive_title(t, cur)
             out.append({"title": f"{base} (part {part})" if part > 1 else base, "body": cur.strip(), "parent_heading": p, "breadcrumb_path": bc})
-    return out
+    return _fold_image_only(out)
 
 
 def sections(md, max_chars=1600):

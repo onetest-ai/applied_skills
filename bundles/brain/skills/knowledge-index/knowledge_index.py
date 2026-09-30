@@ -18,7 +18,7 @@ import argparse, glob, hashlib, json, os, re, sqlite3, sys
 import csv
 import sqlite_vec
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from chunking import section_records, sections
+from chunking import CHUNKER_VERSION, section_records, sections
 
 RRF_K = 60; W_FTS = 0.4; W_VEC = 0.6; POOL = 30
 DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"; DEFAULT_DIM = 384
@@ -221,7 +221,7 @@ def index_docs(c, model, corpus, sources, dim, max_chars):
         raw = open(f, encoding="utf-8", errors="replace").read()
         # The document-level cache key includes every setting that changes chunks
         # or vectors. A model/chunk-size change must not skip the whole document.
-        doc_hash = hashlib.sha256(f"{model}\x00{dim}\x00{max_chars}\x00{raw}".encode()).hexdigest()
+        doc_hash = hashlib.sha256(f"{model}\x00{dim}\x00{max_chars}\x00{CHUNKER_VERSION}\x00{raw}".encode()).hexdigest()
         known = c.execute("SELECT content_hash FROM documents WHERE source=?", (src,)).fetchone()
         if known and known[0] == doc_hash:
             skipped_docs += 1
@@ -229,8 +229,10 @@ def index_docs(c, model, corpus, sources, dim, max_chars):
         changed_docs += 1
         created_at, event_date = _document_dates(f, raw)
         new_ids = set()
-        for i, record in enumerate(section_records(raw, max_chars)):
-            title, body = record["title"], record["body"]
+        for record in section_records(raw, max_chars):
+            # ord comes from the chunker: it skips the ords of image-only sections it
+            # folds away, so every other chunk keeps its id (sha256(source, ord)).
+            i, title, body = record["ord"], record["title"], record["body"]
             cid = chunk_id(src, i); new_ids.add(cid)
             rows.append((src, i, cid, title, body, record["parent_heading"], record["breadcrumb_path"], created_at, event_date, doc_hash))
         old_ids = {r[0] for r in c.execute("SELECT id FROM chunks WHERE source=?", (src,))}

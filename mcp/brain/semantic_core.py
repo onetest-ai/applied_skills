@@ -241,8 +241,11 @@ def get_metric(
         rows = [dict(row) for row in con.execute(query, params)]
         truncated = len(rows) > limit
         rows = rows[:limit]
-        if rows and "fact_versions" in _present_tables(con):
+        present = _present_tables(con) if rows else set()
+        if "fact_versions" in present:
             _attach_versions(con, spec["family"], spec["metric"], rows)
+        if "fact_merges" in present:
+            _attach_merges(con, spec["family"], spec["metric"], rows)
     return {
         "status": "ok" if rows else "not_modeled",
         "metric": name,
@@ -259,8 +262,29 @@ def get_metric(
                     "restated=true means a later report revised it (quote the current value, name the "
                     "earlier one and its source_file when comparing periods or reconciling reports); "
                     "conflicting=true means reports of the same period disagree -- give both with both "
-                    "citations, never pick one silently.",
+                    "citations, never pick one silently. A row with merged_from was combined from several "
+                    "rows of its source_file by the stated policy (e.g. weighted_mean over the rows' record "
+                    "counts); say so when the number is questioned.",
     }
+
+
+def _attach_merges(con: sqlite3.Connection, family: str, metric: str, rows: list[dict[str, Any]]) -> None:
+    """Mark rows whose value build_marts merged from several rows of ONE file (a collision
+    resolved by the family's policy). Keyed on the row's own source_file."""
+    merges = {
+        (m["grain"], m["entity"], m["month"], m["source_file"]): m
+        for m in con.execute(
+            "SELECT grain, entity, month, source_file, policy, n_rows, inputs FROM fact_merges "
+            "WHERE family = ? AND metric = ?", (family, metric))
+    }
+    for row in rows:
+        m = merges.get((row["grain"], row["entity"], row["month"], row["source_file"]))
+        if m:
+            try:
+                inputs = json.loads(m["inputs"] or "[]")
+            except ValueError:
+                inputs = []
+            row["merged_from"] = {"policy": m["policy"], "rows": m["n_rows"], "inputs": inputs}
 
 
 def _attach_versions(con: sqlite3.Connection, family: str, metric: str, rows: list[dict[str, Any]]) -> None:
