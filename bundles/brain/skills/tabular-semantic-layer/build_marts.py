@@ -200,14 +200,17 @@ def entity_resolver(wb, spec):
     """Raw dim value -> raw entity before conform, per `entity_map` / `entity_with`.
 
     entity_map {"sheet", "from", "to", "when": "ambiguous"|"always"} looks the EXACT raw
-    spelling up in a mapping sheet of the same workbook; by default only names whose
-    spellings fold together (case/whitespace -- "RIVERTON  " vs "Riverton") are mapped, so every
-    other entity keeps joining across families. entity_with [headers] appends those
-    columns' values. Returns None when neither is configured."""
+    spelling up in a mapping sheet of the same workbook. By default only names that
+    COLLIDE IN THE DATA SHEET being loaded (two raw spellings folding together, e.g.
+    "RIVERTON  " and "Riverton" as separate rows) are mapped -- never judged from the
+    mapping sheet, which may list one branch under several spellings -- so every other
+    entity keeps its plain name and keeps joining across families. The loader calls
+    `resolve.scan(values)` with the sheet's dim values first. entity_with [headers]
+    appends those columns' values. Returns None when neither is configured."""
     em, ew = spec.get("entity_map"), spec.get("entity_with")
     if not em and not ew:
         return None
-    table, ambiguous = {}, set()
+    table, state = {}, {"ambiguous": set()}
     if em:
         ws = get_sheet(wb, em["sheet"])
         rows = read_rows(ws) if ws is not None else []
@@ -215,25 +218,38 @@ def entity_resolver(wb, spec):
                    if col_index(r, em["from"]) is not None and col_index(r, em["to"]) is not None), None)
         if hi is not None:
             fc, tc = col_index(rows[hi], em["from"]), col_index(rows[hi], em["to"])
-            folded = {}
             for r in rows[hi+1:]:
                 if max(fc, tc) < len(r) and is_dim_value(r[fc]) and is_dim_value(r[tc]):
                     raw = str(r[fc])
                     table.setdefault(raw, str(r[tc]).strip())
                     table.setdefault(raw.strip(), str(r[tc]).strip())
-                    folded.setdefault(norm(raw), set()).add(raw)
-            ambiguous = {k for k, v in folded.items() if len(v) > 1}
         always = em.get("when", "ambiguous") == "always"
+    def scan(values):
+        folded = {}
+        for v in values:
+            if is_dim_value(v):
+                folded.setdefault(norm(v), set()).add(str(v))
+        state["ambiguous"] = {k for k, raws in folded.items() if len(raws) > 1}
     def resolve(raw, row, header):
         out = raw
-        if em and (always or norm(raw) in ambiguous):
+        if em and (always or norm(raw) in state["ambiguous"]):
             out = table.get(str(raw), table.get(str(raw).strip(), raw))
+            if out is not raw:
+                MAP_LOG.setdefault((spec.get("name"), str(raw).strip()), set()).add(out)
         if ew:
             extra = [row[j] for j in (col_index(header, h) for h in ew)
                      if j is not None and j < len(row) and is_dim_value(row[j])]
             out = " ".join([str(out).strip()] + [str(x).strip() for x in extra])
         return out
+    resolve.scan = scan
     return resolve
+
+MAP_LOG = {}   # (family, raw name) -> every entity_map target it got, across files
+
+def prime(ent_fn, rows, dcol):
+    """Tell an entity resolver which dim values this sheet holds (see entity_resolver)."""
+    if ent_fn is not None and hasattr(ent_fn, "scan"):
+        ent_fn.scan([r[dcol] for r in rows if dcol < len(r)])
 
 def read_rows(ws, cap=100000):
     out = []
@@ -318,6 +334,7 @@ def load_tolerant_sheet(rows, family, month, dim_candidates, measures, dim_map, 
     missing = [m for m, j in mcols.items() if j is None]
     mcols = {m: j for m, j in mcols.items() if j is not None}
     facts = []
+    prime(ent_fn, rows[hdr_i+1:], dcol)
     for r in rows[hdr_i+1:]:
         if dcol >= len(r) or not is_dim_value(r[dcol]): continue
         raw = str(ent_fn(r[dcol], r, header) if ent_fn else r[dcol]).strip()
@@ -394,6 +411,7 @@ def load_long(rows, family, grain, dim_type, dim_header, measures, dim_map, ent_
     facts = []
     month = family["_month"]
     started = False
+    prime(ent_fn, rows[hdr_i+1:], dcol)
     for r in rows[hdr_i+1:]:
         # stop at first fully-blank row once the table has started (table boundary)
         if all(c in (None, "") for c in r):
@@ -440,6 +458,7 @@ def load_wide_month(rows, family, grain, dim_type, dim_header, measures, dim_map
     if dcol is None:
         return [], {"reason": f"dim column '{dim_header}' not found in rows {br}/{hr}"}
     facts = []
+    prime(ent_fn, rows[hr+1:], dcol)
     for r in rows[hr+1:]:
         if dcol >= len(r) or not is_dim_value(r[dcol]): continue
         raw = ent_fn(r[dcol], r, header) if ent_fn else r[dcol]
@@ -682,6 +701,13 @@ def main():
     con.execute("CREATE INDEX IF NOT EXISTS idx_fact_versions ON fact_versions(family, metric, grain, entity, month)")
     con.commit(); con.close()
 
+    # one raw name mapped to different targets in different files: the mapping sheets disagree
+    inconsistent = [{"family": f, "raw": r, "targets": sorted(t)}
+                    for (f, r), t in sorted(MAP_LOG.items()) if len(t) > 1]
+    for i in inconsistent:
+        print(f"⚠️  entity_map: {i['family']} '{i['raw']}' maps to different entities across files: "
+              f"{', '.join(i['targets'])}", file=sys.stderr)
+
     # audit summary — silent skips are made LOUD here
     zeros = [x for x in audit if x["status"] in ("zero", "error")]
     partials = [x for x in audit if x["status"] == "partial"]
@@ -694,8 +720,10 @@ def main():
                                "conflicts": sum(r["kind"] == "conflict" for r in restated),
                                "collisions": len(collisions),
                                "collisions_merged": sum("resolved" in c for c in collisions),
-                               "collision_errors": sum(bool(c.get("error")) for c in collisions)},
-                   "audit": audit, "restatements": restated, "collisions": collisions}, f, indent=2)
+                               "collision_errors": sum(bool(c.get("error")) for c in collisions),
+                               "entity_map_inconsistent": len(inconsistent)},
+                   "audit": audit, "restatements": restated, "collisions": collisions,
+                   "entity_map_inconsistent": inconsistent}, f, indent=2)
     print(f"TOTAL {len(df)} facts -> SQLite: {db} (table: facts)" + (f"  [+parquet {pq}]" if pq else ""), file=sys.stderr)
     if len(df):
         cov = df.groupby(["family","grain"]).agg(

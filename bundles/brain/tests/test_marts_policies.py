@@ -120,9 +120,12 @@ class PolicyBuild(unittest.TestCase):
         _book(self.root / "March Repeat.xlsx", {
             "Branch Summary": [("Division", "Branch Name", "State", "% Repeat"),
                                ("West", "Riverton", "PA", 0.2), ("West", "RIVERTON  ", "OH", 0.08),
-                               ("West", "EASTON", "PA", 0.1)],
+                               ("West", "EASTON", "PA", 0.1), ("West", "Millbrook", "IL", 0.3)],
             "Branch Mapping": [("Code", "Branch Name"), ("RIVERTON OH", "RIVERTON  "), ("RIVERTON PA", "Riverton"),
-                               ("EASTON PA", "EASTON")]})
+                               ("EASTON PA", "EASTON"),
+                               # the mapping sheet lists most names under two spellings;
+                               # only names that collide in the DATA sheet may be mapped
+                               ("MILLBROOK IL", "MILLBROOK "), ("MILLBROOK IL", "Millbrook")]})
         return {"name": "repeat", "glob": "*Repeat*.xlsx", "month_from": "filename", "layout": "long",
                 "grains": {"branch": {"sheet": "Branch Summary", "dim_header": "Branch Name"}},
                 "measures": {"repeat_pct": "% Repeat"}}
@@ -132,7 +135,8 @@ class PolicyBuild(unittest.TestCase):
         fam["grains"]["branch"]["entity_map"] = {"sheet": "Branch Mapping", "from": "Branch Name", "to": "Code"}
         con = self.build([fam], strict=False)
         ents = {r[0]: r[1] for r in con.execute("SELECT entity, value FROM facts")}
-        self.assertEqual(ents, {"Riverton PA": 0.2, "Riverton OH": 0.08, "Easton": 0.1})   # Easton still joins
+        # Easton and Millbrook keep their plain names (still join other families)
+        self.assertEqual(ents, {"Riverton PA": 0.2, "Riverton OH": 0.08, "Easton": 0.1, "Millbrook": 0.3})
         self.assertEqual(self.audit["collisions"], [])
 
     def test_entity_map_always(self):
@@ -147,7 +151,19 @@ class PolicyBuild(unittest.TestCase):
         fam["grains"]["branch"]["entity_with"] = ["State"]
         con = self.build([fam])
         self.assertEqual({r[0] for r in con.execute("SELECT entity FROM facts")},
-                         {"Riverton PA", "Riverton OH", "Easton PA"})
+                         {"Riverton PA", "Riverton OH", "Easton PA", "Millbrook IL"})
+
+    def test_entity_map_reports_a_name_mapped_differently_across_files(self):
+        fam = self._repeat()
+        fam["glob"] = "*Repeat*.xlsx"
+        fam["grains"]["branch"]["entity_map"] = {"sheet": "Branch Mapping", "from": "Branch Name", "to": "Code"}
+        _book(self.root / "April Repeat.xlsx", {
+            "Branch Summary": [("Branch Name", "% Repeat"), ("Riverton", 0.3), ("RIVERTON  ", 0.1)],
+            "Branch Mapping": [("Code", "Branch Name"), ("RIVERTON KY", "Riverton"), ("RIVERTON OH", "RIVERTON  ")]})
+        self.build([fam])
+        inc = self.audit["entity_map_inconsistent"]
+        self.assertEqual([(i["family"], i["raw"], sorted(i["targets"])) for i in inc],
+                         [("repeat", "Riverton", ["RIVERTON KY", "RIVERTON PA"])])
 
     # ---- 3. sheet aliases ------------------------------------------------------------
     def test_sheet_accepts_alternatives(self):
