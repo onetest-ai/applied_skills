@@ -25,7 +25,7 @@ python knowledge_index.py search --db knowledge.sqlite --query "..." --full
 python knowledge_index.py sources --db knowledge.sqlite [--like SUBSTR] [--json]
 ```
 - **Input = Markdown.** Point it at parser output (`corpus-taxonomy-extraction/parse_corpus.py` / `visual-parse`) or any `.md`. No code→text layer needed — the input is already text.
-- Chunking: paragraph-merge to ~`--max-chars` (default 1200). Deterministic.
+- Chunking: paragraph-merge to ~`--max-chars` (default 1200). Deterministic. A section whose body is only an `<!-- image: … -->` marker (a visual page heading whose transcription sits under sub-headings, or a page split whose first part is just the marker) is not its own chunk: the marker moves onto the next section and every other chunk keeps its `ord`, so chunk ids (`sha256(source, ord)`) only disappear, never shift. `chunking.CHUNKER_VERSION` is part of each document's cache key, so a full `index` run re-chunks unchanged documents once after a chunker change — without re-embedding surviving chunks.
 - Fusion knobs (top of the script): `RRF_K=60`, `W_FTS=0.4`, `W_VEC=0.6`, `POOL=30` — the wikis defaults.
 
 ## Embeddings (torch-free)

@@ -152,6 +152,21 @@ class SemanticCoreTests(FixtureCase):
         regional = core.get_metric("revenue", grain="region")["rows"][0]
         self.assertNotIn("restated", regional)
 
+    def test_metric_rows_carry_collision_merges(self):
+        self.assertNotIn("merged_from", core.get_metric("revenue", grain="overall")["rows"][0])
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.executescript("""
+                CREATE TABLE fact_merges(family TEXT, metric TEXT, grain TEXT, entity TEXT, month TEXT,
+                                         source_file TEXT, policy TEXT, n_rows INT, value REAL, inputs TEXT);
+                INSERT INTO fact_merges VALUES ('commercial','revenue','overall','All','2024-01','report.xlsx',
+                  'weighted_mean',2,100.0,'[{"value": 99.0, "weight": 9.0}, {"value": 109.0, "weight": 1.0}]'),
+                  ('commercial','revenue','overall','All','2024-01','other.xlsx','sum',2,5.0,'[]');
+            """)
+        row = core.get_metric("revenue", grain="overall")["rows"][0]
+        self.assertEqual(row["merged_from"], {"policy": "weighted_mean", "rows": 2,
+                                              "inputs": [{"value": 99.0, "weight": 9.0}, {"value": 109.0, "weight": 1.0}]})
+        self.assertIn("merged_from", core.get_metric("revenue", grain="overall")["guidance"])
+
     def test_database_is_read_only(self):
         with core._readonly_connection() as con, self.assertRaises(sqlite3.OperationalError):
             con.execute("INSERT INTO facts VALUES('x','x','x','x','x',1,'x')")

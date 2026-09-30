@@ -6,6 +6,9 @@ the families JSON. Never loads a whole workbook into memory (openpyxl read_only)
 Output long schema:
   facts(family, metric, grain, entity, month, value:double, source_file)
   fact_versions(family, metric, grain, entity, month, value, source_file, reported_in, is_current)
+  fact_merges(family, metric, grain, entity, month, source_file, policy, n_rows, value, inputs)
+    -- one file listing an entity-month on several rows (a collision), resolved by the
+       family's `collision` policy; `inputs` is the JSON list of {value, weight} merged.
     -- every distinct value of a metric-month that files DISAGREE on: a restatement (a later
        report changed it) or a conflict (reports of the same month differ). `facts` holds the
        newest report's value; the others are kept here, never dropped (see build_audit.json).
@@ -13,7 +16,7 @@ Output long schema:
 Usage:
   build_marts.py --root <reporting dir> --config <families.json> --out-dir <dir>
 """
-import argparse, glob, json, os, re, sys, warnings
+import argparse, glob, itertools, json, os, re, sys, warnings
 warnings.filterwarnings("ignore")
 import openpyxl
 
@@ -51,29 +54,96 @@ def vintage_key(path):
 
 KEY = ["family", "metric", "grain", "entity", "month"]
 
+COLLISION_POLICIES = ("last", "first", "max", "min", "sum", "mean", "weighted_mean", "error")
+
+def check_collision_config(fam):
+    """Refuse an unknown policy up front -- a typo must not silently fall back to last."""
+    spec = fam.get("collision")
+    if not spec:
+        return
+    bad = [p for p in [spec.get("policy", "last")] + list((spec.get("metrics") or {}).values())
+           if p not in COLLISION_POLICIES]
+    if bad:
+        sys.exit(f"family {fam['name']}: unknown collision policy {bad} (use one of {', '.join(COLLISION_POLICIES)})")
+    if "weighted_mean" in [spec.get("policy")] + list((spec.get("metrics") or {}).values()):
+        if spec.get("weight") not in fam.get("measures", {}):
+            sys.exit(f"family {fam['name']}: collision weight {spec.get('weight')!r} must be one of its measures")
+
+def _policy_for(spec, metric):
+    if metric in (spec.get("sum") or []):
+        return "sum"
+    return (spec.get("metrics") or {}).get(metric) or spec.get("policy", "last")
+
+def resolve_collisions(df, families):
+    """One file listing an entity-month on several rows (a collision). Without a family
+    `collision` policy the last row wins, reported only when the values differ (as ever).
+    With one, every multi-row key is merged by it: weighted_mean pairs each value with the
+    weight measure from the SAME source row (`_row`), skipping rows missing either.
+    Returns (df with one row per key+file and no `_row`, collision audit, merge rows)."""
+    import pandas as pd
+    mcols = KEY + ["source_file", "policy", "n_rows", "value", "inputs"]
+    if df.empty:
+        return df.drop(columns=["_row"]), [], pd.DataFrame(columns=mcols)
+    fams = {f["name"]: f for f in families}
+    kf = KEY + ["source_file"]
+    multi = df.groupby(kf)["_row"].transform("nunique") > 1
+    if not multi.any():
+        return df.drop(columns=["_row"]), [], pd.DataFrame(columns=mcols)
+    weights = {}
+    for f in families:
+        w = (f.get("collision") or {}).get("weight")
+        if w:
+            sub = df[(df.family == f["name"]) & (df.metric == w)]
+            for fn, rid, v in zip(sub["source_file"], sub["_row"], sub["value"]):
+                weights[(f["name"], fn, rid)] = v
+    audit, merges, resolved = [], [], {}
+    for key, g in df[multi].groupby(kf, sort=True):
+        fam, metric, fn = key[0], key[1], key[-1]
+        spec = fams.get(fam, {}).get("collision")
+        vals = g["value"].tolist()
+        entry = dict(zip(kf, key))
+        if not spec:
+            if g["value"].round(9).nunique() > 1:
+                audit.append(entry | {"policy": "last", "values": sorted(set(vals))})
+            continue                                          # drop_duplicates keeps last
+        pol = _policy_for(spec, metric)
+        inputs = [{"value": v} for v in vals]
+        if pol == "weighted_mean":
+            inputs = [{"value": v, "weight": weights.get((fam, fn, rid))} for v, rid in zip(vals, g["_row"])]
+            ok = [(i["value"], i["weight"]) for i in inputs if isinstance(i["weight"], (int, float)) and i["weight"] > 0]
+            value = sum(v * w for v, w in ok) / sum(w for _, w in ok) if ok else None
+        else:
+            value = {"last": vals[-1], "first": vals[0], "max": max(vals), "min": min(vals),
+                     "sum": float(sum(vals)), "mean": sum(vals) / len(vals), "error": vals[-1]}[pol]
+        e = entry | {"policy": pol, "values": sorted(set(vals))}
+        if pol == "error":
+            e["error"] = True
+        elif value is None:
+            e["unresolved"] = "no row carries a positive weight; kept the last row"
+        else:
+            e["resolved"] = value
+            resolved[key] = value
+            merges.append(list(key) + [pol, len(vals), value, json.dumps(inputs)])
+        audit.append(e)
+    out = df.drop_duplicates(subset=kf, keep="last").drop(columns=["_row"]).reset_index(drop=True)
+    if resolved:
+        out["value"] = [resolved.get(k, v) for k, v in zip(out[kf].itertuples(index=False, name=None), out["value"])]
+    return out, audit, pd.DataFrame(merges, columns=mcols)
+
 def restatements(df, vintage):
-    """Metric-months whose reported value CHANGED between files (a restatement), and
-    metric-months one file reports twice with different values (a collision: a loader
-    or config problem, not a vintage). `df` is in file order (oldest report first), so
+    """Metric-months whose reported value CHANGED between files. `df` holds one row per
+    key and file (collisions already resolved), in file order (oldest report first), so
     the last row per key is the value `facts` keeps.
-    Returns (fact_versions rows, restatement audit entries, collision audit entries)."""
+    Returns (fact_versions rows, restatement audit entries)."""
     import pandas as pd
     cols = KEY + ["value", "source_file", "reported_in", "is_current"]
     if df.empty:
-        return pd.DataFrame(columns=cols), [], []
+        return pd.DataFrame(columns=cols), []
     d = df.copy()
     d["_r"] = d["value"].round(9)
     d = d[d.groupby(KEY)["_r"].transform("nunique") > 1]
-    collisions = [dict(zip(KEY, key)) | {"source_file": key_f,
-                                         "values": sorted(g["value"].unique().tolist())}
-                  for (*key, key_f), g in d.groupby(KEY + ["source_file"], sort=True)
-                  if g["_r"].nunique() > 1]
-    # one value per file (its last, as `facts` would take it), then per key the files in order
-    d = d.drop_duplicates(subset=KEY + ["source_file"], keep="last")
     versions, restated = [], []
     for key, g in d.groupby(KEY, sort=True):
-        if g["_r"].nunique() < 2:
-            continue                    # disagreement was only inside one file: a collision
         cur = g.iloc[-1]
         # each earlier value once, cited to the first file that reported it
         earlier = g[g["_r"] != cur["_r"]].drop_duplicates(subset=["_r"], keep="first")
@@ -89,7 +159,7 @@ def restatements(df, vintage):
             "kind": kind,
             "current": {"value": cur["value"], "source_file": cur["source_file"]},
             "earlier": [{"value": r["value"], "source_file": r["source_file"]} for _, r in earlier.iterrows()]})
-    return pd.DataFrame(versions, columns=cols), restated, collisions
+    return pd.DataFrame(versions, columns=cols), restated
 
 def norm(s):
     return re.sub(r"\s+", " ", str(s or "").strip().lower())
@@ -112,12 +182,74 @@ def conform(dim_type, value, dim_map):
     return v
 
 def get_sheet(wb, name):
-    if name in wb.sheetnames:
-        return wb[name]
-    for s in wb.sheetnames:               # tolerant fallback: contains
-        if norm(name) in norm(s):
-            return wb[s]
+    """`name` is a sheet name or a list of alternatives (templates drift): an exact name
+    wins over any alternative's contains-match."""
+    names = name if isinstance(name, list) else [name]
+    for n in names:
+        if n in wb.sheetnames:
+            return wb[n]
+    for n in names:                       # tolerant fallback: contains
+        for s in wb.sheetnames:
+            if norm(n) in norm(s):
+                return wb[s]
     return None
+
+_ROWS = itertools.count()   # a unique id per source data row: pairs a value with its weight
+
+def entity_resolver(wb, spec):
+    """Raw dim value -> raw entity before conform, per `entity_map` / `entity_with`.
+
+    entity_map {"sheet", "from", "to", "when": "ambiguous"|"always"} looks the EXACT raw
+    spelling up in a mapping sheet of the same workbook. By default only names that
+    COLLIDE IN THE DATA SHEET being loaded (two raw spellings folding together, e.g.
+    "RIVERTON  " and "Riverton" as separate rows) are mapped -- never judged from the
+    mapping sheet, which may list one branch under several spellings -- so every other
+    entity keeps its plain name and keeps joining across families. The loader calls
+    `resolve.scan(values)` with the sheet's dim values first. entity_with [headers]
+    appends those columns' values. Returns None when neither is configured."""
+    em, ew = spec.get("entity_map"), spec.get("entity_with")
+    if not em and not ew:
+        return None
+    table, state = {}, {"ambiguous": set()}
+    if em:
+        ws = get_sheet(wb, em["sheet"])
+        rows = read_rows(ws) if ws is not None else []
+        hi = next((i for i, r in enumerate(rows[:20])
+                   if col_index(r, em["from"]) is not None and col_index(r, em["to"]) is not None), None)
+        if hi is not None:
+            fc, tc = col_index(rows[hi], em["from"]), col_index(rows[hi], em["to"])
+            for r in rows[hi+1:]:
+                if max(fc, tc) < len(r) and is_dim_value(r[fc]) and is_dim_value(r[tc]):
+                    raw = str(r[fc])
+                    table.setdefault(raw, str(r[tc]).strip())
+                    table.setdefault(raw.strip(), str(r[tc]).strip())
+        always = em.get("when", "ambiguous") == "always"
+    def scan(values):
+        folded = {}
+        for v in values:
+            if is_dim_value(v):
+                folded.setdefault(norm(v), set()).add(str(v))
+        state["ambiguous"] = {k for k, raws in folded.items() if len(raws) > 1}
+    def resolve(raw, row, header):
+        out = raw
+        if em and (always or norm(raw) in state["ambiguous"]):
+            out = table.get(str(raw), table.get(str(raw).strip(), raw))
+            if out is not raw:
+                MAP_LOG.setdefault((spec.get("name"), str(raw).strip()), set()).add(out)
+        if ew:
+            extra = [row[j] for j in (col_index(header, h) for h in ew)
+                     if j is not None and j < len(row) and is_dim_value(row[j])]
+            out = " ".join([str(out).strip()] + [str(x).strip() for x in extra])
+        return out
+    resolve.scan = scan
+    return resolve
+
+MAP_LOG = {}   # (family, raw name) -> every entity_map target it got, across files
+
+def prime(ent_fn, rows, dcol):
+    """Tell an entity resolver which dim values this sheet holds (see entity_resolver)."""
+    if ent_fn is not None and hasattr(ent_fn, "scan"):
+        ent_fn.scan([r[dcol] for r in rows if dcol < len(r)])
 
 def read_rows(ws, cap=100000):
     out = []
@@ -170,7 +302,7 @@ def to_float(v):
         except ValueError: return None
     return None
 
-def load_tolerant_sheet(rows, family, month, dim_candidates, measures, dim_map, entity_regex):
+def load_tolerant_sheet(rows, family, month, dim_candidates, measures, dim_map, entity_regex, ent_fn=None):
     """For template-less exports (e.g. NPS): find the header row by CONTENT (any dim
     candidate + >=1 measure), infer grain from the matched dim, map measures by name
     wherever they sit, and clean entity encodings (e.g. 'SE1: Clinton Poche' -> 'SE1')."""
@@ -202,19 +334,21 @@ def load_tolerant_sheet(rows, family, month, dim_candidates, measures, dim_map, 
     missing = [m for m, j in mcols.items() if j is None]
     mcols = {m: j for m, j in mcols.items() if j is not None}
     facts = []
+    prime(ent_fn, rows[hdr_i+1:], dcol)
     for r in rows[hdr_i+1:]:
         if dcol >= len(r) or not is_dim_value(r[dcol]): continue
-        raw = str(r[dcol]).strip()
+        raw = str(ent_fn(r[dcol], r, header) if ent_fn else r[dcol]).strip()
         ent = raw
         if entity_regex:
             m = _re.match(entity_regex, raw)
             if m: ent = m.group(1)
         ent = conform(matched_grain, ent, dim_map)
+        rid = next(_ROWS)
         for m, j in mcols.items():
             if j < len(r):
                 v = to_float(r[j])
                 if v is not None:
-                    facts.append((family["name"], m, matched_grain, ent, month, v))
+                    facts.append((family["name"], m, matched_grain, ent, month, v, rid))
     diag = {"reason": (f"partial: {missing}" if missing else (None if facts else "no data rows")),
             "grain": matched_grain, "missing_measures": missing}
     return facts, diag
@@ -241,11 +375,12 @@ def load_matrix(rows, family, year):
         found = False
         for r in rows[hr+1:]:                          # first matching row only
             if mcol < len(r) and r[mcol] and header_exact(norm(r[mcol]), label):
+                rid = next(_ROWS)
                 for month, j in month2col.items():
                     if j < len(r):
                         val = to_float(r[j])
                         if val is not None:
-                            facts.append((family["name"], m, "overall", entity, month, val))
+                            facts.append((family["name"], m, "overall", entity, month, val, rid))
                 found = True; break
         (matched if found else missing).append(m)
     diag = {"reason": None, "measures_matched": matched, "missing_measures": missing}
@@ -259,7 +394,7 @@ def is_dim_value(v):
     return s not in ("total", "grand total", "all", "sum",
                      "#n/a", "n/a", "#ref!", "#value!", "#div/0!", "(blank)", "blank")
 
-def load_long(rows, family, grain, dim_type, dim_header, measures, dim_map):
+def load_long(rows, family, grain, dim_type, dim_header, measures, dim_map, ent_fn=None):
     hdr_i = find_header(rows, dim_header, measures.values(),
                         hint=family.get("header_row"))
     if hdr_i is None:
@@ -276,6 +411,7 @@ def load_long(rows, family, grain, dim_type, dim_header, measures, dim_map):
     facts = []
     month = family["_month"]
     started = False
+    prime(ent_fn, rows[hdr_i+1:], dcol)
     for r in rows[hdr_i+1:]:
         # stop at first fully-blank row once the table has started (table boundary)
         if all(c in (None, "") for c in r):
@@ -284,19 +420,21 @@ def load_long(rows, family, grain, dim_type, dim_header, measures, dim_map):
         if dcol >= len(r) or not is_dim_value(r[dcol]):
             continue
         started = True
-        ent = conform(dim_type, r[dcol], dim_map)
+        raw = ent_fn(r[dcol], r, header) if ent_fn else r[dcol]
+        ent = conform(dim_type, raw, dim_map)
+        rid = next(_ROWS)
         for m, j in mcols.items():
             if j < len(r):
                 val = to_float(r[j])
                 if val is not None:
-                    facts.append((family["name"], m, grain, ent, month, val))
+                    facts.append((family["name"], m, grain, ent, month, val, rid))
     diag = {"reason": None, "header": hdr_i, "measures_matched": list(mcols.keys()),
             "missing_measures": missing}
     if missing:
         diag["reason"] = f"partial: measures not matched: {missing}"
     return facts, diag
 
-def load_wide_month(rows, family, grain, dim_type, dim_header, measures, dim_map):
+def load_wide_month(rows, family, grain, dim_type, dim_header, measures, dim_map, ent_fn=None):
     """Adjustments-style: banner row has month dates per block; header row repeats
     measure names. Forward-fill month across columns."""
     br = family.get("banner_row", 0); hr = family.get("header_row", 1)
@@ -320,15 +458,18 @@ def load_wide_month(rows, family, grain, dim_type, dim_header, measures, dim_map
     if dcol is None:
         return [], {"reason": f"dim column '{dim_header}' not found in rows {br}/{hr}"}
     facts = []
+    prime(ent_fn, rows[hr+1:], dcol)
     for r in rows[hr+1:]:
         if dcol >= len(r) or not is_dim_value(r[dcol]): continue
-        ent = conform(dim_type, r[dcol], dim_map)
+        raw = ent_fn(r[dcol], r, header) if ent_fn else r[dcol]
+        ent = conform(dim_type, raw, dim_map)
+        rid = next(_ROWS)
         for j, cell in enumerate(header):
             for m, txt in measures.items():
                 if header_exact(norm(cell), txt) and colmonth.get(j) and j < len(r):
                     val = to_float(r[j])
                     if val is not None:
-                        facts.append((family["name"], m, grain, ent, colmonth[j], val))
+                        facts.append((family["name"], m, grain, ent, colmonth[j], val, rid))
     return facts, {"reason": None if facts else "no month-banner columns matched measures"}
 
 def _month_range(start, end):
@@ -470,7 +611,7 @@ def main():
     benign = {f["name"]: [p.lower() for p in f.get("allow_zero", [])] for f in cfg["families"]}
 
     def record(family, fn, unit, facts, diag):
-        got = [t + (fn,) for t in facts]
+        got = [t[:6] + (fn,) + (t[6] if len(t) > 6 else next(_ROWS),) for t in facts]
         all_facts.extend(got)
         status = "ok"
         if not got:
@@ -482,10 +623,15 @@ def main():
                       "status": status, "reason": diag.get("reason")})
 
     for fam in cfg["families"]:
+        check_collision_config(fam)
+    for fam in cfg["families"]:
         # oldest report first: on a duplicate metric-month the newest report wins. Every
         # snapshot (matrix_month_cols) is read, not just the newest -- an older one's
         # figures are what a later snapshot may restate, and they are kept as vintages.
-        files = sorted(glob.glob(os.path.join(a.root, fam["glob"])), key=vintage_key)
+        # `glob` may be a list (a workbook that moved folders): one vintage order across all
+        globs = fam["glob"] if isinstance(fam["glob"], list) else [fam["glob"]]
+        files = sorted({p for g in globs for p in glob.glob(os.path.join(a.root, g), recursive=True)},
+                       key=vintage_key)
         if not files:
             audit.append({"family": fam["name"], "file": None, "unit": "-", "facts": 0,
                           "status": "zero", "reason": f"glob matched no files: {fam['glob']}"})
@@ -511,10 +657,11 @@ def main():
                 wb.close(); continue
             if fam["layout"] == "tolerant_long":
                 total = []
+                ent_fn = entity_resolver(wb, fam)
                 for sh in wb.sheetnames:
                     facts, _ = load_tolerant_sheet(read_rows(wb[sh]), fam, fam["_month"],
                                                    fam["dim_candidates"], fam["measures"],
-                                                   dim_map, fam.get("entity_regex"))
+                                                   dim_map, fam.get("entity_regex"), ent_fn)
                     total.extend(facts)
                 record(fam["name"], fn, "auto", total,
                        {"reason": None if total else "no sheet yielded rows (dim+measure not found)"})
@@ -525,14 +672,16 @@ def main():
                     record(fam["name"], fn, grain, [], {"reason": f"no sheet '{gc['sheet']}'"}); continue
                 dim_type = "region" if grain == "region" else grain
                 loader = load_wide_month if fam["layout"] == "wide_month" else load_long
-                facts, diag = loader(read_rows(ws), fam, grain, dim_type, gc["dim_header"], fam["measures"], dim_map)
+                facts, diag = loader(read_rows(ws), fam, grain, dim_type, gc["dim_header"], fam["measures"],
+                                     dim_map, entity_resolver(wb, {**fam, **gc}))
                 record(fam["name"], fn, grain, facts, diag)
             wb.close()
 
     # write parquet + sqlite `facts`
     import pandas as pd, sqlite3
-    df = pd.DataFrame(all_facts, columns=["family","metric","grain","entity","month","value","source_file"])
-    versions, restated, collisions = restatements(df, vintage)
+    df = pd.DataFrame(all_facts, columns=["family","metric","grain","entity","month","value","source_file","_row"])
+    df, collisions, merges = resolve_collisions(df, cfg["families"])
+    versions, restated = restatements(df, vintage)
     df = df.drop_duplicates(subset=["family","metric","grain","entity","month"], keep="last").reset_index(drop=True)
 
     df = apply_rollups(df, cfg, a.config)
@@ -548,8 +697,16 @@ def main():
     df.to_sql("facts", con, if_exists="replace", index=False)
     con.execute("CREATE INDEX IF NOT EXISTS idx_facts ON facts(family, metric, grain, entity, month)")
     versions.to_sql("fact_versions", con, if_exists="replace", index=False)   # always: no stale vintages
+    merges.to_sql("fact_merges", con, if_exists="replace", index=False)       # always: no stale merges
     con.execute("CREATE INDEX IF NOT EXISTS idx_fact_versions ON fact_versions(family, metric, grain, entity, month)")
     con.commit(); con.close()
+
+    # one raw name mapped to different targets in different files: the mapping sheets disagree
+    inconsistent = [{"family": f, "raw": r, "targets": sorted(t)}
+                    for (f, r), t in sorted(MAP_LOG.items()) if len(t) > 1]
+    for i in inconsistent:
+        print(f"⚠️  entity_map: {i['family']} '{i['raw']}' maps to different entities across files: "
+              f"{', '.join(i['targets'])}", file=sys.stderr)
 
     # audit summary — silent skips are made LOUD here
     zeros = [x for x in audit if x["status"] in ("zero", "error")]
@@ -561,8 +718,12 @@ def main():
                                "partial": len(partials), "benign": len(benigns),
                                "zero_or_error": len(zeros), "restated": sum(r["kind"] == "restated" for r in restated),
                                "conflicts": sum(r["kind"] == "conflict" for r in restated),
-                               "collisions": len(collisions)},
-                   "audit": audit, "restatements": restated, "collisions": collisions}, f, indent=2)
+                               "collisions": len(collisions),
+                               "collisions_merged": sum("resolved" in c for c in collisions),
+                               "collision_errors": sum(bool(c.get("error")) for c in collisions),
+                               "entity_map_inconsistent": len(inconsistent)},
+                   "audit": audit, "restatements": restated, "collisions": collisions,
+                   "entity_map_inconsistent": inconsistent}, f, indent=2)
     print(f"TOTAL {len(df)} facts -> SQLite: {db} (table: facts)" + (f"  [+parquet {pq}]" if pq else ""), file=sys.stderr)
     if len(df):
         cov = df.groupby(["family","grain"]).agg(
@@ -612,16 +773,22 @@ def main():
                   f"{r['current']['value']:g} [{r['current']['source_file']}] (was {was})", file=sys.stderr)
         if len(restated) > 20: print(f"   … {len(restated)-20} more in build_audit.json", file=sys.stderr)
     if collisions:
-        print(f"\n⚠️  {len(collisions)} COLLISION(s) — one file reports a metric-month twice with "
-              f"different values; the last read wins (check the family's sheets/measures):", file=sys.stderr)
+        n_m = sum("resolved" in c for c in collisions)
+        print(f"\n⚠️  {len(collisions)} COLLISION(s) — one file lists a metric-month on several rows; "
+              f"{n_m} merged by the family's `collision` policy, the rest keep the last row "
+              f"(set a policy, or fix the family's sheets/entity keys):", file=sys.stderr)
         for c in collisions[:10]:
+            how = (f"-> {c['resolved']:g} ({c['policy']})" if "resolved" in c else
+                   "ERROR (policy: error)" if c.get("error") else f"last kept ({c['policy']})")
             print(f"   - {c['family']}/{c['metric']}/{c['entity']} {c['month']} [{c['source_file']}]: "
-                  f"{', '.join(f'{v:g}' for v in c['values'])}", file=sys.stderr)
+                  f"{', '.join(f'{v:g}' for v in c['values'])} {how}", file=sys.stderr)
         if len(collisions) > 10: print(f"   … {len(collisions)-10} more in build_audit.json", file=sys.stderr)
     print(f"\naudit -> {os.path.join(a.out_dir,'build_audit.json')}", file=sys.stderr)
-    if a.strict and (zeros or partials or viols):
+    col_err = [c for c in collisions if c.get("error")]
+    if a.strict and (zeros or partials or viols or col_err):
         print(f"\nSTRICT: failing build ({len(zeros)} zero/error, {len(partials)} partial, "
-              f"{len(viols)} expected-roster violation(s); {len(benigns)} benign ignored).", file=sys.stderr)
+              f"{len(viols)} expected-roster violation(s), {len(col_err)} collision error(s); "
+              f"{len(benigns)} benign ignored).", file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":

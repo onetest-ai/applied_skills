@@ -221,6 +221,14 @@ that are re-indexed for some other reason (a content change, a flag change above
 re-index — say this plainly to an operator who asks why an old chunk's breadcrumb still looks
 wrong after upgrading.
 
+**Empty page-heading chunks (chunker version 2) also change chunking, not parsed bytes.** A
+visual page heading whose only body is its image marker used to be indexed as an empty chunk
+(classified from its title alone); the chunker now folds the marker into the next section. On an
+existing Brain `brain_sync` applies this only to documents it re-indexes for another reason; a full
+`knowledge_index.py index` run re-chunks every document once (the chunker version is in the cache
+key), deletes only the empty chunks with their tags and verdicts, and re-embeds nothing — every
+surviving chunk keeps its id.
+
 **`plan` reports a `superseded_by_video` key.** These are transcript documents retired
 because their video's parsed document now supersedes them — a deletion by design, not drift.
 Do not treat them as an unexpected removal when reviewing the parsed-store delta below.

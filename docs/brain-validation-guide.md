@@ -944,7 +944,9 @@ FAMILIES="$PROJECT/schema/families.$(basename $SOURCES).json"
    `❌ ZERO` warnings. A `FILES DISAGREE` block lists metric-months that workbooks report
    differently (`restated` by a later report, or a same-month `conflict`; the other values
    are kept in `fact_versions`); a `COLLISION` block lists one file reporting a figure
-   twice — fix that family's sheets/measures before trusting it.
+   on several rows — each line says whether the family's `collision` policy merged it
+   (`-> value (weighted_mean)`) or the last row was kept; give the family a policy or an
+   `entity_map` (two entities sharing a name) before trusting those figures.
 
 2. Verify the `facts` table is populated:
    ```bash

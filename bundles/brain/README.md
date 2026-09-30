@@ -171,7 +171,7 @@ flowchart LR
 ```
 
 - 🟢 **Agentic lane** — narrative retrieval (BM25 + vectors, fused), a taxonomy graph, and per-section tags. Answers *what things mean and how they relate*. **Never emits a figure.**
-- 🔵 **Deterministic lane** — SQL over the `facts` table, each row tracing to a source workbook. Answers *every actual number*. **Never guesses.** When workbooks disagree on a figure (a later report restates it, or two reports of one month differ), `facts` keeps the newest and `fact_versions` keeps the rest; `get_metric` returns them as `other_reported_values` so an answer can say the sources disagree instead of silently picking one.
+- 🔵 **Deterministic lane** — SQL over the `facts` table, each row tracing to a source workbook. Answers *every actual number*. **Never guesses.** When workbooks disagree on a figure (a later report restates it, or two reports of one month differ), `facts` keeps the newest and `fact_versions` keeps the rest; `get_metric` returns them as `other_reported_values` so an answer can say the sources disagree instead of silently picking one. When one workbook lists an entity twice in a month, a per-family `collision` policy (e.g. a weighted mean over the rows' record counts) decides the figure, and `get_metric` shows it as `merged_from`.
 
 ---
 
