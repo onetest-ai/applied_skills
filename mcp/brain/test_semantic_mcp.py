@@ -176,6 +176,33 @@ class SemanticCoreTests(FixtureCase):
             {"text": "Applies to every month in this file.", "source_file": "report.xlsx", "sheet": "Summary", "cell": "H9"}])
         self.assertIn("caveats", core.get_metric("revenue", grain="overall")["guidance"])
 
+    def test_caveats_reach_derived_rows_and_history(self):
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.executescript("""
+                INSERT INTO facts VALUES ('commercial','revenue','region','South','2024-01',5.0,'<derived>');
+                CREATE TABLE fact_notes(family TEXT, source_file TEXT, sheet TEXT, cell TEXT, month TEXT, text TEXT);
+                INSERT INTO fact_notes VALUES
+                  ('commercial','report.xlsx','Summary','H1','2024-01','Reporting outage; 9k rows missing.'),
+                  ('commercial','other.xlsx','Summary','H1','2024-01','A file that supplied nothing this month.');
+                CREATE TABLE fact_reports(family TEXT, metric TEXT, grain TEXT, entity TEXT, month TEXT, value REAL,
+                                          source_file TEXT, reported_in TEXT, is_current INT);
+                INSERT INTO fact_reports VALUES
+                  ('commercial','revenue','region','North','2024-01',40.0,'report.xlsx','2024-01',1),
+                  ('commercial','revenue','region','North','2024-02',41.0,'later.xlsx','2024-02',0);
+            """)
+        # (a) a derived/rollup row inherits the notes of the files that supplied its family-month
+        south = [r for r in core.get_metric("revenue", grain="region", month="2024-01")["rows"] if r["entity"] == "South"][0]
+        self.assertEqual([c["text"] for c in south["caveats"]], ["Reporting outage; 9k rows missing."])
+        # (b) history rows carry their own file+month's notes
+        hist = {r["source_file"]: r for r in core.get_metric_history("revenue", grain="region", entity="North")["rows"]}
+        self.assertEqual([c["cell"] for c in hist["report.xlsx"]["caveats"]], ["H1"])
+        self.assertNotIn("caveats", hist["later.xlsx"])
+        # a computed row has no report of its own: history returns it as the current value
+        derived = [r for r in core.get_metric_history("revenue", grain="region", month="2024-01")["rows"]
+                   if r["source_file"] == "<derived>"]
+        self.assertEqual([(d["value"], d["reported_in"], d["is_current"]) for d in derived], [(5.0, None, 1)])
+        self.assertEqual(derived[0]["caveats"][0]["cell"], "H1")
+
     def test_metric_rows_carry_collision_merges(self):
         self.assertNotIn("merged_from", core.get_metric("revenue", grain="overall")["rows"][0])
         with sqlite3.connect(self.fx["db"]) as con:

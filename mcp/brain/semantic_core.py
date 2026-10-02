@@ -274,14 +274,28 @@ def get_metric(
 
 def _attach_notes(con: sqlite3.Connection, family: str, rows: list[dict[str, Any]]) -> None:
     """Attach workbook annotations (build_marts fact_notes) to the rows of the file they were
-    written in: a note dated to a month goes to that month's rows, an undated one to all."""
+    written in: a note dated to a month goes to that month's rows, an undated one to all.
+
+    A computed row (source_file "<derived>" / "<rollup>") has no workbook of its own: it is
+    built from its family's facts of that month, so it inherits the notes of every file that
+    supplied those facts -- a ratio over figures with a reporting outage carries the outage."""
     notes: dict[str, list[dict[str, Any]]] = {}
     for n in con.execute("SELECT source_file, sheet, cell, month, text FROM fact_notes WHERE family = ? "
                          "ORDER BY source_file, sheet, cell", (family,)):
         notes.setdefault(n["source_file"], []).append(dict(n))
+    if not notes:
+        return
+    suppliers: dict[str, list[str]] = {}
     for row in rows:
+        files = [row["source_file"]]
+        if str(row["source_file"]).startswith("<"):
+            if row["month"] not in suppliers:
+                suppliers[row["month"]] = [r[0] for r in con.execute(
+                    "SELECT DISTINCT source_file FROM facts WHERE family = ? AND month = ? "
+                    "AND source_file NOT LIKE '<%' ORDER BY source_file", (family, row["month"]))]
+            files = suppliers[row["month"]]
         found = [{"text": n["text"], "source_file": n["source_file"], "sheet": n["sheet"], "cell": n["cell"]}
-                 for n in notes.get(row["source_file"], []) if n["month"] in (None, row["month"])]
+                 for f in files for n in notes.get(f, []) if n["month"] in (None, row["month"])]
         if found:
             row["caveats"] = found
 
@@ -503,6 +517,14 @@ def get_metric_history(
             rows = [dict(r) for r in con.execute(
                 f"SELECT {cols} FROM fact_reports WHERE {where} "
                 "ORDER BY month, grain, entity, COALESCE(reported_in,''), is_current LIMIT ?", params + [limit + 1])]
+            # derived/rollup values are computed, never reported by a file: their only
+            # "report" is the current facts row
+            reported = {(r["grain"], r["entity"], r["month"]) for r in rows}
+            for r in con.execute(f"SELECT grain, entity, month, value, source_file FROM facts WHERE {where} "
+                                 "AND source_file LIKE '<%'", params):
+                if (r["grain"], r["entity"], r["month"]) not in reported:
+                    rows.append(dict(r) | {"reported_in": None, "is_current": 1})
+            rows.sort(key=lambda r: (r["month"], r["grain"], r["entity"], r["reported_in"] or "", r["is_current"]))
         else:
             # older Brain: disagreeing vintages from fact_versions, else the single facts row
             table = "fact_versions+facts" if "fact_versions" in present else "facts"
@@ -516,6 +538,10 @@ def get_metric_history(
             rows.sort(key=lambda r: (r["month"], r["grain"], r["entity"], r["reported_in"] or "", r["is_current"]))
     truncated = len(rows) > limit
     rows = rows[:limit]
+    if rows:
+        with _readonly_connection() as con:
+            if "fact_notes" in _present_tables(con):
+                _attach_notes(con, spec["family"], rows)
     return {
         "status": "ok" if rows else "not_modeled",
         "metric": name,
