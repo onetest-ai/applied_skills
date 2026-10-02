@@ -16,13 +16,13 @@
       "name": "kb",
       "source": "./bundles/kb",
       "description": "Knowledge-worker companion over the Brain: cited answers and Markdown deliverables.",
-      "version": "0.5.0"
+      "version": "0.7.0"
     },
     {
       "name": "scribe",
       "source": "./bundles/scribe",
       "description": "Living documents over the Brain: scheduled, versioned, cited docx/pdf with claim-level lineage.",
-      "version": "0.1.2"
+      "version": "0.1.3"
     }
   ]
 }
