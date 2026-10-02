@@ -28,8 +28,9 @@ except ModuleNotFoundError:  # Python 3.10
 
 VERSION = 1
 EXPECTED_TOOLS = [
-    "find_related_content", "get_evidence", "get_metric", "get_taxonomy",
-    "health", "list_metrics", "search_knowledge",
+    "find_related_content", "get_current_fact", "get_evidence", "get_metric", "get_metric_history",
+    "get_question_status", "get_taxonomy", "health", "list_metrics", "list_sources", "read_document",
+    "search_knowledge",
 ]
 
 

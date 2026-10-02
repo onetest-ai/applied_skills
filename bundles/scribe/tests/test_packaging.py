@@ -47,8 +47,8 @@ def test_docs_exist_and_versions_agree():
     assert (SCRIBE / "README.md").is_file() and (REPO_ROOT / "docs" / "scribe-guide.md").is_file()
     market = json.loads((REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text())
     brain = json.loads((REPO_ROOT / "bundles" / "brain" / ".claude-plugin" / "plugin.json").read_text())
-    assert next(p for p in market["plugins"] if p["name"] == "brain")["version"] == brain["version"] == "0.12.0"
-    assert market["metadata"]["version"] == "0.12.0"
+    assert next(p for p in market["plugins"] if p["name"] == "brain")["version"] == brain["version"] == "0.13.0"
+    assert market["metadata"]["version"] == "0.13.0"
     claude_md = (REPO_ROOT / "CLAUDE.md").read_text()
     assert "bundles/scribe" in claude_md and "pytest bundles/scribe/tests" in claude_md
 

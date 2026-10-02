@@ -72,7 +72,7 @@ allow_legacy_unlinked_delete = false
 max_deleted_docs = 0
 [verification]
 required_lanes = []
-expected_tools = ["list_metrics", "get_metric", "search_knowledge", "get_taxonomy", "find_related_content", "get_evidence", "health"]
+expected_tools = ["list_metrics", "get_metric", "get_metric_history", "search_knowledge", "list_sources", "read_document", "get_taxonomy", "find_related_content", "get_evidence", "get_current_fact", "get_question_status", "health"]
 [deployment]
 enabled = false
 ''', encoding="utf-8")

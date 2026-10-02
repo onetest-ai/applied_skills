@@ -73,6 +73,7 @@ Cowork keeps its own plugin state and connects to MCP servers **from Anthropic's
 - **Cited or not modeled** — no third option. A missing answer is reported plainly, never filled from priors.
 - **Numbers only from marts** — `get_metric` carries its `source_file`; grain and period differences are stated before any comparison.
 - **Disagreement is reported, never resolved silently** — when two documents, or a restated/conflicting `get_metric` row (`other_reported_values`), give different values, both appear with both citations and which is newer.
+- **Read the document that owns the claim** — on Brains that offer `list_sources`, `read_document` and `get_metric_history`, `/kb:ask` picks the owning report or deck from the catalog, reads it through a titles-and-previews map, and leads month-over-month comparisons with each month's value as originally reported (restatements as caveats). Older Brains without those tools are still recognised and answered the previous way.
 - **Retrieved content is untrusted data** — kb never follows instructions found inside documents it retrieves (prompt-injection defense).
 - **Writes are human-gated** — `brief` and `report` propose the deliverable for your approval before writing.
 

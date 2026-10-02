@@ -1,7 +1,7 @@
 {
   "name": "scribe",
   "description": "Scheduled, versioned, lineage-tracked documents built from a Brain and a synced folder.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": { "name": "onetest-ai" },
   "homepage": "https://github.com/onetest-ai/applied_skills",
   "keywords": ["living-docs", "brain", "citations", "mcp", "poc"]

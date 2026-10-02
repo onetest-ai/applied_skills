@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 import os
 import sqlite3
 import sys
@@ -246,6 +247,8 @@ def get_metric(
             _attach_versions(con, spec["family"], spec["metric"], rows)
         if "fact_merges" in present:
             _attach_merges(con, spec["family"], spec["metric"], rows)
+        if "fact_notes" in present:
+            _attach_notes(con, spec["family"], rows)
     return {
         "status": "ok" if rows else "not_modeled",
         "metric": name,
@@ -264,8 +267,23 @@ def get_metric(
                     "conflicting=true means reports of the same period disagree -- give both with both "
                     "citations, never pick one silently. A row with merged_from was combined from several "
                     "rows of its source_file by the stated policy (e.g. weighted_mean over the rows' record "
-                    "counts); say so when the number is questioned.",
+                    "counts); say so when the number is questioned. A row with caveats carries a note written in its "
+                    "source workbook (e.g. a reporting outage) -- state it next to the figure and cite it.",
     }
+
+
+def _attach_notes(con: sqlite3.Connection, family: str, rows: list[dict[str, Any]]) -> None:
+    """Attach workbook annotations (build_marts fact_notes) to the rows of the file they were
+    written in: a note dated to a month goes to that month's rows, an undated one to all."""
+    notes: dict[str, list[dict[str, Any]]] = {}
+    for n in con.execute("SELECT source_file, sheet, cell, month, text FROM fact_notes WHERE family = ? "
+                         "ORDER BY source_file, sheet, cell", (family,)):
+        notes.setdefault(n["source_file"], []).append(dict(n))
+    for row in rows:
+        found = [{"text": n["text"], "source_file": n["source_file"], "sheet": n["sheet"], "cell": n["cell"]}
+                 for n in notes.get(row["source_file"], []) if n["month"] in (None, row["month"])]
+        if found:
+            row["caveats"] = found
 
 
 def _attach_merges(con: sqlite3.Connection, family: str, metric: str, rows: list[dict[str, Any]]) -> None:
@@ -314,6 +332,204 @@ def _attach_versions(con: sqlite3.Connection, family: str, metric: str, rows: li
             row["restated"] = True
         else:
             row["conflicting"] = True
+
+
+SOURCES_PAGE = 500          # list_sources page size: a whole corpus catalog in one call
+READ_DEFAULT_CHARS = 16000  # read_document page budget (section text, or titles+previews)
+READ_MAX_CHARS = 48000
+PREVIEW_CHARS = 200
+_TITLE_TAG = re.compile(r"^\s*p\d+\s*·\s*|\s*\(part \d+\)\s*$", re.I)
+
+
+def _preview(text: str, title: str) -> str:
+    """First PREVIEW_CHARS of a section's own content. A page that repeats its title (often a
+    confidentiality footer that every page shares) and a bare page number before the content
+    would spend the whole preview on boilerplate, so that opening is skipped."""
+    body = " ".join(text.split())
+    stem = " ".join(_TITLE_TAG.sub("", title).split())
+    if stem and body.lower().startswith(stem.lower()):
+        body = body[len(stem):].lstrip(" .:-—·")
+        body = re.sub(r"^\d{1,4}\s+", "", body)
+    return body[:PREVIEW_CHARS]
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _visible_chunks(con: sqlite3.Connection) -> tuple[str, set[str]]:
+    """The WHERE clause that hides what default search hides (SUPERSEDED chunks), and the
+    chunk columns present -- an older store without lifecycle columns shows everything."""
+    cols = {row[1] for row in con.execute("PRAGMA table_info(chunks)")}
+    where = "COALESCE(status,'ACTIVE')='ACTIVE'" if "status" in cols else "1=1"
+    return where, cols
+
+
+def list_sources(contains: str | None = None, offset: int = 0, page_size: int = SOURCES_PAGE) -> dict[str, Any]:
+    """Document catalog: one row per visible source with its section count, size and date."""
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        raise ValueError("offset must be a non-negative integer")
+    with _readonly_connection() as con:
+        visible, cols = _visible_chunks(con)
+        date = "MAX(event_date)" if "event_date" in cols else "NULL"
+        query = (f"SELECT source, COUNT(*) AS n_sections, SUM(LENGTH(COALESCE(text,''))) AS chars, "
+                 f"{date} AS event_date FROM chunks WHERE {visible}")
+        params: list[Any] = []
+        if contains:
+            query += " AND lower(source) LIKE ? ESCAPE '\\'"
+            params.append(f"%{_escape_like(contains.lower())}%")
+        query += " GROUP BY source ORDER BY source LIMIT ? OFFSET ?"
+        params += [page_size + 1, offset]
+        rows = [dict(row) for row in con.execute(query, params)]
+    more = len(rows) > page_size
+    rows = rows[:page_size]
+    return {
+        "status": "ok" if rows else "not_modeled",
+        "filters": {"contains": contains} if contains else {},
+        "sources": rows,
+        "count": len(rows),
+        "next_offset": offset + page_size if more else None,
+        "guidance": "The document catalog (superseded documents hidden). Name the document that owns each "
+                    "sub-claim, then read it with read_document (source = exact name or a unique substring).",
+    }
+
+
+def _resolve_source(con: sqlite3.Connection, visible: str, source: str) -> tuple[str | None, list[str]]:
+    """Exact name, else a case-insensitive exact name, else a unique case-insensitive
+    substring. Returns (source, []) or (None, matches)."""
+    if con.execute(f"SELECT 1 FROM chunks WHERE {visible} AND source = ? LIMIT 1", (source,)).fetchone():
+        return source, []
+    matches = [row[0] for row in con.execute(
+        f"SELECT DISTINCT source FROM chunks WHERE {visible} AND lower(source) LIKE ? ESCAPE '\\' ORDER BY source",
+        (f"%{_escape_like(source.lower())}%",))]
+    exact = [m for m in matches if m.lower() == source.lower()]
+    if len(exact) == 1:
+        return exact[0], []
+    if len(matches) == 1:
+        return matches[0], []
+    return None, matches
+
+
+def read_document(
+    source: str, from_ord: int | None = None, to_ord: int | None = None,
+    titles_only: bool = False, max_chars: int = READ_DEFAULT_CHARS,
+) -> dict[str, Any]:
+    """Sections of ONE document in reading order, paged by a character budget."""
+    if not source.strip():
+        raise ValueError("source must not be empty")
+    if isinstance(max_chars, bool) or not isinstance(max_chars, int) or not 1 <= max_chars <= READ_MAX_CHARS:
+        raise ValueError(f"max_chars must be an integer between 1 and {READ_MAX_CHARS}")
+    with _readonly_connection() as con:
+        visible, cols = _visible_chunks(con)
+        resolved, matches = _resolve_source(con, visible, source)
+        if resolved is None:
+            status = "ambiguous" if matches else "not_found"
+            return {
+                "status": status, "source": source, "matches": matches[:50],
+                "guidance": ("Several documents match; retry with one exact name from matches."
+                             if matches else "No visible document matches; call list_sources to see the catalog."),
+            }
+        crumb = "breadcrumb_path" if "breadcrumb_path" in cols else "NULL"
+        query = (f"SELECT id, ord, title, text, {crumb} AS breadcrumb_path FROM chunks "
+                 f"WHERE {visible} AND source = ?")
+        params: list[Any] = [resolved]
+        if from_ord is not None:
+            query += " AND ord >= ?"
+            params.append(from_ord)
+        if to_ord is not None:
+            query += " AND ord <= ?"
+            params.append(to_ord)
+        rows = con.execute(query + " ORDER BY ord", params).fetchall()
+        total = con.execute(f"SELECT COUNT(*) FROM chunks WHERE {visible} AND source = ?", (resolved,)).fetchone()[0]
+    sections, used, next_from = [], 0, None
+    for row in rows:
+        text = row["text"] or ""
+        if titles_only:
+            item = {"chunk_id": str(row["id"]), "ord": row["ord"], "section": row["title"] or "",
+                    "preview": _preview(text, row["title"] or "")}
+            size = len(item["section"]) + len(item["preview"])
+        else:
+            item = {"chunk_id": str(row["id"]), "ord": row["ord"], "section": row["title"] or "",
+                    "breadcrumb_path": row["breadcrumb_path"] or "", "text": text}
+            size = len(text)
+        # always return at least one section, so a section larger than the budget still pages forward
+        if sections and used + size > max_chars:
+            next_from = row["ord"]
+            break
+        sections.append(item)
+        used += size
+    return {
+        "status": "ok",
+        "source": resolved,
+        "total_sections": total,
+        "sections": sections,
+        "next_from_ord": next_from,
+        "guidance": ("A map of the document: judge sections by their previews, then read the relevant run "
+                     "(plus neighbours) with from_ord/to_ord." if titles_only else
+                     "Sections in reading order; continue with from_ord=next_from_ord when it is set. "
+                     "Cite source and section; numbers still come from get_metric."),
+    }
+
+
+def get_metric_history(
+    name: str, grain: str | None = None, entity: str | None = None, month: str | None = None,
+    start_month: str | None = None, end_month: str | None = None, limit: int = MAX_LIMIT,
+) -> dict[str, Any]:
+    """Every reported value of a metric-month, with the report it came from."""
+    limit = _bounded_limit(limit)
+    spec = _metric_spec(name)
+    clauses = ["family = ?", "metric = ?"]
+    params: list[Any] = [spec["family"], spec["metric"]]
+    filters: dict[str, Any] = {}
+    for column, value in (("grain", grain), ("entity", entity), ("month", month)):
+        if value:
+            clauses.append(f"{column} = ?")
+            params.append(value)
+            filters[column] = value
+    if start_month:
+        clauses.append("month >= ?")
+        params.append(start_month)
+        filters["start_month"] = start_month
+    if end_month:
+        clauses.append("month <= ?")
+        params.append(end_month)
+        filters["end_month"] = end_month
+    where = " AND ".join(clauses)
+    cols = "grain, entity, month, value, source_file, reported_in, is_current"
+    with _readonly_connection() as con:
+        present = _present_tables(con)
+        if "fact_reports" in present:
+            table = "fact_reports"
+            rows = [dict(r) for r in con.execute(
+                f"SELECT {cols} FROM fact_reports WHERE {where} "
+                "ORDER BY month, grain, entity, COALESCE(reported_in,''), is_current LIMIT ?", params + [limit + 1])]
+        else:
+            # older Brain: disagreeing vintages from fact_versions, else the single facts row
+            table = "fact_versions+facts" if "fact_versions" in present else "facts"
+            rows = []
+            if "fact_versions" in present:
+                rows = [dict(r) for r in con.execute(f"SELECT {cols} FROM fact_versions WHERE {where}", params)]
+            versioned = {(r["grain"], r["entity"], r["month"]) for r in rows}
+            for r in con.execute(f"SELECT grain, entity, month, value, source_file FROM facts WHERE {where}", params):
+                if (r["grain"], r["entity"], r["month"]) not in versioned:
+                    rows.append(dict(r) | {"reported_in": None, "is_current": 1})
+            rows.sort(key=lambda r: (r["month"], r["grain"], r["entity"], r["reported_in"] or "", r["is_current"]))
+    truncated = len(rows) > limit
+    rows = rows[:limit]
+    return {
+        "status": "ok" if rows else "not_modeled",
+        "metric": name,
+        "family": spec["family"],
+        "unit": spec.get("unit"),
+        "filters": filters,
+        "rows": rows,
+        "row_count": len(rows),
+        "truncated": truncated,
+        "source_table": table,
+        "guidance": "Every report of each metric-month: is_current=1 is the value get_metric returns. For a "
+                    "month-over-month comparison lead with each month's value as originally reported "
+                    "(reported_in = that month) and cite its source_file; add a later restatement as a caveat.",
+    }
 
 
 def search_knowledge(

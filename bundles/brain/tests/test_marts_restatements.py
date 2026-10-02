@@ -95,6 +95,24 @@ class RestatementTests(unittest.TestCase):
         self.assertEqual(r["earlier"], [{"value": 41413.0, "source_file": "June 2026 Daily.xlsx"}])
         self.assertIn("RESTATED", err)
 
+    def test_every_report_is_kept_in_fact_reports(self):
+        # an AGREEING later report is still a citable report of that month
+        _snapshot(self.root / "June 2026 Daily.xlsx", 6, {"June": 41413})
+        _snapshot(self.root / "July 2026 Daily.xlsx", 7, {"June": 42635, "July": 27862})
+        _snapshot(self.root / "August 2026 Daily.xlsx", 8, {"June": 42635, "July": 27862})
+        con, _, _ = self._build([self.MOM])
+        july = [tuple(r) for r in con.execute(
+            "SELECT value, source_file, reported_in, is_current FROM fact_reports "
+            "WHERE metric='calls_abandoned' AND month='2026-07' ORDER BY reported_in")]
+        self.assertEqual(july, [(27862.0, "July 2026 Daily.xlsx", "2026-07", 0),
+                                (27862.0, "August 2026 Daily.xlsx", "2026-08", 1)])
+        # fact_versions stays restatements-only: July never changed
+        self.assertEqual(con.execute("SELECT count(*) FROM fact_versions WHERE month='2026-07'").fetchone()[0], 0)
+        # exactly one current row per key, and it is the facts row
+        self.assertEqual(con.execute("""SELECT count(*) FROM facts f JOIN fact_reports r
+            USING(family, metric, grain, entity, month, source_file) WHERE r.is_current=1""").fetchone()[0],
+            con.execute("SELECT count(*) FROM facts").fetchone()[0])
+
     def test_same_month_reports_that_differ_are_a_conflict(self):
         _snapshot(self.root / "June 2026 Daily A.xlsx", 6, {"June": 1})
         _snapshot(self.root / "June 2026 Daily B.xlsx", 6, {"June": 2})

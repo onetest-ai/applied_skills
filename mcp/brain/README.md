@@ -17,7 +17,10 @@ Every advertised tool property carries a concrete primitive schema, with a `null
 |---|---|
 | `list_metrics` | Discover governed metrics, units, grains, and periods |
 | `get_metric` | Read exact `facts` rows with `source_file` citations |
+| `get_metric_history` | Every report of a metric-month (`value`, `source_file`, `reported_in`, `is_current`) — cite a month as originally reported; reads `fact_reports`, falling back to `fact_versions` + `facts` on older stores |
 | `search_knowledge` | Hybrid BM25 + vector narrative retrieval |
+| `list_sources` | Document catalog (`source`, `n_sections`, `chars`, `event_date`), superseded documents hidden; `contains` filter, 500 per page with `next_offset` |
+| `read_document` | One document's sections in reading order, paged by `max_chars` (default 16000, max 48000) with `next_from_ord`; `titles_only` returns a map with ~200-character previews; `source` is an exact name or unique substring (else `ambiguous`/`not_found`, not an error) |
 | `get_current_fact` | Current or as-of mutable fact with retained history |
 | `get_question_status` | Open/resolved question linked across meeting sources |
 | `get_taxonomy` | Explore taxonomy nodes, edges, and tagged sections; the looked-up node (`label=`) and each listed node carry a `description` when the store has one (built from a described taxonomy); `subclasses` entries do not |

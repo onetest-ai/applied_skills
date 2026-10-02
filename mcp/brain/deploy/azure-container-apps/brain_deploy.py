@@ -37,6 +37,15 @@ TAG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 SUFFIX = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 
 
+
+def has_concrete_type(schema: dict) -> bool:
+    """A field advertises a concrete type either directly (`type`) or, for an optional
+    field, as `anyOf: [{type: X}, {type: null}]` -- the shape the server publishes."""
+    if schema.get("type"):
+        return True
+    types = {item.get("type") for item in schema.get("anyOf", []) if isinstance(item, dict)}
+    return bool(types - {None, "null"})
+
 def load(path: Path) -> dict:
     with path.open("rb") as handle:
         cfg = tomllib.load(handle)
@@ -113,7 +122,7 @@ def verify(cfg: dict) -> dict:
                 raise RuntimeError("unexpected public tool set")
             for tool in tools.values():
                 for field, schema in tool.inputSchema.get("properties", {}).items():
-                    if "type" not in schema:
+                    if not has_concrete_type(schema):
                         raise RuntimeError(f"{tool.name}.{field} has no concrete JSON Schema type")
             metric = await client.call_tool("get_metric", {"name": verification["metric_name"], "grain": verification["metric_grain"], "limit": 1})
             rows = metric.data.get("rows", [])

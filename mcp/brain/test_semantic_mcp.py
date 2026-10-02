@@ -152,6 +152,30 @@ class SemanticCoreTests(FixtureCase):
         regional = core.get_metric("revenue", grain="region")["rows"][0]
         self.assertNotIn("restated", regional)
 
+    def test_preview_skips_a_repeated_title_and_page_number(self):
+        title = "p10 · Example Corp Confidential. (part 2)"
+        text = "Example Corp Confidential. 10 You are not starting from a blank slate. " + "x" * 300
+        self.assertTrue(core._preview(text, title).startswith("You are not starting"))
+        self.assertEqual(core._preview("Plain body text.", "Intro"), "Plain body text.")
+        self.assertEqual(len(core._preview("y " * 400, "Intro")), core.PREVIEW_CHARS)
+
+    def test_metric_rows_carry_workbook_notes_as_caveats(self):
+        self.assertNotIn("caveats", core.get_metric("revenue", grain="overall")["rows"][0])
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.executescript("""
+                CREATE TABLE fact_notes(family TEXT, source_file TEXT, sheet TEXT, cell TEXT, month TEXT, text TEXT);
+                INSERT INTO fact_notes VALUES
+                  ('commercial','report.xlsx','Summary','H1','2024-01','Reporting outage; 9k rows missing.'),
+                  ('commercial','report.xlsx','Summary','H9',NULL,'Applies to every month in this file.'),
+                  ('commercial','report.xlsx','Summary','H2','2024-02','Another month; not this row.'),
+                  ('commercial','other.xlsx','Summary','H1','2024-01','Other file; not this row.');
+            """)
+        row = core.get_metric("revenue", grain="overall")["rows"][0]
+        self.assertEqual(row["caveats"], [
+            {"text": "Reporting outage; 9k rows missing.", "source_file": "report.xlsx", "sheet": "Summary", "cell": "H1"},
+            {"text": "Applies to every month in this file.", "source_file": "report.xlsx", "sheet": "Summary", "cell": "H9"}])
+        self.assertIn("caveats", core.get_metric("revenue", grain="overall")["guidance"])
+
     def test_metric_rows_carry_collision_merges(self):
         self.assertNotIn("merged_from", core.get_metric("revenue", grain="overall")["rows"][0])
         with sqlite3.connect(self.fx["db"]) as con:
@@ -411,15 +435,158 @@ class SemanticCoreTests(FixtureCase):
 
 
 @unittest.skipUnless(Client is not None, "fastmcp is not installed")
+class ReadToolsTests(FixtureCase):
+    """list_sources / read_document / get_metric_history (MCP 1.3.0)."""
+    BIG = 9_007_199_254_740_993   # > 2**53: must survive as a string
+
+    def _docs(self, with_status=True):
+        with sqlite3.connect(self.fx["db"]) as con:
+            if with_status:
+                con.execute("ALTER TABLE chunks ADD COLUMN status TEXT DEFAULT 'ACTIVE'")
+                con.execute("ALTER TABLE chunks ADD COLUMN event_date TEXT")
+                con.execute("ALTER TABLE chunks ADD COLUMN breadcrumb_path TEXT")
+            rows = [
+                (self.BIG, "decks/Plan_v2.pdf.md", 0, "p01 \u00b7 Confidential", "Intro   text\n about the plan", "s", None),
+                (11, "decks/Plan_v2.pdf.md", 2, "p02 \u00b7 Confidential", "x" * 300, "s", None),   # ord gap at 1
+                (12, "decks/Plan_v2.pdf.md", 3, "p03 \u00b7 Confidential", "Already committed scope " + "y" * 50, "s", None),
+                (13, "decks/Plan_v1.pdf.md", 0, "p01", "old plan", "s", None),
+                (14, "notes/50%_done.md", 0, "Notes", "percent doc", "s", None),
+                (15, "old/retired.md", 0, "Gone", "superseded text", "s", None),
+            ]
+            con.executemany("INSERT INTO chunks(id,source,ord,title,text,sha,image) VALUES(?,?,?,?,?,?,?)", rows)
+            if with_status:
+                con.execute("UPDATE chunks SET status='SUPERSEDED' WHERE source='old/retired.md'")
+                con.execute("UPDATE chunks SET event_date='2026-08-01' WHERE source='decks/Plan_v2.pdf.md'")
+
+    def test_list_sources_catalog_hides_superseded(self):
+        self._docs()
+        out = core.list_sources()
+        by = {r["source"]: r for r in out["sources"]}
+        self.assertNotIn("old/retired.md", by)
+        self.assertEqual(by["decks/Plan_v2.pdf.md"]["n_sections"], 3)
+        self.assertEqual(by["decks/Plan_v2.pdf.md"]["event_date"], "2026-08-01")
+        self.assertEqual(by["decks/Plan_v2.pdf.md"]["chars"], len("Intro   text\n about the plan") + 300 + 74)
+        self.assertEqual([r["source"] for r in out["sources"]], sorted(by))
+        self.assertIsNone(out["next_offset"])
+
+    def test_list_sources_contains_is_literal_and_case_insensitive(self):
+        self._docs()
+        self.assertEqual([r["source"] for r in core.list_sources(contains="PLAN_V")["sources"]],
+                         ["decks/Plan_v1.pdf.md", "decks/Plan_v2.pdf.md"])
+        self.assertEqual([r["source"] for r in core.list_sources(contains="50%")["sources"]], ["notes/50%_done.md"])
+        self.assertEqual(core.list_sources(contains="zzz")["status"], "not_modeled")
+
+    def test_list_sources_pages(self):
+        self._docs()
+        first = core.list_sources(offset=0, page_size=2)
+        self.assertEqual((len(first["sources"]), first["next_offset"]), (2, 2))
+        rest = core.list_sources(offset=2, page_size=500)
+        self.assertIsNone(rest["next_offset"])
+
+    def test_read_document_in_order_with_string_ids_and_paging(self):
+        self._docs()
+        out = core.read_document("Plan_v2", max_chars=200)
+        self.assertEqual(out["source"], "decks/Plan_v2.pdf.md")
+        self.assertEqual([s["ord"] for s in out["sections"]], [0])
+        self.assertEqual(out["sections"][0]["chunk_id"], str(self.BIG))
+        self.assertEqual(out["next_from_ord"], 2)                      # pages by ord value across the gap
+        nxt = core.read_document("decks/Plan_v2.pdf.md", from_ord=2, max_chars=1000)
+        self.assertEqual([s["ord"] for s in nxt["sections"]], [2, 3])
+        self.assertIsNone(nxt["next_from_ord"])
+        self.assertEqual(out["total_sections"], 3)
+
+    def test_read_document_always_returns_one_section_even_if_large(self):
+        self._docs()
+        out = core.read_document("Plan_v2", from_ord=2, max_chars=10)
+        self.assertEqual([s["ord"] for s in out["sections"]], [2])
+        self.assertEqual(out["next_from_ord"], 3)
+
+    def test_read_document_titles_only_previews(self):
+        self._docs()
+        out = core.read_document("Plan_v2", titles_only=True)
+        self.assertEqual(out["sections"][0], {"chunk_id": str(self.BIG), "ord": 0, "section": "p01 \u00b7 Confidential",
+                                              "preview": "Intro text about the plan"})
+        self.assertTrue(out["sections"][2]["preview"].startswith("Already committed scope"))
+        self.assertLessEqual(len(out["sections"][1]["preview"]), 200)
+        self.assertNotIn("text", out["sections"][1])
+
+    def test_read_document_to_ord(self):
+        self._docs()
+        self.assertEqual([s["ord"] for s in core.read_document("Plan_v2", from_ord=0, to_ord=2)["sections"]], [0, 2])
+
+    def test_read_document_ambiguous_not_found_and_hidden(self):
+        self._docs()
+        amb = core.read_document("plan_v")
+        self.assertEqual(amb["status"], "ambiguous")
+        self.assertEqual(amb["matches"], ["decks/Plan_v1.pdf.md", "decks/Plan_v2.pdf.md"])
+        self.assertEqual(core.read_document("nothing-like-it")["status"], "not_found")
+        self.assertEqual(core.read_document("retired")["status"], "not_found")   # superseded doc stays hidden
+        self.assertEqual(core.read_document("DECKS/PLAN_V2.PDF.MD")["source"], "decks/Plan_v2.pdf.md")
+        with self.assertRaises(ValueError):
+            core.read_document("Plan_v2", max_chars=10**6)
+
+    def test_read_document_on_store_without_lifecycle_columns(self):
+        self._docs(with_status=False)
+        self.assertEqual(core.read_document("Plan_v2")["total_sections"], 3)
+        self.assertIsNone(core.list_sources(contains="Plan_v2")["sources"][0]["event_date"])
+
+    def test_metric_history_from_fact_reports(self):
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.executescript("""
+                CREATE TABLE fact_reports(family TEXT, metric TEXT, grain TEXT, entity TEXT, month TEXT,
+                                          value REAL, source_file TEXT, reported_in TEXT, is_current INT);
+                INSERT INTO fact_reports VALUES
+                  ('commercial','revenue','overall','All','2024-01', 90.0,'jan.xlsx','2024-01',0),
+                  ('commercial','revenue','overall','All','2024-01', 90.0,'feb.xlsx','2024-02',0),
+                  ('commercial','revenue','overall','All','2024-01',100.0,'report.xlsx','2024-03',1),
+                  ('commercial','revenue','region','North','2024-01', 40.0,'report.xlsx','2024-03',1);
+            """)
+        out = core.get_metric_history("revenue", grain="overall")
+        self.assertEqual([(r["source_file"], r["reported_in"], r["is_current"]) for r in out["rows"]],
+                         [("jan.xlsx", "2024-01", 0), ("feb.xlsx", "2024-02", 0), ("report.xlsx", "2024-03", 1)])
+        self.assertEqual(out["source_table"], "fact_reports")
+        self.assertTrue(core.get_metric_history("revenue", limit=2)["truncated"])
+        with self.assertRaisesRegex(ValueError, "Unknown metric"):
+            core.get_metric_history("unknown")
+
+    def test_metric_history_fallback_without_fact_reports(self):
+        with sqlite3.connect(self.fx["db"]) as con:
+            con.executescript("""
+                CREATE TABLE fact_versions(family TEXT, metric TEXT, grain TEXT, entity TEXT, month TEXT,
+                                           value REAL, source_file TEXT, reported_in TEXT, is_current INT);
+                INSERT INTO fact_versions VALUES
+                  ('commercial','revenue','overall','All','2024-01', 90.0,'jan.xlsx','2024-01',0),
+                  ('commercial','revenue','overall','All','2024-01',100.0,'report.xlsx','2024-02',1);
+            """)
+        out = core.get_metric_history("revenue")
+        rows = [(r["grain"], r["entity"], r["month"], r["value"], r["reported_in"], r["is_current"]) for r in out["rows"]]
+        self.assertIn(("overall", "All", "2024-01", 90.0, "2024-01", 0), rows)
+        self.assertIn(("overall", "All", "2024-01", 100.0, "2024-02", 1), rows)
+        self.assertIn(("region", "North", "2024-01", 40.0, None, 1), rows)       # single report: facts row
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(out["source_table"], "fact_versions+facts")
+
+
 class FastMCPContractTests(FixtureCase):
     def test_in_process_and_real_stdio(self):
         import fastmcp_server
 
         async def run():
-            expected = {"list_metrics", "get_metric", "search_knowledge", "get_current_fact", "get_question_status", "get_taxonomy", "find_related_content", "get_evidence", "health"}
+            expected = {"list_metrics", "get_metric", "search_knowledge", "get_current_fact", "get_question_status", "get_taxonomy", "find_related_content", "get_evidence", "health",
+                        "list_sources", "read_document", "get_metric_history"}
             async with Client(fastmcp_server.mcp) as client:
                 tools = {tool.name: tool for tool in await client.list_tools()}
                 self.assertEqual(set(tools), expected)
+                # the deploy scripts' post-deploy check must accept every published field
+                # (optional fields are `anyOf: [type, null]`, not a top-level `type`)
+                for kind in ("local-docker", "azure-container-apps"):
+                    spec = importlib.util.spec_from_file_location(
+                        f"brain_deploy_{kind}", Path(__file__).parent / "deploy" / kind / "brain_deploy.py")
+                    deploy = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(deploy)
+                    for tool in tools.values():
+                        for field, schema in tool.inputSchema.get("properties", {}).items():
+                            self.assertTrue(deploy.has_concrete_type(schema), f"{kind}: {tool.name}.{field}")
                 # F5: labelling must happen at import time (module-level), not only inside
                 # main() — the uvicorn/`app` ASGI entrypoint Cowork remote connectors reach
                 # never calls main(). Every other labelling test calls _label_tools()
@@ -433,7 +600,7 @@ class FastMCPContractTests(FixtureCase):
                         (tool.description or "").startswith("[optimize call-center operations]"),
                         f"{name}: tool description not labelled at import time: {tool.description!r}",
                     )
-                for name in ("get_metric", "search_knowledge", "get_taxonomy", "find_related_content"):
+                for name in ("get_metric", "search_knowledge", "get_taxonomy", "find_related_content", "get_metric_history"):
                     limit = tools[name].inputSchema["properties"]["limit"]
                     self.assertIn("1..100", limit["description"])
                     self.assertIn("never send more than 100", limit["description"])
@@ -453,6 +620,10 @@ class FastMCPContractTests(FixtureCase):
                     # steer the client to pass the exact string it received from search.
                     "find_related_content": {"chunk_id": "string", "query": "string", "limit": "integer"},
                     "get_evidence": {"chunk_id": "string", "include_page_text": "boolean"},
+                    "list_sources": {"contains": "string", "offset": "integer"},
+                    "read_document": {"source": "string", "from_ord": "integer", "to_ord": "integer", "titles_only": "boolean", "max_chars": "integer"},
+                    "get_metric_history": {"name": "string", "grain": "string", "entity": "string", "month": "string",
+                                           "start_month": "string", "end_month": "string", "limit": "integer"},
                 }
                 for tool_name, field_types in expected_types.items():
                     properties = tools[tool_name].inputSchema["properties"]
@@ -492,6 +663,24 @@ class FastMCPContractTests(FixtureCase):
                 # rely on exceptions - the failure is never silently reported as success.
                 with self.assertRaises(Exception):
                     await client.call_tool("get_evidence", {})
+                # the read tools: honest non-error results, typed errors for bad input
+                catalog = await client.call_tool("list_sources", {})
+                self.assertFalse(catalog.is_error)
+                self.assertEqual([r["source"] for r in catalog.data["sources"]], ["a.md", "b.md", "c.md"])
+                doc = await client.call_tool("read_document", {"source": "a.md", "titles_only": True})
+                self.assertFalse(doc.is_error)
+                self.assertEqual(doc.data["sections"][0]["chunk_id"], "1")
+                missing_doc = await client.call_tool("read_document", {"source": "zzz"})
+                self.assertFalse(missing_doc.is_error)
+                self.assertEqual(missing_doc.data["status"], "not_found")
+                too_big = await client.call_tool("read_document", {"source": "a.md", "max_chars": 10**6}, raise_on_error=False)
+                self.assertTrue(too_big.is_error)
+                self.assertIn("max_chars", too_big.data["how_to_fix"])
+                bad_offset = await client.call_tool("list_sources", {"offset": "x"}, raise_on_error=False)
+                self.assertTrue(bad_offset.is_error)
+                history = await client.call_tool("get_metric_history", {"name": "revenue"})
+                self.assertFalse(history.is_error)
+                self.assertEqual(history.data["source_table"], "facts")
                 unknown_metric = await client.call_tool("get_metric", {"name": "not-a-metric"}, raise_on_error=False)
                 self.assertTrue(unknown_metric.is_error)
                 self.assertEqual(unknown_metric.data["status"], "error")

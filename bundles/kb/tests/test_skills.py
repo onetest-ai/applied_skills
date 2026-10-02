@@ -178,3 +178,31 @@ class TestBrainContractIsInlined(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestReadToolsAreOptional(unittest.TestCase):
+    """list_sources / read_document / get_metric_history are used when offered, never
+    required: a Brain is identified by the original 7-tool surface, so an older Brain
+    without them must still be recognised and answered."""
+
+    def test_contract_names_them_outside_the_identifying_surface(self):
+        from test_plugin_structure import _extract_contract
+        block = _extract_contract(read_text(KB_ROOT / "skills" / "_shared" / "doctrine.md"))
+        surface = block.split("identify it by that surface", 1)[0]
+        for tool in ("list_sources", "read_document", "get_metric_history"):
+            self.assertNotIn(tool, surface, f"{tool} must not join the identifying surface")
+            self.assertIn(tool, block)
+        self.assertIn("still a Brain", block)
+
+    def test_ask_procedure_reads_owning_documents_and_falls_back(self):
+        text = read_text(KB_ROOT / "skills" / "ask" / "SKILL.md")
+        for token in ("list_sources", "titles_only", "preview", "next_from_ord",
+                      "get_metric_history", "originally reported", "reported_in",
+                      "owns", "caveats", "other_reported_values", "Not modeled"):
+            self.assertIn(token, text, f"ask missing {token!r}")
+        self.assertIn("On a Brain without", text)
+
+    def test_verifier_accepts_an_originally_reported_value(self):
+        text = read_text(KB_ROOT / "agents" / "verifier.md")
+        self.assertIn("get_metric_history", text)
+        self.assertIn("originally reported", text)

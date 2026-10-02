@@ -51,6 +51,10 @@ Conforms dimension names, drops junk dim values (`#N/A`, `(blank)`…), stops at
 
 **Disagreeing files are kept, never dropped.** When files report different values for one metric-month, `facts` keeps the newest report and every other distinct value lands in **`fact_versions`** `(family, metric, grain, entity, month, value, source_file, reported_in, is_current)`. `build_audit.json` lists each as `restatements[]` with `kind`: `restated` (a later report revised it) or `conflict` (reports of the same month disagree), and one file reporting a metric-month on several rows as `collisions[]` (below — it is not a vintage). `get_metric` rows then carry `other_reported_values` plus `restated`/`conflicting`, so answers can say the sources disagree.
 
+**Every report stays citable.** `fact_reports` `(…, value, source_file, reported_in, is_current)` holds one row per file that reported a metric-month — agreeing later reports too — so "the July workbook reported July as X" can be cited even when nothing was restated; `is_current = 1` is the row `facts` holds. MCP serves it as `get_metric_history`. `fact_versions` stays restatements-only, so `restated` keeps its meaning.
+
+**Workbook notes become caveats.** A free-text note written **beside** a loaded table — right of its header run, past a blank column, a standalone sentence of ≥ 40 characters (e.g. *"Reporting tool outage; N contacts missing from 7/30…"*) — lands in `fact_notes` `(family, source_file, sheet, cell, month, text)`, and `get_metric` returns it as `caveats` on that file's rows. Titles and filter lines above a table, side-table labels, block headings, and every sheet the family does not load (case/detail dumps, which may hold personal data) are never captured. `"notes": false` on a family turns it off.
+
 **Collisions: one file, one entity-month, several rows.** Without config the last row wins and differing values are reported. When the rows are genuinely parts of one figure (an export listing a branch as a main row plus stray small rows), give the family a policy:
 ```json
 "collision": {"policy": "weighted_mean", "weight": "n_records", "sum": ["n_records"],

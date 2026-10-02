@@ -26,10 +26,13 @@ from semantic_core import (
     get_current_fact as _get_current_fact,
     get_evidence as _get_evidence,
     get_metric as _get_metric,
+    get_metric_history as _get_metric_history,
     get_question_status as _get_question_status,
     get_taxonomy as _get_taxonomy,
     health as _health,
     list_metrics as _list_metrics,
+    list_sources as _list_sources,
+    read_document as _read_document,
     search_knowledge as _search_knowledge,
 )
 
@@ -38,7 +41,10 @@ This server exposes a private knowledge brain through safe, read-only semantic t
 
 Routing: narrative -> search_knowledge; exact figures -> get_metric (never infer a number
 from prose; every number cites its source_file); taxonomy/relations -> get_taxonomy; a named
-section, page figure, or table -> get_evidence. For a mutable fact call get_current_fact and
+section, page figure, or table -> get_evidence. The document catalog -> list_sources; one
+document in reading order (titles_only for a map with previews, then the relevant run) ->
+read_document; every report of a metric-month (as originally reported vs restated) ->
+get_metric_history. For a mutable fact call get_current_fact and
 for an open question get_question_status rather than trusting the newest retrieved sentence;
 a conflicted result has no current value until a supersedes/retracts relation resolves it.
 
@@ -136,7 +142,7 @@ _IDENTITY = _brain_identity()
 
 mcp = FailSafeFastMCP(
     name=f"Semantic Knowledge Brain — {_IDENTITY}" if _IDENTITY else "Semantic Knowledge Brain",
-    version="1.2.0",
+    version="1.3.0",
     instructions=_instructions_for(_IDENTITY),
     mask_error_details=True,
     # Tool functions validate inputs themselves so mistakes can be returned as structured,
@@ -155,6 +161,9 @@ _TOOL_FIXES = {
     "get_question_status": "Provide a stable non-empty question_id; use ISO-8601 for optional as_of.",
     "get_evidence": "Provide a valid chunk_id string returned by search_knowledge, get_taxonomy, or find_related_content, passed back verbatim (do not turn the large id into a number).",
     "health": "Verify BRAIN_DB, BRAIN_CATALOG, BRAIN_SKILLS, and sqlite-vec are installed and readable.",
+    "list_sources": "Use an optional literal contains filter and a non-negative integer offset (continue with next_offset).",
+    "read_document": "Provide a source name from list_sources (exact, or a unique substring); keep max_chars between 1 and 48000; page with from_ord=next_from_ord.",
+    "get_metric_history": "Call list_metrics, use one returned metric name and valid filters, and keep limit between 1 and 100.",
 }
 
 
@@ -330,6 +339,84 @@ def get_metric(
             return error
         optional.append(valid)
     return _safe_call("get_metric", _get_metric, valid_name, *optional, valid_limit)
+
+
+@mcp.tool(tags={"numbers", "history"})
+def get_metric_history(
+    name: Annotated[str | None, SkipValidation, Field(description="Required non-empty governed metric name returned by list_metrics")] = None,
+    grain: Annotated[str | None, SkipValidation, Field(description="Optional exact grain such as overall, region, division, or branch")] = None,
+    entity: Annotated[str | None, SkipValidation, Field(description="Optional exact entity name")] = None,
+    month: Annotated[str | None, SkipValidation, Field(description="Optional exact reporting period, normally YYYY-MM")] = None,
+    start_month: Annotated[str | None, SkipValidation, Field(description="Optional inclusive start period, normally YYYY-MM")] = None,
+    end_month: Annotated[str | None, SkipValidation, Field(description="Optional inclusive end period, normally YYYY-MM")] = None,
+    limit: Annotated[int, SkipValidation, Field(description=_LIMIT_DESCRIPTION)] = 100,
+) -> dict | ToolResult:
+    """Return every reported value of a governed metric-month, one row per source report.
+
+    Use to cite a month as originally reported (reported_in = that month) and to see later
+    restatements; is_current=1 is the value get_metric returns.
+    """
+    valid_name, error = _required_string("get_metric_history", "name", name)
+    if error:
+        return error
+    valid_limit, error = _limit_or_error("get_metric_history", limit)
+    if error:
+        return error
+    optional = []
+    for field, value in (("grain", grain), ("entity", entity), ("month", month), ("start_month", start_month), ("end_month", end_month)):
+        valid, error = _optional_string("get_metric_history", field, value)
+        if error:
+            return error
+        optional.append(valid)
+    return _safe_call("get_metric_history", _get_metric_history, valid_name, *optional, valid_limit)
+
+
+@mcp.tool(tags={"discovery", "narrative"})
+def list_sources(
+    contains: Annotated[str | None, SkipValidation, Field(description="Optional case-insensitive literal substring of the source path")] = None,
+    offset: Annotated[int, SkipValidation, Field(description="Optional non-negative integer; continue a long catalog with the returned next_offset")] = 0,
+) -> dict | ToolResult:
+    """List the documents in this Brain: source, section count, size, and date.
+
+    Use once to orient, then name the document that owns each sub-claim and read it with
+    read_document. Superseded documents are hidden.
+    """
+    valid_contains, error = _optional_string("list_sources", "contains", contains)
+    if error:
+        return error
+    valid_offset, error = _required_integer("list_sources", "offset", offset)
+    if error:
+        return error
+    return _safe_call("list_sources", _list_sources, valid_contains, valid_offset)
+
+
+@mcp.tool(tags={"narrative", "evidence"})
+def read_document(
+    source: Annotated[str | None, SkipValidation, Field(description="Required document source from list_sources: the exact name or a unique substring")] = None,
+    from_ord: Annotated[int | None, SkipValidation, Field(description="Optional first section ord to return (use next_from_ord to continue)")] = None,
+    to_ord: Annotated[int | None, SkipValidation, Field(description="Optional last section ord to return (inclusive)")] = None,
+    titles_only: Annotated[bool, SkipValidation, Field(description="Boolean: return a map of section titles with ~200-character previews instead of full text")] = False,
+    max_chars: Annotated[int, SkipValidation, Field(description="Optional integer page budget in characters, 1..48000 (default 16000)")] = 16000,
+) -> dict | ToolResult:
+    """Read one document's sections in reading order, paged, with citable chunk ids.
+
+    Start with titles_only=true to get a map judged by previews, then read the relevant
+    run of sections plus neighbours (or a short document in full).
+    """
+    valid_source, error = _required_string("read_document", "source", source)
+    if error:
+        return error
+    for field, value in (("from_ord", from_ord), ("to_ord", to_ord)):
+        if value is not None:
+            _, error = _required_integer("read_document", field, value)
+            if error:
+                return error
+    if not isinstance(titles_only, bool):
+        return _error_result("read_document", "invalid_arguments", "titles_only must be a boolean")
+    valid_max, error = _required_integer("read_document", "max_chars", max_chars)
+    if error:
+        return error
+    return _safe_call("read_document", _read_document, valid_source, from_ord, to_ord, titles_only, valid_max)
 
 
 @mcp.tool(tags={"narrative"})
