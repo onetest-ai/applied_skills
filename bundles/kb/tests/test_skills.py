@@ -96,14 +96,14 @@ class TestSkillsNameNoServer(unittest.TestCase):
 
     def test_no_skill_hardcodes_a_server_name(self):
         from test_plugin_structure import KB_ROOT, read_text
-        for name in ("ask", "brief", "challenge", "explore", "report"):
+        for name in ("ask", "brief", "challenge", "explore", "fact-check", "report"):
             text = read_text(KB_ROOT / "skills" / name / "SKILL.md")
             for token in self.FORBIDDEN:
                 self.assertNotIn(token, text, f"{name}: hardcodes {token!r}")
 
     def test_answer_skills_defer_to_the_discovery_contract(self):
         from test_plugin_structure import KB_ROOT, read_text
-        for name in ("ask", "brief", "challenge", "explore", "report"):
+        for name in ("ask", "brief", "challenge", "explore", "fact-check", "report"):
             text = read_text(KB_ROOT / "skills" / name / "SKILL.md")
             self.assertIn("Brain Discovery", text,
                           f"{name}: must defer to the doctrine Brain Discovery contract")
@@ -125,6 +125,65 @@ class TestSkillsNameNoServer(unittest.TestCase):
             fm = parse_frontmatter(read_text(path))
             self.assertNotIn("allowed-tools", fm,
                              f"{path.parent.name}: must not declare allowed-tools")
+
+
+class TestFactCheckSkill(unittest.TestCase):
+    """The comment policy is behaviour: pin it so a rewrite cannot quietly drop it."""
+
+    def _text(self):
+        from test_plugin_structure import KB_ROOT, read_text
+        return read_text(KB_ROOT / "skills" / "fact-check" / "SKILL.md")
+
+    def test_every_non_verified_defect_is_highlighted_in_the_document(self):
+        """Minor Incorrect/Misleading/Outdated/Controversial get a Word comment too;
+        only No Evidence stays log-only and Verified adds nothing to the document."""
+        text = self._text()
+        self.assertNotIn("same, Minor | log only", text)
+        self.assertIn("| Incorrect / Misleading / Outdated / Controversial, **Minor** | Word comment |", text)
+        self.assertIn("| No Evidence | log only", text)
+
+    def test_findings_page_lists_every_claim(self):
+        self.assertIn("every claim, all verdicts", self._text())
+
+    def test_omission_the_documents_own_text_contradicts_is_major(self):
+        self.assertIn("an omission the document's own text contradicts", self._text())
+
+    def test_comment_word_limit_counts_the_whole_comment(self):
+        self.assertIn("60 words in total, header and Source line included", self._text())
+
+    def test_evidence_without_an_event_date_is_dated_by_inference_and_marked(self):
+        self.assertIn("date inferred", self._text())
+
+    def test_embedded_workbooks_and_smartart_are_read(self):
+        text = self._text()
+        self.assertIn("word/embeddings", text)
+        self.assertIn("word/diagrams", text)
+
+    def test_annotate_input_fields_are_documented(self):
+        text = self._text()
+        self.assertIn("Each finding passed to `annotate` carries", text)
+        for key in ("`section`", "`source`", "`quote`"):
+            self.assertIn(key, text)
+
+    def test_unresolved_source_is_marked_inside_the_comment(self):
+        self.assertIn('put "(not in inventory)" in the finding\'s `source`', self._text())
+
+    def test_a_draft_that_contradicts_itself_may_cite_both_places(self):
+        self.assertIn("cite both places in the draft", self._text())
+
+    def test_a_newer_source_does_not_silently_retire_an_older_one(self):
+        text = self._text()
+        self.assertIn("A newer source does not silently override an older one", text)
+        self.assertIn("supersedes", text.split("### 5.", 1)[1].split("### 6.", 1)[0])
+
+    def test_figures_get_a_reverse_omission_pass(self):
+        section = self._text().split("### 3.", 1)[1].split("### 4.", 1)[0]
+        self.assertIn("Reverse pass", section)
+        self.assertIn("every system or integration the text says is connected", section)
+
+    def test_stale_source_rule_defers_to_the_conflict_rule(self):
+        line = [l for l in self._text().splitlines() if l.startswith("- Source precedence")][0]
+        self.assertIn("see step 5", line)
 
 
 CONTRACT_START = "<!-- BRAIN-CONTRACT:START -->"
@@ -155,7 +214,7 @@ class TestBrainContractIsInlined(unittest.TestCase):
     def test_every_answering_skill_inlines_the_contract(self):
         from test_plugin_structure import KB_ROOT, read_text
         canonical = self._canonical()
-        for name in ("ask", "brief", "challenge", "explore", "report"):
+        for name in ("ask", "brief", "challenge", "explore", "fact-check", "report"):
             text = read_text(KB_ROOT / "skills" / name / "SKILL.md")
             self.assertEqual(_contract(text), canonical,
                              f"{name}: inlined contract differs from doctrine.md")
@@ -186,7 +245,7 @@ class TestBrainContractIsInlined(unittest.TestCase):
     def test_no_skill_depends_on_a_parent_directory_reference_for_its_rules(self):
         """Depth may live in _shared/; the rules may not."""
         from test_plugin_structure import KB_ROOT, read_text
-        for name in ("ask", "brief", "challenge", "explore", "report"):
+        for name in ("ask", "brief", "challenge", "explore", "fact-check", "report"):
             text = read_text(KB_ROOT / "skills" / name / "SKILL.md")
             head = text.split(CONTRACT_START, 1)[0]
             self.assertNotIn("Follow `../_shared/doctrine.md`", head,
