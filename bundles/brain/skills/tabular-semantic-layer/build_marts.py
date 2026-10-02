@@ -6,6 +6,12 @@ the families JSON. Never loads a whole workbook into memory (openpyxl read_only)
 Output long schema:
   facts(family, metric, grain, entity, month, value:double, source_file)
   fact_versions(family, metric, grain, entity, month, value, source_file, reported_in, is_current)
+  fact_reports(family, metric, grain, entity, month, value, source_file, reported_in, is_current)
+    -- EVERY file that reported a metric-month (agreeing reports too), so "the July report
+       said X" stays citable; is_current=1 is the row `facts` holds.
+  fact_notes(family, source_file, sheet, cell, month, text)
+    -- free-text annotations written BESIDE a loaded table (e.g. "reporting outage; N
+       contacts missing"); get_metric returns them as caveats. See scan_notes.
   fact_merges(family, metric, grain, entity, month, source_file, policy, n_rows, value, inputs)
     -- one file listing an entity-month on several rows (a collision), resolved by the
        family's `collision` policy; `inputs` is the JSON list of {value, weight} merged.
@@ -160,6 +166,56 @@ def restatements(df, vintage):
             "current": {"value": cur["value"], "source_file": cur["source_file"]},
             "earlier": [{"value": r["value"], "source_file": r["source_file"]} for _, r in earlier.iterrows()]})
     return pd.DataFrame(versions, columns=cols), restated
+
+_SENTENCE = re.compile(r"[.;!?](\s|$)")
+
+def _cell_ref(i, j):
+    col, n = "", j + 1
+    while n:
+        n, r = divmod(n - 1, 26)
+        col = chr(65 + r) + col
+    return f"{col}{i + 1}"
+
+def scan_notes(rows, hdr_i):
+    """Annotation cells of a loaded table: text written BESIDE the table -- right of its
+    contiguous header run, past at least one blank column, from the header row down --
+    that reads as a sentence (>= 40 chars, sentence punctuation) and stands alone (the
+    cell below is empty). Titles and filter lines above the table, side-table labels
+    with values next to them, and block headings with content under them are not notes;
+    neither is anything on sheets the family never loads (detail/case dumps).
+    Returns [(cell_ref, text)]."""
+    if hdr_i is None or hdr_i >= len(rows):
+        return []
+    h = rows[hdr_i]
+    first = next((j for j, c in enumerate(h) if c not in (None, "")), 0)
+    end = first
+    while end + 1 < len(h) and h[end + 1] not in (None, ""):
+        end += 1
+    notes = []
+    for i in range(hdr_i, len(rows)):
+        r = rows[i]
+        for j in range(end + 2, len(r)):
+            c = r[j]
+            if not (isinstance(c, str) and len(c.strip()) >= 40 and _SENTENCE.search(c.strip())):
+                continue
+            if any(x not in (None, "") for x in r[end + 1:j]) or any(x not in (None, "") for x in r[j + 1:j + 4]):
+                continue                                   # part of a side table, not a lone note
+            below = rows[i + 1][j] if i + 1 < len(rows) and j < len(rows[i + 1]) else None
+            if below not in (None, ""):
+                continue
+            notes.append((_cell_ref(i, j), re.sub(r"\s+", " ", c.strip())))
+    return notes
+
+def table_header_row(rows, fam, dim_header=None):
+    """The header row a loader would use, for scan_notes."""
+    if fam["layout"] == "matrix_month_cols":
+        return fam.get("month_header_row", 1)
+    if fam["layout"] == "wide_month":
+        return fam.get("header_row", 1)
+    if dim_header:
+        return find_header(rows, dim_header, fam["measures"].values(), hint=fam.get("header_row"))
+    return next((i for i, r in enumerate(rows[:40])
+                 if any(any(header_matches(norm(c), m) for c in r) for m in fam["measures"].values())), None)
 
 def norm(s):
     return re.sub(r"\s+", " ", str(s or "").strip().lower())
@@ -605,10 +661,17 @@ def main():
     os.makedirs(a.out_dir, exist_ok=True)
 
     all_facts = []
+    notes = []     # fact_notes rows: (family, source_file, sheet, cell, month, text)
     vintage = {}   # source_file -> the month that file reports
     audit = []   # one row per (file, unit): status ok|partial|zero|benign|error + reason
     # per-family substrings for files that are EXPECTED to yield nothing (redundant/legacy)
     benign = {f["name"]: [p.lower() for p in f.get("allow_zero", [])] for f in cfg["families"]}
+
+    def take_notes(fam, fn, ws, rows, dim_header=None):
+        if fam.get("notes", True) is False or not rows:
+            return
+        for cell, text in scan_notes(rows, table_header_row(rows, fam, dim_header)):
+            notes.append((fam["name"], fn, ws.title, cell, fam.get("_month"), text))
 
     def record(family, fn, unit, facts, diag):
         got = [t[:6] + (fn,) + (t[6] if len(t) > 6 else next(_ROWS),) for t in facts]
@@ -652,16 +715,21 @@ def main():
                     yr = 2026
                     ym = re.search(r"20(2\d)", fn)
                     if ym: yr = int("20"+ym.group(1))
-                    facts, diag = load_matrix(read_rows(ws), fam, yr)
+                    rows = read_rows(ws)
+                    take_notes(fam, fn, ws, rows)
+                    facts, diag = load_matrix(rows, fam, yr)
                     record(fam["name"], fn, fam["sheet"], facts, diag)
                 wb.close(); continue
             if fam["layout"] == "tolerant_long":
                 total = []
                 ent_fn = entity_resolver(wb, fam)
                 for sh in wb.sheetnames:
-                    facts, _ = load_tolerant_sheet(read_rows(wb[sh]), fam, fam["_month"],
+                    rows = read_rows(wb[sh])
+                    facts, _ = load_tolerant_sheet(rows, fam, fam["_month"],
                                                    fam["dim_candidates"], fam["measures"],
                                                    dim_map, fam.get("entity_regex"), ent_fn)
+                    if facts:                       # only sheets the family actually loaded
+                        take_notes(fam, fn, wb[sh], rows)
                     total.extend(facts)
                 record(fam["name"], fn, "auto", total,
                        {"reason": None if total else "no sheet yielded rows (dim+measure not found)"})
@@ -672,7 +740,9 @@ def main():
                     record(fam["name"], fn, grain, [], {"reason": f"no sheet '{gc['sheet']}'"}); continue
                 dim_type = "region" if grain == "region" else grain
                 loader = load_wide_month if fam["layout"] == "wide_month" else load_long
-                facts, diag = loader(read_rows(ws), fam, grain, dim_type, gc["dim_header"], fam["measures"],
+                rows = read_rows(ws)
+                take_notes(fam, fn, ws, rows, gc["dim_header"])
+                facts, diag = loader(rows, fam, grain, dim_type, gc["dim_header"], fam["measures"],
                                      dim_map, entity_resolver(wb, {**fam, **gc}))
                 record(fam["name"], fn, grain, facts, diag)
             wb.close()
@@ -682,6 +752,9 @@ def main():
     df = pd.DataFrame(all_facts, columns=["family","metric","grain","entity","month","value","source_file","_row"])
     df, collisions, merges = resolve_collisions(df, cfg["families"])
     versions, restated = restatements(df, vintage)
+    reports = df[KEY + ["value", "source_file"]].copy()       # one row per key+file, file order
+    reports["reported_in"] = [vintage.get(f) for f in reports["source_file"]]
+    reports["is_current"] = (~reports.duplicated(subset=KEY, keep="last")).astype(int)
     df = df.drop_duplicates(subset=["family","metric","grain","entity","month"], keep="last").reset_index(drop=True)
 
     df = apply_rollups(df, cfg, a.config)
@@ -698,6 +771,10 @@ def main():
     con.execute("CREATE INDEX IF NOT EXISTS idx_facts ON facts(family, metric, grain, entity, month)")
     versions.to_sql("fact_versions", con, if_exists="replace", index=False)   # always: no stale vintages
     merges.to_sql("fact_merges", con, if_exists="replace", index=False)       # always: no stale merges
+    reports.to_sql("fact_reports", con, if_exists="replace", index=False)     # always: no stale reports
+    pd.DataFrame(sorted(set(notes)), columns=["family", "source_file", "sheet", "cell", "month", "text"]
+                 ).to_sql("fact_notes", con, if_exists="replace", index=False)  # always: no stale notes
+    con.execute("CREATE INDEX IF NOT EXISTS idx_fact_reports ON fact_reports(family, metric, grain, entity, month)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_fact_versions ON fact_versions(family, metric, grain, entity, month)")
     con.commit(); con.close()
 
@@ -721,9 +798,12 @@ def main():
                                "collisions": len(collisions),
                                "collisions_merged": sum("resolved" in c for c in collisions),
                                "collision_errors": sum(bool(c.get("error")) for c in collisions),
-                               "entity_map_inconsistent": len(inconsistent)},
+                               "entity_map_inconsistent": len(inconsistent),
+                               "notes": len(set(notes))},
                    "audit": audit, "restatements": restated, "collisions": collisions,
-                   "entity_map_inconsistent": inconsistent}, f, indent=2)
+                   "entity_map_inconsistent": inconsistent,
+                   "notes": [dict(zip(["family", "source_file", "sheet", "cell", "month", "text"], n))
+                             for n in sorted(set(notes))]}, f, indent=2)
     print(f"TOTAL {len(df)} facts -> SQLite: {db} (table: facts)" + (f"  [+parquet {pq}]" if pq else ""), file=sys.stderr)
     if len(df):
         cov = df.groupby(["family","grain"]).agg(

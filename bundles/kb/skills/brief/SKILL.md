@@ -10,7 +10,7 @@ sourcing; `../_shared/authoring.md` holds the full pipeline write-up and worked 
 
 1. **Resolve the Brain.** Use the contract's resolution order: identify candidate servers by tool surface, `health` each, use the override if the user named one, ask if several answer, and follow the contract's guidance if none does. Read `about` from the resolved Brain's `health` and adapt the memo's **tone, depth, and section emphasis** to `about.audience`, within `about.goal`'s scope (empty audience → no persona).
 
-2. **Gather.** Call the Brain tools to collect narrative, metrics, and relations on the subject. Route per the contract (narrative → `search_knowledge`, numbers → `get_metric`, relations → `get_taxonomy`, cited sections → `get_evidence`).
+2. **Gather.** Call the Brain tools to collect narrative, metrics, and relations on the subject. Route per the contract (narrative → `search_knowledge`, numbers → `get_metric`, relations → `get_taxonomy`, cited sections → `get_evidence`). When the Brain offers `list_sources`, `read_document` and `get_metric_history`, gather the way `/kb:ask` does: name the document that owns each claim from the catalog, read it through its titles-and-previews map rather than single search hits, and take month-over-month figures as each month originally reported them (restatements as caveats).
 
 3. **Draft.** Compose a 200–400-word memo with inline citation tags (`[RAG:id]`, `[MART:metric@grain]`, `[GRAPH:node]`). Mark any unsupported claim as "Not modeled: …".
 
@@ -35,6 +35,10 @@ Each number shows its source. Gaps are explicit ("Not modeled: …"). The human 
 **Resolve one Brain per invocation.** A Brain is any MCP server exposing the tool surface
 `health`, `search_knowledge`, `get_metric`, `get_taxonomy`, `get_evidence`,
 `find_related_content`, `list_metrics` — identify it by that surface, never by server name.
+Newer Brains also offer `list_sources`, `read_document` and `get_metric_history`; they are
+not part of the identifying surface (a Brain without them is still a Brain), so use them
+when the resolved Brain offers them and fall back to `search_knowledge`, `get_evidence` and
+`get_metric` when it does not.
 
 **Precedence: a Brain named in this request wins over the pin; the pin wins over
 discovery.**

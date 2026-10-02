@@ -7,17 +7,53 @@ Answer **$question** grounded in the Brain. The Brain contract below governs; `.
 
 1. **Resolve the Brain.** Use the contract's resolution order: identify candidate servers by tool surface, `health` each, use the override if the user named one, ask if several answer, and follow the contract's guidance if none does. Read `about` from the resolved Brain's `health`: tune this answer's **altitude and vocabulary** to `about.audience`, within `about.goal`'s scope. If `about.audience` is empty, proceed with no persona.
 
-2. **Decompose** the question into sub-claims. Classify each: narrative, number, relation, or visual/table.
+2. **Orient once per session.** Besides `health`, call `list_metrics` and — when the Brain
+   offers it — `list_sources` (the document catalog: source, sections, size, date). Keep the
+   catalog in mind: it tells you which reports, decks, workbooks and transcripts exist, so
+   you can target them by name.
 
-3. **Route each sub-claim:**
-   - narrative → `search_knowledge`
-   - number → `get_metric` (never assert a figure from narrative)
+3. **Decompose** the question into sub-claims — every month, metric, entity, document or
+   comparison it names. Classify each: narrative, number, relation, or visual/table. For each,
+   **name the document that owns it** from the catalog: the period's own report for a monthly
+   figure, the deck the question names for that deck's commitments.
+
+4. **Locate** with `search_knowledge` — limit 10–20, several phrasings, `source_contains` to
+   target an owning document by name.
+
+5. **Read the owning documents, don't skim them** (when `read_document` is offered):
+   - First `read_document` with `titles_only: true`. It returns each section's title **and a
+     ~200-character preview** — judge sections by the preview, since page titles are often
+     just `pNN · <deck name>`. Never guess a page range from titles alone.
+   - Then read the relevant run of sections **plus its neighbours** (commitments, dates and
+     footnotes sit on adjacent pages), or the whole document when it is short — follow
+     `next_from_ord` until it is null.
+   - For a series across months, read the matching section of **each month's own report**;
+     never take one month from the next report's prior-month column.
+
+6. **Route numbers and the rest:**
+   - number → `get_metric` (never assert a figure from narrative). If a row carries
+     `caveats` (a note written in the source workbook, e.g. missing data), cite it with the
+     figure.
+   - a comparison across months, or any question where the reporting period matters →
+     `get_metric_history` (when offered). **Lead with each month's value as
+     originally reported** — the row whose `reported_in` equals that month — compute changes from those,
+     then give any later restatement (value, source file, which is newer) as a caveat. Cite
+     the workbook each month came from.
    - relation/classification → `get_taxonomy`
    - a specific section / page figure / table → `get_evidence`
 
-4. **Compose one answer** per the contract's answer format below, shaped to fit and to `about.audience`.
+   **On a Brain without `list_sources`, `read_document` or `get_metric_history`:** skip the
+   catalog, locate and read with `search_knowledge` (`source_contains`) and `get_evidence`,
+   and take earlier reported values from `get_metric`'s `other_reported_values`.
 
-5. **Commit, cite, then qualify** — give the value first, disambiguate after; never refuse a retrievable figure.
+7. **Check coverage before writing.** Every sub-claim is cited from the document that owns
+   it, or declared "Not modeled: …".
+
+8. **Compose one answer** per the contract's answer format below, shaped to fit and to
+   `about.audience`.
+
+9. **Commit, cite, then qualify** — give the value first, disambiguate after; never refuse a
+   retrievable figure.
 
 ## The Brain contract (non-negotiable)
 
@@ -25,6 +61,10 @@ Answer **$question** grounded in the Brain. The Brain contract below governs; `.
 **Resolve one Brain per invocation.** A Brain is any MCP server exposing the tool surface
 `health`, `search_knowledge`, `get_metric`, `get_taxonomy`, `get_evidence`,
 `find_related_content`, `list_metrics` — identify it by that surface, never by server name.
+Newer Brains also offer `list_sources`, `read_document` and `get_metric_history`; they are
+not part of the identifying surface (a Brain without them is still a Brain), so use them
+when the resolved Brain offers them and fall back to `search_knowledge`, `get_evidence` and
+`get_metric` when it does not.
 
 **Precedence: a Brain named in this request wins over the pin; the pin wins over
 discovery.**

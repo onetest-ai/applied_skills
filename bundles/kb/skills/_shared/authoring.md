@@ -10,7 +10,7 @@ worked examples and formatting detail, safe to skip if this file doesn't resolve
 
 The authoring process follows a four-step flow:
 
-1. **Gather** — Route the subject through the Brain's MCP tools (`search_knowledge`, `get_metric`, `get_taxonomy`, `find_related_content`, `get_evidence`) per `../_shared/doctrine.md`. Collect raw claims, numbers, and relations.
+1. **Gather** — Route the subject through the Brain's MCP tools (`search_knowledge`, `get_metric`, `get_taxonomy`, `find_related_content`, `get_evidence`, and on newer Brains `list_sources`, `read_document`, `get_metric_history`) per `../_shared/doctrine.md`. Collect raw claims, numbers, and relations; read the documents that own them rather than single hits, and take month-over-month figures as originally reported.
 
 2. **Draft** — Compose the memo or report in the house style (`../_shared/doctrine.md` → **Answer format**): lead with the answer, then support. Cite each claim with a numbered footnote `[1]`, `[2]`, … and build the **Sources** section as you go, mapping each number to its machine tag and file — `1. [RAG:<chunk_id>] — "Section" — source_file.md`. The machine tags (`[RAG:]`/`[MART:]`/`[GRAPH:]`) live in the Sources list, not inline in the prose, and are what the `verifier` re-resolves. Mark any unsupported area as an explicit "Not modeled: …" callout.
 

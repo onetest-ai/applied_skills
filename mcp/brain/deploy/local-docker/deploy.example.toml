@@ -32,9 +32,14 @@ search_query = "stakeholders names roles"
 expected_tools = [
   "list_metrics",
   "get_metric",
+  "get_metric_history",
   "search_knowledge",
+  "list_sources",
+  "read_document",
   "get_taxonomy",
   "find_related_content",
   "get_evidence",
+  "get_current_fact",
+  "get_question_status",
   "health",
 ]

@@ -201,6 +201,10 @@ Copied verbatim from kb's doctrine. It governs every Brain call this skill makes
 **Resolve one Brain per invocation.** A Brain is any MCP server exposing the tool surface
 `health`, `search_knowledge`, `get_metric`, `get_taxonomy`, `get_evidence`,
 `find_related_content`, `list_metrics` — identify it by that surface, never by server name.
+Newer Brains also offer `list_sources`, `read_document` and `get_metric_history`; they are
+not part of the identifying surface (a Brain without them is still a Brain), so use them
+when the resolved Brain offers them and fall back to `search_knowledge`, `get_evidence` and
+`get_metric` when it does not.
 
 **Precedence: a Brain named in this request wins over the pin; the pin wins over
 discovery.**

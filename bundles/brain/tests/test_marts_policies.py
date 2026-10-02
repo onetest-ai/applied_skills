@@ -37,8 +37,7 @@ RANKER = {"name": "ranker", "glob": "*Ranker*.xlsx", "month_from": "filename", "
           "measures": {"nps": "Overall NPS", "n_records": "# of records"}}
 
 
-@unittest.skipUnless(_DEPS, "requires pandas + openpyxl")
-class PolicyBuild(unittest.TestCase):
+class _BuildCase(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.root = self.tmp / "root"
@@ -64,6 +63,9 @@ class PolicyBuild(unittest.TestCase):
     def fact(self, con, metric, entity):
         return con.execute("SELECT value FROM facts WHERE metric=? AND entity=?", (metric, entity)).fetchone()[0]
 
+
+@unittest.skipUnless(_DEPS, "requires pandas + openpyxl")
+class PolicyBuild(_BuildCase):
     # ---- 1. collision policy -------------------------------------------------------
     def _ranker(self):
         _book(self.root / "April Ranker.xlsx", {"Sheet0": [
@@ -196,3 +198,38 @@ class PolicyBuild(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(_DEPS, "requires pandas + openpyxl")
+class NotesTests(_BuildCase):
+    """Free-text annotations beside a loaded table become fact_notes (caveats); titles,
+    filter lines, side-table labels and the detail sheets a family never loads do not."""
+    FAM = {"name": "volume", "glob": "*Volume*.xlsx", "month_from": "filename", "layout": "long",
+           "grains": {"division": {"sheet": "Division", "dim_header": "Division"}},
+           "measures": {"total_calls": "Total Calls"}}
+
+    def _book_with_notes(self):
+        note = "Reporting tool outage; about 9k contacts missing from 7/30. Figures will be restated."
+        _book(self.root / "July 2026 Volume.xlsx", {
+            "Division": [
+                ("Division", "Total Calls", None, note),                       # note beside the header row
+                ("North", 100, None, None, None, "Billing, Payments and Collections overall", 5),
+                ("South", 200, None, None),
+                (None,),
+                ("Filters: (Calculation: Calls) & (Rank: Division) & (Period: Last Month)",),  # below table, col A
+            ],
+            "Detail": [("Customer", "Comment"),
+                       ("Jane Example", "Customer called twice about a missed delivery; please follow up.")]})
+        return note
+
+    def test_side_note_is_captured_and_noise_is_not(self):
+        note = self._book_with_notes()
+        con = self.build([self.FAM])
+        rows = [dict(r) for r in con.execute("SELECT * FROM fact_notes")]
+        self.assertEqual([(r["family"], r["source_file"], r["sheet"], r["cell"], r["month"], r["text"]) for r in rows],
+                         [("volume", "July 2026 Volume.xlsx", "Division", "D1", "2026-07", note)])
+
+    def test_notes_can_be_switched_off(self):
+        self._book_with_notes()
+        con = self.build([dict(self.FAM, notes=False)])
+        self.assertEqual(con.execute("SELECT count(*) FROM fact_notes").fetchone()[0], 0)
