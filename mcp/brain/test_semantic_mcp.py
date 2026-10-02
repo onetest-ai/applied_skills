@@ -301,7 +301,8 @@ class SemanticCoreTests(FixtureCase):
                     if (status or "ACTIVE") != "ACTIVE":
                         continue
                 out.append({"id": row["id"], "source": row["source"], "title": row.get("title"),
-                            "score": 1.0, "text": row["text"], "status": status})
+                            "score": 1.0, "text": row["text"], "status": status,
+                            "event_date": row.get("event_date")})
             return {"results": out[:limit]}
         return types.SimpleNamespace(DEFAULT_MODEL="fake", search=search)
 
@@ -373,6 +374,152 @@ class SemanticCoreTests(FixtureCase):
                 sorted(h["source"] for h in default_hits),
                 sorted(h["source"] for h in explicit_hits),
             )
+
+    def _hint_db(self, superseded):
+        db = Path(self.temp.name) / "hint.sqlite"
+        if db.exists():
+            db.unlink()
+        with sqlite3.connect(db) as con:
+            con.executescript(
+                """
+                CREATE TABLE chunks(id INTEGER PRIMARY KEY, source TEXT, ord INT, title TEXT,
+                                     text TEXT, sha TEXT, image TEXT, status TEXT,
+                                     valid_from TEXT, valid_to TEXT, event_date TEXT);
+                """
+            )
+            rows = [(1, "current.md", 0, "Cur", "policy evidence current", "c", "ACTIVE", None)]
+            for i, (src, date) in enumerate(superseded):
+                rows.append((10 + i, src, i, "Old", "policy evidence old SECRETTEXT", f"o{i}", "SUPERSEDED", date))
+            con.executemany(
+                "INSERT INTO chunks(id, source, ord, title, text, sha, status, event_date) VALUES(?,?,?,?,?,?,?,?)",
+                rows)
+        return db
+
+    def _hint_search(self, db, *args, **kwargs):
+        with patch.dict(sys.modules, {"knowledge_index": self._status_aware_module()}), \
+                patch.object(core, "_readonly_connection", self._ro_for(db)):
+            return core.search_knowledge(*args, **kwargs)
+
+    def test_superseded_hint_present_for_default_search(self):
+        db = self._hint_db([("old.md", "2023-01-01"), ("old.md", "2023-02-01")])
+        out = self._hint_search(db, "policy", 5)
+        self.assertEqual([h["source"] for h in out["hits"]], ["current.md"])
+        self.assertEqual(out["count"], 1)
+        hint = out["superseded_hint"]
+        self.assertEqual(hint["count"], 2)
+        self.assertEqual(hint["sources"], ["old.md"])
+        self.assertEqual(hint["event_dates"], ["2023-01-01", "2023-02-01"])
+        self.assertIn("latest_only=false", hint["message"])
+        # count is passages (chunks), not documents: 2 passages from 1 document here.
+        self.assertIn("2 superseded (outdated) passages from 1 document", hint["message"])
+        self.assertEqual(hint["message"], (
+            "2 superseded (outdated) passages from 1 document also match this query: old.md. "
+            "If the hits below do not contain what the question asks about, your next call "
+            "should be search_knowledge with the same query and latest_only=false; label "
+            "anything you use from those documents as history."))
+        self.assertIn("your next call should be search_knowledge with the same query and "
+                      "latest_only=false", hint["message"])
+        self.assertIn("old.md", hint["message"])
+        self.assertNotIn("SECRETTEXT", json.dumps(hint))
+        self.assertEqual(set(hint), {"count", "sources", "event_dates", "message"})
+
+    def test_superseded_hint_is_first_key_when_present(self):
+        db = self._hint_db([("old.md", None)])
+        out = self._hint_search(db, "policy", 5)
+        self.assertEqual(list(out.keys()), ["superseded_hint", "query", "hits", "count", "guidance"])
+
+    def test_superseded_hint_absent_when_latest_only_false_or_as_of(self):
+        db = self._hint_db([("old.md", "2023-01-01")])
+        self.assertNotIn("superseded_hint", self._hint_search(db, "policy", 5, latest_only=False))
+        self.assertNotIn("superseded_hint", self._hint_search(db, "policy", 5, as_of="2023-06-01"))
+
+    def test_superseded_hint_absent_and_shape_unchanged_without_superseded_match(self):
+        db = self._hint_db([])
+        out = self._hint_search(db, "policy", 5)
+        self.assertNotIn("superseded_hint", out)
+        self.assertEqual(set(out), {"query", "hits", "count", "guidance"})
+        self.assertEqual(list(out.keys()), ["query", "hits", "count", "guidance"])
+        db2 = self._hint_db([("old.md", None)])
+        out2 = self._hint_search(db2, "nomatchatall", 5)
+        self.assertNotIn("superseded_hint", out2)
+
+    def _counting_module(self):
+        base = self._status_aware_module()
+        calls = []
+        def spy(con, model, query, limit, as_of=None, latest_only=False,
+                source_contains=None, tag=None, tag_boost=None):
+            calls.append(latest_only)
+            return base.search(con, model, query, limit, as_of, latest_only, source_contains, tag, tag_boost)
+        return types.SimpleNamespace(DEFAULT_MODEL="fake", search=spy), calls
+
+    def test_probe_skipped_when_store_has_no_superseded_chunks(self):
+        db = self._hint_db([])
+        mod, calls = self._counting_module()
+        with patch.dict(sys.modules, {"knowledge_index": mod}), \
+                patch.object(core, "_readonly_connection", self._ro_for(db)):
+            out = core.search_knowledge("policy", 5)
+        self.assertEqual(calls, [True])
+        self.assertNotIn("superseded_hint", out)
+        self.assertEqual([h["source"] for h in out["hits"]], ["current.md"])
+
+    def test_probe_still_runs_when_store_has_superseded_chunks(self):
+        db = self._hint_db([("old.md", None)])
+        mod, calls = self._counting_module()
+        with patch.dict(sys.modules, {"knowledge_index": mod}), \
+                patch.object(core, "_readonly_connection", self._ro_for(db)):
+            out = core.search_knowledge("policy", 5)
+        self.assertEqual(calls, [True, False])
+        self.assertEqual(out["superseded_hint"]["count"], 1)
+
+    def test_superseded_hint_degrades_on_legacy_store_or_index(self):
+        def ro(*, vectors=False):
+            con = sqlite3.connect(f"file:{self.fx['db'].as_posix()}?mode=ro", uri=True)
+            con.row_factory = sqlite3.Row
+            return con
+        with patch.dict(sys.modules, {"knowledge_index": self._status_aware_module()}), \
+                patch.object(core, "_readonly_connection", ro):
+            self.assertNotIn("superseded_hint", core.search_knowledge("alpha", 1))
+        old = types.SimpleNamespace(DEFAULT_MODEL="fake",
+                                    search=lambda con, model, query, limit: {"results": []})
+        db = self._hint_db([("old.md", None)])
+        with patch.dict(sys.modules, {"knowledge_index": old}), \
+                patch.object(core, "_readonly_connection", self._ro_for(db)):
+            self.assertNotIn("superseded_hint", core.search_knowledge("policy", 5))
+
+    def test_superseded_hint_caps_and_dedups_sources(self):
+        db = self._hint_db([("a.md", None), ("a.md", None), ("b.md", "2022-01-01"),
+                            ("c.md", None), ("d.md", None), ("e.md", None)])
+        hint = self._hint_search(db, "policy", 20)["superseded_hint"]
+        self.assertEqual(hint["count"], 6)
+        self.assertEqual(hint["sources"], ["a.md", "b.md", "c.md"])
+        self.assertEqual(hint["event_dates"], [None, "2022-01-01"])  # distinct, capped at 3
+
+    def test_superseded_hint_uses_same_other_filters_and_limit(self):
+        calls = []
+        base = self._status_aware_module()
+        def spy(con, model, query, limit, as_of=None, latest_only=False,
+                source_contains=None, tag=None, tag_boost=None):
+            calls.append((limit, as_of, latest_only, source_contains, tag, tag_boost))
+            return base.search(con, model, query, limit, as_of, latest_only, source_contains, tag, tag_boost)
+        mod = types.SimpleNamespace(DEFAULT_MODEL="fake", search=spy)
+        db = self._hint_db([("old.md", None)])
+        with patch.dict(sys.modules, {"knowledge_index": mod}), \
+                patch.object(core, "_readonly_connection", self._ro_for(db)):
+            core.search_knowledge("policy", 3, source_contains="x", tag="t", tag_boost="b")
+        self.assertEqual(calls, [(3, None, True, "x", "t", "b"), (3, None, False, "x", "t", "b")])
+
+    def test_search_tool_description_mentions_superseded_hint(self):
+        import fastmcp_server
+
+        async def run():
+            async with Client(fastmcp_server.mcp) as client:
+                tools = {t.name: t for t in await client.list_tools()}
+                return tools["search_knowledge"].description
+        self.assertIn("superseded_hint", asyncio.run(run()))
+
+    def test_server_version_is_1_4_0(self):
+        import fastmcp_server
+        self.assertEqual(fastmcp_server.mcp.version, "1.4.0")
 
     def test_search_default_does_not_error_on_store_without_status_column(self):
         # A store built before chunk lifecycle metadata existed has no `status` column.
@@ -463,7 +610,7 @@ class SemanticCoreTests(FixtureCase):
 
 @unittest.skipUnless(Client is not None, "fastmcp is not installed")
 class ReadToolsTests(FixtureCase):
-    """list_sources / read_document / get_metric_history (MCP 1.3.0)."""
+    """list_sources / read_document / get_metric_history (MCP 1.3.1)."""
     BIG = 9_007_199_254_740_993   # > 2**53: must survive as a string
 
     def _docs(self, with_status=True):
@@ -796,6 +943,40 @@ class FastMCPContractTests(FixtureCase):
                 expected_health = "healthy" if _has_ext else "degraded"
                 self.assertEqual(result.data["status"], expected_health)
         asyncio.run(run())
+
+    def test_search_flag_descriptions_match_the_history_rule(self):
+        """The tool schema is what the model reads on every call: it must not tell an agent
+        to use as_of for history (as_of drops undated documents)."""
+        import fastmcp_server
+
+        async def run():
+            async with Client(fastmcp_server.mcp) as client:
+                tools = {t.name: t for t in await client.list_tools()}
+                props = tools["search_knowledge"].inputSchema["properties"]
+                return props["latest_only"]["description"], props["as_of"]["description"]
+
+        latest, as_of = asyncio.run(run())
+        self.assertNotIn("Pass as_of for history", latest)
+        self.assertIn("latest_only=false", latest)
+        self.assertIn("superseded", latest.lower())
+        self.assertIn("exact", as_of.lower())
+        self.assertIn("undated", as_of.lower())
+
+    def test_string_latest_only_is_refused_with_a_usable_message(self):
+        """A client that serialises false as "false" must get an error that names the
+        argument, so the agent can correct itself instead of giving up on history."""
+        import fastmcp_server
+
+        async def run():
+            async with Client(fastmcp_server.mcp) as client:
+                return await client.call_tool(
+                    "search_knowledge", {"query": "alpha", "latest_only": "false"}, raise_on_error=False)
+
+        res = asyncio.run(run())
+        self.assertTrue(res.is_error)
+        self.assertEqual(res.data["error"]["code"], "invalid_arguments")
+        self.assertIn("latest_only", res.data["error"]["message"])
+        self.assertIn("boolean", res.data["error"]["message"])
 
     def test_invalid_transport_env_is_parser_error(self):
         import fastmcp_server
