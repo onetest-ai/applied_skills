@@ -146,5 +146,50 @@ class TestFactCheckRules(unittest.TestCase):
                  "A rounded draft figure is covered by the draft's own text")
 
 
+class TestFactCheckRootCauseRules(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.text = SKILL.read_text(encoding="utf-8")
+        cls.step2 = flat(section(cls.text, "### 2.", "### 3."))
+        cls.step3 = flat(section(cls.text, "### 3.", "### 4."))
+        cls.step4 = flat(section(cls.text, "### 4.", "### 5."))
+        cls.step9 = flat(section(cls.text, "### 9.", "### 10."))
+
+    # RC-1
+    def test_old_claim_count_target_is_gone(self):
+        self.assertNotIn("Aim for", self.text)
+        self.assertNotIn("≥15", self.text)
+
+    def test_extract_every_checkable_statement_with_no_target(self):
+        self.assertIn("every checkable statement", self.step2)
+        self.assertIn("no count target", self.step2)
+        self.assertIn("no sampling", self.step2)
+
+    def test_coverage_self_check_present(self):
+        self.assertIn("Coverage self-check", self.step2)
+        self.assertIn("re-walk the document before verifying", self.step2)
+        self.assertIn("50–90 claims", self.step2)
+        self.assertIn("never as a cap", self.step2)
+
+    # RC-2
+    def test_figure_claims_must_be_findings_rows(self):
+        self.assertIn("**must** appear in `findings.json` as its own row", self.step3)
+        self.assertIn('"Figure"', self.step3)
+        self.assertIn("word/media", self.step3)
+        self.assertIn("no `I*` row", self.step3)
+        self.assertIn("`I01…`", self.step9)
+        self.assertIn('`type` and `section` "Figure"', self.step9)
+
+    # RC-3
+    def test_checks_list_recorded_and_required_for_verified(self):
+        for s in (self.step4, self.step9):
+            self.assertIn("`checks`", s)
+            self.assertIn("search latest_only=false", s)
+            self.assertIn('"opposing"', s)
+        self.assertIn("may be **Verified** only if `checks` contains both", self.step4)
+        self.assertIn("otherwise the verdict is No Evidence", self.step4)
+        self.assertIn("get_current_fact", self.step9)
+
+
 if __name__ == "__main__":
     unittest.main()

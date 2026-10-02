@@ -37,7 +37,7 @@ def _is_major(f: dict) -> bool:
 
 
 def _is_figure(f: dict) -> bool:
-    return f.get("type") == "figure" or str(f.get("id", "")).startswith("I")
+    return str(f.get("type", "")).lower() == "figure" or str(f.get("id", "")).startswith("I")
 
 
 def _tags(f: dict) -> str:
@@ -47,7 +47,7 @@ def _tags(f: dict) -> str:
     if _is_major(f):
         tags.append("major")
     if _has_comment(f):
-        tags.append("in-document")
+        tags.append("comment")
     if _is_figure(f):
         tags.append("figure")
     return " ".join(tags)
@@ -114,6 +114,7 @@ h2{font-family:var(--display);font-weight:600;font-size:20px;margin:0 0 14px}
 .vfill.s-controversial{background:var(--s-controversial)}.vfill.s-outdated{background:var(--s-outdated)}.vfill.s-no-evidence{background:var(--s-no-evidence)}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;align-items:center}
 .chip{font-family:var(--body);font-size:13px;padding:6px 12px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);border-radius:999px;cursor:pointer}
+.chip:disabled{opacity:.45;cursor:not-allowed}
 .chip[aria-pressed=true]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 .chip .ct{font-family:var(--mono);font-size:11.5px;margin-left:6px;opacity:.75}
 .empty td{padding:22px 12px;color:var(--muted);font-style:italic}
@@ -124,7 +125,7 @@ th{text-align:left;font-family:var(--mono);font-size:11px;letter-spacing:.06em;t
 td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
 tr:last-child td{border-bottom:0}
 .mono{font-family:var(--mono);font-weight:600;color:var(--term);white-space:nowrap}
-.q{font-style:italic;color:var(--ink-2);max-width:32ch}.src{display:block;color:var(--muted);font-size:12.5px}.cap{color:var(--muted);font-size:12px}
+.q{font-style:italic;color:var(--ink-2);max-width:32ch}.src{display:block;color:var(--muted);font-size:12.5px}.cap{display:block;color:var(--muted);font-size:12px}
 .sev-major{color:var(--s-incorrect);font-weight:600}.sev-blocker{color:var(--s-incorrect);font-weight:700;text-transform:uppercase;letter-spacing:.04em}
 .dest{font-family:var(--mono);font-size:12px;white-space:nowrap}
 footer{font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:14px}footer p{margin:0 0 6px}
@@ -146,6 +147,7 @@ JS = """
   chips.forEach(function(c){
     var f=c.getAttribute('data-f'),n=rows.filter(function(r){return match(r,f);}).length;
     c.innerHTML=c.textContent+'<span class="ct">'+n+'</span>';
+    if(!n&&f!=='all'){c.disabled=true;c.setAttribute('aria-disabled','true');}
   });
   function apply(f){
     var n=0;
@@ -166,10 +168,10 @@ def render_html(findings, *, document="", brain_version="", run_date=None,
     n = len(findings)
     counts = {v: sum(1 for f in findings if f.get("verdict") == v) for v in VERDICTS}
     comments = sum(1 for f in findings if _has_comment(f))
+    no_dest = bool(findings) and not any("destination" in f for f in findings)
     majors = [f for f in findings if _is_major(f)]
     blockers = sum(1 for f in majors if f.get("severity") == "Blocker")
     major_only = len(majors) - blockers
-    figures = sum(1 for f in findings if _is_figure(f))
     verified_pct = round(100 * counts["Verified"] / n) if n else 0
 
     title = title or "Fact-check findings"
@@ -182,7 +184,8 @@ def render_html(findings, *, document="", brain_version="", run_date=None,
     tiles = [("claims", n, "claims checked", "across the document"),
              ("verified", counts["Verified"], "verified", f"{verified_pct}% of all claims"),
              ("major", len(majors), "blocker + major", major_label),
-             ("comments", comments, "comments in the file", "every finding, for review")]
+             ("comments", "n/a" if no_dest else comments, "comments in the file",
+              "destination missing in findings.json" if no_dest else "every finding, for review")]
     tiles_html = "".join(
         f'<div class="tile{" alert" if k == "major" and v else ""}"><div class="k">{_e(l)}</div>'
         f'<div class="v" data-stat="{k}"{f" style=\"color:var(--s-verified)\"" if k == "verified" else ""}>{v}</div>'
@@ -202,12 +205,12 @@ def render_html(findings, *, document="", brain_version="", run_date=None,
     else:
         majors_html = '<h2>Blocker and Major findings</h2><p class="note">None.</p>'
 
-    chip_defs = [("all", "All", True), ("finding", "All findings", n - counts["Verified"]),
-                 ("major", "Blocker + Major", len(majors)), ("in-document", "In document", comments)]
-    chip_defs += [(_slug(v), v, counts[v]) for v in VERDICTS]
-    chip_defs.append(("figure", "Figure only", figures))
-    chips_html = "".join(f'<button class="chip" data-f="{k}" aria-pressed="{"true" if k == "all" else "false"}">{_e(l)}</button>'
-                         for k, l, present in chip_defs if present)
+    chip_ids = {"all": "f-all", "finding": "f-finding", "major": "f-major", "no-evidence": "f-noev"}
+    chip_defs = [("all", "All"), ("finding", "All findings"), ("major", "Blocker + Major")]
+    chip_defs += [(_slug(v), v) for v in VERDICTS if v != "Verified"] + [("verified", "Verified")]
+    chips_html = "".join(
+        f'<button class="chip" id="{chip_ids.get(k, "f-" + k)}" data-f="{k}" aria-pressed="{"true" if k == "all" else "false"}">{_e(l)}</button>'
+        for k, l in chip_defs)
 
     def _sev_cell(f):
         sev = f.get("severity")
@@ -241,13 +244,13 @@ def render_html(findings, *, document="", brain_version="", run_date=None,
 <section>
 <h2>Claim ledger</h2>
 <div class="chips" role="group" aria-label="Filter claims">{chips_html}<span class="shown" id="shown"></span></div>
-<div class="scroll"><table><thead><tr><th>ID</th><th>Where</th><th>Claim</th><th>Verdict</th><th>Severity</th><th>Conf.</th><th>Brain evidence</th><th>Source files</th><th>Action</th></tr></thead>
+<div class="scroll"><table><thead><tr><th>ID</th><th>Where</th><th>Claim</th><th>Verdict</th><th>Severity</th><th>Conf.</th><th>Brain evidence (dated)</th><th>Source</th><th>Action</th></tr></thead>
 <tbody id="ledger">
 {rows}
 </tbody></table></div>
 </section>
 <footer>
-<p>Method: numbers checked against governed Brain metrics where one exists; narrative and topology checked via Brain search with cited evidence. Newer sources win disagreements; the older value is shown as context.</p>
+<p>Method: numbers checked against governed Brain metrics where one exists; narrative and topology checked via Brain search with cited evidence. Disagreements between sources are reported with both values and both citations, never resolved silently.</p>
 </footer>
 </div><script>{JS}</script></body></html>
 """
@@ -267,7 +270,13 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     data = json.load(open(a.findings))
     if isinstance(data, dict):
-        data = data.get("findings") or data.get("claims") or next(iter(data.values()))
+        data = data.get("findings") or data.get("claims")
+        if not isinstance(data, list):
+            print('findings.json: expected a list, or an object with "findings" or "claims"', file=sys.stderr)
+            return 2
+    if isinstance(data, list) and data and not any(isinstance(f, dict) and "destination" in f for f in data):
+        print("warning: no finding has a `destination` key; the comments tile shows n/a "
+              "(write destination after step 8)", file=sys.stderr)
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(render_html(data, document=a.document, brain_version=a.brain_version, brain_name=a.brain_name,

@@ -12,7 +12,6 @@ from pathlib import Path
 from test_plugin_structure import KB_ROOT, read_text
 
 SKILL_DIR = KB_ROOT / "skills" / "fact-check"
-sys.path.insert(0, str(SKILL_DIR))
 
 
 def f(id, verdict, severity, destination, quote="", **kw):
@@ -90,27 +89,64 @@ class TestFindingsReport(unittest.TestCase):
         html = self.render([f("V1", "Verified", "—", "count only")])
         self.assertIn('<p class="note">None.</p>', html)
 
-    def test_chips_are_data_driven_and_omit_zero_count_verdicts(self):
-        html = self.render()
-        for label in ("All", "All findings", "Blocker + Major", "In document", "Incorrect", "Misleading",
-                      "No Evidence", "Verified", "Figure only"):
-            self.assertIn(f'">{label}<', html)
-        self.assertNotIn('data-f="outdated"', html)
-        self.assertNotIn('data-f="controversial"', html)
+    CHIP_IDS = ["f-all", "f-finding", "f-major", "f-incorrect", "f-misleading", "f-outdated",
+                "f-controversial", "f-noev", "f-verified"]
 
-    def test_figure_chip_omitted_when_no_figure_findings(self):
-        html = self.render([f("C01", "Incorrect", "Major", "Word comment")])
+    def test_chip_ids_in_reference_order(self):
+        html = self.render()
+        bar = re.search(r'<div class="chips" role="group" aria-label="Filter claims">(.*?)<span class="shown" id="shown"></span>',
+                        html, re.S).group(1)
+        self.assertEqual(re.findall(r'<button class="chip" id="([^"]+)"', bar), self.CHIP_IDS)
+        self.assertEqual(re.findall(r'data-f="([^"]+)"', bar),
+                         ["all", "finding", "major", "incorrect", "misleading", "outdated",
+                          "controversial", "no-evidence", "verified"])
+        self.assertEqual(re.findall(r'aria-pressed="([^"]+)">([^<]+)</button>', bar),
+                         [("true", "All"), ("false", "All findings"), ("false", "Blocker + Major"),
+                          ("false", "Incorrect"), ("false", "Misleading"), ("false", "Outdated"),
+                          ("false", "Controversial"), ("false", "No Evidence"), ("false", "Verified")])
+
+    def test_zero_count_chips_still_present_and_script_disables_them(self):
+        html = self.render([f("V1", "Verified", "—", "count only")])
+        for cid in self.CHIP_IDS:
+            self.assertIn(f'id="{cid}"', html)
+        self.assertIn("disabled", html.split("<script>")[1])
+
+    def test_no_figure_only_or_in_document_chip(self):
+        html = self.render()
         self.assertNotIn("Figure only", html)
+        self.assertNotIn('data-f="figure"', html)
+        self.assertNotIn('data-f="in-document"', html)
+
+    def test_ledger_headers_exact(self):
+        html = self.render()
+        self.assertEqual(re.findall(r"<th>(.*?)</th>", html),
+                         ["ID", "Where", "Claim", "Verdict", "Severity", "Conf.", "Brain evidence (dated)", "Source", "Action"])
+
+    def test_section_headings(self):
+        html = self.render()
+        self.assertEqual(re.findall(r"<h2>(.*?)</h2>", html), ["Verdicts", "Blocker and Major findings", "Claim ledger"])
+        self.assertEqual(re.findall(r"<h1>(.*?)</h1>", self.render(title="My Title")), ["My Title"])
+
+    def _tags(self, html, id):
+        return set(re.search(rf'<tr data-tags="([^"]*)"><td class="mono">{id}<', html).group(1).split())
+
+    def test_row_tags_for_each_verdict(self):
+        cases = [("Incorrect", "Blocker", "Word comment", {"incorrect", "finding", "major", "comment"}),
+                 ("Misleading", "Major", "log only", {"misleading", "finding", "major"}),
+                 ("Outdated", "Minor", "Word comment", {"outdated", "finding", "comment"}),
+                 ("Controversial", "Minor", "log only", {"controversial", "finding"}),
+                 ("No Evidence", "Minor", "log only", {"no-evidence", "finding"}),
+                 ("Verified", "—", "count only", {"verified"})]
+        for i, (v, sev, dest, expected) in enumerate(cases):
+            html = self.render([f(f"C{i:02d}", v, sev, dest)])
+            self.assertEqual(self._tags(html, f"C{i:02d}"), expected, v)
 
     def test_rows_carry_verdict_severity_comment_and_figure_tags(self):
         html = self.render()
-        c01_tags = re.search(r'<tr data-tags="([^"]*)"><td class="mono">C01<', html).group(1).split()
-        self.assertEqual(set(c01_tags), {"incorrect", "finding", "major", "in-document"})
+        self.assertEqual(self._tags(html, "C01"), {"incorrect", "finding", "major", "comment"})
         self.assertIn("no-evidence finding", html)
-        i01_tags = re.search(r'<tr data-tags="([^"]*)"><td class="mono">I01<', html).group(1).split()
-        self.assertIn("figure", i01_tags)
-        verified_tags = re.search(r'<tr data-tags="([^"]*)"><td class="mono">C04<', html).group(1).split()
-        self.assertNotIn("finding", verified_tags)
+        self.assertIn("figure", self._tags(html, "I01"))
+        self.assertNotIn("finding", self._tags(html, "C04"))
 
     def test_untrusted_text_is_escaped(self):
         html = self.render([f("C01", "Incorrect", "Major", "Word comment", '<script>alert(1)</script>')])
@@ -146,6 +182,60 @@ class TestFindingsReport(unittest.TestCase):
         self.assertTrue(out.read_text().startswith("<!doctype html>"))
         self.assertIn(str(out), r.stdout)
 
+    def test_missing_destination_everywhere_shows_na_not_zero(self):
+        rows = [{k: v for k, v in r.items() if k != "destination"} for r in FINDINGS]
+        html = self.render(rows)
+        self.assertRegex(html, r'data-stat="comments">n/a<')
+        self.assertIn("destination missing in findings.json", html)
+
+    def test_cli_warns_on_stderr_when_destination_is_missing(self):
+        tmp = Path(tempfile.mkdtemp())
+        src, out = tmp / "findings.json", tmp / "findings.html"
+        src.write_text(json.dumps([{k: v for k, v in r.items() if k != "destination"} for r in FINDINGS]))
+        r = subprocess.run([sys.executable, str(SKILL_DIR / "findings_report.py"), str(src), "--out", str(out)],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("destination", r.stderr)
+        self.assertRegex(out.read_text(), r'data-stat="comments">n/a<')
+
+    def test_destination_present_keeps_numeric_count_and_no_warning(self):
+        tmp = Path(tempfile.mkdtemp())
+        src, out = tmp / "findings.json", tmp / "findings.html"
+        src.write_text(json.dumps(FINDINGS))
+        r = subprocess.run([sys.executable, str(SKILL_DIR / "findings_report.py"), str(src), "--out", str(out)],
+                           capture_output=True, text=True)
+        self.assertEqual(r.stderr, "")
+        self.assertRegex(out.read_text(), r'data-stat="comments">3<')
+        self.assertNotIn("n/a", self.render())
+
+    def test_zero_comments_with_destination_key_is_still_a_number(self):
+        html = self.render([f("C03", "No Evidence", "Minor", "log only")])
+        self.assertRegex(html, r'data-stat="comments">0<')
+
+    def test_source_folder_sits_on_its_own_line(self):
+        from findings_report import CSS
+        self.assertRegex(CSS, r'\.cap\{[^}]*display:block')
+
+
+class TestReview9Report(unittest.TestCase):
+    def test_footer_does_not_say_newer_sources_win(self):
+        from findings_report import render_html
+        html = render_html([f("C01", "Incorrect", "Major", "Word comment", "x")])
+        self.assertNotIn("Newer sources win", html)
+        self.assertIn("Disagreements between sources are reported with both values and both citations, "
+                      "never resolved silently.", html)
+
+    def test_unrecognised_findings_object_exits_cleanly(self):
+        for payload in ({}, {"other": 1}):
+            with tempfile.TemporaryDirectory() as t:
+                src = Path(t) / "findings.json"
+                src.write_text(json.dumps(payload))
+                r = subprocess.run([sys.executable, str(SKILL_DIR / "findings_report.py"), str(src),
+                                    "--out", str(Path(t) / "o.html")], capture_output=True, text=True)
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn('findings.json: expected a list, or an object with "findings" or "claims"', r.stderr)
+                self.assertNotIn("Traceback", r.stderr)
+
 
 class TestSkillWritesTheReportLocally(unittest.TestCase):
     def _text(self):
@@ -157,6 +247,15 @@ class TestSkillWritesTheReportLocally(unittest.TestCase):
         self.assertIn("findings.html", step9)
         self.assertIn("never publish it as an Artifact", step9)
         self.assertNotIn("If an Artifact tool is available", step9)
+
+    def test_step9_defines_the_findings_json_schema(self):
+        step9 = self._text().split("### 9.", 1)[1].split("### 10.", 1)[0]
+        for key in ("id", "p_id", "section", "quote", "type", "verdict", "severity", "confidence", "evidence",
+                    "fix", "source", "sources", "destination"):
+            self.assertIn(f"`{key}`", step9, key)
+        for value in ("Word comment", "log only", "count only"):
+            self.assertIn(f'"{value}"', step9, value)
+        self.assertIn("after step 8", step9)
 
 
 if __name__ == "__main__":

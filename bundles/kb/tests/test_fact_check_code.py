@@ -141,6 +141,106 @@ class TestReferenceCode(unittest.TestCase):
         in_table = any(a.tag.endswith("}tc") for a in anchored[0].iterancestors())
         self.assertFalse(in_table, "figure 2 is the body drawing, not the one inside the table")
 
+    def test_mark_destinations_sets_values_without_mutating_input(self):
+        findings = [self._finding(id="C01"), self._finding(id="C02"),
+                    self._finding(id="C03", verdict="Verified", severity="—")]
+        before = [dict(f) for f in findings]
+        out = self.h["mark_destinations"](findings, ["C01"])
+        self.assertEqual([f["destination"] for f in out], ["Word comment", "log only", "count only"])
+        self.assertEqual(findings, before)
+        self.assertNotIn("destination", findings[0])
+
+    def test_comment_tile_equals_comments_really_in_the_saved_docx(self):
+        import re, zipfile
+        from findings_report import render_html
+        def build(d):
+            d.add_paragraph("Alpha beta gamma delta")
+            d.add_paragraph("Epsilon zeta eta theta")
+        src = self._doc(build)
+        dst = self.tmp / "out.docx"
+        findings = [self._finding(id="C01", quote="beta gamma"), self._finding(id="C02", quote="absent words"),
+                    self._finding(id="C03", quote="zeta eta"),
+                    self._finding(id="C04", verdict="Verified", severity="—", quote="Alpha")]
+        written, skipped = self.h["annotate"](str(src), str(dst), findings[:3])   # only approved findings are annotated
+        self.assertEqual((written, skipped), (["C01", "C03"], ["C02"]))
+        marked = self.h["mark_destinations"](findings, written)
+        html = render_html(marked, document="in.docx", brain_version="v1", run_date="2026-01-01")
+        xml = zipfile.ZipFile(dst).read("word/comments.xml").decode()
+        real = len(re.findall(r"<w:comment ", xml))
+        self.assertEqual(real, 2)
+        self.assertRegex(html, rf'data-stat="comments">{real}<')
+
+
+    # --- review9 findings 2, 6 ---
+    def _add_textbox(self, doc, text):
+        """Append a paragraph holding a w:txbxContent text box that contains `text`."""
+        from docx.oxml import parse_xml
+        W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+        xml = (f'<w:p {W}><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml"><w:txbxContent>'
+               f'<w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:txbxContent></v:shape></w:pict></w:r></w:p>')
+        body = doc.element.body
+        body.insert(0, parse_xml(xml))   # text box first, so document order would pick it first
+
+    def _comment_paragraph_texts(self, path):
+        from docx import Document
+        from docx.oxml.ns import qn
+        doc = Document(path)
+        out = []
+        for s in doc.element.body.iter(qn("w:commentRangeStart")):
+            p = next(a for a in s.iterancestors() if a.tag == qn("w:p"))
+            out.append((p.xpath("string(.)"), any(a.tag == qn("w:txbxContent") for a in p.iterancestors())))
+        return out
+
+    def test_quote_in_body_and_textbox_anchors_in_the_body(self):
+        from docx import Document
+        d = Document()
+        d.add_paragraph("Body says revenue was 40 million today.")
+        self._add_textbox(d, "Box says revenue was 40 million today.")
+        src, dst = self.tmp / "tb.docx", self.tmp / "tb-out.docx"
+        d.save(src)
+        written, _ = self.h["annotate"](str(src), str(dst), [self._finding(quote="40 million")])
+        self.assertEqual(written, ["C01"])
+        (text, in_box), = self._comment_paragraph_texts(dst)
+        self.assertFalse(in_box)
+        self.assertTrue(text.startswith("Body says"))
+
+    def test_textbox_is_the_fallback_when_the_body_lacks_the_quote(self):
+        from docx import Document
+        d = Document()
+        d.add_paragraph("Nothing relevant here.")
+        self._add_textbox(d, "Only the box mentions 40 million.")
+        src, dst = self.tmp / "tb2.docx", self.tmp / "tb2-out.docx"
+        d.save(src)
+        log = []
+        written, _ = self.h["annotate"](str(src), str(dst), [self._finding(quote="40 million")])
+        self.assertEqual(written, ["C01"])
+        (text, in_box), = self._comment_paragraph_texts(dst)
+        self.assertTrue(in_box)
+
+    def test_textbox_fallback_is_logged_as_anchored_textbox(self):
+        import contextlib, io
+        from docx import Document
+        d = Document()
+        d.add_paragraph("Nothing relevant here.")
+        self._add_textbox(d, "Only the box mentions 40 million.")
+        src, dst = self.tmp / "tb3.docx", self.tmp / "tb3-out.docx"
+        d.save(src)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            self.h["annotate"](str(src), str(dst), [self._finding(quote="40 million")])
+        self.assertIn("anchored: textbox", buf.getvalue())
+
+    def test_id_mentioned_in_another_comments_body_does_not_suppress_it(self):
+        src = self._doc(lambda d: d.add_paragraph("one two three four"))
+        a, b = self.tmp / "a6.docx", self.tmp / "b6.docx"
+        f2 = self._finding(id="C02", quote="one two", fix="Align with the C01 item, see [Incorrect · Major · C01] · C01] too")
+        f1 = self._finding(id="C01", quote="three four")
+        self.h["annotate"](str(src), str(a), [f2])
+        written, _ = self.h["annotate"](str(a), str(b), [f2, f1])
+        self.assertEqual(written, ["C02", "C01"])
+        from docx import Document
+        self.assertEqual(len(list(Document(b).comments)), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

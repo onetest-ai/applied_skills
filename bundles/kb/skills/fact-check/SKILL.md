@@ -14,6 +14,8 @@ Lessons this skill encodes: a numeric error is often invisible to prose retrieva
 - A Brain, resolved per the contract below. Never blend two Brains.
 - Optional: a source inventory (xlsx/csv with file `Name` and `Folder Path`, or a URL base) so evidence can link to the real file. Without one, ask for it once; evidence then cites the Brain's `source_file` only.
 - Optional: a previous run's baseline (`docs/kb/fact-check/<doc-slug>/baseline.md`) for idempotent reruns.
+
+**Reusing a baseline.** When a baseline exists: (1) print its claim count, its date and the Brain `knowledge_version` it was written against, and the current `knowledge_version` from the health check; (2) reuse it only when the document's checksum and the `knowledge_version` are unchanged AND its claim count is at least the number of atomic claims step 2 extracts from the document now; otherwise re-run step 2 and verify the claims that are new or whose verdict rested on a single source; (3) never present a reused baseline as a fresh run: the first line of the report says "reused baseline of <date>, N claims"; (4) a reused baseline's Verified claims of type TIME/STATUS/OWN/TOPO that lack the two-sided record from step 4 are re-verified, not carried over.
 - `python-docx >= 1.2` in the session (`pip install "python-docx>=1.2"`); the comments API does not exist below 1.2. If it cannot be installed, run through step 7 and deliver `findings.json` instead of writing comments.
 
 ## Procedure
@@ -31,7 +33,9 @@ Never rely on a summary to read the draft.
 
 ### 2. Extract atomic claims
 Walk paragraphs in order. Keep only checkable statements. Types: NUM (numbers, %, counts), TIME (dates, timelines, current/legacy/planned), ENTITY (system, vendor, version names), TOPO (what connects to what, hosts, environments), OWN (who owns/operates), STATUS (live / retired / in migration). Skip opinions, intentions, headings, boilerplate.
-Each claim: `id` (C01…), `p_id`, verbatim quote ≤25 words, type. Merge duplicates. Aim for ≥15 on a 10-page document; if you get fewer than 10, you are summarising, not extracting.
+Each claim: `id` (C01…), `p_id`, verbatim quote ≤25 words, type. Merge duplicates. Extract **every checkable statement**: there is no count target and no sampling. Every paragraph, list item and table row that holds a checkable statement yields at least one claim, and every type (NUM, TIME, ENTITY, TOPO, OWN, STATUS) is covered wherever it occurs; do not stop once the NUM and TIME claims are in.
+
+**Coverage self-check (end of step 2).** Count the non-heading paragraphs and table rows that hold a checkable statement. If you have fewer claims than those units, re-walk the document before verifying. For orientation only, never as a cap: a typical 10–15 page baseline draft yields 50–90 claims.
 
 ### 3. Read every figure
 For each image: **look at it** and transcribe it into claims, one per box, edge, label or legend entry (`I01…`), e.g. `edge A ↔ B, bidirectional, label "async integration"`. No prose description. Then:
@@ -39,12 +43,14 @@ For each image: **look at it** and transcribe it into claims, one per box, edge,
 - verify each figure claim against **the document's own text** (a diagram/text contradiction is a finding on the diagram);
 - **Reverse pass**: list every system or integration the text says is connected, and confirm each appears in the figure with its edge; a missing one is an omission finding, not an unchecked claim;
 - an omission counts only when the document's text describes the missing element (then verdict Misleading, note "omission").
+Every figure claim (`I01…`) **must** appear in `findings.json` as its own row, with `type` and `section` "Figure"; a figure read but not recorded is a skipped step. **Self-check:** if the document has referenced images (`word/media` referenced from document.xml) and `findings.json` has no `I*` row, step 3 was skipped: do it before writing outputs.
 Cache transcriptions by image hash in `docs/kb/fact-check/<doc-slug>/figures.json` for reruns.
 
 ### 4. Verify — route by type, numbers only from get_metric
 - NUM → `get_metric` (match the grain: period, unit, scope). When a governed row (`get_metric` / `get_metric_history`) or a chunk states a value for the same subject, grain and period as the draft, compare it with the draft: equal at the draft's stated precision is Verified; a different value is **Incorrect**; the same value at another grain, period or scope is **Misleading**. Quote the draft value and the Brain value verbatim, each with its source and date. No Evidence is only for a claim that no row or chunk covers at all. A figure from a narrative chunk may be used only as a verbatim quotation of the chunk span, attributed with its chunk id and date ("the source states: '…'"); never restate, convert or compute with it. Governed figures come only from `get_metric`, `get_metric_history` or an extracted table cell. If a governed total row exists, compare it; if only components exist, the total is No Evidence (components listed verbatim).
 - NUM, never compute (comparing is not computing; this never turns a differing value into No Evidence): never compute, sum, average, round or convert a figure you write into `evidence` or `fix`; a figure there is quoted exactly as a tool returned it (a `get_metric` row, `get_metric_history`, an extracted table cell), or, from a narrative chunk, as a verbatim quotation of its span with chunk id and date. Comparing the draft's figure with a tool value is allowed: a rounded draft figure that matches the tool value at its stated precision is Verified, and counting items in the draft is not a computed figure (a self-contradiction check may count them). A unit gap with no tool-returned conversion is Misleading when the Brain holds the figure at another unit, otherwise No Evidence. If the claim needs an aggregate the Brain does not return, it is **No Evidence**: say "the Brain holds the components, not the total" (the finding may list the component rows verbatim). A `fix` never contains a computed number: the `fix` is "needs owner input". No Evidence is log-only, so that note and the component rows go into the findings page and `baseline.md`, not a comment.
 - TIME / STATUS / OWN (any claim about a time, status, owner or current state) → call `get_current_fact` when an entity/predicate exists **and** run `search_knowledge` twice with the same query: once default, once with `latest_only=false` (the Brain hides superseded sources by default, so the older or conflicting source only returns on the second call). Compare the dated sources from both, using `event_date` (or the source's own date). An older source counts as replaced only by an explicit supersedes/retracts relation (`get_current_fact`, or a SUPERSEDED status); otherwise apply step 5. When the dated sources differ, cite both dated sources in the finding; in the comment the `Brain:` line carries both, as "newer (date) vs older (date)", within the word limit.
+- **Two-sided check (TIME / STATUS / OWN / TOPO claims).** Before a claim of one of these types may be Verified, run ONE more `search_knowledge` whose query states the opposite or alternative (a different value, owner, system, date or direction than the draft's), with `latest_only=false`, and look for a span from a source of the same period or later that disagrees with the draft. Record both sides in two lines (the supporting span and the opposing span, each with its source and date, or "no opposing span found") before choosing the verdict. (a) An opposing span from a same-period or later source with no supersedes/retracts relation means the claim is not Verified: it is Controversial and the evidence cites both spans. (b) An opposing span from an older, superseded source is handled by the Outdated rule in step 5, unchanged. (c) "no opposing span found" must be written explicitly; Verified is allowed only then. (e) Every finding of type TIME, STATUS, OWN or TOPO carries a `checks` list recording the searches actually run, e.g. `["search", "search latest_only=false", "opposing"]` (plus `"get_current_fact"` when used). Such a finding may be **Verified** only if `checks` contains both `search latest_only=false` and `opposing`; otherwise run them, or otherwise the verdict is No Evidence. (d) This costs one extra search per such claim and is skipped for NUM claims (they go through `get_metric`) and for claims that are only definitions of the document's own terms.
 - ENTITY / TOPO → `search_knowledge`, then `get_evidence` on the best chunk; `get_taxonomy` for names and relations; `find_related_content` when the first query is empty.
 - Retrieve **each dated roadmap item separately**; a shared month does not make two items one.
 - Source precedence: Brain > baseline documents in the inventory > the draft. If a baseline disagrees with the Brain, verify against the Brain and add one finding on the baseline. Date every piece of evidence from the hit's `event_date`; when it is null, date it from the source's own file name or title and write "date inferred" beside it. A stale Brain source (an old training deck, an earlier kickoff) is context for the author, not a contradiction, when it describes an earlier state the draft does not claim; when it gives a different value for the very item the draft states, see step 5.
@@ -52,7 +58,7 @@ Cache transcriptions by image hash in `docs/kb/fact-check/<doc-slug>/figures.jso
 - Checks that have found the real errors: the draft contradicting itself (a count stated two ways); claims imported from another baseline (check those first); a borrowed statistic relabelled (re-open the source's axis label); the unit of a count (an inventory of 25 APIs is not 25 calls per session); a completed change stated as current; proper nouns that are transcription artefacts.
 
 ### 5. Verdict, severity, confidence — exactly one verdict per claim
-Verified · Incorrect (Brain contradicts) · Misleading (true in part; wrong grain, scope, omitted qualifier, omission in a figure) · Outdated (was true; give the date it changed) · Controversial (Brain holds conflicting sources; cite both, and say which is newer) · No Evidence (not modeled — say so, never infer).
+Verified · Incorrect (Brain contradicts) · Misleading (true in part; wrong grain, scope, omitted qualifier, omission in a figure) · Outdated (was true; give the date it changed) · Controversial (Brain holds conflicting sources; cite both spans, and say which is newer; one-sided support is not enough to call a claim Verified when step 4's two-sided check found an opposing span) · No Evidence (not modeled — say so, never infer).
 A newer source does not silently override an older one: only an explicit supersedes/retracts relation (`get_current_fact`) resolves a conflict. Two dated sources that differ on the same roadmap item, count or owner are Controversial, even when one is newer.
 Outdated must cite the superseded statement and the current one; each is a chunk span, a `get_current_fact` result, or a `get_metric_history` row with `reported_in`. If only one is found it is not Outdated; it takes the verdict that one source supports (Incorrect or Verified), stated explicitly.
 Confidence High / Medium / Low; **Medium** whenever the evidence is one person's in-meeting estimate or a self-correction.
@@ -130,42 +136,63 @@ def isolate(p, quote):
         if pos>=s and pos+n<=e and n: out.append(r)
         pos+=n
     return out
-def paragraphs(doc):   # every paragraph in true document order, table cells included, each once
+def paragraphs(doc, textbox=False):   # every paragraph in true document order, table cells included, each once
+    # body paragraphs only by default; textbox=True yields only text-box paragraphs (w:txbxContent), the fallback anchor
     from docx.text.paragraph import Paragraph
-    for p in doc.element.body.iter(qn('w:p')): yield Paragraph(p, doc)
-def annotate(src,dst,findings,author='Fact Checker · Brain'):
+    for p in doc.element.body.iter(qn('w:p')):
+        in_box=any(a.tag==qn('w:txbxContent') for a in p.iterancestors())
+        if in_box==textbox: yield Paragraph(p, doc)
+def mark_destinations(findings, written_ids):   # call after annotate; pure, returns a new list
+    out=[]
+    for f in findings:
+        dest='Word comment' if f['id'] in written_ids else ('count only' if f.get('verdict')=='Verified' else 'log only')
+        out.append({**f,'destination':dest})
+    return out
+def annotate(src,dst,findings,author='Fact Checker · Brain'):   # returns (written, skipped) id lists
     doc=Document(src)
     if not hasattr(doc,'comments'): raise SystemExit('python-docx >= 1.2 required for comments')
-    have=' '.join(c.text for c in doc.comments)
+    import re, sys
+    hdr=re.compile(r'^\[[^·\]]+ · [^·\]]+ · ([^\]\s]+)\]')   # only a comment's own header line names its id
+    have={m[1] for c in doc.comments if (m:=hdr.match((c.text.strip().splitlines() or [''])[0]))}; written=[]; skipped=[]
     for f in findings:
-        if f"· {f['id']}]" in have: continue   # token match: C1 must not match C10
+        if f['id'] in have: written.append(f['id']); continue   # exact id: C1 is not C10, a mention in another comment's body is not a header
         text=f"[{f['verdict']} · {f['severity']} · {f['id']}] §{f['section']}\nBrain: {f['evidence']}\nFix: {f['fix']}\nSource: {f['source']}"
+        before=len(written)
         if f.get('anchor')=='drawing':
             k=0
             for p in paragraphs(doc):
                 runs=[r for r in p.runs if r._r.findall('.//'+qn('w:drawing'))]
-                if runs and (k:=k+1)==f.get('figure',1): doc.add_comment(runs,text=text,author=author,initials='FC'); break
-            continue
-        for p in paragraphs(doc):
-            if f['quote'] in p.text:
-                runs=isolate(p,f['quote'])
-                if runs: doc.add_comment(runs,text=text,author=author,initials='FC'); break
+                if runs and (k:=k+1)==f.get('figure',1): doc.add_comment(runs,text=text,author=author,initials='FC'); written.append(f['id']); break
+        else:
+            for box in (False,True):   # body first; text boxes only when the body lacks the quote
+                for p in paragraphs(doc,textbox=box):
+                    if f['quote'] in p.text:
+                        runs=isolate(p,f['quote'])
+                        if runs:
+                            doc.add_comment(runs,text=text,author=author,initials='FC'); written.append(f['id'])
+                            if box: print('anchored: textbox',f['id'],file=sys.stderr)
+                            break
+                if len(written)>before: break
+        if len(written)==before: skipped.append(f['id'])   # quote/figure not found: logged, no comment
     doc.save(dst)
+    return written, skipped
 ```
 
 ### 9. Build the findings page
-Write the findings table from step 7 to `findings.json`, then run the renderer that sits beside this file:
+**findings.json schema.** A JSON list with one object per claim (every claim, whatever its verdict) and exactly these keys: `id`, `p_id`, `section`, `quote`, `type`, `verdict`, `severity`, `confidence`, `evidence`, `fix`, `source`, `sources` (a list of `{name, link, folder}`), `destination`, and for TIME, STATUS, OWN and TOPO findings `checks` (the searches actually run, e.g. `["search", "search latest_only=false", "opposing"]`, plus `"get_current_fact"` when used; Verified requires both `search latest_only=false` and `opposing`). Every figure claim (`I01…`) is its own row, with `type` and `section` "Figure". `destination` is one of the exact strings "Word comment", "log only", "count only" (the step 7 table): "Word comment" only for a finding whose comment was actually written in step 8 (the ids `annotate` returned as `written`), otherwise "log only" (non-Verified, no comment) or "count only" (Verified); `mark_destinations` in step 8 sets it. The page's comment tile counts these values, so write or update `findings.json` after step 8, never before; a file with no `destination` key shows "n/a" and a warning rather than a silent 0.
+
+Write that table to `findings.json`, then run the renderer that sits beside this file:
 ```
 python findings_report.py findings.json --out <name> — findings.html --document "<name>.docx" --brain-version <knowledge_version> \
   [--brain-name <brain>] [--title <h1 text>] [--eyebrow <short engagement tag>] [--lede <one-sentence summary>] [--output-name <annotated docx name>]
 ```
 It writes one self-contained HTML file next to the annotated `.docx` — standard library only, no network resources (no CDN fonts or scripts), so it renders identically offline; the page is a local file, so never publish it as an Artifact or to any hosted service. `--title`/`--eyebrow`/`--lede` are optional, document-specific prose only you can supply (what the engagement is, what the draft is, anything worth telling the reader before the numbers); omit any of them and that part of the header is simply absent, never invented.
 
-The page holds: a header (eyebrow, title, lede, then a meta row of Document/Brain/Knowledge/Run/Output — each shown only when given); four stat tiles (claims checked, Verified with its % of all claims, Blocker+Major with a Blocker/Major breakdown, comments written); one labelled bar per verdict, always all six (Incorrect, Misleading, Outdated, Controversial, No Evidence, Verified), including ones at zero — bars are never stacked and the page draws no other charts; a **Blocker and Major findings** panel listing every finding at that severity (or a "None." note when there are none); and the **claim ledger** — every claim, all verdicts, none omitted, each marked "Comment" when it carries a Word comment or "Log" otherwise — with data-driven filter chips (only chips with at least one matching claim are shown: All, All findings, Blocker + Major, In document, one per verdict present, Figure only) and a Source files column where every cited file is a link. A governed metric that conflicts with the document shows in that finding's evidence cell with its own date. Give each finding's `sources` as `[{"name","link","folder"}]`; a plain string is also accepted. Tell the user the file's absolute path.
+The page holds: a header (eyebrow, title, lede, then a meta row of Document/Brain/Knowledge/Run/Output — each shown only when given); four stat tiles (claims checked, Verified with its % of all claims, Blocker+Major with a Blocker/Major breakdown, comments written); one labelled bar per verdict, always all six (Incorrect, Misleading, Outdated, Controversial, No Evidence, Verified), including ones at zero — bars are never stacked and the page draws no other charts; a **Blocker and Major findings** panel listing every finding at that severity (or a "None." note when there are none); and the **claim ledger** — every claim, all verdicts, none omitted, each marked "Comment" when it carries a Word comment or "Log" otherwise — with nine filter chips, always all shown (All, All findings, Blocker + Major, then one per verdict; a chip with no matching claim is disabled) and a Source column where every cited file is a link. A governed metric that conflicts with the document shows in that finding's evidence cell with its own date. Give each finding's `sources` as `[{"name","link","folder"}]`; a plain string is also accepted. Tell the user the file's absolute path.
 
 ### 10. Report and persist
 - Reply in the contract's answer format: one or two sentences (claims checked, comments written), then the Blocker and Major findings one line each with numbered footnotes, then coverage (% claims the Brain could adjudicate) and what stayed in the log, closing with a `**Sources**` list. Offer to notify the owner; do not send anything unasked.
-- Emit `docs/kb/fact-check/<doc-slug>/baseline.md` (the full findings table with evidence and source links) and `baseline.sources.json` in the shape `_shared/authoring.md` defines, so the next run can be diffed and the citations re-traced. Projects may redirect `docs/kb/` via `.claude/settings.json`.
+- Emit `docs/kb/fact-check/<doc-slug>/baseline.md` (the full findings table with evidence and source links, under a short header recording the document checksum, the `knowledge_version` and the claim count, so the reuse checks in Inputs are possible) and `baseline.sources.json` in the shape `_shared/authoring.md` defines, so the next run can be diffed and the citations re-traced. Projects may redirect `docs/kb/` via `.claude/settings.json`.
 - Deliver the annotated `.docx` (`<name> — fact-checked.docx`) and the findings page (`<name> — findings.html`) beside the original, and give both absolute paths; never overwrite the original.
 
 ## Rules
