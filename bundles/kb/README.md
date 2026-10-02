@@ -11,7 +11,7 @@ It runs in **two places**:
 
 ---
 
-## The six skills
+## The seven skills
 
 | Skill | Use it to… |
 |---|---|
@@ -20,9 +20,10 @@ It runs in **two places**:
 | `/kb:challenge` | Stress-test a claim: verify its sources, surface contradictions, note gaps. |
 | `/kb:brief` | Co-author a short brief; every assertion links to a source (human-gated write). |
 | `/kb:report` | Generate a full report (Markdown/PDF) with citations and a provenance appendix (human-gated write). |
+| `/kb:fact-check` | Fact-check a draft `.docx` (text and diagrams) against the Brain; anchored Word comments for Major findings only, plus a findings page (human-gated write). |
 | `/kb:mode` | Toggle **ambient grounding** on/off/status (project-scoped; **Claude Code only** — it relies on a hook). |
 
-Interrogate with `ask` / `explore` / `challenge`; author with `brief` / `report`; toggle ambient grounding with `mode`. Registering a Brain is platform plumbing, not a skill — a custom connector in Cowork, or an `mcpServers` entry in `.mcp.json` for the CLI — and kb resolves it via `health` at answer time. kb reads the Brain's `health().about` (goal + audience) to tune answer altitude and artifact style.
+Interrogate with `ask` / `explore` / `challenge`; author with `brief` / `report`; fact-check a Word draft with `fact-check`; toggle ambient grounding with `mode`. Registering a Brain is platform plumbing, not a skill — a custom connector in Cowork, or an `mcpServers` entry in `.mcp.json` for the CLI — and kb resolves it via `health` at answer time. kb reads the Brain's `health().about` (goal + audience) to tune answer altitude and artifact style.
 
 ---
 

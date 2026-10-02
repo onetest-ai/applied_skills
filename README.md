@@ -43,7 +43,7 @@ claude plugin install kb@applied-ai
 
 Every answer is **cited** (to a mart row, document, or graph node) or honestly **"not modeled."** Numbers come only from the marts. kb discovers the Brain by its tool surface and names which one it used; once several are registered, pin one in this project's `CLAUDE.md`/`AGENTS.md` (`This project's Brain is \`acme-brain\`.`) so kb never has to ask.
 
-**The six skills:** `/kb:ask`, `/kb:explore`, `/kb:challenge` (interrogate) · `/kb:brief`, `/kb:report` (cited Markdown, human-gated writes) · `/kb:mode` (opt-in ambient grounding). See [`bundles/kb/README.md`](bundles/kb/README.md).
+**The seven skills:** `/kb:ask`, `/kb:explore`, `/kb:challenge` (interrogate) · `/kb:brief`, `/kb:report` (cited Markdown, human-gated writes) · `/kb:fact-check` (annotate a `.docx` draft against the Brain) · `/kb:mode` (opt-in ambient grounding). See [`bundles/kb/README.md`](bundles/kb/README.md).
 
 ---
 
