@@ -398,5 +398,31 @@ class FixRound2Tests(unittest.TestCase):
         self.assertIn("Run it before step 6b. Steps 6b–10 work on the merged `findings.json`, never on the chunk files.", self.all)
 
 
+class FinalFixWaveRules(unittest.TestCase):
+    def setUp(self):
+        self.all = flat((KB_ROOT / "skills" / "fact-check" / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_rerunning_stage_e_means_rechunk_and_reverify(self):
+        self.assertIn("After re-running a batch's stage E, re-run `chunk_claims.py` and re-verify every chunk "
+                      "(stale `findings_chunk_*` files are deleted by the re-chunk).", self.all)
+
+    def test_merge_section_rule_and_figure_append_wording(self):
+        self.assertIn("neither a claim nor a coverage entry", self.all)
+        self.assertNotIn("neither a finding nor a coverage entry", self.all)
+        self.assertNotIn("appends it after the batches", self.all)
+        self.assertIn("appends it after the chunk findings", self.all)
+        self.assertIn("`{section_id, reason}`", self.all)
+
+    def test_step3_allows_anchor_and_figure_on_figure_findings(self):
+        step3 = self.all[self.all.index("### 3."):self.all.index("### 4.")]
+        self.assertIn("`anchor`", step3)
+        self.assertIn("`figure`", step3)
+        self.assertIn("`I*` findings only", step3)
+
+    def test_baseline_header_records_the_mode_and_reuse_requires_it_to_match(self):
+        self.assertIn("recording the document checksum, the mode (from `run.json`), the `knowledge_version`", self.all)
+        self.assertIn("its mode equals the requested mode", self.all)
+
+
 if __name__ == "__main__":
     unittest.main()

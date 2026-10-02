@@ -36,8 +36,8 @@ def finding(fid, section, verdict="Incorrect", **kw):
 
 
 def claim(k, n, section):
-    return {"claim_id": f"B{k}-C{n:02d}", "p_id": "p3", "s_id": "p3s1", "section": section,
-            "quote": "q", "type": "NUM"}
+    return {"claim_id": f"B{k}-C{n:02d}", "p_id": "p3", "s_id": f"b{k}s{n}", "section": section,
+            "quote": "runs 12 services", "type": "NUM"}
 
 
 class MergeCase(unittest.TestCase):
@@ -52,6 +52,23 @@ class MergeCase(unittest.TestCase):
                                     "claim_ids": ["B1-C01", "B1-C02", "B2-C01"]}])
         self.write("findings_chunk_1.json", [finding("B1-C01", S1), finding("B1-C02", S2, verdict="Verified"),
                                              finding("B2-C01", S3, verdict="No Evidence", severity="Minor")])
+        self.batch_files()
+
+    def batch_files(self, risky=lambda cid: True, extra=()):
+        """Write batch_<k>.json: one sentence per stage-E claim (its s_id), risk-tagged when risky(claim_id).
+        extra: (batch, section, s_id, risk) sentences no claim covers."""
+        for b in BATCHES:
+            k = b["batch"]
+            found = json.loads((self.dir / f"claims_batch_{k}.json").read_text())
+            secs = []
+            for s in b["sections"]:
+                sents = [{"s_id": c["s_id"], "text": "t", "risk": ["num"] if risky(c["claim_id"]) else []}
+                         for c in found if c["section"] == s["section"]]
+                sents += [{"s_id": sid, "text": "t", "risk": r} for (kk, sec, sid, r) in extra
+                          if kk == k and sec == s["section"]]
+                secs.append({"section_id": s["section_id"], "section": s["section"],
+                             "paragraphs": [{"p_id": "p3", "text": "x", "sentences": sents}], "tables": []})
+            self.write(f"batch_{k}.json", {"batch": k, "sections": secs})
 
     def write(self, name, obj):
         p = self.dir / name
@@ -77,6 +94,12 @@ class TestMergeHappyPath(MergeCase):
         self.assertEqual((run["claims_extracted"], run["claims_in_scope"], run["claims_verified"], run["chunks"]),
                          (3, 3, 3, 1))
         self.assertEqual((run["sections_total"], run["statements_risk"]), (3, 4))
+
+    def test_run_carries_the_source_hash_recorded_by_the_extractor(self):
+        self.assertNotIn("source_sha256", M.merge(self.dir)[2])
+        stats = json.loads((self.dir / "stats.json").read_text())
+        self.write("stats.json", dict(stats, source_sha256="ab" * 32))
+        self.assertEqual(M.merge(self.dir)[2]["source_sha256"], "ab" * 32)
 
     def test_order_follows_claim_order_not_finding_order(self):
         self.write("findings_chunk_1.json", [finding("B2-C01", S3), finding("B1-C02", S2), finding("B1-C01", S1)])
@@ -110,6 +133,7 @@ class TestMergeHappyPath(MergeCase):
 
     def test_risk_scope_zero_chunks_is_clean_and_auto_covers_sections(self):
         self.write("chunks.json", [])
+        self.batch_files(risky=lambda cid: False)
         for p in self.dir.glob("findings_chunk_*.json"):
             p.unlink()
         findings, coverage, run, errors = M.merge(self.dir, scope="risk")
@@ -159,7 +183,7 @@ class TestMergeFailsLoudly(MergeCase):
         self.write("claims_batch_1.json", [claim(1, 1, S1)])        # S2 lost its only claim
         self.write("chunks.json", [{"chunk": 1, "file": "chunk_1.json", "claim_ids": ["B1-C01", "B2-C01"]}])
         self.write("findings_chunk_1.json", [finding("B1-C01", S1), finding("B2-C01", S3)])
-        self.has_error(S2, "neither claims nor coverage")
+        self.has_error(S2, "neither a claim nor a coverage entry")
 
     def test_coverage_with_another_reason_does_not_count(self):
         self.write("claims_batch_1.json", [claim(1, 1, S1)])
@@ -271,6 +295,7 @@ class TestMergeReviewFixes(MergeCase):
     def test_risk_scope_claim_outside_chunks_is_fine(self):
         self.write("chunks.json", [{"chunk": 1, "file": "chunk_1.json", "claim_ids": ["B1-C01"]}])
         self.write("findings_chunk_1.json", [finding("B1-C01", S1)])
+        self.batch_files(risky=lambda cid: cid == "B1-C01")
         _, _, run, errors = M.merge(self.dir, scope="risk")
         self.assertEqual(errors, [])
         self.assertEqual(run["claims_in_scope"], 1)
@@ -328,6 +353,76 @@ class TestMergeReviewFixes(MergeCase):
                            capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue(out.with_name("run.json").exists())
+
+
+class TestFinalFixWave(MergeCase):
+    def test_fast_coverage_reason_has_one_definition(self):
+        import fact_check_invariants as I
+        self.assertIs(M.RISK_COVERAGE_REASON, I.RISK_COVERAGE_REASON)
+        self.assertNotIn("RISK_COVERAGE_REASON =", SCRIPT.read_text(encoding="utf-8"))
+
+    # I2c
+    def test_finding_quote_and_p_id_must_equal_its_claims(self):
+        self.write("findings_chunk_1.json", [finding("B1-C01", S1, quote="runs 13 services"),
+                                             finding("B1-C02", S2, p_id="p9"),
+                                             finding("B2-C01", S3)])
+        self.has_error("B1-C01", "quote")
+        self.has_error("B1-C02", "p_id")
+
+    # I2d
+    def test_risk_scope_recomputes_the_in_scope_set_from_batch_risk(self):
+        self.write("chunks.json", [{"chunk": 1, "file": "chunk_1.json", "claim_ids": ["B1-C01"]}])
+        self.write("findings_chunk_1.json", [finding("B1-C01", S1)])
+        self.has_error("chunks.json", "B1-C02", scope="risk")          # B1-C02 is risky but not chunked
+        self.batch_files(risky=lambda cid: cid == "B1-C01")
+        self.assertEqual(self.errors(scope="risk"), [])
+        self.write("chunks.json", [{"chunk": 1, "file": "chunk_1.json", "claim_ids": ["B1-C01", "B2-C01"]}])
+        self.write("findings_chunk_1.json", [finding("B1-C01", S1), finding("B2-C01", S3)])
+        self.has_error("chunks.json", "B2-C01", scope="risk")          # chunked but not risky
+
+    def test_merge_reuses_the_batch_risk_helper(self):
+        src = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("_risk_by_s_id", src)
+        self.assertNotIn("def _risk_by_s_id", src)
+
+    # I3
+    def test_risk_tagged_statement_needs_a_claim_or_a_section_coverage(self):
+        self.batch_files(extra=[(1, S1, "b1s9", ["date"])])
+        self.has_error("b1s9", scope="risk")
+        self.assertEqual(self.errors(), [])                            # deep mode does not enforce it
+        self.write("coverage_batch_1.json", [{"section_id": "s01", "reason": "no checkable statement"}])
+        self.assertFalse(any("b1s9" in e for e in self.errors(scope="risk")))
+
+    def test_untagged_statement_needs_no_claim(self):
+        self.batch_files(extra=[(1, S1, "b1s9", [])])
+        self.assertFalse(any("b1s9" in e for e in self.errors(scope="risk")))
+
+    def test_row_with_risk_needs_a_claim_too(self):
+        self.batch_files()
+        b = json.loads((self.dir / "batch_1.json").read_text())
+        b["sections"][0]["tables"] = [{"t_id": "t1", "rows": [{"s_id": "t1r2", "cells": ["a"], "risk": ["num"]}]}]
+        self.write("batch_1.json", b)
+        self.has_error("t1r2", scope="risk")
+
+    # M1
+    def test_scope_flag_must_match_the_chunk_files(self):
+        self.write("chunk_1.json", {"chunk": 1, "scope": "all", "claims": []})
+        self.has_error("chunk_1.json", "scope", scope="risk")
+        self.assertFalse(any("chunk_1.json" in e for e in self.errors(scope="all")))
+
+    # M4
+    def test_figure_findings_may_carry_anchor_and_figure_only(self):
+        from fact_check_invariants import FIGURE_KEYS
+        self.assertEqual(FIGURE_KEYS, ("anchor", "figure"))
+        self.write("findings_figures.json", [finding("I01", "Figure", anchor="drawing", figure=1)])
+        self.assertEqual(self.errors(), [])
+        self.write("findings_figures.json", [finding("I01", "Figure", anchor="drawing", figure=1, extra=1)])
+        self.has_error("I01", "unknown key", "extra")
+
+    def test_chunk_findings_may_not_carry_figure_keys(self):
+        self.write("findings_chunk_1.json", [finding("B1-C01", S1, anchor="drawing"), finding("B1-C02", S2),
+                                             finding("B2-C01", S3)])
+        self.has_error("B1-C01", "unknown key", "anchor")
 
 
 class TestSectionsToMergeRoundTrip(unittest.TestCase):

@@ -146,3 +146,41 @@ class FixRoundCase(ChunkCase):
         self.assertEqual(errors, [])
         self.assertEqual(index[0]["claim_ids"], ["B1-C01"])
         self.assertEqual(json.loads((self.d / "chunk_1.json").read_text())["claims"][0]["risk"], ["num"])
+
+class FinalFixChunkTests(ChunkCase):
+    def test_rechunk_deletes_stale_findings_chunk_files(self):
+        self.w("findings_chunk_1.json", []); self.w("findings_chunk_9.json", [])
+        C.chunk(self.d, "all", 8)
+        self.assertEqual(list(self.d.glob("findings_chunk_*.json")), [])
+        self.w("findings_chunk_1.json", [])
+        C.chunk(self.d, "all", 8)                       # a failing re-chunk clears them too
+        self.assertEqual(list(self.d.glob("findings_chunk_*.json")), [])
+
+    def test_uncovered_section_fails_before_any_chunk_is_written(self):
+        self.w("claims_batch_1.json", [claim(1, 1, "p2s1", section="Scope")])
+        self.w("batches.json", [{"batch": 1, "file": "batch_1.json", "sections": [
+            {"section_id": "s01", "section": "Scope"}, {"section_id": "s02", "section": "Other"}]}])
+        out, errors = C.chunk(self.d, "all", 8)
+        self.assertEqual(out, [])
+        self.assertTrue(any("Other" in e and "neither a claim nor a coverage entry" in e for e in errors), errors)
+        self.assertEqual(list(self.d.glob("chunk*.json")), [])
+        self.w("coverage_batch_1.json", [{"section_id": "s02", "reason": "no checkable statement"}])
+        out, errors = C.chunk(self.d, "all", 8)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(out), 1)
+
+    def test_bad_coverage_entry_fails_the_chunking(self):
+        self.w("coverage_batch_1.json", [{"section_id": "s99", "reason": "no checkable statement"}])
+        _, errors = C.chunk(self.d, "all", 8)
+        self.assertTrue(any("s99" in e for e in errors), errors)
+
+    def test_section_coverage_has_one_shared_implementation(self):
+        import merge_findings
+        for mod in (C, merge_findings):
+            src = Path(mod.__file__).read_text(encoding="utf-8")
+            self.assertIn("section_coverage", src)
+            self.assertNotIn("def section_coverage", src)
+
+
+if __name__ == "__main__":
+    unittest.main()

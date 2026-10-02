@@ -5,7 +5,9 @@ violation strings (empty = clean). CLI, for a run saved by a project:
 
     python fact_check_invariants.py <findings.json> <annotated.docx> --original <draft.docx>
 
-A `coverage.json` beside findings.json (list of {heading, reason: "no checkable statement"}) is read too.
+A `coverage.json` beside findings.json (list of {heading, reason}) is read too, and `run.json` (written by
+merge_findings.py) gives the mode and the draft's `source_sha256` recorded by sections.py before the run.
+Without a recorded hash the "original document was modified" check is skipped, never faked.
 
 Verdict agreement against a golden is deliberately not checked here: it varies between runs of
 the same skill. These are the properties that must not vary.
@@ -30,6 +32,8 @@ MAX_COMMENT_WORDS = 60
 FINDING_KEYS = ("id", "p_id", "section", "quote", "type", "verdict", "severity", "confidence",
                 "evidence", "fix", "source", "sources", "destination")
 LATE_KEYS = frozenset({"destination"})
+# Figure findings (`I*` ids only) also carry what step 8's `annotate` needs to anchor on the drawing.
+FIGURE_KEYS = ("anchor", "figure")
 HEADER = re.compile(r"^\[(?P<verdict>[^·\]]+?) · (?P<severity>[^·\]]+?) · (?P<id>[^\]\s]+)\]")
 
 
@@ -54,6 +58,8 @@ def _range_texts(docx_path: Path) -> dict[str, str]:
 
 
 COVERAGE_REASON = "no checkable statement"
+# Fast mode verifies only high-risk claims; a section with none is covered in a fast run only.
+RISK_COVERAGE_REASON = "no high-risk statement"
 SECTION_SEP = re.compile(r"\s*(?:>|›|»)\s*")
 
 
@@ -61,9 +67,55 @@ def _norm(t: str) -> str:
     return re.sub(r"\s+", " ", str(t)).strip().casefold()
 
 
+def section_key(s) -> str:
+    """A heading path normalised for comparison: `A > B` with each segment case- and space-folded."""
+    return " > ".join(_norm(seg) for seg in SECTION_SEP.split(str(s or "")) if seg.strip())
+
+
+def _last_heading(name: str) -> str:
+    segs = [x for x in SECTION_SEP.split(name) if x.strip()]
+    return segs[-1].strip() if segs else name
+
+
+def section_coverage(k, sections, claims, cov, cname) -> tuple[list[dict], list[str]]:
+    """Stage-E section coverage for batch k, shared by chunk_claims.py and merge_findings.py.
+
+    sections: the batch's `{section_id, section}` records (batches.json); claims: the batch's stage-E
+    claims; cov: its `coverage_batch_<k>.json` entries (`{section_id, reason: "no checkable statement"}`).
+    Returns ([{heading, section, reason}] for the sections covered by an entry, [errors]); every section
+    needs a claim or a coverage entry."""
+    errors: list[str] = []
+    secs = [s for s in sections if isinstance(s, dict)]
+    by_id = {s.get("section_id"): s.get("section", "") for s in secs}
+    covered = {section_key(c.get("section")) for c in claims if isinstance(c, dict)}
+    records: list[dict] = []
+    for c in cov:
+        if not isinstance(c, dict):
+            errors.append(f"{cname}: an entry must be an object, got {type(c).__name__}")
+            continue
+        if _norm(str(c.get("reason", ""))) != COVERAGE_REASON:
+            errors.append(f"{cname}: reason {c.get('reason')!r} is not {COVERAGE_REASON!r}")
+            continue
+        if not c.get("section_id"):
+            errors.append(f"{cname}: entry needs section_id, got {c!r}")
+            continue
+        name = by_id.get(c.get("section_id"))
+        if name is None:
+            errors.append(f"{cname}: {c.get('section_id')!r} is not a section of batch {k}")
+            continue
+        covered.add(section_key(name))
+        records.append({"heading": _last_heading(name), "section": name, "reason": COVERAGE_REASON})
+    for s in secs:
+        name = s.get("section", "")
+        if section_key(name) not in covered:
+            errors.append(f"batch {k}: section {name!r} has neither a claim nor a coverage entry "
+                          f"(stage E: add a claim, or a {COVERAGE_REASON!r} entry in {cname})")
+    return records, errors
+
+
 def load_findings(path):
     """Load findings.json; return (list, violations). An object wrapper is unwrapped but reported."""
-    data = json.load(open(path))
+    data = json.loads(Path(path).read_text())
     v: list[str] = []
     if isinstance(data, dict):
         v.append("findings.json must be a JSON list")
@@ -84,14 +136,15 @@ def _headings(docx_path) -> list[str]:
     return out
 
 
-def _covered_headings(findings, coverage) -> set[str]:
+def _covered_headings(findings, coverage, mode=None) -> set[str]:
+    reasons = {COVERAGE_REASON} | ({RISK_COVERAGE_REASON} if mode == "fast" else set())
     cov = set()
     for f in findings:
         for seg in SECTION_SEP.split(str(f.get("section") or "")):
             if seg.strip():
                 cov.add(_norm(seg))
     for c in coverage or []:
-        if isinstance(c, dict) and _norm(c.get("reason", "")) == COVERAGE_REASON and c.get("heading"):
+        if isinstance(c, dict) and _norm(c.get("reason", "")) in reasons and c.get("heading"):
             cov.add(_norm(c["heading"]))
     return cov
 
@@ -104,7 +157,8 @@ def _references_images(docx_path) -> bool:
     return any(n.startswith("word/media/") for n in z.namelist())
 
 
-def check_run(findings, docx_path, *, original_sha256=None, original_path=None, coverage=None) -> list[str]:
+def check_run(findings, docx_path, *, original_sha256=None, original_path=None, coverage=None,
+              mode=None) -> list[str]:
     from docx import Document
 
     docx_path = Path(docx_path)
@@ -144,7 +198,7 @@ def check_run(findings, docx_path, *, original_sha256=None, original_path=None, 
         if _references_images(original_path) and not any(
                 str(f.get("id", "")).startswith("I") for f in findings):
             v.append("figures present but no I* findings")
-        covered = _covered_headings(findings, coverage)
+        covered = _covered_headings(findings, coverage, mode)
         for h in _headings(original_path):
             if _norm(h) not in covered:
                 v.append(f"heading not covered: {h}")
@@ -188,10 +242,11 @@ def main(argv=None) -> int:
     ap.add_argument("--original")
     a = ap.parse_args(argv)
     data, shape = load_findings(a.findings)
-    cov_path = Path(a.findings).with_name("coverage.json")
-    coverage = json.load(open(cov_path)) if cov_path.exists() else None
-    sha = hashlib.sha256(Path(a.original).read_bytes()).hexdigest() if a.original else None
-    vs = shape + check_run(data, a.docx, original_sha256=sha, original_path=a.original, coverage=coverage)
+    beside = Path(a.findings).with_name
+    coverage = json.loads(beside("coverage.json").read_text()) if beside("coverage.json").exists() else None
+    run = json.loads(beside("run.json").read_text()) if beside("run.json").exists() else {}
+    vs = shape + check_run(data, a.docx, original_sha256=run.get("source_sha256"), original_path=a.original,
+                           coverage=coverage, mode=run.get("mode"))
     print("\n".join(vs) or "clean")
     return 1 if vs else 0
 

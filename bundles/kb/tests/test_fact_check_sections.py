@@ -1,6 +1,7 @@
 """sections.py: deterministic heading sections and word-bounded batches from a .docx (synthetic fixture)."""
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import subprocess
@@ -259,6 +260,7 @@ class StatsOutputTests(unittest.TestCase):
         self.assertEqual(stats["statements_total"], 3)
         self.assertEqual(stats["statements_risk"], 2)
         self.assertEqual(stats["estimate_minutes"], S.estimate_minutes(3, 2))
+        self.assertEqual(stats["source_sha256"], hashlib.sha256(Path(src).read_bytes()).hexdigest())
 
 
 if __name__ == "__main__":

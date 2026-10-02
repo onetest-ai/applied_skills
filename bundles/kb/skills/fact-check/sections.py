@@ -7,7 +7,7 @@ Writes into <dir>:
                  heading path joined with " > "), heading_path, level, heading_p_id,
                  paragraphs [{p_id, text, sentences [{s_id, text, risk}]}], tables [{t_id, rows [{r_id, cells, s_id, risk}]}],
                  figures [{figure, p_id, image}], words.
-- stats.json    {sections_total, statements_total, statements_risk, estimate_minutes {fast, deep}}:
+- stats.json    {sections_total, statements_total, statements_risk, estimate_minutes {fast, deep}, source_sha256}:
                  statements are body sentences (s_id p<n>s<k>) plus table rows (s_id = r_id); risk is the
                  list of tags (num, date, absolute, ownership) from RISK_PATTERNS.
 - batches.json   the batch index: [{batch, file, words, sections [{section_id, section, part?}]}].
@@ -26,6 +26,7 @@ counts them (`figure`), with the paragraph id (or the table-row id) that holds i
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import re
@@ -256,7 +257,8 @@ def write_outputs(docx_path, out_dir, max_words: int = 1500) -> tuple[list[dict]
                   for s in (rec["sentences"] if kind == "p" else [rec] if kind == "r" else [])]
     total, risky = len(statements), sum(1 for s in statements if s["risk"])
     _dump(out_dir / "stats.json", {"sections_total": len(sections), "statements_total": total,
-                                   "statements_risk": risky, "estimate_minutes": estimate_minutes(total, risky)})
+                                   "statements_risk": risky, "estimate_minutes": estimate_minutes(total, risky),
+                                   "source_sha256": hashlib.sha256(Path(docx_path).read_bytes()).hexdigest()})
     index = []
     for k, units in enumerate(batches, 1):
         name = f"batch_{k}.json"

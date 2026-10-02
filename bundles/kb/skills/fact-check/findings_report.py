@@ -25,7 +25,9 @@ def coverage_line(run: dict) -> str:
     if run.get("scope") == "risk":
         return (f"Fast scan — {run.get('claims_verified', 0)} of {run.get('claims_extracted', 0)} claims checked "
                 f"(high-risk only). Run a Deep check before sign-off.")
-    return f"Deep check — all {run.get('sections_total', 0)} sections checked; {run.get('claims_verified', 0)} claims verified."
+    if run.get("scope") == "all":
+        return f"Deep check — all {run.get('sections_total', 0)} sections checked; {run.get('claims_verified', 0)} claims verified."
+    return "Coverage unknown — run.json scope is missing or unrecognised."
 
 
 def _e(x) -> str:
@@ -269,6 +271,22 @@ def render_html(findings, *, document="", brain_version="", run_date=None,
 """
 
 
+def _load_run(path: str) -> dict | None:
+    """run.json as a dict, or None after a one-line stderr message (absent, malformed or not an object)."""
+    try:
+        run = json.loads(Path(path).read_text(encoding="utf-8"))
+    except OSError as e:
+        print(f"findings_report.py: cannot read run.json {path}: {e.strerror or e}", file=sys.stderr)
+        return None
+    except ValueError as e:
+        print(f"findings_report.py: {path} is not valid JSON ({str(e).splitlines()[0]})", file=sys.stderr)
+        return None
+    if not isinstance(run, dict):
+        print(f"findings_report.py: {path} must hold a JSON object, got {type(run).__name__}", file=sys.stderr)
+        return None
+    return run
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("findings", nargs="?")
@@ -284,8 +302,16 @@ def main(argv=None) -> int:
     ap.add_argument("--output-name", default="")
     a = ap.parse_args(argv)
     if a.coverage_line:
-        print(coverage_line(json.load(open(a.coverage_line))))
+        run = _load_run(a.coverage_line)
+        if run is None:
+            return 2
+        print(coverage_line(run))
         return 0
+    run = None
+    if a.run:
+        run = _load_run(a.run)
+        if run is None:
+            return 2
     if not a.findings:
         ap.error("findings is required unless --coverage-line is given")
     if not a.out:
@@ -303,7 +329,7 @@ def main(argv=None) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(render_html(data, document=a.document, brain_version=a.brain_version, brain_name=a.brain_name,
                                title=a.title, eyebrow=a.eyebrow, lede=a.lede, output_name=a.output_name,
-                               run=json.load(open(a.run)) if a.run else None),
+                               run=run),
                    encoding="utf-8")
     print(out.resolve())
     return 0

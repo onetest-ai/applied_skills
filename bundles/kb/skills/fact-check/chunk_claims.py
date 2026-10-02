@@ -7,7 +7,9 @@ claims_batch_<k>.json (claims of that batch, written by stage E), fills each cla
 batch file by `s_id` (never trusted from the model), keeps the claims in scope (`all`, or `risk` =
 non-empty risk), and writes chunk_<j>.json ({chunk, scope, claims}) of at most --chunk-size claims
 in document order, plus chunks.json ([{chunk, file, claim_ids}]). Exits 1 and lists every problem
-(missing/malformed file, claim id not prefixed B<k>-, duplicate claim id, s_id not in its batch).
+(missing/malformed file, claim id not prefixed B<k>-, duplicate claim id, s_id not in its batch, a section
+of a batch with neither a claim nor a `coverage_batch_<k>.json` entry). It deletes the stale chunk_*.json and
+findings_chunk_*.json first: after re-running a batch's stage E, every chunk is verified again.
 """
 from __future__ import annotations
 
@@ -15,6 +17,8 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+from fact_check_invariants import section_coverage
 
 
 def _load(path: Path, errors: list[str]):
@@ -47,7 +51,8 @@ def chunk(d: Path, scope: str = "all", size: int = 8) -> tuple[list[dict], list[
     if scope not in ("all", "risk"):
         raise ValueError(f"scope must be 'all' or 'risk', got {scope!r}")
     # A failed run must leave no chunk files behind, so clear them before validating.
-    for stale in d.glob("chunk_*.json"):
+    # Stage-V findings belong to the chunks being replaced; stale ones would be merged against new chunks.
+    for stale in (*d.glob("chunk_*.json"), *d.glob("findings_chunk_*.json")):
         stale.unlink()
     (d / "chunks.json").unlink(missing_ok=True)
     errors: list[str] = []
@@ -75,6 +80,15 @@ def chunk(d: Path, scope: str = "all", size: int = 8) -> tuple[list[dict], list[
             errors.append(f"claims_batch_{k}.json: must be a top-level JSON list")
             continue
         risk = _risk_by_s_id(batch)
+        cname = f"coverage_batch_{k}.json"
+        cov = _load(d / cname, errors) if (d / cname).exists() else []
+        if not isinstance(cov, list):
+            if cov is not None:
+                errors.append(f"{cname}: must be a top-level JSON list")
+            cov = []
+        if isinstance(b.get("sections"), list):
+            _, cov_errors = section_coverage(k, b["sections"], [c for c in found if isinstance(c, dict)], cov, cname)
+            errors.extend(cov_errors)
         for c in found:
             if not isinstance(c, dict):
                 errors.append(f"claims_batch_{k}.json: item {c!r} is not a JSON object")

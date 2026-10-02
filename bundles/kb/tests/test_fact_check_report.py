@@ -300,6 +300,29 @@ class CoverageLineTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn(coverage_line(self.DEEP), (d / "o.html").read_text(encoding="utf-8"))
 
+    def test_only_scope_all_renders_the_deep_line(self):
+        from findings_report import coverage_line
+        unknown = "Coverage unknown — run.json scope is missing or unrecognised."
+        no_scope = {k: v for k, v in self.DEEP.items() if k != "scope"}
+        self.assertEqual(coverage_line(no_scope), unknown)
+        self.assertEqual(coverage_line(dict(self.DEEP, scope="everything")), unknown)
+        self.assertEqual(coverage_line({}), unknown)
+        self.assertTrue(coverage_line(self.DEEP).startswith("Deep check"))
+
+    def test_cli_guards_an_absent_malformed_or_non_dict_run_file(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "bad.json").write_text("{nope"); (d / "list.json").write_text("[]")
+        (d / "f.json").write_text(json.dumps(FINDINGS))
+        script = str(SKILL_DIR / "findings_report.py")
+        for name in ("missing.json", "bad.json", "list.json"):
+            for args in (["--coverage-line", str(d / name)],
+                         [str(d / "f.json"), "--out", str(d / "o.html"), "--run", str(d / name)]):
+                with self.subTest(name=name, flag=args[0]):
+                    r = subprocess.run([sys.executable, script, *args], capture_output=True, text=True)
+                    self.assertEqual(r.returncode, 2, r.stderr)
+                    self.assertNotIn("Traceback", r.stderr)
+                    self.assertEqual(len(r.stderr.strip().splitlines()), 1, r.stderr)
+
     def test_findings_required_without_coverage_line(self):
         r = subprocess.run([sys.executable, str(SKILL_DIR / "findings_report.py"), "--out", "x.html"],
                            capture_output=True, text=True)

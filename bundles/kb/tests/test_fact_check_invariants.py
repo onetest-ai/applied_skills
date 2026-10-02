@@ -295,6 +295,48 @@ class TestRunInvariants(unittest.TestCase):
         r = subprocess.run(args, capture_output=True, text=True)
         self.assertEqual(r.stdout.strip(), "clean", r.stdout)
 
+    # Fast mode: a section with no high-risk statement is covered, but only in a fast run.
+    def test_fast_run_accepts_no_high_risk_coverage(self):
+        self._three_heading_docx()
+        fs = [dict(f, section="Alpha > Beta") for f in GOOD]
+        self._annotate(fs)
+        cov = [{"heading": "Gamma", "reason": "no high-risk statement"}]
+        self.assertEqual(self._check(fs, coverage=cov, mode="fast"), [])
+
+    def test_deep_run_rejects_no_high_risk_coverage(self):
+        self._three_heading_docx()
+        fs = [dict(f, section="Alpha > Beta") for f in GOOD]
+        self._annotate(fs)
+        cov = [{"heading": "Gamma", "reason": "no high-risk statement"}]
+        self.assertIn("heading not covered: Gamma", self._check(fs, coverage=cov, mode="deep"))
+        self.assertIn("heading not covered: Gamma", self._check(fs, coverage=cov))
+
+    def _cli(self, fs, run=None, coverage=None):
+        import json, subprocess, sys
+        from test_plugin_structure import KB_ROOT
+        cli = KB_ROOT / "skills" / "fact-check" / "fact_check_invariants.py"
+        (self.tmp / "findings.json").write_text(json.dumps(fs))
+        for name, obj in (("run.json", run), ("coverage.json", coverage)):
+            (self.tmp / name).unlink(missing_ok=True)
+            if obj is not None:
+                (self.tmp / name).write_text(json.dumps(obj))
+        args = [sys.executable, str(cli), str(self.tmp / "findings.json"), str(self.out), "--original", str(self.orig)]
+        return subprocess.run(args, capture_output=True, text=True).stdout.strip()
+
+    def test_cli_takes_the_mode_from_run_json(self):
+        self._three_heading_docx()
+        fs = [dict(f, section="Alpha > Beta") for f in GOOD]
+        self._annotate(fs)
+        cov = [{"heading": "Gamma", "reason": "no high-risk statement"}]
+        self.assertEqual(self._cli(fs, run={"mode": "fast"}, coverage=cov), "clean")
+        self.assertIn("heading not covered: Gamma", self._cli(fs, run={"mode": "deep"}, coverage=cov))
+
+    def test_cli_detects_a_modified_original_from_the_recorded_hash(self):
+        self._annotate(GOOD)
+        self.assertEqual(self._cli(GOOD, run={"mode": "deep", "source_sha256": self.sha}), "clean")
+        out = self._cli(GOOD, run={"mode": "deep", "source_sha256": "0" * 64})
+        self.assertIn("original document was modified", out)
+
     # RC-4: findings.json is a list
     def test_load_findings_flags_an_object(self):
         import json
