@@ -258,5 +258,53 @@ class TestSkillWritesTheReportLocally(unittest.TestCase):
         self.assertIn("after step 8", step9)
 
 
+
+class CoverageLineTests(unittest.TestCase):
+    FAST = {"mode": "fast", "scope": "risk", "sections_total": 9, "claims_extracted": 40, "claims_verified": 12}
+    DEEP = {"mode": "deep", "scope": "all", "sections_total": 9, "claims_extracted": 40, "claims_verified": 40}
+
+    def test_fast_line(self):
+        from findings_report import coverage_line
+        self.assertEqual(coverage_line(self.FAST),
+                         "Fast scan — 12 of 40 claims checked (high-risk only). Run a Deep check before sign-off.")
+
+    def test_deep_line(self):
+        from findings_report import coverage_line
+        self.assertEqual(coverage_line(self.DEEP), "Deep check — all 9 sections checked; 40 claims verified.")
+
+    def test_zero_risk_fast_line(self):
+        from findings_report import coverage_line
+        self.assertEqual(coverage_line(dict(self.FAST, claims_verified=0)),
+                         "Fast scan — 0 of 40 claims checked (high-risk only). Run a Deep check before sign-off.")
+
+    def test_page_banner_equals_cli_line(self):
+        from findings_report import coverage_line, render_html
+        html = render_html(FINDINGS, document="x.docx", brain_version="v1", run_date="2026-01-01", run=self.FAST)
+        self.assertIn(f'<p class="coverage" data-mode="fast">{coverage_line(self.FAST)}</p>', html)
+        d = Path(tempfile.mkdtemp()); (d / "run.json").write_text(json.dumps(self.FAST))
+        r = subprocess.run([sys.executable, str(SKILL_DIR / "findings_report.py"), "--coverage-line", str(d / "run.json")],
+                           capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, coverage_line(self.FAST)))
+
+    def test_no_run_means_no_banner(self):
+        from findings_report import render_html
+        html = render_html(FINDINGS, document="x.docx", brain_version="v1", run_date="2026-01-01")
+        self.assertNotIn('class="coverage"', html)
+
+    def test_cli_run_flag_renders_banner(self):
+        from findings_report import coverage_line
+        d = Path(tempfile.mkdtemp())
+        (d / "run.json").write_text(json.dumps(self.DEEP)); (d / "f.json").write_text(json.dumps(FINDINGS))
+        r = subprocess.run([sys.executable, str(SKILL_DIR / "findings_report.py"), str(d / "f.json"),
+                            "--out", str(d / "o.html"), "--run", str(d / "run.json")], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(coverage_line(self.DEEP), (d / "o.html").read_text(encoding="utf-8"))
+
+    def test_findings_required_without_coverage_line(self):
+        r = subprocess.run([sys.executable, str(SKILL_DIR / "findings_report.py"), "--out", "x.html"],
+                           capture_output=True, text=True)
+        self.assertNotEqual(r.returncode, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

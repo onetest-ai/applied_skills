@@ -204,29 +204,120 @@ class TestRunInvariants(unittest.TestCase):
         self._annotate(GOOD)
         self.assertNotIn("figures present but no I* findings", self._check(GOOD))
 
-    # RC-3: two-sided check must be recorded
-    def test_verified_topo_without_checks_is_a_violation(self):
-        fs = GOOD + [finding("C05", "Verified", "Minor", "count only", type="TOPO")]
-        self._annotate(fs)
-        self.assertTrue(any("C05" in v and "checks" in v for v in self._check(fs)))
+    # RC-5 (b8 evidence): the model fabricated a self-reported `checks` field (claimed latest_only=false searches
+    # that never ran), so the field is no longer required; only the actual tool calls in the transcript count.
+    def test_verified_two_sided_types_need_no_checks_field(self):
+        for t in ("TOPO", "TIME", "STATUS", "OWN"):
+            fs = GOOD + [finding("C05", "Verified", "Minor", "count only", type=t)]
+            self._annotate(fs)
+            self.assertEqual(self._check(fs), [], t)
 
-    def test_verified_time_with_only_one_check_is_a_violation(self):
-        fs = GOOD + [finding("C05", "Verified", "Minor", "count only", type="TIME",
-                             checks=["search", "search latest_only=false"])]
-        self._annotate(fs)
-        self.assertTrue(any("C05" in v and "opposing" in v for v in self._check(fs)))
-
-    def test_verified_topo_with_both_checks_is_clean(self):
-        fs = GOOD + [finding("C05", "Verified", "Minor", "count only", type="TOPO",
-                             checks=["search", "search latest_only=false", "opposing"])]
-        self._annotate(fs)
+    def test_verified_num_with_time_marker_needs_no_checks_field(self):
+        fs = GOOD + [finding("C05", "Verified", "Minor", "count only", "currently 12 sites", type="NUM")]
+        self._annotate(GOOD)
         self.assertEqual(self._check(fs), [])
 
-    def test_non_verified_or_num_findings_need_no_checks(self):
-        fs = GOOD + [finding("C05", "No Evidence", "Minor", "log only", type="STATUS"),
-                     finding("C06", "Verified", "Minor", "count only", type="NUM")]
+    # RC-1: auditable coverage
+    def _three_heading_docx(self):
+        from docx import Document
+        d = Document()
+        d.add_heading("Alpha", 1)
+        d.add_paragraph("Revenue was 40 million in 2025 across green fields.")
+        d.add_heading("Beta", 2)
+        d.add_paragraph("Second statement.")
+        d.add_heading("Gamma", 1)
+        d.add_paragraph("Third statement.")
+        d.save(self.orig)
+        self.sha = hashlib.sha256(self.orig.read_bytes()).hexdigest()
+
+    def test_empty_section_is_a_violation(self):
+        fs = [dict(f) for f in GOOD]
+        fs[3]["section"] = ""
         self._annotate(fs)
-        self.assertEqual(self._check(fs), [])
+        self.assertIn("finding C04: empty section", self._check(fs))
+
+    def test_missing_section_key_is_a_violation(self):
+        fs = [dict(f) for f in GOOD]
+        del fs[2]["section"]
+        self._annotate(fs)
+        self.assertIn("finding C03: empty section", self._check(fs))
+
+    def test_uncovered_headings_are_violations(self):
+        self._three_heading_docx()
+        fs = [dict(f, section="Alpha") for f in GOOD]
+        fs[1]["section"] = "Alpha > Beta"
+        self._annotate(fs)
+        vs = self._check(fs)
+        self.assertIn("heading not covered: Gamma", vs)
+        self.assertNotIn("heading not covered: Alpha", vs)
+        self.assertNotIn("heading not covered: Beta", vs)
+
+    def test_coverage_record_covers_a_heading(self):
+        self._three_heading_docx()
+        fs = [dict(f, section="Alpha > Beta") for f in GOOD]
+        self._annotate(fs)
+        cov = [{"heading": "Gamma", "reason": "no checkable statement"}]
+        self.assertEqual(self._check(fs, coverage=cov), [])
+
+    def test_coverage_record_needs_the_reason(self):
+        self._three_heading_docx()
+        fs = [dict(f, section="Alpha > Beta") for f in GOOD]
+        self._annotate(fs)
+        cov = [{"heading": "Gamma", "reason": "skipped"}]
+        self.assertIn("heading not covered: Gamma", self._check(fs, coverage=cov))
+
+    def test_heading_prefix_is_not_a_cover(self):
+        self._three_heading_docx()
+        fs = [dict(f, section="Alphabet > Betamax > Gamma2") for f in GOOD]
+        self._annotate(fs)
+        vs = self._check(fs)
+        self.assertEqual(sorted(v for v in vs if v.startswith("heading not covered")),
+                         ["heading not covered: Alpha", "heading not covered: Beta", "heading not covered: Gamma"])
+
+    def test_no_headings_check_without_original_path(self):
+        fs = [dict(f, section="Zed") for f in GOOD]
+        self._annotate(fs)
+        self.assertFalse(any(v.startswith("heading not covered") for v in
+                             check_run(fs, self.out, original_sha256=self.sha)))
+
+    def test_cli_reads_coverage_json_beside_findings(self):
+        import json, subprocess, sys
+        from test_plugin_structure import KB_ROOT
+        cli = KB_ROOT / "skills" / "fact-check" / "fact_check_invariants.py"
+        self._three_heading_docx()
+        fs = [dict(f, section="Alpha > Beta") for f in GOOD]
+        self._annotate(fs)
+        (self.tmp / "findings.json").write_text(json.dumps(fs))
+        args = [sys.executable, str(cli), str(self.tmp / "findings.json"), str(self.out), "--original", str(self.orig)]
+        r = subprocess.run(args, capture_output=True, text=True)
+        self.assertIn("heading not covered: Gamma", r.stdout)
+        (self.tmp / "coverage.json").write_text(json.dumps([{"heading": "Gamma", "reason": "no checkable statement"}]))
+        r = subprocess.run(args, capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), "clean", r.stdout)
+
+    # RC-4: findings.json is a list
+    def test_load_findings_flags_an_object(self):
+        import json
+        from fact_check_invariants import load_findings
+        p = self.tmp / "f.json"
+        p.write_text(json.dumps({"findings": GOOD}))
+        data, vs = load_findings(p)
+        self.assertEqual(data, GOOD)
+        self.assertIn("findings.json must be a JSON list", vs)
+        p.write_text(json.dumps(GOOD))
+        data, vs = load_findings(p)
+        self.assertEqual((data, vs), (GOOD, []))
+
+    def test_cli_reports_object_findings(self):
+        import json, subprocess, sys
+        from test_plugin_structure import KB_ROOT
+        cli = KB_ROOT / "skills" / "fact-check" / "fact_check_invariants.py"
+        self._annotate(GOOD)
+        p = self.tmp / "findings.json"
+        p.write_text(json.dumps({"findings": GOOD}))
+        r = subprocess.run([sys.executable, str(cli), str(p), str(self.out)], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("findings.json must be a JSON list", r.stdout)
 
     def test_invariants_cli_ships_in_the_skill_dir_and_runs(self):
         import subprocess

@@ -5,6 +5,8 @@ violation strings (empty = clean). CLI, for a run saved by a project:
 
     python fact_check_invariants.py <findings.json> <annotated.docx> --original <draft.docx>
 
+A `coverage.json` beside findings.json (list of {heading, reason: "no checkable statement"}) is read too.
+
 Verdict agreement against a golden is deliberately not checked here: it varies between runs of
 the same skill. These are the properties that must not vary.
 """
@@ -23,6 +25,11 @@ VERDICTS = {"Verified", "Incorrect", "Misleading", "Outdated", "Controversial", 
 DEFECTS = VERDICTS - {"Verified", "No Evidence"}
 SEVERITIES = {"Blocker", "Major", "Minor"}
 MAX_COMMENT_WORDS = 60
+# The step-9 findings.json keys, in SKILL.md order (a test pins this to the SKILL.md text).
+# `destination` is set in step 8, so it may be absent before then (e.g. at merge_findings.py).
+FINDING_KEYS = ("id", "p_id", "section", "quote", "type", "verdict", "severity", "confidence",
+                "evidence", "fix", "source", "sources", "destination")
+LATE_KEYS = frozenset({"destination"})
 HEADER = re.compile(r"^\[(?P<verdict>[^·\]]+?) · (?P<severity>[^·\]]+?) · (?P<id>[^\]\s]+)\]")
 
 
@@ -46,8 +53,47 @@ def _range_texts(docx_path: Path) -> dict[str, str]:
     return out
 
 
-TWO_SIDED_TYPES = {"TIME", "STATUS", "OWN", "TOPO"}
-REQUIRED_CHECKS = ("search latest_only=false", "opposing")
+COVERAGE_REASON = "no checkable statement"
+SECTION_SEP = re.compile(r"\s*(?:>|›|»)\s*")
+
+
+def _norm(t: str) -> str:
+    return re.sub(r"\s+", " ", str(t)).strip().casefold()
+
+
+def load_findings(path):
+    """Load findings.json; return (list, violations). An object wrapper is unwrapped but reported."""
+    data = json.load(open(path))
+    v: list[str] = []
+    if isinstance(data, dict):
+        v.append("findings.json must be a JSON list")
+        data = data.get("findings") or data.get("claims") or next(iter(data.values()), [])
+    if not isinstance(data, list):
+        v.append("findings.json must be a JSON list")
+        data = []
+    return data, v
+
+
+def _headings(docx_path) -> list[str]:
+    from docx import Document
+    out = []
+    for p in Document(docx_path).paragraphs:
+        name = (p.style.name if p.style is not None else "") or ""
+        if (name.startswith("Heading") or name == "Title") and p.text.strip():
+            out.append(p.text.strip())
+    return out
+
+
+def _covered_headings(findings, coverage) -> set[str]:
+    cov = set()
+    for f in findings:
+        for seg in SECTION_SEP.split(str(f.get("section") or "")):
+            if seg.strip():
+                cov.add(_norm(seg))
+    for c in coverage or []:
+        if isinstance(c, dict) and _norm(c.get("reason", "")) == COVERAGE_REASON and c.get("heading"):
+            cov.add(_norm(c["heading"]))
+    return cov
 
 
 def _references_images(docx_path) -> bool:
@@ -58,7 +104,7 @@ def _references_images(docx_path) -> bool:
     return any(n.startswith("word/media/") for n in z.namelist())
 
 
-def check_run(findings, docx_path, *, original_sha256=None, original_path=None) -> list[str]:
+def check_run(findings, docx_path, *, original_sha256=None, original_path=None, coverage=None) -> list[str]:
     from docx import Document
 
     docx_path = Path(docx_path)
@@ -74,17 +120,14 @@ def check_run(findings, docx_path, *, original_sha256=None, original_path=None) 
             v.append(f"{fid}: duplicate claim id")
         else:
             seen.add(fid)
+        if not str(f.get("section") or "").strip():
+            v.append(f"finding {fid}: empty section")
         if f.get("verdict") not in VERDICTS:
             v.append(f"{fid}: unknown verdict {f.get('verdict')!r}")
         if f.get("verdict") != "Verified" and f.get("severity") not in SEVERITIES:
             v.append(f"{fid}: unknown severity {f.get('severity')!r}")
 
         verdict, commented = f.get("verdict"), _has_comment(f)
-        if verdict == "Verified" and str(f.get("type", "")).upper() in TWO_SIDED_TYPES:
-            checks = f.get("checks") or []
-            for need in REQUIRED_CHECKS:
-                if need not in checks:
-                    v.append(f"{fid}: Verified {f.get('type')} finding lacks {need!r} in checks")
         if verdict in DEFECTS and not commented:
             v.append(f"{fid}: {verdict} defect must have a Word comment")
         if verdict == "No Evidence":
@@ -101,6 +144,10 @@ def check_run(findings, docx_path, *, original_sha256=None, original_path=None) 
         if _references_images(original_path) and not any(
                 str(f.get("id", "")).startswith("I") for f in findings):
             v.append("figures present but no I* findings")
+        covered = _covered_headings(findings, coverage)
+        for h in _headings(original_path):
+            if _norm(h) not in covered:
+                v.append(f"heading not covered: {h}")
         if original_sha256 and hashlib.sha256(Path(original_path).read_bytes()).hexdigest() != original_sha256:
             v.append("original document was modified")
 
@@ -140,11 +187,11 @@ def main(argv=None) -> int:
     ap.add_argument("docx")
     ap.add_argument("--original")
     a = ap.parse_args(argv)
-    data = json.load(open(a.findings))
-    if isinstance(data, dict):
-        data = data.get("findings") or data.get("claims") or next(iter(data.values()))
+    data, shape = load_findings(a.findings)
+    cov_path = Path(a.findings).with_name("coverage.json")
+    coverage = json.load(open(cov_path)) if cov_path.exists() else None
     sha = hashlib.sha256(Path(a.original).read_bytes()).hexdigest() if a.original else None
-    vs = check_run(data, a.docx, original_sha256=sha, original_path=a.original)
+    vs = shape + check_run(data, a.docx, original_sha256=sha, original_path=a.original, coverage=coverage)
     print("\n".join(vs) or "clean")
     return 1 if vs else 0
 

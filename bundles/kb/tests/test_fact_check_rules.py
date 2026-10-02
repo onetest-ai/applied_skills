@@ -5,6 +5,7 @@ import re
 import unittest
 from pathlib import Path
 
+KB_ROOT = Path(__file__).resolve().parent.parent
 SKILL = Path(__file__).resolve().parent.parent / "skills" / "fact-check" / "SKILL.md"
 
 
@@ -167,7 +168,7 @@ class TestFactCheckRootCauseRules(unittest.TestCase):
 
     def test_coverage_self_check_present(self):
         self.assertIn("Coverage self-check", self.step2)
-        self.assertIn("re-walk the document before verifying", self.step2)
+        self.assertIn("Re-walk any heading that has neither before verifying", self.step2)
         self.assertIn("50–90 claims", self.step2)
         self.assertIn("never as a cap", self.step2)
 
@@ -180,15 +181,221 @@ class TestFactCheckRootCauseRules(unittest.TestCase):
         self.assertIn("`I01…`", self.step9)
         self.assertIn('`type` and `section` "Figure"', self.step9)
 
-    # RC-3
-    def test_checks_list_recorded_and_required_for_verified(self):
-        for s in (self.step4, self.step9):
-            self.assertIn("`checks`", s)
-            self.assertIn("search latest_only=false", s)
-            self.assertIn('"opposing"', s)
-        self.assertIn("may be **Verified** only if `checks` contains both", self.step4)
+    # RC-3 / RC-4: two-sided check is now a mandatory sequential algorithm (not a self-attestation).
+    # The `checks` self-report field was removed because the model fabricated it (b8 evidence:
+    # 23 claims declared opposing in one document but only 2 latest_only=false searches ran).
+    # The new design requires explicit scratchpad steps (a)-(e) before Verified.
+    def test_two_sided_check_is_sequential_algorithm(self):
+        self.assertIn("execute every lettered step in order", self.step4)
+        self.assertIn("record each result explicitly", self.step4)
+        self.assertIn("latest_only=false", self.step4)
+        self.assertIn("opposing query:", self.step4)
+        self.assertIn("no opposing span found", self.step4)
         self.assertIn("otherwise the verdict is No Evidence", self.step4)
-        self.assertIn("get_current_fact", self.step9)
+        self.assertIn("get_current_fact", self.step4)
+
+class TestCoverageAndVerifiedRules(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        t = SKILL.read_text(encoding="utf-8")
+        cls.step2 = flat(section(t, "### 2.", "### 3."))
+        cls.step4 = flat(section(t, "### 4.", "### 5."))
+        cls.step5 = flat(section(t, "### 5.", "### 6."))
+        cls.step9 = flat(section(t, "### 9.", "### 10."))
+        cls.all = flat(t)
+
+    # RC-1
+    def test_section_is_the_heading_path_and_never_empty(self):
+        self.assertIn("`section` is the heading path of its paragraph", self.step2)
+        self.assertIn('"Figure" for `I*`', self.step2)
+        self.assertIn("An empty `section` is invalid", self.step2)
+
+    def test_coverage_self_check_walks_headings(self):
+        self.assertIn("List every heading of the document", self.step2)
+        self.assertIn("as the `section` of at least one finding", self.step2)
+        self.assertIn("`coverage.json`", self.step2)
+        self.assertIn('"no checkable statement"', self.step2)
+        self.assertIn("Re-walk any heading that has neither", self.step2)
+        self.assertNotIn("Count the non-heading paragraphs", self.step2)
+
+    # RC-2
+    def test_mandatory_claims(self):
+        self.assertIn("Always extract", self.step2)
+        for w in ("never", "always", "all", "none", "no", "only", "every", "consistent across"):
+            self.assertIn(w, self.step2)
+        self.assertIn("absolute or universal statements", self.step2)
+        self.assertIn("who owns, operates, attended, decided", self.step2)
+        self.assertIn("every number with a unit or count, and every date", self.step2)
+
+    # RC-3
+    def test_verified_needs_positive_evidence(self):
+        self.assertIn("same subject, scope and period as the claim", self.step4)
+        self.assertIn("A related or partially supporting passage is not enough", self.step4)
+        self.assertIn("Misleading or No Evidence", self.step4)
+
+    def test_opposing_evidence_blocks_verified(self):
+        self.assertIn("any statement whose value, owner, status or date differs for the same subject", self.step4)
+        self.assertIn("cannot be Verified", self.step4)
+        self.assertIn("newer or superseding", self.step4)
+        self.assertIn("same-period disagreement", self.step4)
+
+    def test_num_claims_with_time_or_status_dimension_are_two_sided(self):
+        self.assertIn("NUM claims that carry a time or status dimension", self.step4)
+        for m in ('"currently"', '"today"', '"~N"', '"now"', "a year"):
+            self.assertIn(m, self.step4)
+        self.assertIn("run steps **b** and **d** of the two-sided check sequence below", self.step4)
+
+    # RC-4
+    def test_findings_json_is_top_level_array_and_coverage_is_separate(self):
+        self.assertIn("top-level JSON array of finding objects", self.step9)
+        self.assertIn("never an object wrapper", self.step9)
+        self.assertIn("`coverage.json` beside findings.json", self.step9)
+
+    # RC-5
+    def test_no_client_names_in_worked_example(self):
+        self.assertIn("`The speaker did not establish whether system A pushes the result into system B or B reads it.` "
+                      "→ OWN (who controls that path?)", self.all)
+
+    def test_no_self_reported_checks_field(self):
+        # the field was fabricated in real runs; the skill must not ask the model to self-report searches
+        self.assertNotIn("record `checks`", self.all)
+        self.assertNotIn("without both checks is invalid", self.all)
+
+    def test_num_with_time_dimension_runs_sequence_steps(self):
+        self.assertIn("run steps **b** and **d** of the two-sided check sequence below", self.all)
+
+
+class TestSectionParallelRules(unittest.TestCase):
+    """Section-parallel design: deterministic sections, per-batch subagents, deterministic merge."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = SKILL.read_text(encoding="utf-8")
+        cls.step1 = flat(section(cls.text, "### 1.", "### 1b."))
+        cls.dispatch = flat(section(cls.text, "### 1b.", "### 2."))
+        cls.step2 = flat(section(cls.text, "### 2.", "### 3."))
+        cls.step3 = flat(section(cls.text, "### 3.", "### 4."))
+        cls.merge = flat(section(cls.text, "### 6a.", "### 6b."))
+
+    def test_step_1_runs_sections_cli_not_improvised_extraction(self):
+        self.assertIn('python sections.py "<draft>.docx" --out <work dir>', self.step1)
+        self.assertIn("--max-words 1500", self.step1)
+        self.assertIn("`sections.json`", self.step1)
+        self.assertIn("`batches.json`", self.step1)
+        self.assertNotIn("Run python (`python-docx`) in the session", self.step1)
+        self.assertIn("Never rely on a summary to read the draft", self.step1)
+        self.assertIn("word/embeddings/*", self.step1)            # embedded objects still read
+
+    def test_dispatch_step_sits_between_1_and_2(self):
+        t = self.text
+        self.assertLess(t.index("### 1."), t.index("### 1b. Extract, chunk, verify (two stages)"))
+        self.assertLess(t.index("### 1b. Extract, chunk, verify (two stages)"), t.index("### 2."))
+
+    def test_dispatch_in_waves_of_wave_size(self):
+        d = self.dispatch
+        self.assertIn("waves of `wave_size` (default 10)", d)
+        for item in ("`<work dir>/batch_<k>.json`", "absolute path of this SKILL.md", "`<work dir>/claims_batch_<k>.json`",
+                     "`<work dir>/coverage_batch_<k>.json`", "`<work dir>/findings_chunk_<j>.json`"):
+            self.assertIn(item, d)
+
+    def test_subagents_read_step_2_then_steps_4_to_6(self):
+        d = self.dispatch
+        self.assertIn("reads **step 2** here", d)
+        self.assertIn("reads **steps 4–6** here", d)
+        self.assertIn('"reason": "no checkable statement"', d)
+
+    def test_sequential_fallback_without_the_agent_tool(self):
+        self.assertIn("if the Agent tool is unavailable", self.dispatch)
+        self.assertIn("runs the same stages sequentially", self.dispatch)
+
+    def test_figures_stay_in_the_main_session(self):
+        self.assertIn("main session", self.step3)
+        self.assertIn("`<work dir>/findings_figures.json`", self.step3)
+
+    def test_merge_runs_via_its_cli_before_step_7(self):
+        self.assertIn('python merge_findings.py <work dir> --out <run dir>/findings.json', self.merge)
+        self.assertLess(self.text.index("### 6a."), self.text.index("### 7."))
+        self.assertIn("On failure it lists", self.merge)
+        self.assertIn("renumbers", self.merge)
+
+    def test_step_2_coverage_is_enforced_by_the_merge(self):
+        self.assertIn("`merge_findings.py` enforces section coverage", self.step2)
+        self.assertIn("`coverage_batch_<k>.json`", self.step2)
+
+
+class TwoModeTwoStageTests(unittest.TestCase):
+    def setUp(self):
+        self.all = (KB_ROOT / "skills" / "fact-check" / "SKILL.md").read_text(encoding="utf-8")
+
+    def test_step0b_mode_selection(self):
+        for t in ("### 0b. Choose the mode", '"fast", "quick", "scan"', '"deep", "full", "thorough", "sign-off", "final"',
+                  "ask once", "mode required: fast or deep"):
+            self.assertIn(t, self.all)
+
+    def test_step1b_two_stages_and_parameters(self):
+        for t in ("Stage E", "Stage V", "chunk_claims.py <work dir> --scope", "at most 8 claims",
+                  "per claim, never batched across claims", "waves of `wave_size` (default 10)",
+                  "| `scope` | `all` | `risk` |"):
+            self.assertIn(t, self.all)
+
+    def test_fallback_runs_same_stages(self):
+        self.assertIn("runs the same stages sequentially", self.all)
+
+    def test_merge_and_report_use_scope_and_run(self):
+        for t in ("merge_findings.py <work dir> --out <run dir>/findings.json --scope", "--run <run dir>/run.json",
+                  "findings_report.py --coverage-line <run dir>/run.json"):
+            self.assertIn(t, self.all)
+
+    def test_dry_no_second_procedure_and_patterns_only_in_sections(self):
+        self.assertEqual(self.all.count("### 2. Extract atomic claims"), 1)
+        self.assertEqual(self.all.count("### 4. Verify"), 1)
+        self.assertNotIn("findings_batch_", self.all)
+        for word in ("consistent across", "operated by", "managed by"):
+            self.assertNotIn(word, self.all.split("### 2. Extract atomic claims")[0])
+        sections_src = (KB_ROOT / "skills" / "fact-check" / "sections.py").read_text(encoding="utf-8")
+        self.assertIn("RISK_PATTERNS", sections_src)
+
+
+class FixRound1Tests(unittest.TestCase):
+    def setUp(self):
+        self.all = flat((KB_ROOT / "skills" / "fact-check" / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_fix_round_1_sentences(self):
+        for t in (
+            "**The reply's** first line is the output of `python findings_report.py --coverage-line <run dir>/run.json`, verbatim.",
+            "the 'reused baseline of <date>, N claims' line comes second. Then the one-or-two-sentence answer.",
+            "send up to `wave_size` dispatches in one message, wait for the whole wave to finish, then send the next wave.",
+            "except `destination`, which step 8 sets",
+            "copy `p_id`, `quote`, `section` and `type` from the chunk's claim unchanged",
+            "Run the two-sided sequence per claim (step 4); never batch one search across several claims.",
+            "still writes `claims_batch_<k>.json` as `[]`",
+            "does not run steps 3–10 and does not dispatch subagents",
+            "in stage E the claim id field is `claim_id` (`B<k>-C<n>`), renumbered to `C01…` by the merge",
+            "use the `s_id` of the sentence holding its main assertion",
+            "step 3 (figures and embedded objects)",
+            "### 6a. Merge the chunks",
+            "figure ids `I*` are kept",
+            "In fast mode `findings.json` holds only the in-scope claims that stage V verified; never add rows for out-of-scope claims",
+            "`estimate_minutes.fast` and `estimate_minutes.deep`",
+            "stop at this step, before step 1, with \"mode required: fast or deep\" and write nothing",
+        ):
+            self.assertIn(t, self.all)
+        self.assertEqual(self.all.count("wait for the whole wave to finish"), 2)
+        self.assertNotIn("Batch Brain calls per section", self.all)
+        self.assertNotIn("Merge the batches", self.all)
+
+
+class FixRound2Tests(unittest.TestCase):
+    def setUp(self):
+        self.all = flat((KB_ROOT / "skills" / "fact-check" / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_baseline_line_is_second(self):
+        self.assertNotIn("first line of the report says", self.all)
+        self.assertIn("the reply's second line, after the coverage line (step 10), says \"reused baseline of <date>, N claims\"", self.all)
+
+    def test_merge_runs_before_6b(self):
+        self.assertIn("Run it before step 6b.", self.all)
+        self.assertIn("Run it before step 6b. Steps 6b–10 work on the merged `findings.json`, never on the chunk files.", self.all)
 
 
 if __name__ == "__main__":

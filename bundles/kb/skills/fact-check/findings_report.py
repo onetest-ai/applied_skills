@@ -20,6 +20,14 @@ VERDICTS = ["Incorrect", "Misleading", "Outdated", "Controversial", "No Evidence
 MAJOR_SEVERITIES = ("Blocker", "Major")
 
 
+def coverage_line(run: dict) -> str:
+    """The one sentence that states what a run checked (spec §13.6/§15.3); page and report both use it."""
+    if run.get("scope") == "risk":
+        return (f"Fast scan — {run.get('claims_verified', 0)} of {run.get('claims_extracted', 0)} claims checked "
+                f"(high-risk only). Run a Deep check before sign-off.")
+    return f"Deep check — all {run.get('sections_total', 0)} sections checked; {run.get('claims_verified', 0)} claims verified."
+
+
 def _e(x) -> str:
     return html.escape("" if x is None else str(x), quote=True)
 
@@ -90,6 +98,7 @@ h2{font-family:var(--display);font-weight:600;font-size:20px;margin:0 0 14px}
 .lede{color:var(--ink-2);max-width:68ch;margin:0}
 .meta{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:14px;font-family:var(--mono);font-size:12.5px;color:var(--muted)}
 .meta b{color:var(--ink-2);font-weight:500}
+.coverage{margin:0;padding:8px 12px;border-left:4px solid var(--warn,#b45309);font-weight:600;background:var(--surface)}
 .tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
 .tile{background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:16px 18px}
 .tile .k{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
@@ -163,7 +172,7 @@ JS = """
 
 
 def render_html(findings, *, document="", brain_version="", run_date=None,
-                 brain_name="", title="", eyebrow="", lede="", output_name="") -> str:
+                 brain_name="", title="", eyebrow="", lede="", output_name="", run=None) -> str:
     run_date = run_date or datetime.date.today().isoformat()
     n = len(findings)
     counts = {v: sum(1 for f in findings if f.get("verdict") == v) for v in VERDICTS}
@@ -190,6 +199,9 @@ def render_html(findings, *, document="", brain_version="", run_date=None,
         f'<div class="tile{" alert" if k == "major" and v else ""}"><div class="k">{_e(l)}</div>'
         f'<div class="v" data-stat="{k}"{f" style=\"color:var(--s-verified)\"" if k == "verified" else ""}>{v}</div>'
         f'<div class="n">{_e(sub)}</div></div>' for k, v, l, sub in tiles)
+
+    coverage_html = (f'<p class="coverage" data-mode="{_e(run.get("mode", ""))}">{_e(coverage_line(run))}</p>'
+                     if run else "")
 
     bars_html = "".join(
         f'<div class="vbar"><span class="vlabel">{_e(v)}</span>'
@@ -236,6 +248,7 @@ def render_html(findings, *, document="", brain_version="", run_date=None,
 {f'<p class="lede">{_e(lede)}</p>' if lede else ""}
 <div class="meta">{meta_html}</div>
 </header>
+{coverage_html}
 <section class="tiles" aria-label="Summary">{tiles_html}</section>
 <section class="band">
 <div class="panel"><h2>Verdicts</h2><div class="bars">{bars_html}</div><p class="note">Bars are drawn to scale against all {n} claims.</p></div>
@@ -258,8 +271,10 @@ def render_html(findings, *, document="", brain_version="", run_date=None,
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("findings")
-    ap.add_argument("--out", required=True)
+    ap.add_argument("findings", nargs="?")
+    ap.add_argument("--run", default="")
+    ap.add_argument("--coverage-line", default="")
+    ap.add_argument("--out")
     ap.add_argument("--document", default="")
     ap.add_argument("--brain-version", default="")
     ap.add_argument("--brain-name", default="")
@@ -268,6 +283,13 @@ def main(argv=None) -> int:
     ap.add_argument("--lede", default="")
     ap.add_argument("--output-name", default="")
     a = ap.parse_args(argv)
+    if a.coverage_line:
+        print(coverage_line(json.load(open(a.coverage_line))))
+        return 0
+    if not a.findings:
+        ap.error("findings is required unless --coverage-line is given")
+    if not a.out:
+        ap.error("--out is required unless --coverage-line is given")
     data = json.load(open(a.findings))
     if isinstance(data, dict):
         data = data.get("findings") or data.get("claims")
@@ -280,7 +302,8 @@ def main(argv=None) -> int:
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(render_html(data, document=a.document, brain_version=a.brain_version, brain_name=a.brain_name,
-                               title=a.title, eyebrow=a.eyebrow, lede=a.lede, output_name=a.output_name),
+                               title=a.title, eyebrow=a.eyebrow, lede=a.lede, output_name=a.output_name,
+                               run=json.load(open(a.run)) if a.run else None),
                    encoding="utf-8")
     print(out.resolve())
     return 0
