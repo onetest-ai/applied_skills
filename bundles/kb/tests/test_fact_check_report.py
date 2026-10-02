@@ -291,6 +291,32 @@ class CoverageLineTests(unittest.TestCase):
         html = render_html(FINDINGS, document="x.docx", brain_version="v1", run_date="2026-01-01")
         self.assertNotIn('class="coverage"', html)
 
+    def _cli(self, d, *extra):
+        r = subprocess.run([sys.executable, str(SKILL_DIR / "findings_report.py"), str(d / "findings.json"),
+                            "--out", str(d / "o.html"), *extra], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return (d / "o.html").read_text(encoding="utf-8")
+
+    def test_cli_reads_run_json_beside_findings_when_run_is_not_given(self):
+        from findings_report import coverage_line
+        d = Path(tempfile.mkdtemp())
+        (d / "findings.json").write_text(json.dumps(FINDINGS)); (d / "run.json").write_text(json.dumps(self.DEEP))
+        self.assertIn(f'<p class="coverage" data-mode="deep">{coverage_line(self.DEEP)}</p>', self._cli(d))
+
+    def test_cli_without_run_json_renders_no_banner(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "findings.json").write_text(json.dumps(FINDINGS))
+        self.assertNotIn('class="coverage"', self._cli(d))
+
+    def test_explicit_run_wins_over_run_json_beside_findings(self):
+        from findings_report import coverage_line
+        d = Path(tempfile.mkdtemp())
+        (d / "findings.json").write_text(json.dumps(FINDINGS)); (d / "run.json").write_text(json.dumps(self.DEEP))
+        (d / "other.json").write_text(json.dumps(self.FAST))
+        page = self._cli(d, "--run", str(d / "other.json"))
+        self.assertIn(coverage_line(self.FAST), page)
+        self.assertNotIn(coverage_line(self.DEEP), page)
+
     def test_cli_run_flag_renders_banner(self):
         from findings_report import coverage_line
         d = Path(tempfile.mkdtemp())

@@ -40,6 +40,11 @@ def claim(k, n, section):
             "quote": "runs 12 services", "type": "NUM"}
 
 
+def fclaim(n):
+    return {"claim_id": f"I{n:02d}", "p_id": "p9", "s_id": "p9", "section": "Figure", "quote": "edge A to B",
+            "type": "TOPO", "kind": "figure", "figure": 1}
+
+
 class MergeCase(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
@@ -69,6 +74,14 @@ class MergeCase(unittest.TestCase):
                 secs.append({"section_id": s["section_id"], "section": s["section"],
                              "paragraphs": [{"p_id": "p3", "text": "x", "sentences": sents}], "tables": []})
             self.write(f"batch_{k}.json", {"batch": k, "sections": secs})
+
+    def add_figures(self, n):
+        """n figure claims, verified in their own chunk 2 (as chunk_claims.py would chunk them)."""
+        self.write("claims_figures.json", [fclaim(i) for i in range(1, n + 1)])
+        chunks = json.loads((self.dir / "chunks.json").read_text())
+        ids = [f"I{i:02d}" for i in range(1, n + 1)]
+        self.write("chunks.json", chunks + [{"chunk": 2, "file": "chunk_2.json", "claim_ids": ids}])
+        self.write("findings_chunk_2.json", [finding(i, "Figure", type="TOPO", quote="edge A to B", p_id="p9", anchor="drawing", figure=1) for i in ids])
 
     def write(self, name, obj):
         p = self.dir / name
@@ -108,8 +121,7 @@ class TestMergeHappyPath(MergeCase):
         self.assertEqual([f["section"] for f in findings], [S1, S2, S3])
 
     def test_figure_ids_are_kept_and_appended(self):
-        self.write("findings_figures.json", [finding("I01", "Figure", type="Figure"),
-                                             finding("I02", "Figure", type="Figure")])
+        self.add_figures(2)
         findings, _, _, errors = M.merge(self.dir)
         self.assertEqual(errors, [])
         self.assertEqual([f["id"] for f in findings], ["C01", "C02", "C03", "I01", "I02"])
@@ -240,9 +252,21 @@ class TestMergeFailsLoudly(MergeCase):
                                              finding("B2-C01", S3, sources="s.md")])
         self.has_error("B2-C01", "sources")
 
-    def test_figure_ids_must_start_with_i(self):
-        self.write("findings_figures.json", [finding("I01", "Figure"), finding("C09", "Figure")])
-        self.has_error("C09", "figure ids start with I")
+    def test_figure_claim_ids_must_start_with_i(self):
+        self.write("claims_figures.json", [fclaim(1), {**fclaim(2), "claim_id": "C09"}])
+        self.has_error("C09", "start with I")
+
+    def test_figure_claim_without_a_finding_is_an_error(self):
+        self.add_figures(2)
+        self.write("findings_chunk_2.json", [finding("I01", "Figure", type="TOPO", quote="edge A to B", p_id="p9", anchor="drawing", figure=1)])
+        self.has_error("I02", "no finding")
+        for scope in ("all", "risk"):
+            with self.subTest(scope=scope):
+                self.has_error("I02", "no finding", scope=scope)
+
+    def test_findings_figures_file_is_an_error(self):
+        self.write("findings_figures.json", [finding("I01", "Figure")])
+        self.has_error("findings_figures.json", "claims_figures.json")
 
     def test_every_error_is_reported_not_only_the_first(self):
         self.write("findings_chunk_1.json", [finding("B1-C01", S1, verdict="Wrong"), finding("B1-C02", S2)])
@@ -313,7 +337,7 @@ class TestMergeReviewFixes(MergeCase):
                 self.has_error("B2-C01", "more than one chunk", scope=scope)
 
     def test_duplicate_figure_id_fails(self):
-        self.write("findings_figures.json", [finding("I01", "Figure"), finding("I01", "Figure")])
+        self.write("claims_figures.json", [fclaim(1), fclaim(1)])
         self.has_error("I01", "duplicate")
 
     def test_duplicate_claim_id_fails_within_and_across_batches(self):
@@ -440,9 +464,10 @@ class TestFinalFixWave(MergeCase):
     def test_figure_findings_may_carry_anchor_and_figure_only(self):
         from fact_check_invariants import FIGURE_KEYS
         self.assertEqual(FIGURE_KEYS, ("anchor", "figure"))
-        self.write("findings_figures.json", [finding("I01", "Figure", anchor="drawing", figure=1)])
+        self.add_figures(1)
+        self.write("findings_chunk_2.json", [finding("I01", "Figure", type="TOPO", quote="edge A to B", p_id="p9", anchor="drawing", figure=1)])
         self.assertEqual(self.errors(), [])
-        self.write("findings_figures.json", [finding("I01", "Figure", anchor="drawing", figure=1, extra=1)])
+        self.write("findings_chunk_2.json", [finding("I01", "Figure", type="TOPO", quote="edge A to B", p_id="p9", anchor="drawing", figure=1, extra=1)])
         self.has_error("I01", "unknown key", "extra")
 
     def test_chunk_findings_may_not_carry_figure_keys(self):
@@ -496,3 +521,46 @@ class TestSchemaHasOneSource(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFigureAnchors(MergeCase):
+    def setUp(self):
+        super().setUp()
+        self.add_figures(1)
+
+    def fig(self, **kw):
+        f = finding("I01", "Figure", type="TOPO", quote="edge A to B", p_id="p9", anchor="drawing", figure=1)
+        for k, v in kw.items():
+            f.pop(k, None) if v is None else f.update({k: v})
+        self.write("findings_chunk_2.json", [f])
+
+    def test_correct_anchor_and_figure_pass(self):
+        self.fig()
+        self.assertEqual(self.errors(), [])
+
+    def test_missing_wrong_figure_or_anchor_are_errors(self):
+        for kw in ({"figure": None}, {"figure": 2}, {"anchor": None}, {"anchor": "paragraph"}):
+            with self.subTest(kw=kw):
+                self.fig(**kw)
+                self.has_error("I01", "figure" if "figure" in kw else "anchor")
+
+    def test_embedded_claim_is_verified_like_any_other_and_anchors_on_the_paragraph(self):
+        emb = {**fclaim(1), "kind": "embedded", "quote": "sheet total 12"}
+        emb.pop("figure")
+        self.write("claims_figures.json", [emb])
+        f = finding("I01", "Figure", type="TOPO", quote="sheet total 12", p_id="p9", anchor="paragraph")
+        self.write("findings_chunk_2.json", [f])
+        findings, _, _, errors = M.merge(self.dir)
+        self.assertEqual(errors, [])
+        self.assertEqual(findings[-1]["anchor"], "paragraph")
+        self.write("findings_chunk_2.json", [{**f, "anchor": "drawing", "figure": 1}])
+        self.has_error("I01", "anchor")
+
+    def test_finding_built_as_the_stage_v_text_describes_merges_cleanly(self):
+        """Stage V copies p_id/quote/section/type, plus anchor and figure for a figure claim; never kind."""
+        c = json.loads((self.dir / "claims_figures.json").read_text())[0]
+        f = finding(c["claim_id"], c["section"], type=c["type"], quote=c["quote"], p_id=c["p_id"],
+                    anchor="drawing", figure=c["figure"])
+        self.assertNotIn("kind", f)
+        self.write("findings_chunk_2.json", [f])
+        self.assertEqual(self.errors(), [])

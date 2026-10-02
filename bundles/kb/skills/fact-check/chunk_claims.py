@@ -10,6 +10,9 @@ in document order, plus chunks.json ([{chunk, file, claim_ids}]). Exits 1 and li
 (missing/malformed file, claim id not prefixed B<k>-, duplicate claim id, s_id not in its batch, a section
 of a batch with neither a claim nor a `coverage_batch_<k>.json` entry, a section entry for a section that has
 claims, and, with --scope risk, a risk-tagged sentence that is no claim's s_id/s_ids and has no waiver).
+`claims_figures.json` (the main session's figure and embedded-object claims, `I*` ids, `section` "Figure") is also read when
+present: those claims are always in scope (both scopes), carry `risk: ["figure"]`, are not looked up in the batch files (their
+`s_id`, and any `s_ids`, must be a figure `p_id` of sections.json or of a batch file, or for `kind: "embedded"` any paragraph, sentence or row id; `kind: "figure"` (the default) also carries the int `figure` number), and are chunked after the text claims.
 A claim may list every sentence it spans in an optional `s_ids` (anchor `s_id` included). It deletes the stale chunk_*.json and
 findings_chunk_*.json first: after re-running a batch's stage E, every chunk is verified again.
 """
@@ -93,6 +96,87 @@ def risk_coverage_errors(k: int, batch: dict, claims: list, cov: list, cname: st
     return errors
 
 
+FIGURES_CLAIMS_FILE = "claims_figures.json"
+
+
+def figure_claims(d: Path, batches: list[dict], errors: list[str]) -> list[dict]:
+    """The `I*` claims of claims_figures.json, validated (id starts with I, unique, s_id/s_ids are figure holder ids)."""
+    path = d / FIGURES_CLAIMS_FILE
+    if not path.exists():
+        return []
+    data = _load(path, errors)
+    if data is None:
+        return []
+    if not isinstance(data, list):
+        errors.append(f"{FIGURES_CLAIMS_FILE}: must be a top-level JSON list")
+        return []
+    holders: dict[str, int] = {}          # figure holder p_id -> figure number
+    ids: set[str] = set()                 # every paragraph, sentence and row id (embedded objects anchor on any)
+    sources = [d / "sections.json"] if (d / "sections.json").exists() else []
+    sources += [d / f"batch_{b['batch']}.json" for b in batches if isinstance(b, dict) and isinstance(b.get("batch"), int)
+                and (d / f"batch_{b['batch']}.json").exists()]
+    for src in sources:
+        try:
+            doc = json.loads(src.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue                                   # a malformed batch file is reported by the text-claims pass
+        for sec in (doc.get("sections", []) if isinstance(doc, dict) else doc if isinstance(doc, list) else []):
+            if not isinstance(sec, dict):
+                continue
+            for f in sec.get("figures", []) or []:
+                if isinstance(f, dict) and isinstance(f.get("p_id"), str):
+                    ids.add(f["p_id"])
+                    if isinstance(f.get("figure"), int):
+                        holders[f["p_id"]] = f["figure"]
+            for p in sec.get("paragraphs", []) or []:
+                if isinstance(p, dict):
+                    ids.update(x for x in [p.get("p_id"), *[s.get("s_id") for s in p.get("sentences", []) or []
+                                                              if isinstance(s, dict)]] if isinstance(x, str))
+            for tb in sec.get("tables", []) or []:
+                for r in (tb.get("rows", []) if isinstance(tb, dict) else []) or []:
+                    if isinstance(r, dict):
+                        ids.update(x for x in (r.get("s_id"), r.get("r_id")) if isinstance(x, str))
+    out: list[dict] = []
+    seen: set[str] = set()
+    for c in data:
+        if not isinstance(c, dict):
+            errors.append(f"{FIGURES_CLAIMS_FILE}: item {c!r} is not a JSON object")
+            continue
+        cid = str(c.get("claim_id", ""))
+        if not cid.startswith("I"):
+            errors.append(f"{FIGURES_CLAIMS_FILE}: {cid or '(no claim_id)'}: claim_id must start with I")
+            continue
+        if cid in seen:
+            errors.append(f"{FIGURES_CLAIMS_FILE}: {cid}: duplicate claim_id")
+            continue
+        kind = c.get("kind", "figure")
+        if kind not in ("figure", "embedded"):
+            errors.append(f"{FIGURES_CLAIMS_FILE}: {cid}: kind {kind!r} must be 'figure' or 'embedded'")
+            continue
+        known = holders if kind == "figure" else ids
+        what = ("the holder paragraph or row of a figure" if kind == "figure"
+                else "a paragraph, sentence or row")
+        sid = c.get("s_id")
+        if not isinstance(sid, str) or sid not in known:
+            errors.append(f"{FIGURES_CLAIMS_FILE}: {cid}: s_id {sid!r} is not {what} recorded in sections.json")
+            continue
+        if kind == "figure":
+            fig = c.get("figure")
+            if not isinstance(fig, int) or isinstance(fig, bool) or (sid in holders and holders[sid] != fig):
+                errors.append(f"{FIGURES_CLAIMS_FILE}: {cid}: figure {fig!r} must be the int figure number of {sid} "
+                              f"({holders.get(sid)!r} in sections.json)")
+                continue
+        extra = c.get("s_ids")
+        if extra is not None:
+            bad = [x for x in extra if not isinstance(x, str) or x not in known] if isinstance(extra, list) else [extra]
+            if bad:
+                errors.append(f"{FIGURES_CLAIMS_FILE}: {cid}: s_ids {bad!r} are not {what} recorded in sections.json")
+                continue
+        seen.add(cid)
+        out.append({**c, "risk": ["figure"]})
+    return out
+
+
 def chunk(d: Path, scope: str = "all", size: int = 8) -> tuple[list[dict], list[str]]:
     if scope not in ("all", "risk"):
         raise ValueError(f"scope must be 'all' or 'risk', got {scope!r}")
@@ -165,9 +249,10 @@ def chunk(d: Path, scope: str = "all", size: int = 8) -> tuple[list[dict], list[
                     continue
             seen.add(cid)
             claims.append({**c, "risk": risk[sid]})
+    claims.extend(c for c in figure_claims(d, index, errors) if c["claim_id"] not in seen)
     if errors:
         return [], errors
-    in_scope = [c for c in claims if scope == "all" or c["risk"]]
+    in_scope = [c for c in claims if scope == "all" or c["risk"]]   # figure claims carry risk ["figure"]: always in scope
     chunks = [in_scope[i:i + size] for i in range(0, len(in_scope), size)]
     out = []
     for j, cs in enumerate(chunks, 1):

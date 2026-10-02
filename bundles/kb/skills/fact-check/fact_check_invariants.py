@@ -167,12 +167,26 @@ def _references_images(docx_path) -> bool:
     return any(n.startswith("word/media/") for n in z.namelist())
 
 
+BANNER_STALE = "findings page coverage banner is missing or stale"
+
+
+def banner_violations(page_html: str, run: dict) -> list[str]:
+    """The page's `<p class="coverage" data-mode=...>` must be the one findings_report renders from run.json."""
+    from findings_report import coverage_line
+    m = re.search(r'<p class="coverage" data-mode="([^"]*)">(.*?)</p>', page_html, re.S)
+    if m and m.group(1) == str(run.get("mode", "")) and html.unescape(m.group(2)) == coverage_line(run):
+        return []
+    return [BANNER_STALE]
+
+
 def check_run(findings, docx_path, *, original_sha256=None, original_path=None, coverage=None,
-              mode=None) -> list[str]:
+              mode=None, run=None, page=None) -> list[str]:
     from docx import Document
 
     docx_path = Path(docx_path)
     v: list[str] = []
+    if run and page is not None:
+        v.extend(banner_violations(page, run))
 
     seen: set[str] = set()
     for n, f in enumerate(findings, 1):
@@ -250,13 +264,21 @@ def main(argv=None) -> int:
     ap.add_argument("findings")
     ap.add_argument("docx")
     ap.add_argument("--original")
+    ap.add_argument("--page", help="the findings page (default: '<name> — findings.html' beside the annotated docx)")
     a = ap.parse_args(argv)
     data, shape = load_findings(a.findings)
     beside = Path(a.findings).with_name
     coverage = json.loads(beside("coverage.json").read_text()) if beside("coverage.json").exists() else None
     run = json.loads(beside("run.json").read_text()) if beside("run.json").exists() else {}
+    page = Path(a.page) if a.page else None
+    if page is None and Path(a.docx).stem.endswith(" — fact-checked"):
+        page = Path(a.docx).with_name(Path(a.docx).stem[:-len(" — fact-checked")] + " — findings.html")
+    page_html = page.read_text(encoding="utf-8") if page is not None and page.exists() else None
+    page_missing = bool(run) and page_html is None
     vs = shape + check_run(data, a.docx, original_sha256=run.get("source_sha256"), original_path=a.original,
-                           coverage=coverage, mode=run.get("mode"))
+                           coverage=coverage, mode=run.get("mode"), run=run, page=page_html)
+    if page_missing:
+        vs.append("findings page not found for banner check")
     print("\n".join(vs) or "clean")
     return 1 if vs else 0
 

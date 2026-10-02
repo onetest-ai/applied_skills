@@ -18,6 +18,8 @@ def finding(id, verdict, severity, destination, quote="", **kw):
                 section="1", evidence="Brain: x (2026-01-01, f.md)", fix="Fix it", source="f.md", **kw)
 
 
+NO_PAGE = "findings page not found for banner check"
+
 GOOD = [
     finding("C01", "Incorrect", "Major", "Word comment", "40 million in"),
     finding("C02", "Misleading", "Minor", "Word comment", "green fields"),
@@ -295,6 +297,58 @@ class TestRunInvariants(unittest.TestCase):
         r = subprocess.run(args, capture_output=True, text=True)
         self.assertEqual(r.stdout.strip(), "clean", r.stdout)
 
+    RUN = {"mode": "deep", "scope": "all", "sections_total": 3, "claims_extracted": 4, "claims_verified": 4}
+
+    def _page(self, run):
+        from findings_report import render_html
+        return render_html(GOOD, document="x.docx", brain_version="v1", run_date="2026-01-01", run=run)
+
+    def test_findings_page_banner_must_match_run_json(self):
+        self._annotate(GOOD)
+        STALE = "findings page coverage banner is missing or stale"
+        self.assertNotIn(STALE, self._check(GOOD, run=self.RUN, page=self._page(self.RUN)))
+        stale = self._page(dict(self.RUN, claims_verified=3))
+        self.assertIn(STALE, self._check(GOOD, run=self.RUN, page=stale))
+        self.assertIn(STALE, self._check(GOOD, run=self.RUN, page=self._page(None)))
+        wrong_mode = self._page(dict(self.RUN, mode="fast")).replace('data-mode="fast"', 'data-mode="deep"')
+        self.assertIn(STALE, self._check(GOOD, run=self.RUN, page=wrong_mode.replace("Deep check", "Fast scan")))
+
+    def test_banner_is_not_checked_without_a_page_or_run(self):
+        self._annotate(GOOD)
+        self.assertEqual(self._check(GOOD, page=self._page(None)), [])
+        self.assertEqual(self._check(GOOD, run=self.RUN), [])
+
+    def test_cli_checks_the_findings_page_beside_the_document(self):
+        import json, subprocess, sys
+        from test_plugin_structure import KB_ROOT
+        cli = KB_ROOT / "skills" / "fact-check" / "fact_check_invariants.py"
+        self._annotate(GOOD)
+        out = self.tmp / "Draft — fact-checked.docx"
+        self.out.rename(out)
+        (self.tmp / "findings.json").write_text(json.dumps(GOOD))
+        (self.tmp / "run.json").write_text(json.dumps(self.RUN))
+        page = self.tmp / "Draft — findings.html"
+        page.write_text(self._page(dict(self.RUN, claims_verified=3)), encoding="utf-8")
+        args = [sys.executable, str(cli), str(self.tmp / "findings.json"), str(out)]
+        r = subprocess.run(args, capture_output=True, text=True)
+        self.assertIn("coverage banner is missing or stale", r.stdout)
+        page.write_text(self._page(self.RUN), encoding="utf-8")
+        r = subprocess.run(args, capture_output=True, text=True)
+        self.assertNotIn("coverage banner", r.stdout)
+
+    def test_cli_reports_a_missing_findings_page_when_run_json_exists(self):
+        import json, subprocess, sys
+        from test_plugin_structure import KB_ROOT
+        cli = KB_ROOT / "skills" / "fact-check" / "fact_check_invariants.py"
+        self._annotate(GOOD)
+        out = self.tmp / "Draft — fact-checked.docx"
+        self.out.rename(out)
+        (self.tmp / "findings.json").write_text(json.dumps(GOOD))
+        (self.tmp / "run.json").write_text(json.dumps(self.RUN))
+        r = subprocess.run([sys.executable, str(cli), str(self.tmp / "findings.json"), str(out)],
+                           capture_output=True, text=True)
+        self.assertIn("findings page not found for banner check", r.stdout)
+
     # Fast mode: a section with no high-risk statement is covered, but only in a fast run.
     def test_fast_run_accepts_no_high_risk_coverage(self):
         self._three_heading_docx()
@@ -328,12 +382,12 @@ class TestRunInvariants(unittest.TestCase):
         fs = [dict(f, section="Alpha > Beta") for f in GOOD]
         self._annotate(fs)
         cov = [{"heading": "Gamma", "reason": "no high-risk statement"}]
-        self.assertEqual(self._cli(fs, run={"mode": "fast"}, coverage=cov), "clean")
+        self.assertEqual(self._cli(fs, run={"mode": "fast"}, coverage=cov), NO_PAGE)   # only the page note: no violation
         self.assertIn("heading not covered: Gamma", self._cli(fs, run={"mode": "deep"}, coverage=cov))
 
     def test_cli_detects_a_modified_original_from_the_recorded_hash(self):
         self._annotate(GOOD)
-        self.assertEqual(self._cli(GOOD, run={"mode": "deep", "source_sha256": self.sha}), "clean")
+        self.assertEqual(self._cli(GOOD, run={"mode": "deep", "source_sha256": self.sha}), NO_PAGE)
         out = self._cli(GOOD, run={"mode": "deep", "source_sha256": "0" * 64})
         self.assertIn("original document was modified", out)
 

@@ -308,12 +308,14 @@ def main(argv=None) -> int:
         print(coverage_line(run))
         return 0
     run = None
-    if a.run:
-        run = _load_run(a.run)
-        if run is None:
-            return 2
     if not a.findings:
         ap.error("findings is required unless --coverage-line is given")
+    beside = Path(a.findings).with_name("run.json")
+    run_path = a.run or (str(beside) if beside.exists() else "")   # an explicit --run wins; else run.json beside findings
+    if run_path:
+        run = _load_run(run_path)
+        if run is None:
+            return 2
     if not a.out:
         ap.error("--out is required unless --coverage-line is given")
     data = json.load(open(a.findings))

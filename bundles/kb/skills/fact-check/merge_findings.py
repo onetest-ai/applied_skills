@@ -8,13 +8,14 @@
 (a list of {section_id, reason: "no checkable statement"}), `chunks.json`
 (chunk_claims.py: [{chunk, file, claim_ids}]) and `findings_chunk_<j>.json` for every chunk j
 (stage V: a top-level list in the step-9 schema whose `id` is the claim's claim_id). An optional
-`findings_figures.json` holds the main session's figure findings (`I*` ids), appended last.
+`claims_figures.json` (the main session's figure and embedded-object claims, `I*` ids) is read too and its claims
+are verified in stage V like any other. A `findings_figures.json` is an error: figure findings come from the chunks.
 
 --scope all (Deep) or risk (Fast) is recorded in run.json; in risk mode the sections with no
 in-scope claim are listed in coverage.json with reason "no high-risk statement".
 
 Writes <findings.json> (one finding per in-scope claim in stage-E order, renumbered C01, C02, ...,
-figure ids kept), coverage.json beside it ({heading, section, reason}) and run.json beside it
+figure `I*` ids kept, after the text findings), coverage.json beside it ({heading, section, reason}) and run.json beside it
 (mode, scope, counts, skill_version).
 
 Fails (exit 1, nothing written) and lists every problem when an input is missing or malformed, a
@@ -32,12 +33,12 @@ import json
 import sys
 from pathlib import Path
 
-from chunk_claims import _risk_by_s_id, risk_coverage_errors
+from chunk_claims import FIGURES_CLAIMS_FILE, _risk_by_s_id, risk_coverage_errors
 from fact_check_invariants import (COVERAGE_REASON, RISK_COVERAGE_REASON, FIGURE_KEYS, FINDING_KEYS, LATE_KEYS,
                                    SEVERITIES, VERDICTS, _last_heading, section_coverage, section_key)
 
 REQUIRED = tuple(k for k in FINDING_KEYS if k not in LATE_KEYS)
-FIGURES_FILE = "findings_figures.json"
+OLD_FIGURES_FILE = "findings_figures.json"
 SKILL_MD = Path(__file__).with_name("SKILL.md")
 
 
@@ -167,6 +168,18 @@ def merge(d: Path, scope: str = "all", wave_size: int = 10) -> tuple[list[dict],
                     seen_cov.add(section_key(r["section"]))
                     coverage.append(r)
 
+    if (d / OLD_FIGURES_FILE).exists():
+        errors.append(f"{OLD_FIGURES_FILE}: no longer read; write the figure claims to {FIGURES_CLAIMS_FILE} "
+                      f"(step 3) and let stage V verify them")
+    for c in _load_list(d / FIGURES_CLAIMS_FILE, errors, required=False) or []:
+        cid = c.get("claim_id") if isinstance(c, dict) else None
+        if not isinstance(cid, str) or not cid.startswith("I"):
+            errors.append(f"{FIGURES_CLAIMS_FILE}: {cid or '(no claim_id)'}: claim_id must start with I")
+        elif cid in claims:
+            errors.append(f"{FIGURES_CLAIMS_FILE}: {cid}: duplicate claim_id")
+        else:
+            claims[cid] = c
+
     # Stage V: every in-scope claim has exactly one finding, from its own chunk.
     in_scope: list[str] = []
     got: dict[str, dict] = {}
@@ -203,6 +216,16 @@ def merge(d: Path, scope: str = "all", wave_size: int = 10) -> tuple[list[dict],
                         mismatch = True
                         errors.append(f"{fname}: {fid}: {key} {a!r} differs from its claim's {key} {b!r} "
                                       f"(stage V copies section, quote and p_id unchanged)")
+            if fid in claims and fid.startswith("I"):
+                want = "paragraph" if claims[fid].get("kind") == "embedded" else "drawing"
+                if f.get("anchor") != want:
+                    mismatch = True
+                    errors.append(f"{fname}: {fid}: anchor {f.get('anchor')!r} must be {want!r} for a "
+                                  f"{claims[fid].get('kind', 'figure')} claim")
+                if want == "drawing" and f.get("figure") != claims[fid].get("figure"):
+                    mismatch = True
+                    errors.append(f"{fname}: {fid}: figure {f.get('figure')!r} must equal its claim's figure "
+                                  f"{claims[fid].get('figure')!r}")
             if mismatch:
                 continue
             if fid in got:
@@ -226,7 +249,9 @@ def merge(d: Path, scope: str = "all", wave_size: int = 10) -> tuple[list[dict],
             errors.append(f"{cid}: in-scope claim has no finding (re-run its chunk)")
 
     if scope == "risk":
-        _check_risk_scope(d, index, claims, set(in_scope), errors)
+        _check_risk_scope(d, index, claims, {c for c in in_scope if not c.startswith("I")}, errors)
+        errors.extend(f"{c}: figure claim is in no chunk (figure claims are always in scope)"
+                      for c in claims if c.startswith("I") and c not in in_scope)
         has_scope = {section_key(claims[c].get("section")) for c in in_scope if c in claims}
         listed = {section_key(c["section"]) for c in coverage}
         for b in index:
@@ -238,19 +263,8 @@ def merge(d: Path, scope: str = "all", wave_size: int = 10) -> tuple[list[dict],
                     coverage.append({"heading": _last_heading(name), "section": name, "reason": RISK_COVERAGE_REASON})
 
     ordered = [got[c] for c in claims if c in got]          # document order = stage-E order
-    out = [{**f, "id": f"C{n:02d}"} for n, f in enumerate(ordered, 1)]
-    seen_fig: set[str] = set()
-    for f in _load_list(d / FIGURES_FILE, errors, required=False) or []:
-        fid = _check_finding(f, FIGURES_FILE, errors)
-        if fid is None:
-            continue
-        if not fid.startswith("I"):
-            errors.append(f"{FIGURES_FILE}: {fid}: figure ids start with I")
-        elif fid in seen_fig:
-            errors.append(f"{FIGURES_FILE}: {fid}: duplicate figure id")
-        seen_fig.add(fid)
-        out.append(f)
-
+    texts = [f for f in ordered if not str(f.get("id", "")).startswith("I")]
+    out = [{**f, "id": f"C{n:02d}"} for n, f in enumerate(texts, 1)] + [f for f in ordered if str(f.get("id", "")).startswith("I")]
     run = {"mode": "deep" if scope == "all" else "fast", "scope": scope, "wave_size": wave_size,
            "sections_total": stats.get("sections_total"), "statements_total": stats.get("statements_total"),
            "statements_risk": stats.get("statements_risk"), "claims_extracted": len(claims),

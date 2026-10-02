@@ -262,3 +262,88 @@ class FinalFixChunkTests(ChunkCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def fclaim(n, s_id="p5", quote="edge A to B", **kw):
+    return {"claim_id": f"I{n:02d}", "p_id": s_id, "s_id": s_id, "section": "Figure", "quote": quote,
+            "type": "TOPO", "kind": "figure", "figure": 1, **kw}
+
+
+class FigureClaimCase(unittest.TestCase):
+    w = ChunkCase.w
+
+    def setUp(self):
+        ChunkCase.setUp(self)
+        b = json.loads((self.d / "batch_1.json").read_text())
+        b["sections"][0]["figures"] = [{"figure": 1, "p_id": "p5", "image": "image1.png"}]
+        self.w("batch_1.json", b)
+        self.w("claims_figures.json", [fclaim(1), fclaim(2, quote="Z absent from figure 1")])
+
+    def ids(self, scope, size=8):
+        index, errors = C.chunk(self.d, scope, size)
+        return [i for c in index for i in c["claim_ids"]], errors
+
+    def test_figure_claims_are_in_both_scopes_after_the_text_claims(self):
+        ids, errors = self.ids("all")
+        self.assertEqual(errors, [])
+        self.assertEqual(ids[-2:], ["I01", "I02"])
+        self.assertEqual(len(ids), 12)
+        ids, errors = self.ids("risk")
+        self.assertEqual(ids, ["B1-C01", "B1-C03", "B1-C05", "B1-C07", "B1-C09", "I01", "I02"])
+
+    def test_figure_claims_get_the_figure_risk_tag(self):
+        C.chunk(self.d, "all", 4)
+        last = json.loads((self.d / "chunk_3.json").read_text())["claims"]
+        self.assertEqual([(c["claim_id"], c["risk"]) for c in last][-2:], [("I01", ["figure"]), ("I02", ["figure"])])
+
+    def test_chunking_follows_the_size_rule_across_text_and_figures(self):
+        index, errors = C.chunk(self.d, "all", 4)
+        self.assertEqual([len(c["claim_ids"]) for c in index], [4, 4, 4])
+        self.assertEqual(index[2]["claim_ids"][-2:], ["I01", "I02"])
+
+    def test_no_claims_figures_file_changes_nothing(self):
+        (self.d / "claims_figures.json").unlink()
+        ids, errors = self.ids("all")
+        self.assertEqual((len(ids), errors), (10, []))
+
+    def test_bad_id_duplicate_and_unknown_s_id_are_errors(self):
+        self.w("claims_figures.json", [{**fclaim(1), "claim_id": "X01"}])
+        self.assertTrue(any("X01" in e and "start with I" in e for e in self.ids("all")[1]))
+        self.w("claims_figures.json", [fclaim(1), fclaim(1)])
+        self.assertTrue(any("I01" in e and "duplicate" in e for e in self.ids("all")[1]))
+        self.w("claims_figures.json", [fclaim(1, s_id="p99")])
+        self.assertTrue(any("I01" in e and "p99" in e for e in self.ids("all")[1]))
+        self.w("claims_figures.json", [fclaim(1, s_ids=["p5", "p98"])])
+        self.assertTrue(any("I01" in e and "p98" in e for e in self.ids("all")[1]))
+        self.assertEqual(list(self.d.glob("chunk_*.json")), [])
+
+    def test_s_id_is_checked_against_sections_json_figures_too(self):
+        b = json.loads((self.d / "batch_1.json").read_text())
+        b["sections"][0]["figures"] = []
+        self.w("batch_1.json", b)
+        self.assertTrue(self.ids("all")[1])
+        self.w("sections.json", [{"section_id": "s01", "figures": [{"figure": 1, "p_id": "p5", "image": "i.png"}]}])
+        self.assertEqual(self.ids("all")[1], [])
+
+    def test_figure_number_is_passed_through_to_the_chunk_claims(self):
+        C.chunk(self.d, "all", 20)
+        got = {c["claim_id"]: c for c in json.loads((self.d / "chunk_1.json").read_text())["claims"]}
+        self.assertEqual((got["I01"]["figure"], got["I01"]["kind"]), (1, "figure"))
+
+    def test_figure_kind_needs_an_int_figure_matching_the_holder(self):
+        for bad in (fclaim(1, figure=None), fclaim(1, figure="1"), fclaim(1, figure=2)):
+            self.w("claims_figures.json", [bad])
+            self.assertTrue(any("I01" in e and "figure" in e for e in self.ids("all")[1]), bad)
+        self.w("claims_figures.json", [{k: v for k, v in fclaim(1).items() if k != "figure"}])
+        self.assertTrue(any("I01" in e and "figure" in e for e in self.ids("all")[1]))
+
+    def test_embedded_object_claim_may_use_any_paragraph_or_row_id(self):
+        emb = {"claim_id": "I03", "p_id": "p2", "s_id": "p2s4", "section": "Figure", "quote": "sheet total 12",
+               "type": "NUM", "kind": "embedded"}
+        self.w("claims_figures.json", [fclaim(1), emb])
+        ids, errors = self.ids("risk")
+        self.assertEqual((errors, ids[-2:]), ([], ["I01", "I03"]))
+        self.w("claims_figures.json", [{**emb, "s_id": "p77"}])
+        self.assertTrue(any("I03" in e and "p77" in e for e in self.ids("all")[1]))
+        self.w("claims_figures.json", [{**emb, "kind": "diagram"}])
+        self.assertTrue(any("I03" in e and "kind" in e for e in self.ids("all")[1]))

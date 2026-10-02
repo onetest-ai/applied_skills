@@ -173,6 +173,11 @@ class TestFactCheckRootCauseRules(unittest.TestCase):
         self.assertIn("never as a cap", self.step2)
 
     # RC-2
+    def test_step9_renders_after_the_final_merge_and_the_self_check_covers_the_banner(self):
+        self.assertIn("render after the final merge (step 6a); the renderer reads run.json beside findings.json", self.step9)
+        self.assertIn("coverage banner", self.text[self.text.index("### 10."):self.text.index("## Rules")])
+        self.assertIn("fact_check_invariants.py", self.text)
+
     def test_figure_claims_must_be_findings_rows(self):
         self.assertIn("**must** appear in `findings.json` as its own row", self.step3)
         self.assertIn('"Figure"', self.step3)
@@ -310,7 +315,30 @@ class TestSectionParallelRules(unittest.TestCase):
 
     def test_figures_stay_in_the_main_session(self):
         self.assertIn("main session", self.step3)
-        self.assertIn("`<work dir>/findings_figures.json`", self.step3)
+        self.assertIn("`<work dir>/claims_figures.json`", self.step3)
+
+    def test_step3_transcribes_claims_and_verifies_nothing(self):
+        self.assertIn("transcribe", self.step3)
+        self.assertIn("does not verify", self.step3)
+        self.assertIn('section: "Figure"', self.step3)
+
+    def test_step3_writes_omission_claims_as_i_claims(self):
+        self.assertIn("absent from figure <n>", self.step3)
+        self.assertIn("omission claim", self.step3)
+
+    def test_figure_claims_are_always_in_scope_and_verified_in_stage_v(self):
+        self.assertIn("claims_figures.json", self.dispatch)
+        self.assertIn("always in scope", self.dispatch)
+        self.assertIn("anchor: 'drawing'", self.dispatch)
+
+    def test_step3_schema_has_kind_and_figure_and_embedded_anchoring(self):
+        for s in ('kind', '"embedded"', "`figure` is that figure's int number", 'anchor: "paragraph"'):
+            self.assertIn(s, self.step3)
+        self.assertIn("Numeric/date self-check before answering", self.text)
+        self.assertNotIn("Figure self-check", self.text)
+
+    def test_no_findings_figures_file_is_left(self):
+        self.assertNotIn("findings_figures", self.text)
 
     def test_merge_runs_via_its_cli_before_step_7(self):
         self.assertIn('python merge_findings.py <work dir> --out <run dir>/findings.json', self.merge)
@@ -372,7 +400,7 @@ class FixRound1Tests(unittest.TestCase):
             "does not run steps 3–10 and does not dispatch subagents",
             "in stage E the claim id field is `claim_id` (`B<k>-C<n>`), renumbered to `C01…` by the merge",
             "use the `s_id` of the sentence holding its main assertion",
-            "step 3 (figures and embedded objects)",
+            "step 3 (transcribes figures and embedded objects into `<work dir>/claims_figures.json`)",
             "### 6a. Merge the chunks",
             "figure ids `I*` are kept",
             "In fast mode `findings.json` holds only the in-scope claims that stage V verified; never add rows for out-of-scope claims",
@@ -410,14 +438,18 @@ class FinalFixWaveRules(unittest.TestCase):
         self.assertIn("neither a claim nor a coverage entry", self.all)
         self.assertNotIn("neither a finding nor a coverage entry", self.all)
         self.assertNotIn("appends it after the batches", self.all)
-        self.assertIn("appends it after the chunk findings", self.all)
+        self.assertIn("figure ids `I*` are kept and listed last", self.all)
         self.assertIn("`{section_id, reason}`", self.all)
 
-    def test_step3_allows_anchor_and_figure_on_figure_findings(self):
-        step3 = self.all[self.all.index("### 3."):self.all.index("### 4.")]
-        self.assertIn("`anchor`", step3)
-        self.assertIn("`figure`", step3)
-        self.assertIn("`I*` findings only", step3)
+    def test_stage_v_does_not_tell_the_agent_to_copy_kind(self):
+        stage = self.all[self.all.index("### 1b."):self.all.index("### 2.")]
+        self.assertIn("do not copy `kind`", stage)
+        self.assertNotIn("copy `kind`", stage.replace("do not copy `kind`", ""))
+
+    def test_stage_v_copies_anchor_and_figure_for_figure_claims(self):
+        stage = self.all[self.all.index("### 1b."):self.all.index("### 2.")]
+        self.assertIn("`figure` (the claim's own int", stage)
+        self.assertIn("anchor: 'drawing'", stage)
 
     def test_baseline_header_records_the_mode_and_reuse_requires_it_to_match(self):
         self.assertIn("recording the document checksum, the mode (from `run.json`), the `knowledge_version`", self.all)
