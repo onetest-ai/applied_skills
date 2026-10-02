@@ -184,7 +184,7 @@ npx github:onetest-ai/applied_skills init --user               # install under $
 npx github:onetest-ai/applied_skills init --symlink            # link instead of copy
 npx github:onetest-ai/applied_skills init --dry-run            # preview
 ```
-(Private repo → needs git access, e.g. `npx git+ssh://git@github.com/onetest-ai/applied_skills.git init`.)
+(Over SSH instead of HTTPS: `npx git+ssh://git@github.com/onetest-ai/applied_skills.git init`.)
 
 **Shell installer (no Node):**
 

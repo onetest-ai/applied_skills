@@ -4,7 +4,7 @@ import parse_corpus as P
 
 @pytest.mark.parametrize("name,ext,expected", [
     ("Deck 08.18.26.pdf", ".pdf", ("2026-08-18", "filename")),
-    ("SprintDemo_4.23.24.pptx", ".pptx", ("2024-04-23", "filename")),
+    ("Review_4.23.24.pptx", ".pptx", ("2024-04-23", "filename")),
     ("Session-20260914_162508UTC-Meeting Recording.vtt", ".vtt", ("2026-09-14", "filename")),
     ("GMT20240717-190217_Recording.vtt", ".vtt", ("2024-07-17", "filename")),
     ("260406 - SteerCo.pptx", ".pptx", ("2026-04-06", "filename")),
@@ -75,12 +75,12 @@ def test_version_word_in_content_is_not_read_as_a_date():
 
 
 def test_dotted_dates_still_match_when_not_version_like():
-    assert P.exact_date("", "SprintDemo_4.23.24.pptx", ".pptx") == ("2024-04-23", "filename")
+    assert P.exact_date("", "Review_4.23.24.pptx", ".pptx") == ("2024-04-23", "filename")
     assert P.exact_date("", "Deck 08.18.26.pdf", ".pdf") == ("2026-08-18", "filename")
     # preceded by "v2." not the bare version word "v" -> not rejected merely for a
     # preceding digit-dot token
     assert P.exact_date("", "Proposal.v2.08.24.2026.pdf", ".pdf") == ("2026-08-24", "filename")
-    assert P.exact_date("", "Team_SprintDemo_7.17.2024.pptx", ".pptx") == ("2024-07-17", "filename")
+    assert P.exact_date("", "Team_Review_7.17.2024.pptx", ".pptx") == ("2024-07-17", "filename")
 
 
 def test_impossible_calendar_date_in_filename_is_rejected():
