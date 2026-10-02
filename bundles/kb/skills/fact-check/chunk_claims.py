@@ -8,7 +8,9 @@ batch file by `s_id` (never trusted from the model), keeps the claims in scope (
 non-empty risk), and writes chunk_<j>.json ({chunk, scope, claims}) of at most --chunk-size claims
 in document order, plus chunks.json ([{chunk, file, claim_ids}]). Exits 1 and lists every problem
 (missing/malformed file, claim id not prefixed B<k>-, duplicate claim id, s_id not in its batch, a section
-of a batch with neither a claim nor a `coverage_batch_<k>.json` entry). It deletes the stale chunk_*.json and
+of a batch with neither a claim nor a `coverage_batch_<k>.json` entry, a section entry for a section that has
+claims, and, with --scope risk, a risk-tagged sentence that is no claim's s_id/s_ids and has no waiver).
+A claim may list every sentence it spans in an optional `s_ids` (anchor `s_id` included). It deletes the stale chunk_*.json and
 findings_chunk_*.json first: after re-running a batch's stage E, every chunk is verified again.
 """
 from __future__ import annotations
@@ -18,7 +20,7 @@ import json
 import sys
 from pathlib import Path
 
-from fact_check_invariants import section_coverage
+from fact_check_invariants import COVERAGE_REASON, _norm, section_coverage
 
 
 def _load(path: Path, errors: list[str]):
@@ -45,6 +47,50 @@ def _risk_by_s_id(batch: dict) -> dict[str, list[str]]:
                 if key:
                     out[key] = list(r.get("risk", []))
     return out
+
+
+def risk_coverage_errors(k: int, batch: dict, claims: list, cov: list, cname: str, scope: str) -> list[str]:
+    """Per-statement coverage for batch k; the one copy, called by chunk_claims.py (before stage V) and by
+    merge_findings.py. Always validates the batch's waivers (`{s_id, reason: "no checkable statement"}`, the
+    s_id a real one of the batch). In scope `risk`, every risk-tagged sentence or row must also be the `s_id`
+    of a claim, listed in a claim's `s_ids`, waived, or inside a section a coverage entry covers."""
+    errors: list[str] = []
+    risk = _risk_by_s_id(batch)
+    waived: set[str] = set()
+    covered_sections: set[str] = set()
+    for c in cov:
+        if not isinstance(c, dict):
+            continue
+        if c.get("section_id"):
+            if isinstance(c["section_id"], str):
+                covered_sections.add(c["section_id"])
+        elif c.get("s_id"):
+            if not isinstance(c["s_id"], str):
+                errors.append(f"{cname}: waiver s_id must be a string, got {c['s_id']!r}")
+            elif _norm(str(c.get("reason", ""))) != COVERAGE_REASON:
+                errors.append(f"{cname}: waiver for {c['s_id']!r}: reason {c.get('reason')!r} is not {COVERAGE_REASON!r}")
+            elif c["s_id"] not in risk:
+                errors.append(f"{cname}: waiver s_id {c['s_id']!r} is not a sentence or row of batch {k}")
+            else:
+                waived.add(c["s_id"])
+    if scope != "risk":
+        return errors
+    claimed: set[str] = set()
+    for c in claims:
+        if isinstance(c, dict):
+            if isinstance(c.get("s_id"), str):
+                claimed.add(c["s_id"])
+            if isinstance(c.get("s_ids"), list):
+                claimed.update(x for x in c["s_ids"] if isinstance(x, str))
+    for sec in batch.get("sections", []) or []:
+        if not isinstance(sec, dict) or sec.get("section_id") in covered_sections:
+            continue
+        for s_id, tags in _risk_by_s_id({"sections": [sec]}).items():
+            if tags and s_id not in claimed and s_id not in waived:
+                errors.append(f"batch {k}: high-risk statement {s_id} ({', '.join(tags)}) in section "
+                              f"{sec.get('section')!r} is neither claimed (anchor s_id or listed in a claim's s_ids) "
+                              f"nor waived with {{s_id, reason: {COVERAGE_REASON!r}}} in {cname}")
+    return errors
 
 
 def chunk(d: Path, scope: str = "all", size: int = 8) -> tuple[list[dict], list[str]]:
@@ -89,6 +135,7 @@ def chunk(d: Path, scope: str = "all", size: int = 8) -> tuple[list[dict], list[
         if isinstance(b.get("sections"), list):
             _, cov_errors = section_coverage(k, b["sections"], [c for c in found if isinstance(c, dict)], cov, cname)
             errors.extend(cov_errors)
+        errors.extend(risk_coverage_errors(k, batch, found, cov, cname, scope))
         for c in found:
             if not isinstance(c, dict):
                 errors.append(f"claims_batch_{k}.json: item {c!r} is not a JSON object")
@@ -107,6 +154,15 @@ def chunk(d: Path, scope: str = "all", size: int = 8) -> tuple[list[dict], list[
             if sid not in risk:
                 errors.append(f"claims_batch_{k}.json: {cid}: s_id {sid!r} is not a sentence or row of batch {k}")
                 continue
+            extra = c.get("s_ids")
+            if extra is not None:
+                if not isinstance(extra, list):
+                    errors.append(f"claims_batch_{k}.json: {cid}: s_ids must be a list of s_id strings")
+                    continue
+                bad = [x for x in extra if not isinstance(x, str) or x not in risk]
+                if bad:
+                    errors.append(f"claims_batch_{k}.json: {cid}: s_ids {bad!r} are not sentences or rows of batch {k}")
+                    continue
             seen.add(cid)
             claims.append({**c, "risk": risk[sid]})
     if errors:

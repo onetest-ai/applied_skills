@@ -426,3 +426,32 @@ class FinalFixWaveRules(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TestStatementCoverageRules(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        text = SKILL.read_text(encoding="utf-8")
+        cls.stage_e = flat(section(text, "1. **Stage E", "2. **Chunk."))
+        cls.step2 = flat(section(text, "### 2.", "### 3."))
+        cls.chunk = flat(section(text, "2. **Chunk.", "3. **Stage V"))
+
+    def test_step2_multi_sentence_claim_lists_every_sentence_in_s_ids(self):
+        self.assertIn("lists every sentence it spans in `s_ids`", self.step2)
+        self.assertIn("anchor", self.step2)
+
+    def test_stage_e_writes_per_sentence_waivers(self):
+        self.assertIn('{s_id, reason: "no checkable statement"}', self.stage_e)
+        self.assertIn("only for a tagged sentence with nothing checkable", self.stage_e)
+
+    def test_section_entry_only_for_a_section_without_claims(self):
+        self.assertIn("is only for a section with no claims at all", self.stage_e)
+
+    def test_stage_e_is_told_the_scope(self):
+        self.assertIn("and the mode's `scope` (`all` or `risk`)", self.stage_e)
+        self.assertIn("A Fast (`risk`) stage E claims or waives every risk-tagged sentence and row", self.stage_e)
+
+    def test_stage_e_claim_shape_documents_optional_s_ids(self):
+        self.assertIn("optional `s_ids`", self.stage_e)
+
+    def test_chunk_step_checks_statement_coverage_before_stage_v(self):
+        self.assertIn("before any chunk is written", self.chunk)

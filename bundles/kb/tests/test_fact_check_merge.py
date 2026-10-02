@@ -386,12 +386,38 @@ class TestFinalFixWave(MergeCase):
         self.assertNotIn("def _risk_by_s_id", src)
 
     # I3
-    def test_risk_tagged_statement_needs_a_claim_or_a_section_coverage(self):
+    def test_risk_tagged_statement_needs_a_claim_a_listing_or_a_waiver(self):
         self.batch_files(extra=[(1, S1, "b1s9", ["date"])])
         self.has_error("b1s9", scope="risk")
         self.assertEqual(self.errors(), [])                            # deep mode does not enforce it
-        self.write("coverage_batch_1.json", [{"section_id": "s01", "reason": "no checkable statement"}])
+        self.write("coverage_batch_1.json", [{"s_id": "b1s9", "reason": "no checkable statement"}])
         self.assertFalse(any("b1s9" in e for e in self.errors(scope="risk")))
+
+    def test_claim_s_ids_cover_a_risk_tagged_statement(self):
+        self.batch_files(extra=[(1, S1, "b1s9", ["date"])])
+        claims = json.loads((self.dir / "claims_batch_1.json").read_text())
+        claims[0]["s_ids"] = ["b1s1", "b1s9"]
+        self.write("claims_batch_1.json", claims)
+        self.assertFalse(any("b1s9" in e for e in self.errors(scope="risk")))
+
+    def test_section_coverage_for_a_section_with_claims_is_an_error_in_both_scopes(self):
+        self.write("coverage_batch_1.json", [{"section_id": "s01", "reason": "no checkable statement"}])
+        for scope in ("all", "risk"):
+            self.has_error("s01", "claim", scope=scope)
+
+    def test_section_coverage_for_a_claimless_section_still_covers_its_statements(self):
+        self.write("claims_batch_1.json", [claim(1, 2, S2)])
+        self.write("chunks.json", [{"chunk": 1, "file": "chunk_1.json", "claim_ids": ["B1-C02", "B2-C01"]}])
+        self.write("findings_chunk_1.json", [finding("B1-C02", S2), finding("B2-C01", S3)])
+        self.batch_files(extra=[(1, S1, "b1s9", ["date"])])
+        self.write("coverage_batch_1.json", [{"section_id": "s01", "reason": "no checkable statement"}])
+        self.assertEqual(self.errors(scope="risk"), [])
+
+    def test_merge_validates_a_waiver_s_id_in_scope_all_too(self):
+        self.write("coverage_batch_1.json", [{"s_id": "nope", "reason": "no checkable statement"}])
+        self.has_error("nope", scope="all")
+        self.write("coverage_batch_1.json", [{"s_id": ["b1s1"], "reason": "no checkable statement"}])
+        self.has_error("s_id", scope="all")
 
     def test_untagged_statement_needs_no_claim(self):
         self.batch_files(extra=[(1, S1, "b1s9", [])])

@@ -83,11 +83,14 @@ def section_coverage(k, sections, claims, cov, cname) -> tuple[list[dict], list[
     sections: the batch's `{section_id, section}` records (batches.json); claims: the batch's stage-E
     claims; cov: its `coverage_batch_<k>.json` entries (`{section_id, reason: "no checkable statement"}`).
     Returns ([{heading, section, reason}] for the sections covered by an entry, [errors]); every section
-    needs a claim or a coverage entry."""
+    needs a claim or a coverage entry. An entry for a section that has a claim is an error (it would hide
+    that section's tagged statements); a per-statement waiver (`{s_id, reason}`, no section_id) is not a
+    section entry and is validated by chunk_claims.risk_coverage_errors."""
     errors: list[str] = []
     secs = [s for s in sections if isinstance(s, dict)]
     by_id = {s.get("section_id"): s.get("section", "") for s in secs}
-    covered = {section_key(c.get("section")) for c in claims if isinstance(c, dict)}
+    claimed = {section_key(c.get("section")) for c in claims if isinstance(c, dict)}
+    covered = set(claimed)
     records: list[dict] = []
     for c in cov:
         if not isinstance(c, dict):
@@ -96,12 +99,19 @@ def section_coverage(k, sections, claims, cov, cname) -> tuple[list[dict], list[
         if _norm(str(c.get("reason", ""))) != COVERAGE_REASON:
             errors.append(f"{cname}: reason {c.get('reason')!r} is not {COVERAGE_REASON!r}")
             continue
+        if not c.get("section_id") and c.get("s_id"):
+            continue
         if not c.get("section_id"):
             errors.append(f"{cname}: entry needs section_id, got {c!r}")
             continue
         name = by_id.get(c.get("section_id"))
         if name is None:
             errors.append(f"{cname}: {c.get('section_id')!r} is not a section of batch {k}")
+            continue
+        if section_key(name) in claimed:
+            errors.append(f"{cname}: section {c.get('section_id')!r} ({name!r}) has a stage-E claim, so it cannot be "
+                          f"covered as having no checkable statement (waive single sentences with "
+                          f"{{s_id, reason}} instead)")
             continue
         covered.add(section_key(name))
         records.append({"heading": _last_heading(name), "section": name, "reason": COVERAGE_REASON})

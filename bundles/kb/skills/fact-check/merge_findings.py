@@ -32,7 +32,7 @@ import json
 import sys
 from pathlib import Path
 
-from chunk_claims import _risk_by_s_id
+from chunk_claims import _risk_by_s_id, risk_coverage_errors
 from fact_check_invariants import (COVERAGE_REASON, RISK_COVERAGE_REASON, FIGURE_KEYS, FINDING_KEYS, LATE_KEYS,
                                    SEVERITIES, VERDICTS, _last_heading, section_coverage, section_key)
 
@@ -98,9 +98,10 @@ def _load_obj(path: Path, errors: list[str]) -> dict | None:
 
 
 def _check_risk_scope(d: Path, index: list, claims: dict[str, dict], chunked: set[str],
-                      stage_e_cov: dict[int, set[str]], errors: list[str]) -> None:
+                      errors: list[str]) -> None:
     """Fast mode, from the batch files' own risk tags (never the model's): chunks.json holds exactly the
-    risk-tagged claims, and every risk-tagged statement has a claim or its section a coverage entry."""
+    risk-tagged claims, and every risk-tagged statement is covered (risk_coverage_errors, the helper
+    chunk_claims.py already ran before stage V)."""
     expected: set[str] = set()
     for b in index:
         k = b.get("batch") if isinstance(b, dict) else None
@@ -110,15 +111,10 @@ def _check_risk_scope(d: Path, index: list, claims: dict[str, dict], chunked: se
         if batch is None:
             continue
         risk = _risk_by_s_id(batch)
-        claimed = {c.get("s_id") for c in claims.values() if str(c.get("claim_id", "")).startswith(f"B{k}-")}
         expected |= {cid for cid, c in claims.items() if cid.startswith(f"B{k}-") and risk.get(c.get("s_id"))}
-        for sec in batch.get("sections", []) or []:
-            if not isinstance(sec, dict) or section_key(sec.get("section")) in stage_e_cov.get(k, set()):
-                continue
-            for s_id, tags in _risk_by_s_id({"sections": [sec]}).items():
-                if tags and s_id not in claimed:
-                    errors.append(f"batch {k}: high-risk statement {s_id} ({', '.join(tags)}) in section "
-                                  f"{sec.get('section')!r} has no stage-E claim and its section has no coverage entry")
+        cname = f"coverage_batch_{k}.json"
+        errors.extend(risk_coverage_errors(k, batch, [c for c in claims.values() if str(c.get("claim_id", "")).startswith(f"B{k}-")],
+                                           _load_list(d / cname, [], required=False) or [], cname, "risk"))
     if expected != chunked:
         missing, extra = sorted(expected - chunked), sorted(chunked - expected)
         errors.append("chunks.json: in-scope claims differ from the batch files' risk tags "
@@ -138,7 +134,6 @@ def merge(d: Path, scope: str = "all", wave_size: int = 10) -> tuple[list[dict],
     claims: dict[str, dict] = {}
     coverage: list[dict] = []
     seen_cov: set[str] = set()
-    stage_e_cov: dict[int, set[str]] = {}
     for b in index:
         k = b.get("batch") if isinstance(b, dict) else None
         if not isinstance(k, int) or not isinstance(b.get("sections"), list):
@@ -171,7 +166,6 @@ def merge(d: Path, scope: str = "all", wave_size: int = 10) -> tuple[list[dict],
                 if section_key(r["section"]) not in seen_cov:
                     seen_cov.add(section_key(r["section"]))
                     coverage.append(r)
-        stage_e_cov[k] = {section_key(r["section"]) for r in recs}
 
     # Stage V: every in-scope claim has exactly one finding, from its own chunk.
     in_scope: list[str] = []
@@ -216,6 +210,12 @@ def merge(d: Path, scope: str = "all", wave_size: int = 10) -> tuple[list[dict],
             else:
                 got[fid] = f
     if scope == "all":
+        for b in index:                                    # waivers are validated in both scopes (the risk path does it itself)
+            k = b.get("batch") if isinstance(b, dict) else None
+            batch = _load_obj(d / f"batch_{k}.json", []) if isinstance(k, int) and (d / f"batch_{k}.json").exists() else None
+            if batch is not None:
+                cname = f"coverage_batch_{k}.json"
+                errors.extend(risk_coverage_errors(k, batch, [], _load_list(d / cname, [], required=False) or [], cname, "all"))
         listed_ids = set(in_scope)
         for cid in claims:
             if cid not in listed_ids:
@@ -226,7 +226,7 @@ def merge(d: Path, scope: str = "all", wave_size: int = 10) -> tuple[list[dict],
             errors.append(f"{cid}: in-scope claim has no finding (re-run its chunk)")
 
     if scope == "risk":
-        _check_risk_scope(d, index, claims, set(in_scope), stage_e_cov, errors)
+        _check_risk_scope(d, index, claims, set(in_scope), errors)
         has_scope = {section_key(claims[c].get("section")) for c in in_scope if c in claims}
         listed = {section_key(c["section"]) for c in coverage}
         for b in index:

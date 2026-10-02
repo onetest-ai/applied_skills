@@ -19,6 +19,10 @@ def claim(k, n, s_id, section="Scope"):
             "quote": f"claim {k}.{n}", "type": "NUM"}
 
 
+def waiver(i):
+    return {"s_id": f"p2s{i}", "reason": "no checkable statement"}
+
+
 class ChunkCase(unittest.TestCase):
     def setUp(self):
         self.d = Path(tempfile.mkdtemp())
@@ -49,6 +53,7 @@ class ChunkCase(unittest.TestCase):
 
     def test_empty_scope_gives_zero_chunks(self):
         self.w("claims_batch_1.json", [claim(1, 2, "p2s2")])
+        self.w("coverage_batch_1.json", [waiver(i) for i in (1, 3, 5, 7, 9)])
         index, errors = C.chunk(self.d, "risk", 8)
         self.assertEqual((index, errors), ([], []))
         self.assertEqual(json.loads((self.d / "chunks.json").read_text()), [])
@@ -62,6 +67,79 @@ class ChunkCase(unittest.TestCase):
         self.w("claims_batch_1.json", [dict(claim(1, 1, "p2s1"), claim_id="B2-C01")])
         _, errors = C.chunk(self.d, "all", 8)
         self.assertTrue(any("B2-C01" in e for e in errors), errors)
+
+    def chunk_files(self):
+        return sorted(p.name for p in self.d.glob("chunk_*.json"))
+
+    def test_risk_scope_fails_before_any_chunk_and_names_every_uncovered_s_id(self):
+        self.w("claims_batch_1.json", [claim(1, 1, "p2s1")])          # p2s3, 5, 7, 9 are tagged, unclaimed
+        index, errors = C.chunk(self.d, "risk", 8)
+        self.assertEqual(index, [])
+        for s_id in ("p2s3", "p2s5", "p2s7", "p2s9"):
+            self.assertTrue(any(s_id in e for e in errors), (s_id, errors))
+        self.assertFalse(any("p2s1 " in e for e in errors), errors)
+        self.assertEqual(self.chunk_files(), [])
+        self.assertFalse((self.d / "chunks.json").exists())
+
+    def test_scope_all_does_not_need_every_tagged_statement_claimed(self):
+        self.w("claims_batch_1.json", [claim(1, 1, "p2s1")])
+        _, errors = C.chunk(self.d, "all", 8)
+        self.assertEqual(errors, [])
+
+    def test_claim_s_ids_cover_the_sentences_it_spans(self):
+        c = dict(claim(1, 1, "p2s1"), s_ids=["p2s1", "p2s3", "p2s5", "p2s7", "p2s9"])
+        self.w("claims_batch_1.json", [c])
+        index, errors = C.chunk(self.d, "risk", 8)
+        self.assertEqual(errors, [])
+        self.assertEqual([i for x in index for i in x["claim_ids"]], ["B1-C01"])
+
+    def test_claim_s_ids_must_be_real_s_ids_of_the_batch(self):
+        self.w("claims_batch_1.json", [dict(claim(1, 1, "p2s1"), s_ids=["p2s1", "p9s9"])])
+        _, errors = C.chunk(self.d, "all", 8)
+        self.assertTrue(any("B1-C01" in e and "p9s9" in e for e in errors), errors)
+
+    def test_claim_s_ids_must_be_a_list(self):
+        self.w("claims_batch_1.json", [dict(claim(1, 1, "p2s1"), s_ids="p2s1")])
+        _, errors = C.chunk(self.d, "all", 8)
+        self.assertTrue(any("B1-C01" in e and "s_ids" in e for e in errors), errors)
+
+    def test_per_statement_waiver_covers_a_tagged_sentence(self):
+        self.w("claims_batch_1.json", [claim(1, 1, "p2s1")])
+        self.w("coverage_batch_1.json", [waiver(i) for i in (3, 5, 7, 9)])
+        index, errors = C.chunk(self.d, "risk", 8)
+        self.assertEqual(errors, [])
+        self.assertEqual([i for x in index for i in x["claim_ids"]], ["B1-C01"])
+
+    def test_waiver_must_name_a_real_s_id_of_the_batch(self):
+        self.w("coverage_batch_1.json", [waiver(99)])
+        _, errors = C.chunk(self.d, "all", 8)
+        self.assertTrue(any("p2s99" in e for e in errors), errors)
+
+    def test_waiver_reason_is_checked(self):
+        self.w("coverage_batch_1.json", [{"s_id": "p2s1", "reason": "because"}])
+        _, errors = C.chunk(self.d, "all", 8)
+        self.assertTrue(any("reason" in e for e in errors), errors)
+
+    def test_section_coverage_for_a_section_with_claims_is_rejected(self):
+        self.w("coverage_batch_1.json", [{"section_id": "s01", "reason": "no checkable statement"}])
+        for scope in ("all", "risk"):
+            _, errors = C.chunk(self.d, scope, 8)
+            self.assertTrue(any("s01" in e and "claim" in e for e in errors), (scope, errors))
+
+    def test_unhashable_ids_are_listed_errors_not_a_traceback(self):
+        self.w("claims_batch_1.json", [dict(claim(1, 1, "p2s1"), s_ids=[["p2s1"]]), dict(claim(1, 2, "p2s2"), s_id=["p2s2"])])
+        self.w("coverage_batch_1.json", [{"s_id": ["p2s1"], "reason": "no checkable statement"}])
+        for scope in ("all", "risk"):
+            _, errors = C.chunk(self.d, scope, 8)
+            self.assertTrue(errors, scope)
+            r = subprocess.run([sys.executable, str(SCRIPT), str(self.d), "--scope", scope], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+            self.assertIn("s_id", r.stderr)
+
+    def test_one_helper_serves_chunk_and_merge(self):
+        import merge_findings
+        self.assertIs(merge_findings.risk_coverage_errors, C.risk_coverage_errors)
 
     def test_deterministic(self):
         C.chunk(self.d, "all", 3)
