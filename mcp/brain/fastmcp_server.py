@@ -676,7 +676,7 @@ async def search_shim(request: Request) -> JSONResponse:
             "result_type": "retrieved_context",
         }
         if result.get("superseded_hint"):
-            item["superseded_hint"] = result["superseded_hint"]
+            item = {"superseded_hint": result["superseded_hint"], **item}
         return JSONResponse([item])
     return JSONResponse([{"text": "No context retrieved.", "source": ""}])
 

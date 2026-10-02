@@ -410,9 +410,23 @@ class SemanticCoreTests(FixtureCase):
         self.assertEqual(hint["sources"], ["old.md"])
         self.assertEqual(hint["event_dates"], ["2023-01-01", "2023-02-01"])
         self.assertIn("latest_only=false", hint["message"])
-        self.assertIn("2 superseded", hint["message"])
+        # count is passages (chunks), not documents: 2 passages from 1 document here.
+        self.assertIn("2 superseded (outdated) passages from 1 document", hint["message"])
+        self.assertEqual(hint["message"], (
+            "2 superseded (outdated) passages from 1 document also match this query: old.md. "
+            "If the hits below do not contain what the question asks about, your next call "
+            "should be search_knowledge with the same query and latest_only=false; label "
+            "anything you use from those documents as history."))
+        self.assertIn("your next call should be search_knowledge with the same query and "
+                      "latest_only=false", hint["message"])
+        self.assertIn("old.md", hint["message"])
         self.assertNotIn("SECRETTEXT", json.dumps(hint))
         self.assertEqual(set(hint), {"count", "sources", "event_dates", "message"})
+
+    def test_superseded_hint_is_first_key_when_present(self):
+        db = self._hint_db([("old.md", None)])
+        out = self._hint_search(db, "policy", 5)
+        self.assertEqual(list(out.keys()), ["superseded_hint", "query", "hits", "count", "guidance"])
 
     def test_superseded_hint_absent_when_latest_only_false_or_as_of(self):
         db = self._hint_db([("old.md", "2023-01-01")])
@@ -424,9 +438,38 @@ class SemanticCoreTests(FixtureCase):
         out = self._hint_search(db, "policy", 5)
         self.assertNotIn("superseded_hint", out)
         self.assertEqual(set(out), {"query", "hits", "count", "guidance"})
+        self.assertEqual(list(out.keys()), ["query", "hits", "count", "guidance"])
         db2 = self._hint_db([("old.md", None)])
         out2 = self._hint_search(db2, "nomatchatall", 5)
         self.assertNotIn("superseded_hint", out2)
+
+    def _counting_module(self):
+        base = self._status_aware_module()
+        calls = []
+        def spy(con, model, query, limit, as_of=None, latest_only=False,
+                source_contains=None, tag=None, tag_boost=None):
+            calls.append(latest_only)
+            return base.search(con, model, query, limit, as_of, latest_only, source_contains, tag, tag_boost)
+        return types.SimpleNamespace(DEFAULT_MODEL="fake", search=spy), calls
+
+    def test_probe_skipped_when_store_has_no_superseded_chunks(self):
+        db = self._hint_db([])
+        mod, calls = self._counting_module()
+        with patch.dict(sys.modules, {"knowledge_index": mod}), \
+                patch.object(core, "_readonly_connection", self._ro_for(db)):
+            out = core.search_knowledge("policy", 5)
+        self.assertEqual(calls, [True])
+        self.assertNotIn("superseded_hint", out)
+        self.assertEqual([h["source"] for h in out["hits"]], ["current.md"])
+
+    def test_probe_still_runs_when_store_has_superseded_chunks(self):
+        db = self._hint_db([("old.md", None)])
+        mod, calls = self._counting_module()
+        with patch.dict(sys.modules, {"knowledge_index": mod}), \
+                patch.object(core, "_readonly_connection", self._ro_for(db)):
+            out = core.search_knowledge("policy", 5)
+        self.assertEqual(calls, [True, False])
+        self.assertEqual(out["superseded_hint"]["count"], 1)
 
     def test_superseded_hint_degrades_on_legacy_store_or_index(self):
         def ro(*, vectors=False):

@@ -571,16 +571,18 @@ def _superseded_hint(filtered: list[dict], unfiltered: list[dict]) -> dict[str, 
             sources.append(row["source"])
         if row.get("event_date") not in dates and len(dates) < 3:
             dates.append(row.get("event_date"))
-    n = len(hidden)
+    n = len(hidden)  # passages (chunks), not documents
+    docs = len({row["source"] for row in hidden})
     return {
         "count": n,
         "sources": sources,
         "event_dates": dates,
         "message": (
-            f"{n} superseded (outdated) documents also match this query and are hidden by default. "
-            "If the current documents do not answer the question, or the question concerns an earlier "
-            "period or state, repeat the search with latest_only=false and label anything drawn from "
-            "them as history."
+            f"{n} superseded (outdated) passage{'s' if n != 1 else ''} from {docs} "
+            f"document{'s' if docs != 1 else ''} also match this query: {'; '.join(sources)}. "
+            "If the hits below do not contain what the question asks about, your next call should be "
+            "search_knowledge with the same query and latest_only=false; label anything you use from "
+            "those documents as history."
         ),
     }
 
@@ -633,7 +635,10 @@ def search_knowledge(
                     effective_latest_only = False
         if requested or effective_latest_only:
             result = knowledge.search(con, knowledge.DEFAULT_MODEL, query, limit, as_of, effective_latest_only, source_contains, tag, tag_boost)
-            if effective_latest_only and not as_of:
+            # No superseded chunk anywhere means the hint can never fire: skip the probe.
+            has_superseded = effective_latest_only and not as_of and bool(
+                con.execute("SELECT 1 FROM chunks WHERE status='SUPERSEDED' LIMIT 1").fetchone())
+            if has_superseded:
                 # Advisory only: the same query unfiltered (same limit and other filters),
                 # to tell the caller outdated documents are hidden. Never alters hits.
                 try:
@@ -667,7 +672,8 @@ def search_knowledge(
         "guidance": "Narrative evidence only. Use get_metric for every numeric claim.",
     }
     if hint:
-        response["superseded_hint"] = hint
+        # First key, so a caller reading the response top-down meets it before the hits.
+        response = {"superseded_hint": hint, **response}
     return response
 
 
