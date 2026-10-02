@@ -33,5 +33,5 @@ resource_app_object_id = "00000000-0000-0000-0000-000000000000"   # that app's o
 scope                  = "MCP.Access"                             # the exposed delegated scope name
 
 [mcp]
-resource_url = "https://your-apim.azure-api.net/primo/mcp"        # the MCP endpoint = PRM `resource` (client requires this verbatim)
+resource_url = "https://your-apim.azure-api.net/brain/mcp"        # the MCP endpoint = PRM `resource` (client requires this verbatim)
 callback_url = "https://claude.ai/api/mcp/auth_callback"          # the MCP client's OAuth redirect (moved to SPA; its origin is forwarded to Entra)
