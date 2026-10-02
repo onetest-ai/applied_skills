@@ -558,6 +558,33 @@ def get_metric_history(
     }
 
 
+def _superseded_hint(filtered: list[dict], unfiltered: list[dict]) -> dict[str, Any] | None:
+    """Metadata about SUPERSEDED chunks hidden from the default search; no text, no scores."""
+    seen = {row["id"] for row in filtered}
+    hidden = [r for r in unfiltered if r.get("status") == "SUPERSEDED" and r["id"] not in seen]
+    if not hidden:
+        return None
+    sources: list[str] = []
+    dates: list[Any] = []
+    for row in hidden:
+        if row["source"] not in sources and len(sources) < 3:
+            sources.append(row["source"])
+        if row.get("event_date") not in dates and len(dates) < 3:
+            dates.append(row.get("event_date"))
+    n = len(hidden)
+    return {
+        "count": n,
+        "sources": sources,
+        "event_dates": dates,
+        "message": (
+            f"{n} superseded (outdated) documents also match this query and are hidden by default. "
+            "If the current documents do not answer the question, or the question concerns an earlier "
+            "period or state, repeat the search with latest_only=false and label anything drawn from "
+            "them as history."
+        ),
+    }
+
+
 def search_knowledge(
     query: str, limit: int = 5, as_of: str | None = None,
     latest_only: bool = True, source_contains: str | None = None,
@@ -594,6 +621,7 @@ def search_knowledge(
             f"({', '.join(requested)}); omit them, or rebuild the store with a knowledge-index "
             "version that supports filtered search."
         )
+    hint = None
     with _readonly_connection(vectors=True) as con:
         effective_latest_only = latest_only
         if effective_latest_only:
@@ -605,6 +633,14 @@ def search_knowledge(
                     effective_latest_only = False
         if requested or effective_latest_only:
             result = knowledge.search(con, knowledge.DEFAULT_MODEL, query, limit, as_of, effective_latest_only, source_contains, tag, tag_boost)
+            if effective_latest_only and not as_of:
+                # Advisory only: the same query unfiltered (same limit and other filters),
+                # to tell the caller outdated documents are hidden. Never alters hits.
+                try:
+                    unfiltered = knowledge.search(con, knowledge.DEFAULT_MODEL, query, limit, as_of, False, source_contains, tag, tag_boost)
+                    hint = _superseded_hint(result["results"], unfiltered["results"])
+                except Exception:
+                    hint = None
         else:
             result = knowledge.search(con, knowledge.DEFAULT_MODEL, query, limit)
     hits = [
@@ -624,12 +660,15 @@ def search_knowledge(
         }
         for row in result["results"]
     ]
-    return {
+    response = {
         "query": query,
         "hits": hits,
         "count": len(hits),
         "guidance": "Narrative evidence only. Use get_metric for every numeric claim.",
     }
+    if hint:
+        response["superseded_hint"] = hint
+    return response
 
 
 def _temporal_operation(name: str, *args: Any) -> dict[str, Any]:

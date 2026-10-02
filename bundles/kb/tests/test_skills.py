@@ -160,6 +160,23 @@ class TestBrainContractIsInlined(unittest.TestCase):
             self.assertEqual(_contract(text), canonical,
                              f"{name}: inlined contract differs from doctrine.md")
 
+    def test_contract_teaches_history_via_as_of(self):
+        """A superseded document is hidden by default; without this rule a past-tense
+        question reads hidden history as missing data."""
+        block = self._canonical()
+        for token in ("as_of", "latest_only=false", "superseded"):
+            self.assertIn(token, block, f"contract must name {token!r}")
+        # as_of silently drops documents without an exact date; the rule must say so.
+        self.assertIn("leaves out documents without an exact date", block)
+        # Decision-first: the flag is chosen before the first search, not after a failure.
+        self.assertIn("Decide before your first `search_knowledge` call", block)
+        self.assertIn("make that first call with `latest_only=false`", block)
+        # Observable retry trigger; rephrasing the same default search is the failure mode.
+        self.assertIn("do not rephrase the same default search", block)
+        self.assertIn("repeat it once with `latest_only=false`", block)
+        # An undated or hand-superseded document has no event_date to quote.
+        self.assertIn("or as undated when it has none", block)
+
     def test_verifier_inlines_the_resolution_rules(self):
         from test_plugin_structure import KB_ROOT, read_text
         text = read_text(KB_ROOT / "agents" / "verifier.md")

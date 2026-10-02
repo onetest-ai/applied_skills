@@ -142,7 +142,7 @@ _IDENTITY = _brain_identity()
 
 mcp = FailSafeFastMCP(
     name=f"Semantic Knowledge Brain — {_IDENTITY}" if _IDENTITY else "Semantic Knowledge Brain",
-    version="1.3.0",
+    version="1.4.0",
     instructions=_instructions_for(_IDENTITY),
     mask_error_details=True,
     # Tool functions validate inputs themselves so mistakes can be returned as structured,
@@ -423,8 +423,8 @@ def read_document(
 def search_knowledge(
     query: Annotated[str | None, SkipValidation, Field(description="Required non-empty natural-language narrative question or concept")] = None,
     limit: Annotated[int, SkipValidation, Field(description=_LIMIT_DESCRIPTION)] = 5,
-    as_of: Annotated[str | None, SkipValidation, Field(description="Optional ISO event-time cutoff")] = None,
-    latest_only: Annotated[bool, SkipValidation, Field(description="Exclude chunks marked SUPERSEDED (default). Pass as_of for history.")] = True,
+    as_of: Annotated[str | None, SkipValidation, Field(description="Optional ISO event-time cutoff for a point-in-time question. Only documents with an exact date (or a file date before the cutoff) match, so undated documents are left out; for general history use latest_only=false instead.")] = None,
+    latest_only: Annotated[bool, SkipValidation, Field(description="Exclude chunks marked SUPERSEDED (default true). Pass latest_only=false to include superseded (outdated) documents when the question is about an earlier period or an original state.")] = True,
     source_contains: Annotated[str | None, SkipValidation, Field(description="Optional literal source-path substring")] = None,
     tag: Annotated[str | None, SkipValidation, Field(description="Optional exact taxonomy tag")] = None,
     tag_boost: Annotated[str | None, SkipValidation, Field(description="Optional taxonomy tag for RRF score boost (does not exclude untagged chunks)")] = None,
@@ -432,6 +432,12 @@ def search_knowledge(
     """Search narrative evidence with hybrid BM25+vector retrieval and source citations.
 
     Do not use text returned here as the authority for numeric claims; call get_metric.
+
+    When superseded (outdated) documents also match but are hidden by the default
+    latest_only=true, the response carries `superseded_hint` (count, sources, event_dates,
+    message; no text). If the current hits do not answer the question, or it concerns an
+    earlier period or state, repeat the search with latest_only=false and label anything
+    drawn from superseded documents as history.
     """
     valid_query, error = _required_string("search_knowledge", "query", query)
     if error:
@@ -663,12 +669,15 @@ async def search_shim(request: Request) -> JSONResponse:
         combined = "\n\n---\n\n".join(
             f"[{h['source']} / {h['title']}]\n{h['text']}" for h in flat
         )
-        return JSONResponse([{
+        item = {
             "text": combined,
             "source": flat[0]["source"] if flat else "",
             "sources": [h["source"] for h in flat],
             "result_type": "retrieved_context",
-        }])
+        }
+        if result.get("superseded_hint"):
+            item["superseded_hint"] = result["superseded_hint"]
+        return JSONResponse([item])
     return JSONResponse([{"text": "No context retrieved.", "source": ""}])
 
 
