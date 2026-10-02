@@ -15,15 +15,65 @@ Batches hold at most --max-chunks chunks and --max-bytes bytes, so one agent's r
 under the 32K output-token limit and its batch file is read in one Read call; --batches is
 only a minimum.
 
+Each chunk's preview is its raw text cut to N chars, then whitespace-collapsed. Transcript chunks
+(source ending .vtt.md / .srt.md, packed to ~1000 chars) get --transcript-preview (default 1000); every
+other chunk gets --preview (default 400). 0 means full text. A `coverage:` line and <out>/coverage.json
+report how much of the prepped text the classifier will see.
+
 Usage: classify_prep.py --db knowledge.sqlite --taxonomy taxonomy_v0.json --out <dir> [--batches 5] [--preview 400]
-                        [--max-chunks 150] [--max-bytes 60000]
+                        [--transcript-preview 1000] [--max-chunks 150] [--max-bytes 60000]
 """
 import argparse, json, math, os, sqlite3, sys
+from typing import Sequence
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from taxo_io import one_line
 
 BatchItem = dict[str, int | str]
+
+
+TRANSCRIPT_SUFFIXES = (".vtt.md", ".srt.md")
+
+
+def is_transcript(source: str | None) -> bool:
+    return (source or "").endswith(TRANSCRIPT_SUFFIXES)
+
+
+def _cap(n: int) -> float:
+    return math.inf if n == 0 else n
+
+
+def build_items(rows: Sequence[tuple], preview: int = 400, transcript_preview: int = 1000) -> list[BatchItem]:
+    """rows: (id, source, title, text). Truncate the raw text first, then collapse whitespace."""
+    items: list[BatchItem] = []
+    for cid, source, title, text in rows:
+        n = _cap(transcript_preview if is_transcript(source) else preview)
+        text = text or ""
+        items.append({"id": cid, "source": source, "title": title,
+                      "preview": " ".join((text if n == math.inf else text[:int(n)]).split())})
+    return items
+
+
+def coverage(rows: Sequence[tuple], preview: int = 400, transcript_preview: int = 1000) -> dict:
+    """Share of raw text (before whitespace collapse) the classifier sees, per chunk kind."""
+    cov: dict = {}
+    for _, source, _, text in rows:
+        kind, cap = ("transcript", _cap(transcript_preview)) if is_transcript(source) else ("other", _cap(preview))
+        n = len(text or "")
+        c = cov.setdefault(kind, {"chunks": 0, "truncated": 0, "chars_total": 0, "chars_seen": 0})
+        c["chunks"] += 1; c["truncated"] += n > cap
+        c["chars_total"] += n; c["chars_seen"] += int(min(n, cap))
+    return {**cov, "preview": preview, "transcript_preview": transcript_preview}
+
+
+def coverage_line(cov: dict) -> str:
+    parts = []
+    for kind, tail in (("transcript", "chunks truncated"), ("other", "truncated")):
+        c = cov.get(kind)
+        if c:
+            pct = 100 * c["chars_seen"] / c["chars_total"] if c["chars_total"] else 100
+            parts.append(f"{kind} {pct:.0f}% of chars ({c['truncated']} of {c['chunks']} {tail})")
+    return "coverage: " + ", ".join(parts)
 
 
 def _serialized_size(batch: list[BatchItem]) -> int:
@@ -52,12 +102,16 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True); ap.add_argument("--taxonomy", required=True)
     ap.add_argument("--out", required=True); ap.add_argument("--batches", type=int, default=5)
-    ap.add_argument("--preview", type=int, default=400)
+    ap.add_argument("--preview", type=int, default=400, help="preview chars for non-transcript chunks; 0 = full text (default 400)")
+    ap.add_argument("--transcript-preview", type=int, default=1000,
+                    help="preview chars for .vtt.md/.srt.md chunks; 0 = full text (default 1000)")
     ap.add_argument("--max-chunks", type=int, default=150, help="most chunks per batch (default 150)")
     ap.add_argument("--max-bytes", type=int, default=60000, help="most bytes per batch file (default 60000)")
     ap.add_argument("--docs", help="comma list of source relpaths — prep ONLY these docs' chunks (incremental reclassify)")
     ap.add_argument("--chunks", help="comma list of chunk ids — prep ONLY these chunks (incremental reclassify)")
     a = ap.parse_args(argv)
+    if a.preview < 0 or a.transcript_preview < 0:
+        ap.error("--preview and --transcript-preview must be >= 0 (0 = full text)")
     os.makedirs(a.out, exist_ok=True)
     tax = json.load(open(a.taxonomy))
     it = tax.get("intent_taxonomy", {})
@@ -90,22 +144,27 @@ def main(argv: list[str] | None = None) -> None:
             '  {"12": ["Unauthorized items"], "13": [], "14": ["Track Delivery","Billing & Payments"], "15": ["__no_topic__"]}\n'
             "Judge by the title + preview. Be precise, not generous. (An L2 auto-includes its L1.)\n")
     con = sqlite3.connect(a.db)
-    where, params = "", [a.preview]
+    where, params = "", []
     if a.docs:
         docs = [s.strip() for s in a.docs.split(",") if s.strip()]
         where = " WHERE source IN (" + ",".join("?" * len(docs)) + ")"; params += docs
     elif a.chunks:
         ids = [int(x) for x in a.chunks.split(",") if x.strip()]
         where = " WHERE id IN (" + ",".join("?" * len(ids)) + ")"; params += ids
-    rows = con.execute(f"SELECT id, source, title, substr(text,1,?) FROM chunks{where} ORDER BY id", params).fetchall()
+    rows = con.execute(f"SELECT id, source, title, text FROM chunks{where} ORDER BY id", params).fetchall()
     if not rows:
+        stale = os.path.join(a.out, "coverage.json")
+        if os.path.exists(stale): os.remove(stale)  # a reused --out must not keep the last run's counts
         print(f"no chunks match — nothing to classify -> {a.out}"); return
-    items: list[BatchItem] = [{"id": r[0], "source": r[1], "title": r[2], "preview": " ".join((r[3] or "").split())} for r in rows]
+    items = build_items(rows, a.preview, a.transcript_preview)
+    cov = coverage(rows, a.preview, a.transcript_preview)
+    json.dump(cov, open(os.path.join(a.out, "coverage.json"), "w"), indent=1)
     batches = split_batches(items, a.max_chunks, a.max_bytes, a.batches)
     for k, batch in enumerate(batches):
         json.dump(batch, open(os.path.join(a.out, f"batch_{k}.json"), "w"), indent=1)
     print(f"prepared {len(rows)} chunks into {len(batches)} batches "
           f"(<= {a.max_chunks} chunks, <= {a.max_bytes} bytes each) -> {a.out}")
+    print(coverage_line(cov))
 
 if __name__ == "__main__":
     main()

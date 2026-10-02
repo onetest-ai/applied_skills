@@ -178,6 +178,8 @@ PY=<BRAIN.md's $PY>   # the skills' venv (install.sh --deps); or: uv run --with-
 "$PY" .../corpus-taxonomy-extraction/classify_prep.py --db "$DB" --taxonomy <project>/taxonomy/current.json --out <project>/classify
 #    Batches are capped at 150 chunks / 60 KB (--max-chunks, --max-bytes) so one agent's reply stays under the
 #    32K output-token limit and its batch is read in one Read; --batches only sets a minimum.
+#    Previews: 400 chars per chunk, 1000 for .vtt.md/.srt.md transcript chunks (--transcript-preview; 0 = full text).
+#    Tell the user the printed `coverage:` line; flag it if transcript coverage is below 90%.
 #    Agents write result_k.json into the SAME <project>/classify/ dir as the batch files (not a subdir).
 #    → dispatch N Sonnet subagents: each reads classify/{instructions,vocab,batch_k}.md/json → writes classify/result_k.json
 "$PY" .../corpus-taxonomy-extraction/classify_write.py --db "$DB" --results <project>/classify   # -> chunk_topics + graph 'about' edges

@@ -246,6 +246,8 @@ Do not treat them as an unexpected removal when reviewing the parsed-store delta
 
 The apply step must create a SQLite snapshot, update changed documents atomically, rebuild `related`, and write `sync_plan.json`. On failure, stop and confirm rollback/restoration before continuing.
 
+**Classifier preview windows (0.13.0).** Upgrading reclassifies nothing by itself; the change applies only to the next classify run. Transcript chunks (`.vtt.md`/`.srt.md` sources) now receive a 1000-char preview instead of 400; document chunks stay at 400. Transcript tags should improve, and that run's **transcript** classify spend rises to roughly 1.6× the previous transcript classify spend. `classify_prep` now prints a `coverage:` line and writes `coverage.json`.
+
 ### 5. Complete semantic work
 
 Commands use `$PY`, `$SKILLS` and `$DB` as set under **Required project contract**; the taxonomy scripts are stdlib only.
@@ -257,7 +259,7 @@ Commands use `$PY`, `$SKILLS` and `$DB` as set under **Required project contract
 If `sync_plan.json.reclassify_chunk_ids` is non-empty:
 
 1. rebuild the taxonomy graph first, so categories added since the last build are in the graph (`classify_write` drops labels that are not graph nodes);
-2. prepare batches in a fresh run directory (`classify_prep.py` caps each batch at 150 chunks / 60 KB, so one agent's reply stays under the 32K output-token limit);
+2. prepare batches in a fresh run directory (`classify_prep.py` caps each batch at 150 chunks / 60 KB, so one agent's reply stays under the 32K output-token limit; previews are 400 chars, 1000 for `.vtt.md`/`.srt.md` transcript chunks, and you tell the user the printed `coverage:` line, flagging transcript coverage below 90%);
 3. dispatch Sonnet text subagents, one per `batch_k.json`: each reads that dir's `instructions.md`, `vocab.md` and its batch and writes `result_k.json`;
 4. verify exact chunk-id coverage and valid labels;
 5. run incremental `classify_write` without `--reset`.
