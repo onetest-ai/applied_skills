@@ -283,7 +283,7 @@ class TestSectionParallelRules(unittest.TestCase):
         cls.merge = flat(section(cls.text, "### 6a.", "### 6b."))
 
     def test_step_1_runs_sections_cli_not_improvised_extraction(self):
-        self.assertIn('python sections.py "<draft>.docx" --out <work dir>', self.step1)
+        self.assertIn('python "<skill dir>/sections.py" "<draft>.docx" --out <work dir>', self.step1)
         self.assertIn("--max-words 1500", self.step1)
         self.assertIn("`sections.json`", self.step1)
         self.assertIn("`batches.json`", self.step1)
@@ -341,7 +341,7 @@ class TestSectionParallelRules(unittest.TestCase):
         self.assertNotIn("findings_figures", self.text)
 
     def test_merge_runs_via_its_cli_before_step_7(self):
-        self.assertIn('python merge_findings.py <work dir> --out <run dir>/findings.json', self.merge)
+        self.assertIn('python "<skill dir>/merge_findings.py" <work dir> --out <run dir>/findings.json', self.merge)
         self.assertLess(self.text.index("### 6a."), self.text.index("### 7."))
         self.assertIn("On failure it lists", self.merge)
         self.assertIn("renumbers", self.merge)
@@ -361,7 +361,7 @@ class TwoModeTwoStageTests(unittest.TestCase):
             self.assertIn(t, self.all)
 
     def test_step1b_two_stages_and_parameters(self):
-        for t in ("Stage E", "Stage V", "chunk_claims.py <work dir> --scope", "at most 8 claims",
+        for t in ("Stage E", "Stage V", "chunk_claims.py\" <work dir> --scope", "at most 8 claims",
                   "per claim, never batched across claims", "waves of `wave_size` (default 10)",
                   "| `scope` | `all` | `risk` |"):
             self.assertIn(t, self.all)
@@ -370,8 +370,8 @@ class TwoModeTwoStageTests(unittest.TestCase):
         self.assertIn("runs the same stages sequentially", self.all)
 
     def test_merge_and_report_use_scope_and_run(self):
-        for t in ("merge_findings.py <work dir> --out <run dir>/findings.json --scope", "--run <run dir>/run.json",
-                  "findings_report.py --coverage-line <run dir>/run.json"):
+        for t in ("merge_findings.py\" <work dir> --out <run dir>/findings.json --scope", "--run <run dir>/run.json",
+                  "findings_report.py\" --coverage-line <run dir>/run.json"):
             self.assertIn(t, self.all)
 
     def test_dry_no_second_procedure_and_patterns_only_in_sections(self):
@@ -390,7 +390,7 @@ class FixRound1Tests(unittest.TestCase):
 
     def test_fix_round_1_sentences(self):
         for t in (
-            "**The reply's** first line is the output of `python findings_report.py --coverage-line <run dir>/run.json`, verbatim.",
+            "**The reply's** first line is the output of `python \"<skill dir>/findings_report.py\" --coverage-line <run dir>/run.json`, verbatim.",
             "the 'reused baseline of <date>, N claims' line comes second. Then the one-or-two-sentence answer.",
             "send up to `wave_size` dispatches in one message, wait for the whole wave to finish, then send the next wave.",
             "except `destination`, which step 8 sets",
