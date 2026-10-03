@@ -138,10 +138,16 @@ class TestFactCheckRules(unittest.TestCase):
         self.has(self.step5, "A name the Brain itself gives two ways for the same thing (an auto-transcript spelling "
                            "against a different name in the same or another source) is Controversial, citing both spans")
 
+    def test_entity_checks_what_the_name_is(self):
+        # A vendor name copied from an auto-transcript was a meeting participant's surname; the Brain shows the person.
+        self.has(self.step4, "**ENTITY: check what the name is, not only how it is spelled.** Search the name on its own",
+                 "(a meeting participant or speaker, when the draft names a vendor, company or system), the claim is never Verified",
+                 "The verdict is Controversial, citing both spans")
+
     def test_6b_dispatch_payload_and_reexamination(self):
         s = self.s6b
         self.has(s, "pass the draft's verbatim quote as the claim, plus the chunk ids or metric reference from its `trail`, never the Brain-side value as the claim",
-                 "if it still contradicts the draft, the finding stands and both readings are recorded; if it supports the draft and the finding cites no differing span for the same subject, the claim becomes Verified; if the finding cites a differing span (another value or name the Brain gives for the same subject), it becomes Controversial with both spans; if it cannot be re-opened, it is No Evidence",
+                 "if it still contradicts the draft, the finding stands and both readings are recorded; if it supports the draft and the finding cites no differing span for the same subject, the claim becomes Verified; if the finding cites a differing span (another value or name the Brain gives for the same subject, or the same name used for a different kind of thing), it becomes Controversial with both spans; if it cannot be re-opened, it is No Evidence",
                  "An Incorrect finding with `grain-mismatch` is re-checked for Misleading (right value at another grain)")
         self.assertNotIn("any other finding", s)
 
