@@ -1,0 +1,44 @@
+{
+  "brain": {
+    "url": "https://your-gateway-host/your-brain/mcp",
+    "key_env": "BRAIN_API_KEY",
+    "key_header": "X-API-Key"
+  },
+  "corpus": {
+    "inventory_xlsx": "docs/your-corpus-inventory.xlsx",
+    "inventory_sheet": "Query",
+    "narrative_exts": [
+      ".pdf",
+      ".pptx",
+      ".docx",
+      ".vtt",
+      ".srt"
+    ],
+    "tabular_exts": [
+      ".xlsx",
+      ".xlsm"
+    ],
+    "seed_terms": []
+  },
+  "scope": {
+    "provenance_cutoff": "",
+    "exclude_patterns": [
+      "prior .*engagement"
+    ],
+    "keep_patterns": [
+      "monthly",
+      "survey",
+      "report"
+    ],
+    "junk_patterns": [
+      "tobedeleted",
+      "~\\$",
+      "\\.tmp$",
+      "\\bcopy\\b",
+      "^book\\.xlsx$"
+    ]
+  },
+  "context": {
+    "metric_synonyms": {}
+  }
+}
