@@ -88,7 +88,8 @@ class TestSections(unittest.TestCase):
 
     def test_image_is_a_figure_with_its_paragraph_id(self):
         figs = [f for s in self.sections for f in s["figures"]]
-        self.assertEqual(figs, [{"figure": 1, "p_id": "p7", "image": "word/media/image1.png"}])
+        self.assertEqual(figs, [{"figure": 1, "p_id": "p7", "image": "word/media/image1.png",
+                                "media": "media/image1.png"}])
         self.assertEqual(self.sections[2]["figures"], figs)
 
     def test_words_count_heading_paragraphs_and_cells(self):
@@ -143,8 +144,8 @@ class TestSections(unittest.TestCase):
         again = self.tmp / "again"
         r = run_cli(self.docx, again, "--max-words", str(MAX))
         self.assertEqual(r.returncode, 0, r.stderr)
-        names = sorted(p.name for p in self.out.iterdir())
-        self.assertEqual(names, sorted(p.name for p in again.iterdir()))
+        names = sorted(str(p.relative_to(self.out)) for p in self.out.rglob("*") if p.is_file())
+        self.assertEqual(names, sorted(str(p.relative_to(again)) for p in again.rglob("*") if p.is_file()))
         for n in names:
             self.assertEqual((self.out / n).read_bytes(), (again / n).read_bytes(), n)
 
@@ -265,3 +266,69 @@ class StatsOutputTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAVE_DOCX, "needs python-docx >= 1.2")
+class MediaAndSummaryTests(unittest.TestCase):
+    def _doc_with_figure(self, d):
+        from docx import Document
+        png = d / "fig.png"; png.write_bytes(_tiny_png())
+        doc = Document(); doc.add_heading("Scope", 1)
+        doc.add_paragraph("Figure 1 shows the flow."); doc.add_picture(str(png))
+        src = d / "in.docx"; doc.save(str(src))
+        return src
+
+    def test_referenced_media_is_extracted_and_linked_from_the_figure(self):
+        d = Path(tempfile.mkdtemp()); src = self._doc_with_figure(d)
+        S.write_outputs(src, d / "out")
+        secs = json.loads((d / "out" / "sections.json").read_text())
+        fig = [f for s in secs for f in s["figures"]][0]
+        self.assertTrue(fig["media"].startswith("media/"))
+        self.assertEqual((d / "out" / fig["media"]).read_bytes(), _tiny_png())
+
+    def test_orphaned_package_media_is_not_extracted(self):
+        import zipfile
+        d = Path(tempfile.mkdtemp()); src = self._doc_with_figure(d)
+        orphan = d / "orphan.docx"
+        with zipfile.ZipFile(src) as zin, zipfile.ZipFile(orphan, "w") as zout:
+            for i in zin.infolist():
+                zout.writestr(i, zin.read(i.filename))
+            zout.writestr("word/media/stray.png", _tiny_png())
+        S.write_outputs(orphan, d / "out")
+        secs = json.loads((d / "out" / "sections.json").read_text())
+        fig = [f for s in secs for f in s["figures"]][0]
+        files = [p.name for p in (d / "out" / "media").iterdir()]
+        self.assertEqual(files, [Path(fig["media"]).name])
+        self.assertNotIn("stray.png", files)
+
+    def test_cli_prints_the_summary_the_agent_needs(self):
+        d = Path(tempfile.mkdtemp()); src = self._doc_with_figure(d)
+        r = subprocess.run([sys.executable, str(SCRIPT), str(src), "--out", str(d / "out")],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(r.stdout, r"statements \d+, high-risk \d+, estimate fast ~\d+ min, deep ~\d+ min")
+        self.assertRegex(r.stdout, r"figures: 1 \(figure 1 in p\d+ -> media/image1\.png\)")
+        self.assertIn("embedded objects: 0", r.stdout)
+
+    def test_one_image_used_by_two_figures_is_written_once_and_linked_from_both(self):
+        from docx import Document
+        d = Path(tempfile.mkdtemp()); png = d / "fig.png"; png.write_bytes(_tiny_png())
+        doc = Document(); doc.add_paragraph("A"); doc.add_picture(str(png)); doc.add_paragraph("B"); doc.add_picture(str(png))
+        src = d / "in.docx"; doc.save(str(src))
+        S.write_outputs(src, d / "out")
+        figs = [f for s in json.loads((d / "out" / "sections.json").read_text()) for f in s["figures"]]
+        self.assertEqual(len(figs), 2)
+        self.assertEqual({f["media"] for f in figs}, {figs[0]["media"]})
+        self.assertEqual(len(list((d / "out" / "media").iterdir())), 1)
+
+    def test_external_linked_image_is_skipped_not_fatal(self):
+        d = Path(tempfile.mkdtemp())
+        secs = [{"blocks": [("f", {"figure": 1, "p_id": "p2", "image": "http://example.invalid/x.png"}, 0)]}]
+        src = self._doc_with_figure(d)
+        self.assertEqual(S.extract_media(src, d / "out", secs), [])
+        self.assertNotIn("media", secs[0]["blocks"][0][1])
+
+    def test_skill_step_1_no_longer_says_unzip(self):
+        skill = (KB_ROOT / "skills" / "doc-fact-check" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertNotIn("unzip `word/media/*`", skill)
+        self.assertIn("`<work dir>/media/`", skill)

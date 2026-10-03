@@ -40,8 +40,8 @@ It also writes `stats.json` (section and statement counts, high-risk count, `est
 - `batches.json` and one `batch_<k>.json` per batch: consecutive sections grouped up to `--max-words`. A section is never split unless it alone exceeds the limit; then it is split at paragraph boundaries. Every paragraph and table row lands in exactly one batch.
 
 Then, in the main session:
-- **figures**: unzip `word/media/*`, keep only images referenced from `document.xml` (a package can carry orphaned media from another document); `sections.json` already says which paragraph holds each drawing and gives the `figure` number step 8 anchors to.
-- **embedded objects**: read `word/embeddings/*` (workbooks, other documents) and `word/diagrams/*` (SmartArt); they hold checkable claims that neither `paragraphs` nor `word/media` shows. An OLE object's preview icon in `word/media` is not a figure. Their claims are handled with the figures in step 3 (main session, `I*` ids).
+- **figures**: `sections.py` has already written every referenced image to `<work dir>/media/` and printed which paragraph holds each figure; open those files with the Read tool. Never unzip the package yourself (it can carry orphaned media from another document). `sections.json` gives the `figure` number step 8 anchors to.
+- **embedded objects**: when `sections.py` reports embedded objects or diagrams, read them with the Read tool after `sections.py` (`word/embeddings/*` workbooks and other documents, `word/diagrams/*` SmartArt); they hold checkable claims that neither `paragraphs` nor `word/media` shows. An OLE object's preview icon in `word/media` is not a figure. Their claims are handled with the figures in step 3 (main session, `I*` ids).
 Never rely on a summary to read the draft.
 
 ### 1b. Extract, chunk, verify (two stages)

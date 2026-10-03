@@ -246,6 +246,35 @@ def _dump(path: Path, obj) -> None:
     path.write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def extract_media(docx_path, out_dir: Path, sections: list[dict]) -> list[str]:
+    """Write every image a figure references to <out>/media/; orphaned package media is never read."""
+    import zipfile
+    names = sorted({rec["image"] for s in sections for k, rec, _ in s["blocks"] if k == "f" and rec.get("image")})
+    if not names:
+        return []
+    media = Path(out_dir) / "media"
+    written = []
+    with zipfile.ZipFile(docx_path) as z:
+        have = set(z.namelist())
+        for name in names:                       # r:link (external) images have no part: skipped
+            if name in have:
+                media.mkdir(parents=True, exist_ok=True)
+                (media / Path(name).name).write_bytes(z.read(name))
+                written.append(name)
+    for s in sections:                           # link each figure to its extracted file
+        for k, rec, _ in s["blocks"]:
+            if k == "f" and rec.get("image") in written:
+                rec["media"] = f"media/{Path(rec['image']).name}"
+    return written
+
+
+def package_counts(docx_path) -> tuple[int, int]:
+    import zipfile
+    with zipfile.ZipFile(docx_path) as z:
+        n = z.namelist()
+    return (sum(x.startswith("word/embeddings/") for x in n), sum(x.startswith("word/diagrams/") for x in n))
+
+
 def write_outputs(docx_path, out_dir, max_words: int = 1500) -> tuple[list[dict], list[dict]]:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -253,6 +282,7 @@ def write_outputs(docx_path, out_dir, max_words: int = 1500) -> tuple[list[dict]
     batches = build_batches(sections, max_words)
     for stale in out_dir.glob("batch_*.json"):
         stale.unlink()
+    extract_media(docx_path, out_dir, sections)
     _dump(out_dir / "sections.json", [_render(s, s["blocks"], s["words"]) for s in sections])
     statements = [s for sec in sections for kind, rec, _ in sec["blocks"]
                   for s in (rec["sentences"] if kind == "p" else [rec] if kind == "r" else [])]
@@ -314,7 +344,17 @@ def main(argv=None) -> int:
     except Exception as e:  # not a .docx, corrupt package
         print(f"sections.py: cannot read {src}: {e}", file=sys.stderr)
         return 2
-    print(f"{len(sections)} sections, {len(index)} batches -> {Path(a.out)}")
+    out = Path(a.out)
+    st = json.loads((out / "stats.json").read_text(encoding="utf-8"))
+    figs = [f for s in json.loads((out / "sections.json").read_text(encoding="utf-8")) for f in s["figures"]]
+    emb, dia = package_counts(src)
+    print(f"{len(sections)} sections, {len(index)} batches -> {out}")
+    print(f"statements {st['statements_total']}, high-risk {st['statements_risk']}, "
+          f"estimate fast ~{st['estimate_minutes']['fast']} min, deep ~{st['estimate_minutes']['deep']} min")
+    print(f"figures: {len(figs)}" + (" (" + "; ".join(
+        f"figure {f['figure']} in {f['p_id']} -> {f.get('media', 'external, not extracted')}" for f in figs) + ")"
+        if figs else ""))
+    print(f"embedded objects: {emb} (word/embeddings), diagrams: {dia} (word/diagrams)")
     return 0
 
 
