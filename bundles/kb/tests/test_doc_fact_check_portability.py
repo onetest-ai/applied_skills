@@ -66,11 +66,9 @@ class ScriptsAreSelfContained(unittest.TestCase):
                 self.assertEqual(r.returncode, 0, r.stderr)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class DependencyCheckFlag(unittest.TestCase):
+    @unittest.skipUnless(HAVE_DOCX, "needs python-docx >= 1.2")
     def test_check_prints_versions_and_exits_zero(self):
         r = subprocess.run([sys.executable, str(SKILL_DIR / "sections.py"), "--check"],
                            capture_output=True, text=True, cwd="/")
@@ -88,3 +86,6 @@ class DependencyCheckFlag(unittest.TestCase):
         step0 = SKILL[SKILL.index("### 0. Resolve"):SKILL.index("### 0b.")]
         self.assertIn('python "<skill dir>/sections.py" --check', step0)
         self.assertNotIn("python -c", SKILL)
+
+if __name__ == "__main__":
+    unittest.main()

@@ -7,11 +7,13 @@ Writes into <dir>:
 - sections.json  one record per heading section, in document order: section_id, section (the
                  heading path joined with " > "), heading_path, level, heading_p_id,
                  paragraphs [{p_id, text, sentences [{s_id, text, risk}]}], tables [{t_id, rows [{r_id, cells, s_id, risk}]}],
-                 figures [{figure, p_id, image}], words.
+                 figures [{figure, p_id, image, media?}], words.
 - stats.json    {sections_total, statements_total, statements_risk, estimate_minutes {fast, deep}, source_sha256}:
                  statements are body sentences (s_id p<n>s<k>) plus table rows (s_id = r_id); risk is the
                  list of tags (num, date, absolute, ownership) from RISK_PATTERNS.
 - batches.json   the batch index: [{batch, file, words, sections [{section_id, section, part?}]}].
+- media/        every image a figure references (flat); each figure gains media = "media/<file>".
+- embedded/     every word/embeddings/* and word/diagrams/* part, flat file names.
 - batch_<k>.json one file per batch: {batch, document, max_words, sections [...]}, each entry a
                  section record (or, for a split section, one part of it with part/parts).
 
@@ -31,6 +33,7 @@ import hashlib
 import json
 import math
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -268,11 +271,26 @@ def extract_media(docx_path, out_dir: Path, sections: list[dict]) -> list[str]:
     return written
 
 
-def package_counts(docx_path) -> tuple[int, int]:
+def embedded_members(docx_path) -> tuple[list[str], list[str]]:
+    """Package parts under word/embeddings/ and word/diagrams/ (files only), sorted."""
     import zipfile
     with zipfile.ZipFile(docx_path) as z:
-        n = z.namelist()
-    return (sum(x.startswith("word/embeddings/") for x in n), sum(x.startswith("word/diagrams/") for x in n))
+        n = [x for x in z.namelist() if not x.endswith("/")]
+    return (sorted(x for x in n if x.startswith("word/embeddings/")),
+            sorted(x for x in n if x.startswith("word/diagrams/")))
+
+
+def extract_embedded(docx_path, out_dir: Path) -> None:
+    """Write every embedded object and diagram part flat into <out>/embedded/."""
+    import zipfile
+    emb, dia = embedded_members(docx_path)
+    if not (emb or dia):
+        return
+    dest = Path(out_dir) / "embedded"
+    dest.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(docx_path) as z:
+        for name in emb + dia:
+            (dest / Path(name).name).write_bytes(z.read(name))
 
 
 def write_outputs(docx_path, out_dir, max_words: int = 1500) -> tuple[list[dict], list[dict]]:
@@ -280,9 +298,12 @@ def write_outputs(docx_path, out_dir, max_words: int = 1500) -> tuple[list[dict]
     out_dir.mkdir(parents=True, exist_ok=True)
     sections = extract_sections(docx_path)
     batches = build_batches(sections, max_words)
+    for stale_dir in ("media", "embedded"):
+        shutil.rmtree(out_dir / stale_dir, ignore_errors=True)
     for stale in out_dir.glob("batch_*.json"):
         stale.unlink()
     extract_media(docx_path, out_dir, sections)
+    extract_embedded(docx_path, out_dir)
     _dump(out_dir / "sections.json", [_render(s, s["blocks"], s["words"]) for s in sections])
     statements = [s for sec in sections for kind, rec, _ in sec["blocks"]
                   for s in (rec["sentences"] if kind == "p" else [rec] if kind == "r" else [])]
@@ -324,7 +345,7 @@ def check_dependencies() -> int:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("docx", nargs="?", help="the draft .docx")
-    ap.add_argument("--out", help="directory for sections.json, batches.json, batch_<k>.json")
+    ap.add_argument("--out", help="directory for sections.json, batches.json, batch_<k>.json, media/ and embedded/")
     ap.add_argument("--check", action="store_true", help="print the Python and python-docx versions, then exit")
     ap.add_argument("--max-words", type=int, default=1500, help="word budget per batch (default 1500)")
     a = ap.parse_args(argv)
@@ -347,14 +368,15 @@ def main(argv=None) -> int:
     out = Path(a.out)
     st = json.loads((out / "stats.json").read_text(encoding="utf-8"))
     figs = [f for s in json.loads((out / "sections.json").read_text(encoding="utf-8")) for f in s["figures"]]
-    emb, dia = package_counts(src)
+    emb, dia = embedded_members(src)
+    listed = lambda names: f"{len(names)}" + (" (" + ", ".join(f"embedded/{Path(x).name}" for x in names) + ")" if names else "")
     print(f"{len(sections)} sections, {len(index)} batches -> {out}")
     print(f"statements {st['statements_total']}, high-risk {st['statements_risk']}, "
           f"estimate fast ~{st['estimate_minutes']['fast']} min, deep ~{st['estimate_minutes']['deep']} min")
     print(f"figures: {len(figs)}" + (" (" + "; ".join(
-        f"figure {f['figure']} in {f['p_id']} -> {f.get('media', 'external, not extracted')}" for f in figs) + ")"
+        f"figure {f['figure']} in {f['p_id']} -> {f.get('media', 'not extracted')}" for f in figs) + ")"
         if figs else ""))
-    print(f"embedded objects: {emb} (word/embeddings), diagrams: {dia} (word/diagrams)")
+    print(f"embedded objects: {listed(emb)}, diagrams: {listed(dia)}")
     return 0
 
 

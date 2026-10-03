@@ -264,9 +264,6 @@ class StatsOutputTests(unittest.TestCase):
         self.assertEqual(stats["source_sha256"], hashlib.sha256(Path(src).read_bytes()).hexdigest())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 @unittest.skipUnless(HAVE_DOCX, "needs python-docx >= 1.2")
 class MediaAndSummaryTests(unittest.TestCase):
@@ -328,7 +325,50 @@ class MediaAndSummaryTests(unittest.TestCase):
         self.assertEqual(S.extract_media(src, d / "out", secs), [])
         self.assertNotIn("media", secs[0]["blocks"][0][1])
 
+    def _with_members(self, src, d, members):
+        import zipfile
+        out = d / "withobj.docx"
+        with zipfile.ZipFile(src) as zin, zipfile.ZipFile(out, "w") as zout:
+            for i in zin.infolist():
+                zout.writestr(i, zin.read(i.filename))
+            for name, data in members.items():
+                zout.writestr(name, data)
+        return out
+
+    def test_embedded_objects_and_diagrams_are_extracted_flat_and_listed(self):
+        d = Path(tempfile.mkdtemp()); src = self._doc_with_figure(d)
+        docx = self._with_members(src, d, {"word/embeddings/oleObject1.bin": b"OLE",
+                                           "word/diagrams/data1.xml": b"<x/>"})
+        r = subprocess.run([sys.executable, str(SCRIPT), str(docx), "--out", str(d / "out")],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((d / "out" / "embedded" / "oleObject1.bin").read_bytes(), b"OLE")
+        self.assertEqual((d / "out" / "embedded" / "data1.xml").read_bytes(), b"<x/>")
+        self.assertIn("embedded objects: 1 (embedded/oleObject1.bin), diagrams: 1 (embedded/data1.xml)", r.stdout)
+
+    def test_rerun_into_the_same_out_dir_drops_stale_media_and_embedded(self):
+        from docx import Document
+        d = Path(tempfile.mkdtemp())
+        src = self._with_members(self._doc_with_figure(d), d, {"word/embeddings/oleObject1.bin": b"OLE"})
+        S.write_outputs(src, d / "out")
+        self.assertTrue(any((d / "out" / "media").iterdir()))
+        plain = d / "plain.docx"; doc = Document(); doc.add_paragraph("No figure."); doc.save(str(plain))
+        S.write_outputs(plain, d / "out")
+        self.assertEqual(list((d / "out").glob("media/*")), [])
+        self.assertEqual(list((d / "out").glob("embedded/*")), [])
+
+    def test_batch_files_carry_the_media_link(self):
+        d = Path(tempfile.mkdtemp()); src = self._doc_with_figure(d)
+        S.write_outputs(src, d / "out")
+        figs = [f for b in (d / "out").glob("batch_*.json")
+                for sec in json.loads(b.read_text())["sections"] for f in sec["figures"]]
+        self.assertEqual(len(figs), 1)
+        self.assertTrue(figs[0]["media"].startswith("media/"))
+
     def test_skill_step_1_no_longer_says_unzip(self):
         skill = (KB_ROOT / "skills" / "doc-fact-check" / "SKILL.md").read_text(encoding="utf-8")
         self.assertNotIn("unzip `word/media/*`", skill)
         self.assertIn("`<work dir>/media/`", skill)
+
+if __name__ == "__main__":
+    unittest.main()
