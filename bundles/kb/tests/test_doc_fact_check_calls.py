@@ -57,6 +57,29 @@ class OncePerRunCallsStayInTheMainSession(unittest.TestCase):
         self.assertIn("unless `brain_context.json` has `has_current_facts: false`", step_c)
 
 
+class WorkersDoTheWork(unittest.TestCase):
+    """b15/b17/b20: the main session sometimes extracted or verified itself, once inventing 17 chunks of findings."""
+
+    def test_main_session_never_writes_stage_files_while_agents_exist(self):
+        flat = re.sub(r"\s+", " ", SKILL)
+        self.assertIn("While the Agent tool is available, the main session dispatches every batch and every chunk "
+                      "and never writes `claims_batch_*` or `findings_chunk_*` itself", flat)
+        self.assertIn("if a worker fails or writes nothing, re-dispatch it once; if it fails again, stop and report "
+                      "which batch or chunk failed", flat)
+
+    def test_fallback_only_without_the_agent_tool(self):
+        self.assertIn("only when the Agent tool is not in your tool list", SKILL)
+
+    def test_quote_warnings_are_informational(self):
+        flat = re.sub(r"\s+", " ", SKILL)
+        self.assertIn("the warnings are informational: continue", flat)
+        self.assertNotIn("re-dispatch that batch if a warned quote matters", flat)
+
+    def test_step_0_creates_the_work_dir_first(self):
+        step0 = section("### 0. Resolve", "### 0b.")
+        self.assertIn("create `<work dir>` first", step0)
+
+
 class ChunkerReportsQuoteProblems(unittest.TestCase):
     """Warn-only: 34 of 871 real claims elide with '...'; failing them would force paid stage-E re-runs."""
 

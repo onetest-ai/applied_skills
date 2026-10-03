@@ -123,6 +123,14 @@ def _check_risk_scope(d: Path, index: list, claims: dict[str, dict], chunked: se
                       f"{', '.join(extra) or 'none'}); re-run chunk_claims.py --scope risk")
 
 
+def _looks_unverified(rows: list) -> bool:
+    """A stage-V file that was filled without verifying: >= 3 findings, all No Evidence, one shared evidence text."""
+    fs = [f for f in rows if isinstance(f, dict)]
+    if len(fs) < 3 or any(f.get("verdict") != "No Evidence" for f in fs):
+        return False
+    return len({" ".join(str(f.get("evidence", "")).split()).casefold() for f in fs}) == 1
+
+
 def merge(d: Path, scope: str = "all", wave_size: int = 10) -> tuple[list[dict], list[dict], dict, list[str]]:
     errors: list[str] = []
     index = _load_list(d / "batches.json", errors, required=True)
@@ -201,7 +209,11 @@ def merge(d: Path, scope: str = "all", wave_size: int = 10) -> tuple[list[dict],
             errors.append(f"chunk_{j}.json: chunked with scope {cfile.get('scope')!r} but merging with --scope {scope} "
                           f"(re-run chunk_claims.py with the same scope)")
         fname = f"findings_chunk_{j}.json"
-        for f in _load_list(d / fname, errors, required=True) or []:
+        rows = _load_list(d / fname, errors, required=True) or []
+        if _looks_unverified(rows):
+            errors.append(f"{fname}: looks unverified: every finding is No Evidence with the same evidence text "
+                          f"(re-dispatch stage V for chunk {j}; the main session never writes findings itself)")
+        for f in rows:
             fid = _check_finding(f, fname, errors)
             if fid is None:
                 continue

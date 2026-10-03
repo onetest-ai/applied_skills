@@ -310,7 +310,7 @@ class TestSectionParallelRules(unittest.TestCase):
         self.assertIn('"reason": "no checkable statement"', d)
 
     def test_sequential_fallback_without_the_agent_tool(self):
-        self.assertIn("if the Agent tool is unavailable", self.dispatch)
+        self.assertIn("only when the Agent tool is not in your tool list", self.dispatch)
         self.assertIn("runs the same stages sequentially", self.dispatch)
 
     def test_figures_stay_in_the_main_session(self):

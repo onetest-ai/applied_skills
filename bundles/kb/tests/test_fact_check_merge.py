@@ -268,6 +268,20 @@ class TestMergeFailsLoudly(MergeCase):
         self.write("findings_figures.json", [finding("I01", "Figure")])
         self.has_error("findings_figures.json", "claims_figures.json")
 
+    def test_a_chunk_of_identical_no_evidence_findings_is_rejected_as_unverified(self):
+        # b20: the main session wrote "No Evidence" stubs for chunks it never verified; the merge accepted them
+        stub = dict(verdict="No Evidence", severity="Minor", evidence="not verified")
+        self.write("findings_chunk_1.json", [finding("B1-C01", S1, **stub), finding("B1-C02", S2, **stub),
+                                             finding("B2-C01", S3, **stub)])
+        self.has_error("findings_chunk_1.json", "unverified", "re-dispatch stage V for chunk 1")
+
+    def test_genuine_no_evidence_findings_with_their_own_evidence_pass(self):
+        ne = dict(verdict="No Evidence", severity="Minor")
+        self.write("findings_chunk_1.json", [finding("B1-C01", S1, evidence="no source covers the uptime", **ne),
+                                             finding("B1-C02", S2, evidence="no metric for licences", **ne),
+                                             finding("B2-C01", S3, evidence="roadmap date not in the Brain", **ne)])
+        self.assertFalse(any("unverified" in e for e in self.errors()), self.errors())
+
     def test_every_error_is_reported_not_only_the_first(self):
         self.write("findings_chunk_1.json", [finding("B1-C01", S1, verdict="Wrong"), finding("B1-C02", S2)])
         errors = self.errors()
