@@ -21,7 +21,8 @@ SKILL_DIR = KB_ROOT / "skills" / "doc-fact-check"
 SKILL = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
 WORKER_LINE = ("You are a doc-fact-check worker. The main session has already resolved the Brain and read its "
                "basics into `<work dir>/brain_context.json`: do not run step 0, step 0b or the Brain contract's "
-               "resolution steps, and never call `health`, `list_metrics` or `list_sources`.")
+               "resolution steps, and never call `health`, `list_metrics` or `list_sources`. "
+               "Follow the command rules in Inputs.")
 
 
 def section(start, end):
@@ -130,3 +131,21 @@ class ChunkerReportsQuoteProblems(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CommandDiscipline(unittest.TestCase):
+    RULE = ("Run only the documented commands, exactly as written, with absolute paths. Read files with the Read "
+            "tool; never `cat`, `head`, `ls` or `grep` the work files. No inline Python (`python -c`, heredocs), "
+            "no `cd`, no variable assignments, no `&&` chains. If a step seems to need logic, it is missing from a "
+            "script: report it, do not improvise it.")
+
+    def test_rule_is_stated_once(self):
+        self.assertEqual(re.sub(r"\s+", " ", SKILL).count(self.RULE), 1)
+
+    def test_rule_sits_before_step_0(self):
+        flat = re.sub(r"\s+", " ", SKILL)
+        self.assertLess(flat.index(self.RULE), flat.index("### 0. Resolve"))
+
+    def test_workers_get_the_rule_too(self):
+        # the worker line points workers at the same rule
+        self.assertIn("Follow the command rules in Inputs", SKILL)

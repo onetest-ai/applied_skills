@@ -85,7 +85,8 @@ class DependencyCheckFlag(unittest.TestCase):
     def test_step_0_uses_the_check_flag_not_inline_python(self):
         step0 = SKILL[SKILL.index("### 0. Resolve"):SKILL.index("### 0b.")]
         self.assertIn('python "<skill dir>/sections.py" --check', step0)
-        self.assertNotIn("python -c", SKILL)
+        # the command rule in Inputs names `python -c` to forbid it; no instruction may use it
+        self.assertNotIn("python -c", SKILL.replace("(`python -c`, heredocs)", ""))
 
 if __name__ == "__main__":
     unittest.main()
