@@ -174,7 +174,7 @@ Brain: <verified value or fact, with date> (source: <file / section>)
 Fix: <one sentence, or "needs owner input">
 Source: <source file name>
 ```
-Write the approved findings (the table rows the user approved in step 7) to `<work dir>/approved.json`, then run:
+Write the approved findings (the table rows the user approved in step 7) to `<work dir>/approved.json` (a JSON array of the approved finding objects, with the keys listed above), then run:
 `python "<skill dir>/annotate.py" "<draft>.docx" "<name> — fact-checked.docx" --approved <work dir>/approved.json --findings <run dir>/findings.json`
 It anchors each comment to the exact quoted span (runs split at the span edges; a figure on the run holding its drawing; text boxes only when the body lacks the quote), skips ids already present (idempotent re-runs), never overwrites the draft, sets every finding's `destination` in `findings.json`, and prints the written and skipped ids. A skipped id means the quote was not found verbatim: log it, no comment.
 

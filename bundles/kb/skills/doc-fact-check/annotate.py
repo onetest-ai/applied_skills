@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -121,6 +122,34 @@ def annotate(src, dst, findings, author='Fact Checker · Brain'):
     return written, skipped
 
 
+def _load_list(path, what, need_anchor=False):
+    """Load a JSON list of finding objects; exit 2 with 'annotate.py: <file>: <reason>' when it is not usable."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        sys.exit(_bad(path, f"not valid JSON ({exc})"))
+    if not isinstance(data, list):
+        sys.exit(_bad(path, f"{what} must be a JSON list of finding objects"))
+    for i, f in enumerate(data):
+        if not isinstance(f, dict) or not f.get("id") or not isinstance(f["id"], str):
+            sys.exit(_bad(path, f"item {i} is not an object with a non-empty id"))
+        if need_anchor and not (f.get("quote") or f.get("anchor") == "drawing"):
+            sys.exit(_bad(path, f"finding {f['id']} needs a quote or anchor: \"drawing\""))
+    return data
+
+
+def _bad(path, reason):
+    print(f"annotate.py: {path}: {reason}", file=sys.stderr)
+    return 2
+
+
+def _write_json_atomic(path, data):
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("draft")
@@ -135,11 +164,17 @@ def main(argv=None) -> int:
     if Path(a.out).resolve() == Path(a.draft).resolve():
         print("annotate.py: refusing to overwrite the original draft", file=sys.stderr)
         return 2
-    approved = json.loads(Path(a.approved).read_text(encoding="utf-8"))
+    approved = _load_list(a.approved, "approved", need_anchor=True)
+    findings = _load_list(a.findings, "findings")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from sections import NEEDS_DOCX
+    try:
+        import docx  # noqa: F401
+    except ImportError:
+        print(NEEDS_DOCX, file=sys.stderr)
+        return 2
     written, skipped = annotate(a.draft, a.out, approved)
-    findings = json.loads(Path(a.findings).read_text(encoding="utf-8"))
-    Path(a.findings).write_text(json.dumps(mark_destinations(findings, written), indent=2, ensure_ascii=False) + "\n",
-                                encoding="utf-8")
+    _write_json_atomic(a.findings, mark_destinations(findings, written))
     print(json.dumps({"written": written, "skipped": skipped}))
     return 0
 

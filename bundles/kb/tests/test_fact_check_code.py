@@ -240,33 +240,107 @@ class TestReferenceCode(unittest.TestCase):
         self.assertEqual(len(list(Document(b).comments)), 2)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 @unittest.skipUnless(HAVE_DOCX, "needs python-docx >= 1.2")
 class AnnotateCli(unittest.TestCase):
     SCRIPT = KB_ROOT / "skills" / "doc-fact-check" / "annotate.py"
+    BASE = dict(section="1", evidence="e (2026-01-01, f.md)", fix="x", source="f.md")
+
+    def setUp(self):
+        import tempfile
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.d = Path(self._td.name)
+        from docx import Document
+        doc = Document()
+        doc.add_paragraph("Revenue was 40 million in 2025.")
+        self.src = self.d / "draft.docx"
+        doc.save(str(self.src))
+        self.out = self.d / "out.docx"
+
+    def _write(self, name, data):
+        import json
+        path = self.d / name
+        path.write_text(data if isinstance(data, str) else json.dumps(data), encoding="utf-8")
+        return path
+
+    def _run(self, approved, findings, out=None, draft=None, pre=()):
+        import subprocess
+        import sys
+        return subprocess.run(
+            [sys.executable, *pre, str(self.SCRIPT), str(draft or self.src), str(out or self.out),
+             "--approved", str(approved), "--findings", str(findings)],
+            capture_output=True, text=True)
+
+    def _good(self):
+        approved = [dict(id="C01", verdict="Incorrect", severity="Major", quote="40 million", **self.BASE)]
+        findings = approved + [dict(id="C02", verdict="Verified", severity="Minor", quote="2025", **self.BASE)]
+        return self._write("approved.json", approved), self._write("findings.json", findings)
 
     def test_cli_annotates_marks_destinations_and_reports(self):
-        import json, subprocess, sys, tempfile
-        from docx import Document
-        d = Path(tempfile.mkdtemp()); src = d / "draft.docx"
-        doc = Document(); doc.add_paragraph("Revenue was 40 million in 2025."); doc.save(str(src))
-        base = dict(section="1", evidence="e (2026-01-01, f.md)", fix="x", source="f.md")
-        approved = [dict(id="C01", verdict="Incorrect", severity="Major", quote="40 million", **base)]
-        findings = approved + [dict(id="C02", verdict="Verified", severity="Minor", quote="2025", **base)]
-        (d / "approved.json").write_text(json.dumps(approved)); (d / "findings.json").write_text(json.dumps(findings))
-        r = subprocess.run([sys.executable, str(self.SCRIPT), str(src), str(d / "out.docx"),
-                            "--approved", str(d / "approved.json"), "--findings", str(d / "findings.json")],
-                           capture_output=True, text=True)
+        import json
+        a, f = self._good()
+        r = self._run(a, f)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(r.stdout), {"written": ["C01"], "skipped": []})
-        dest = {f["id"]: f["destination"] for f in json.loads((d / "findings.json").read_text())}
+        dest = {x["id"]: x["destination"] for x in json.loads(f.read_text())}
         self.assertEqual(dest, {"C01": "Word comment", "C02": "count only"})
+
+    def test_missing_python_docx_stops_with_the_step_0_message(self):
+        a, f = self._good()
+        r = self._run(a, f, pre=("-S", "-I"))
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("doc-fact-check needs Python with python-docx ≥ 1.2", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertFalse(self.out.exists())
+
+    def test_malformed_json_exits_2_and_writes_nothing(self):
+        a, f = self._good()
+        bad = self._write("bad.json", "{not json")
+        for approved, findings in ((bad, f), (a, bad)):
+            r = self._run(approved, findings)
+            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertIn("annotate.py: ", r.stderr)
+            self.assertFalse(self.out.exists())
+
+    def test_approved_finding_without_quote_or_anchor_exits_2(self):
+        import json
+        _, f = self._good()
+        before = f.read_text()
+        a = self._write("a2.json", [dict(id="C01", verdict="Incorrect", severity="Major", **self.BASE)])
+        r = self._run(a, f)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("quote", r.stderr)
+        self.assertFalse(self.out.exists())
+        self.assertEqual(f.read_text(), before)
+        self.assertIsInstance(json.loads(before), list)
+
+    def test_non_list_or_idless_input_exits_2(self):
+        _, f = self._good()
+        for data in ({"findings": []}, [{"quote": "x"}], ["C01"]):
+            r = self._run(self._write("a3.json", data), f)
+            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertFalse(self.out.exists())
+
+    def test_refuses_to_overwrite_the_draft(self):
+        a, f = self._good()
+        before = self.src.read_bytes()
+        r = self._run(a, f, out=self.src)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertEqual(self.src.read_bytes(), before)
+
+    def test_missing_input_file_exits_2(self):
+        a, f = self._good()
+        r = self._run(a, f, draft=self.d / "nope.docx")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertFalse(self.out.exists())
 
     def test_skill_md_ships_no_python_block_and_documents_the_command(self):
         skill = (KB_ROOT / "skills" / "doc-fact-check" / "SKILL.md").read_text(encoding="utf-8")
         self.assertNotIn("```python", skill)
         self.assertIn('python "<skill dir>/annotate.py" "<draft>.docx" "<name> \u2014 fact-checked.docx" '
                       '--approved <work dir>/approved.json --findings <run dir>/findings.json', skill)
+        self.assertIn("a JSON array of the approved finding objects, with the keys listed above", skill)
+
+
+if __name__ == "__main__":
+    unittest.main()
