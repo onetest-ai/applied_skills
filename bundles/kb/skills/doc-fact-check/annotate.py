@@ -77,6 +77,12 @@ def mark_destinations(findings, written_ids):
     return out
 
 
+def comment_text(f):
+    """The exact text of a finding's Word comment; annotate() writes it and main() length-checks it."""
+    return (f"[{f['verdict']} · {f['severity']} · {f['id']}] §{f['section']}\n"
+            f"Brain: {f['evidence']}\nFix: {f['fix']}\nSource: {f['source']}")
+
+
 def annotate(src, dst, findings, author='Fact Checker · Brain'):
     """Returns (written, skipped) id lists."""
     from docx import Document
@@ -92,8 +98,7 @@ def annotate(src, dst, findings, author='Fact Checker · Brain'):
         if f['id'] in have:
             written.append(f['id'])   # exact id: C1 is not C10, a mention in another comment's body is not a header
             continue
-        text = (f"[{f['verdict']} · {f['severity']} · {f['id']}] §{f['section']}\n"
-                f"Brain: {f['evidence']}\nFix: {f['fix']}\nSource: {f['source']}")
+        text = comment_text(f)
         before = len(written)
         if f.get('anchor') == 'drawing':
             k = 0
@@ -190,6 +195,12 @@ def main(argv=None) -> int:
     findings = _load_list(a.findings, "findings")
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from sections import NEEDS_DOCX
+    from fact_check_invariants import MAX_COMMENT_WORDS
+    long = [f"{f['id']}: comment would be {n} words (limit {MAX_COMMENT_WORDS}); shorten its evidence or fix"
+            for f in approved if (n := len(comment_text(f).split())) > MAX_COMMENT_WORDS]
+    if long:
+        print(f"annotate.py: {a.approved}: " + "; ".join(long), file=sys.stderr)
+        return 2
     try:
         import docx  # noqa: F401
     except ImportError:

@@ -327,6 +327,35 @@ class AnnotateCli(unittest.TestCase):
                 self.assertFalse(self.out.exists())
                 self.assertEqual(f.read_text(), before)
 
+    def _words_finding(self, total):
+        """An approved finding whose written comment is exactly `total` words (11 are header, labels, fix and source)."""
+        base = {**self.BASE, "evidence": " ".join(["w"] * (total - 11))}
+        return dict(id="C12", verdict="Incorrect", severity="Major", quote="40 million", **base)
+
+    def test_comment_over_the_word_limit_exits_2_naming_id_and_count_and_writes_nothing(self):
+        _, f = self._good()
+        before = f.read_text()
+        a = self._write("a_long.json", [self._words_finding(70)])
+        r = self._run(a, f)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn(f"annotate.py: {a}: C12: comment would be 70 words (limit 60); shorten its evidence or fix", r.stderr)
+        self.assertFalse(self.out.exists())
+        self.assertEqual(f.read_text(), before)
+
+    def test_comment_of_exactly_the_word_limit_is_written(self):
+        import json
+        _, f = self._good()
+        a = self._write("a_exact.json", [self._words_finding(60)])
+        r = self._run(a, f)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout), {"written": ["C12"], "skipped": []})
+        self.assertTrue(self.out.exists())
+
+    def test_skill_md_tells_the_agent_to_write_evidence_and_fix_for_the_comment(self):
+        skill = (KB_ROOT / "skills" / "doc-fact-check" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("Each row's `evidence` and `fix` are written for the comment, so that the whole comment, "
+                      "header and Source line included, is at most 60 words; `annotate.py` refuses a longer one and names it.", skill)
+
     def test_approved_finding_missing_a_comment_key_exits_2_naming_it(self):
         _, f = self._good()
         good = dict(id="C01", verdict="Incorrect", severity="Major", quote="40 million", **self.BASE)
