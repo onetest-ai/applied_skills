@@ -531,7 +531,13 @@ class FinalReviewPins(unittest.TestCase):
 
     def test_evidence_is_for_the_reader_and_trail_is_the_audit(self):
         self.assertIn("It never names a tool, a query, `latest_only` or a chunk id.", self.all)
-        self.assertIn("The merge refuses an `evidence` that breaks this rule.", self.all)
+        self.assertIn("The merge refuses an `evidence` that breaks this rule; exactly,", self.all)
+        # The exact check is spelled out so a worker never reads merge_findings.py to learn it (seen in Cowork).
+        self.assertIn("any number of 12 or more digits, or that runs over 60 words. That is the whole check: "
+                      "never read the skill's scripts to learn it.", self.all)
+        from fact_check_invariants import MAX_EVIDENCE_WORDS, _TRAIL_IN_EVIDENCE
+        self.assertIn(f"runs over {MAX_EVIDENCE_WORDS} words", self.all)
+        self.assertIn(r"\d{12,}", _TRAIL_IN_EVIDENCE.pattern)
 
     def test_baseline_full_match_reuses_the_merged_files(self):
         self.assertIn("On a full match, reuse `<run dir>/findings.json`, `coverage.json` and `run.json` and continue at step 7; "
