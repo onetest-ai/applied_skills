@@ -67,6 +67,8 @@ def _check_finding(f, where: str, errors: list[str]) -> str | None:
         return None
     fid = str(f.get("id") or "")
     label = f"{where}: {fid or '(no id)'}"
+    # No source links is a valid state (no inventory): default it here so the main session never hand-patches chunk files.
+    f.setdefault("sources", [])
     missing = [k for k in REQUIRED if k not in f]
     if missing:
         errors.append(f"{label}: missing key(s) {', '.join(missing)}")

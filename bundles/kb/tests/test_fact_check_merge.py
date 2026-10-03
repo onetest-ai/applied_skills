@@ -252,6 +252,16 @@ class TestMergeFailsLoudly(MergeCase):
                                              finding("B2-C01", S3, sources="s.md")])
         self.has_error("B2-C01", "sources")
 
+    def test_missing_sources_defaults_to_empty_list(self):
+        # A worker without an inventory has no source links: the merge fills [] instead of refusing,
+        # so the main session never patches findings_chunk_*.json by hand (seen in controlled runs).
+        rows = [finding("B1-C01", S1), finding("B1-C02", S2), finding("B2-C01", S3)]
+        del rows[2]["sources"]
+        self.write("findings_chunk_1.json", rows)
+        findings, _, _, errors = M.merge(self.dir, scope="all")
+        self.assertEqual(errors, [])
+        self.assertEqual(sorted(len(f["sources"]) for f in findings), [0, 1, 1])
+
     def test_figure_claim_ids_must_start_with_i(self):
         self.write("claims_figures.json", [fclaim(1), {**fclaim(2), "claim_id": "C09"}])
         self.has_error("C09", "start with I")
