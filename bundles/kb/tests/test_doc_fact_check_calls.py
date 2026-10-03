@@ -32,8 +32,8 @@ def section(start, end):
 class OncePerRunCallsStayInTheMainSession(unittest.TestCase):
     def test_step_0_writes_brain_context(self):
         step0 = section("### 0. Resolve", "### 0b.")
-        self.assertIn("write `<work dir>/brain_context.json` with `knowledge_version`, `about`, `metric_names` "
-                      "(names only) and `has_current_facts`", step0)
+        self.assertIn("write `<work dir>/brain_context.json` with the Write tool (it creates the folder): "
+                      "`knowledge_version`, `about`, `metric_names` (names only) and `has_current_facts`", step0)
 
     def test_both_worker_dispatches_start_with_the_worker_line(self):
         step1b = section("### 1b.", "### 2.")
@@ -76,9 +76,10 @@ class WorkersDoTheWork(unittest.TestCase):
         self.assertIn("the warnings are informational: continue", flat)
         self.assertNotIn("re-dispatch that batch if a warned quote matters", flat)
 
-    def test_step_0_creates_the_work_dir_first(self):
+    def test_step_0_lets_the_write_tool_create_the_work_dir(self):
         step0 = section("### 0. Resolve", "### 0b.")
-        self.assertIn("create `<work dir>` first", step0)
+        self.assertIn("with the Write tool (it creates the folder)", step0)
+        self.assertNotIn("create `<work dir>` first", step0)
 
 
 class ChunkerReportsQuoteProblems(unittest.TestCase):

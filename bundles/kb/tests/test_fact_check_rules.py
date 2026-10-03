@@ -283,7 +283,7 @@ class TestSectionParallelRules(unittest.TestCase):
         cls.merge = flat(section(cls.text, "### 6a.", "### 6b."))
 
     def test_step_1_runs_sections_cli_not_improvised_extraction(self):
-        self.assertIn('python "<skill dir>/sections.py" "<draft>.docx" --out <work dir>', self.step1)
+        self.assertIn('python "<skill dir>/sections.py" "<draft dir>/<name>.docx" --out "<work dir>"', self.step1)
         self.assertIn("--max-words 1500", self.step1)
         self.assertIn("`sections.json`", self.step1)
         self.assertIn("`batches.json`", self.step1)
@@ -349,7 +349,7 @@ class TestSectionParallelRules(unittest.TestCase):
         self.assertNotIn("findings_figures", self.text)
 
     def test_merge_runs_via_its_cli_before_step_7(self):
-        self.assertIn('python "<skill dir>/merge_findings.py" <work dir> --out <run dir>/findings.json', self.merge)
+        self.assertIn('python "<skill dir>/merge_findings.py" "<work dir>" --out "<run dir>/findings.json"', self.merge)
         self.assertLess(self.text.index("### 6a."), self.text.index("### 7."))
         self.assertIn("On failure it lists", self.merge)
         self.assertIn("renumbers", self.merge)
@@ -369,7 +369,7 @@ class TwoModeTwoStageTests(unittest.TestCase):
             self.assertIn(t, self.all)
 
     def test_step1b_two_stages_and_parameters(self):
-        for t in ("Stage E", "Stage V", "chunk_claims.py\" <work dir> --scope", "at most 8 claims",
+        for t in ("Stage E", "Stage V", "chunk_claims.py\" \"<work dir>\" --scope", "at most 8 claims",
                   "per claim, never batched across claims", "waves of `wave_size` (default 10)",
                   "| `scope` | `all` | `risk` |"):
             self.assertIn(t, self.all)
@@ -378,8 +378,8 @@ class TwoModeTwoStageTests(unittest.TestCase):
         self.assertIn("runs the same stages sequentially", self.all)
 
     def test_merge_and_report_use_scope_and_run(self):
-        for t in ("merge_findings.py\" <work dir> --out <run dir>/findings.json --scope", "--run <run dir>/run.json",
-                  "findings_report.py\" --coverage-line <run dir>/run.json"):
+        for t in ("merge_findings.py\" \"<work dir>\" --out \"<run dir>/findings.json\" --scope", "--run \"<run dir>/run.json\"",
+                  "findings_report.py\" --coverage-line \"<run dir>/run.json\""):
             self.assertIn(t, self.all)
 
     def test_dry_no_second_procedure_and_patterns_only_in_sections(self):
@@ -398,7 +398,7 @@ class FixRound1Tests(unittest.TestCase):
 
     def test_fix_round_1_sentences(self):
         for t in (
-            "**The reply's** first line is the output of `python \"<skill dir>/findings_report.py\" --coverage-line <run dir>/run.json`, verbatim.",
+            "**The reply's** first line is the output of `python \"<skill dir>/findings_report.py\" --coverage-line \"<run dir>/run.json\"`, verbatim.",
             "the 'reused baseline of <date>, N claims' line comes second. Then the one-or-two-sentence answer.",
             "send up to `wave_size` dispatches in one message, wait for the whole wave to finish, then send the next wave.",
             "except `destination`, which step 8 sets",
@@ -413,7 +413,7 @@ class FixRound1Tests(unittest.TestCase):
             "figure ids `I*` are kept",
             "In fast mode `findings.json` holds only the in-scope claims that stage V verified; never add rows for out-of-scope claims",
             "`estimate_minutes.fast` and `estimate_minutes.deep`",
-            "stop at this step, before step 1, with \"mode required: fast or deep\" and write nothing",
+            "stop at this step, before step 1, with \"mode required: fast or deep\" and write nothing else",
         ):
             self.assertIn(t, self.all)
         self.assertEqual(self.all.count("wait for the whole wave to finish"), 2)
@@ -462,6 +462,76 @@ class FinalFixWaveRules(unittest.TestCase):
     def test_baseline_header_records_the_mode_and_reuse_requires_it_to_match(self):
         self.assertIn("recording the document's `source_sha256` (from `stats.json`), the mode (from `run.json`), the `knowledge_version`", self.all)
         self.assertIn("its mode equals the requested mode", self.all)
+
+
+class FinalReviewPins(unittest.TestCase):
+    """Final whole-branch review: commands runnable as written, placeholders defined once, honest No Evidence."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = SKILL.read_text(encoding="utf-8")
+        cls.all = flat(cls.text)
+        cls.inputs = flat(section(cls.text, "## Inputs", "## Procedure"))
+        cls.step0 = flat(section(cls.text, "### 0. Resolve", "### 0b."))
+
+    def test_every_dir_and_name_placeholder_in_a_command_is_quoted(self):
+        lines = [l for l in self.text.splitlines() if 'python "<skill dir>/' in l]
+        self.assertGreaterEqual(len(lines), 8)
+        for line in lines:
+            for cmd in re.findall(r'python "<skill dir>/[^`]*', line):
+                with self.subTest(cmd=cmd):
+                    bare = re.sub(r'"[^"]*"', '""', cmd)
+                    self.assertIsNone(re.search(r"<[^<>]*dir>|<name>", bare), cmd)
+                    self.assertNotIn("[--", cmd)
+
+    def test_step_9_command_is_runnable_as_written(self):
+        step9 = flat(section(self.text, "### 9.", "### 10."))
+        self.assertIn('python "<skill dir>/findings_report.py" "<run dir>/findings.json" --out "<draft dir>/<name> — findings.html" '
+                      '--document "<name>.docx" --brain-version <knowledge_version> --run "<run dir>/run.json"', step9)
+        for flag in ("--brain-name", "--title", "--eyebrow", "--lede", "--output-name"):
+            self.assertIn(flag, step9)
+
+    def test_outputs_live_in_the_draft_dir(self):
+        for t in ('"<draft dir>/<name> — fact-checked.docx"', '"<draft dir>/<name> — findings.html"'):
+            self.assertIn(t, self.all)
+        self.assertNotIn('"<name> — fact-checked.docx" --approved', self.all)
+
+    def test_placeholders_are_defined_once_in_inputs(self):
+        defs = ("`<draft dir>` is the folder holding the draft and `<name>` its file name without `.docx`",
+                "`<doc-slug>` is `<name>` in lower case with spaces and punctuation turned into `-`",
+                "`<run dir>` is `docs/kb/doc-fact-check/<doc-slug>/`",
+                "`<work dir>` is `<run dir>/work/`")
+        for d in defs:
+            with self.subTest(d=d):
+                self.assertIn(d, self.inputs)
+                self.assertEqual(self.all.count(d), 1)
+        self.assertEqual(self.all.count("docs/kb/doc-fact-check/<doc-slug>/"), 1)
+        self.assertNotIn("is the `<work dir>`", self.all)
+        self.assertNotIn("(`<run dir>`)", self.all)
+
+    def test_step_0_writes_brain_context_with_the_write_tool_after_0b(self):
+        self.assertIn("After step 0b, write `<work dir>/brain_context.json` with the Write tool (it creates the folder)",
+                      self.step0)
+        self.assertNotIn("create `<work dir>`", self.all)
+
+    def test_stops_write_nothing_else(self):
+        self.assertIn('"doc-fact-check needs Python with python-docx ≥ 1.2 in this environment; none is available here. '
+                      'Run it in Claude Code.", and write nothing else', self.step0)
+        self.assertIn('stop at this step, before step 1, with "mode required: fast or deep" and write nothing else', self.all)
+
+    def test_python3_fallback_and_pip_through_the_interpreter(self):
+        self.assertIn("If `python` is not found, use `python3` for every command in this skill", self.step0)
+        self.assertIn('run `python -m pip install "python-docx>=1.2"` (or `python3 -m pip install "python-docx>=1.2"`) once',
+                      self.step0)
+        self.assertNotIn("run `pip install", self.all)
+
+    def test_no_evidence_names_its_own_queries(self):
+        self.assertIn("A No Evidence finding's `evidence` names this claim's own queries and tools and what each returned.",
+                      self.all)
+
+    def test_baseline_full_match_reuses_the_merged_files(self):
+        self.assertIn("On a full match, reuse `<run dir>/findings.json`, `coverage.json` and `run.json` and continue at step 7; "
+                      "never rebuild `findings.json` from `baseline.md` by hand.", self.inputs)
 
 
 if __name__ == "__main__":

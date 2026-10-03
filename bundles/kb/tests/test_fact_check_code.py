@@ -373,8 +373,8 @@ class AnnotateCli(unittest.TestCase):
     def test_skill_md_ships_no_python_block_and_documents_the_command(self):
         skill = (KB_ROOT / "skills" / "doc-fact-check" / "SKILL.md").read_text(encoding="utf-8")
         self.assertNotIn("```python", skill)
-        self.assertIn('python "<skill dir>/annotate.py" "<draft>.docx" "<name> \u2014 fact-checked.docx" '
-                      '--approved <work dir>/approved.json --findings <run dir>/findings.json', skill)
+        self.assertIn('python "<skill dir>/annotate.py" "<draft dir>/<name>.docx" "<draft dir>/<name> \u2014 fact-checked.docx" '
+                      '--approved "<work dir>/approved.json" --findings "<run dir>/findings.json"', skill)
         self.assertIn("a JSON array of the approved finding objects, with the keys listed above", skill)
 
 
