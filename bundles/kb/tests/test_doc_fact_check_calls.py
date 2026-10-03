@@ -1,0 +1,109 @@
+"""doc-fact-check call economy: once-per-run Brain calls stay in the main session; quote problems are reported by the chunker.
+
+Measured on 5 real fast runs: every repeated health / list_metrics / list_sources call and every
+(always empty) get_current_fact call came from stage-E/V workers, because a worker reads this whole
+SKILL.md, Brain contract included, and acts as if it were a new invocation.
+"""
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+import chunk_claims as C
+from test_plugin_structure import KB_ROOT
+
+SKILL_DIR = KB_ROOT / "skills" / "doc-fact-check"
+SKILL = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+WORKER_LINE = ("You are a doc-fact-check worker. The main session has already resolved the Brain and read its "
+               "basics into `<work dir>/brain_context.json`: do not run step 0, step 0b or the Brain contract's "
+               "resolution steps, and never call `health`, `list_metrics` or `list_sources`.")
+
+
+def section(start, end):
+    return SKILL[SKILL.index(start):SKILL.index(end)]
+
+
+class OncePerRunCallsStayInTheMainSession(unittest.TestCase):
+    def test_step_0_writes_brain_context(self):
+        step0 = section("### 0. Resolve", "### 0b.")
+        self.assertIn("write `<work dir>/brain_context.json` with `knowledge_version`, `about`, `metric_names` "
+                      "(names only) and `has_current_facts`", step0)
+
+    def test_both_worker_dispatches_start_with_the_worker_line(self):
+        step1b = section("### 1b.", "### 2.")
+        self.assertEqual(SKILL.count(WORKER_LINE), 1, "the worker line is defined once")
+        self.assertIn(WORKER_LINE, step1b)
+        for stage in ("**Stage E (extract)", "**Stage V (verify)"):
+            para = step1b[step1b.index(stage):].split("\n")[0]
+            with self.subTest(stage=stage):
+                self.assertIn("starts with the worker line", para)
+
+    def test_current_fact_probe_runs_once_before_stage_v(self):
+        step1b = section("### 1b.", "### 2.")
+        self.assertIn("Before stage V, the main session probes `get_current_fact` for up to 3 distinct entities "
+                      "of TIME / STATUS / OWN claims", step1b)
+        self.assertIn("sets `has_current_facts` to false only when every probe returns nothing", step1b)
+
+    def test_workers_skip_current_fact_without_a_store_but_keep_both_searches(self):
+        rule = [l for l in SKILL.splitlines() if l.startswith("- TIME / STATUS / OWN")][0]
+        self.assertIn("unless `brain_context.json` has `has_current_facts: false`", rule)
+        self.assertIn("run `search_knowledge` twice", rule)
+        step_c = [l for l in SKILL.splitlines() if l.strip().startswith("**c.**")][0]
+        self.assertIn("unless `brain_context.json` has `has_current_facts: false`", step_c)
+
+
+class ChunkerReportsQuoteProblems(unittest.TestCase):
+    """Warn-only: 34 of 871 real claims elide with '...'; failing them would force paid stage-E re-runs."""
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+        sents = [{"s_id": "p2s1", "text": "Revenue was 40 million in 2025 across green fields.", "risk": ["num"]},
+                 {"s_id": "p2s2", "text": "The team owns billing.", "risk": ["ownership"]}]
+        self.w("batches.json", [{"batch": 1, "file": "batch_1.json", "sections": [{"section_id": "s01", "section": "Scope"}]}])
+        self.w("batch_1.json", {"batch": 1, "sections": [{"section_id": "s01", "section": "Scope",
+                                "paragraphs": [{"p_id": "p2", "text": "x", "sentences": sents}],
+                                "tables": [], "figures": []}]})
+
+    def w(self, name, obj):
+        (self.d / name).write_text(json.dumps(obj))
+
+    def claims(self, *quotes):
+        self.w("claims_batch_1.json", [{"claim_id": f"B1-C0{i}", "p_id": "p2", "s_id": f"p2s{i}", "section": "Scope",
+                                        "quote": q, "type": "NUM"} for i, q in enumerate(quotes, 1)])
+
+    def test_verbatim_short_quotes_give_no_warning(self):
+        self.claims("40 million in 2025", "The team owns billing.")
+        warnings: list[str] = []
+        _, errors = C.chunk(self.d, "all", 8, warnings=warnings)
+        self.assertEqual((errors, warnings), ([], []))
+
+    def test_non_verbatim_and_long_quotes_are_warned_not_failed(self):
+        self.claims("40 million...green fields", " ".join(["word"] * 26))
+        warnings: list[str] = []
+        index, errors = C.chunk(self.d, "all", 8, warnings=warnings)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(index), 1, "chunks are still written")
+        self.assertTrue(any("B1-C01" in w and "not verbatim" in w for w in warnings), warnings)
+        self.assertTrue(any("B1-C02" in w and "26 words" in w for w in warnings), warnings)
+
+    def test_cli_prints_warnings_and_exits_zero(self):
+        self.claims("40 million...green fields", "The team owns billing.")
+        r = subprocess.run([sys.executable, str(SKILL_DIR / "chunk_claims.py"), str(self.d), "--scope", "all"],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("B1-C01", r.stderr)
+        self.assertIn("warning", r.stderr.lower())
+
+    def test_skill_says_figure_transcriptions_are_exempt_and_never_hand_edit(self):
+        flat = re.sub(r"\s+", " ", SKILL)
+        self.assertIn("figure transcriptions (`I*`) are exempt from the 25-word limit", flat)
+        self.assertIn("never shorten or edit a stage-E claim in the main session", flat)
+
+
+if __name__ == "__main__":
+    unittest.main()

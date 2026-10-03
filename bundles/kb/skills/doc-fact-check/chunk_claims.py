@@ -96,6 +96,42 @@ def risk_coverage_errors(k: int, batch: dict, claims: list, cov: list, cname: st
     return errors
 
 
+MAX_QUOTE_WORDS = 25
+_QUOTE_FOLD = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u2013": "-", "\u2014": "-"})
+
+
+def _fold(t: str) -> str:
+    return " ".join(str(t).translate(_QUOTE_FOLD).split()).casefold()
+
+
+def quote_warnings(k: int, batch: dict, claims: list) -> list[str]:
+    """Warn (never fail) on text quotes over MAX_QUOTE_WORDS words, or not verbatim in the sentences they
+    span. Table rows are checked for length only (a row quote may join cells). Figure claims are not text
+    claims and are not checked here."""
+    text: dict[str, str] = {}
+    for sec in batch.get("sections", []) or []:
+        for par in sec.get("paragraphs", []) or []:
+            for sen in par.get("sentences", []) or []:
+                if isinstance(sen, dict) and isinstance(sen.get("s_id"), str):
+                    text[sen["s_id"]] = str(sen.get("text", ""))
+    out: list[str] = []
+    for c in claims:
+        if not isinstance(c, dict):
+            continue
+        cid, quote = c.get("claim_id"), str(c.get("quote", ""))
+        n = len(quote.split())
+        if n > MAX_QUOTE_WORDS:
+            out.append(f"claims_batch_{k}.json: {cid}: quote has {n} words (limit {MAX_QUOTE_WORDS})")
+        sid = c.get("s_id")
+        extra = c.get("s_ids") if isinstance(c.get("s_ids"), list) else []
+        ids = [sid, *[x for x in extra if isinstance(x, str) and x != sid]]
+        # malformed ids are reported as errors by chunk(); here they are simply not checked
+        if isinstance(sid, str) and sid in text and _fold(quote) not in _fold(" ".join(text.get(i, "") for i in ids)):
+            out.append(f"claims_batch_{k}.json: {cid}: quote is not verbatim in {', '.join(map(str, ids))} "
+                       "(its Word comment will be skipped)")
+    return out
+
+
 FIGURES_CLAIMS_FILE = "claims_figures.json"
 
 
@@ -177,7 +213,7 @@ def figure_claims(d: Path, batches: list[dict], errors: list[str]) -> list[dict]
     return out
 
 
-def chunk(d: Path, scope: str = "all", size: int = 8) -> tuple[list[dict], list[str]]:
+def chunk(d: Path, scope: str = "all", size: int = 8, warnings: list[str] | None = None) -> tuple[list[dict], list[str]]:
     if scope not in ("all", "risk"):
         raise ValueError(f"scope must be 'all' or 'risk', got {scope!r}")
     # A failed run must leave no chunk files behind, so clear them before validating.
@@ -220,6 +256,8 @@ def chunk(d: Path, scope: str = "all", size: int = 8) -> tuple[list[dict], list[
             _, cov_errors = section_coverage(k, b["sections"], [c for c in found if isinstance(c, dict)], cov, cname)
             errors.extend(cov_errors)
         errors.extend(risk_coverage_errors(k, batch, found, cov, cname, scope))
+        if warnings is not None:
+            warnings.extend(quote_warnings(k, batch, found))
         for c in found:
             if not isinstance(c, dict):
                 errors.append(f"claims_batch_{k}.json: item {c!r} is not a JSON object")
@@ -272,7 +310,12 @@ def main(argv=None) -> int:
     if a.chunk_size < 1:
         print("chunk_claims.py: --chunk-size must be at least 1", file=sys.stderr)
         return 2
-    index, errors = chunk(Path(a.dir), a.scope, a.chunk_size)
+    warnings: list[str] = []
+    index, errors = chunk(Path(a.dir), a.scope, a.chunk_size, warnings=warnings)
+    if warnings:
+        print(f"chunk_claims.py: {len(warnings)} quote warning(s) (not errors):", file=sys.stderr)
+        for w in warnings:
+            print(f"  warning: {w}", file=sys.stderr)
     if errors:
         print(f"chunk_claims.py: {len(errors)} problem(s), no chunks written:", file=sys.stderr)
         for e in errors:
