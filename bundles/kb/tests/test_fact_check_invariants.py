@@ -485,7 +485,7 @@ class TestBaselineReuseText(unittest.TestCase):
         self.assertIn("Reusing a baseline", self.inputs)
 
     def test_reuse_conditions_name_version_checksum_and_claim_count(self):
-        for term in ("knowledge_version", "checksum", "claim count"):
+        for term in ("knowledge_version", "source_sha256", "claim count"):
             self.assertIn(term, self.inputs)
 
     def test_reused_baseline_is_announced_in_first_line(self):
@@ -496,7 +496,7 @@ class TestBaselineReuseText(unittest.TestCase):
 
     def test_step10_baseline_records_checksum_version_and_count(self):
         line = next((l for l in self.step10.splitlines() if "baseline.md" in l), "")
-        for term in ("checksum", "knowledge_version", "claim count"):
+        for term in ("source_sha256", "knowledge_version", "claim count"):
             self.assertIn(term, line)
 
 

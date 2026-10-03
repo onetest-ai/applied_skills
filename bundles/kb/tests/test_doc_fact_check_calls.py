@@ -149,3 +149,14 @@ class CommandDiscipline(unittest.TestCase):
     def test_workers_get_the_rule_too(self):
         # the worker line points workers at the same rule
         self.assertIn("Follow the command rules in Inputs", SKILL)
+
+
+class BaselineStaysInTheRunFolder(unittest.TestCase):
+    def test_baseline_location_and_reuse_conditions(self):
+        flat = re.sub(r"\s+", " ", SKILL)
+        self.assertIn("Write the baseline only to `<run dir>/baseline.md`, never to project knowledge, memory or "
+                      "any shared folder", flat)
+        self.assertIn("Read a baseline only from `<run dir>/baseline.md` of this document; ignore any other "
+                      "fact-check baseline you can see (project files, earlier runs on other documents)", flat)
+        self.assertIn("reuse it only when the document's `source_sha256` and the `knowledge_version` both match "
+                      "the ones it records", flat)

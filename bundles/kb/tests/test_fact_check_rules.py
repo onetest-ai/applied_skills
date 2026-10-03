@@ -452,7 +452,7 @@ class FinalFixWaveRules(unittest.TestCase):
         self.assertIn("anchor: 'drawing'", stage)
 
     def test_baseline_header_records_the_mode_and_reuse_requires_it_to_match(self):
-        self.assertIn("recording the document checksum, the mode (from `run.json`), the `knowledge_version`", self.all)
+        self.assertIn("recording the document's `source_sha256` (from `stats.json`), the mode (from `run.json`), the `knowledge_version`", self.all)
         self.assertIn("its mode equals the requested mode", self.all)
 
 
