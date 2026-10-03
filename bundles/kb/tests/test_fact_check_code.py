@@ -332,6 +332,14 @@ class AnnotateCli(unittest.TestCase):
         base = {**self.BASE, "evidence": " ".join(["w"] * (total - 11))}
         return dict(id="C12", verdict="Incorrect", severity="Major", quote="40 million", **base)
 
+    def test_comment_header_names_only_the_last_heading(self):
+        # A full heading path spent ~20 of the 60 words, so annotate refused and the main session rewrote approved.json.
+        from annotate import comment_text
+        long = "Platform - Baseline (excerpt for tests) > 5.7 Other sources and external parties"
+        text = comment_text(dict(id="C16", verdict="Misleading", severity="Minor", **{**self.BASE, "section": long}))
+        self.assertTrue(text.startswith("[Misleading · Minor · C16] §5.7 Other sources and external parties\n"), text)
+        self.assertNotIn("Baseline", text)
+
     def test_comment_over_the_word_limit_exits_2_naming_id_and_count_and_writes_nothing(self):
         _, f = self._good()
         before = f.read_text()

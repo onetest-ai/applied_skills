@@ -133,10 +133,15 @@ class TestFactCheckRules(unittest.TestCase):
         self.has(self.step4, "this never turns a differing value into No Evidence")
         self.has(self.rules, "A differing value in a covering row or chunk is Incorrect or Misleading, never No Evidence")
 
+    def test_a_name_the_brain_gives_two_ways_is_controversial(self):
+        # An auto-transcript vendor name that the same session names differently was flagged, then overturned by 6b.
+        self.has(self.step5, "A name the Brain itself gives two ways for the same thing (an auto-transcript spelling "
+                           "against a different name in the same or another source) is Controversial, citing both spans")
+
     def test_6b_dispatch_payload_and_reexamination(self):
         s = self.s6b
         self.has(s, "pass the draft's verbatim quote as the claim, plus the chunk ids or metric reference from its `trail`, never the Brain-side value as the claim",
-                 "if it still contradicts the draft, the finding stands and both readings are recorded; if it supports the draft, the claim becomes Verified; if it cannot be re-opened, it is No Evidence",
+                 "if it still contradicts the draft, the finding stands and both readings are recorded; if it supports the draft and the finding cites no differing span for the same subject, the claim becomes Verified; if the finding cites a differing span (another value or name the Brain gives for the same subject), it becomes Controversial with both spans; if it cannot be re-opened, it is No Evidence",
                  "An Incorrect finding with `grain-mismatch` is re-checked for Misleading (right value at another grain)")
         self.assertNotIn("any other finding", s)
 

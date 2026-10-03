@@ -12,6 +12,10 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling imports work under python -I too
+
+from fact_check_invariants import _last_heading  # noqa: E402
+
 
 def split_run(run, off):
     from docx.oxml.ns import qn
@@ -79,7 +83,7 @@ def mark_destinations(findings, written_ids):
 
 def comment_text(f):
     """The exact text of a finding's Word comment; annotate() writes it and main() length-checks it."""
-    return (f"[{f['verdict']} · {f['severity']} · {f['id']}] §{f['section']}\n"
+    return (f"[{f['verdict']} · {f['severity']} · {f['id']}] §{_last_heading(str(f['section']))}\n"
             f"Brain: {f['evidence']}\nFix: {f['fix']}\nSource: {f['source']}")
 
 
@@ -193,7 +197,6 @@ def main(argv=None) -> int:
         return 2
     approved = _load_list(a.approved, "approved", need_anchor=True)
     findings = _load_list(a.findings, "findings")
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
     from sections import NEEDS_DOCX
     from fact_check_invariants import MAX_COMMENT_WORDS
     long = [f"{f['id']}: comment would be {n} words (limit {MAX_COMMENT_WORDS}); shorten its evidence or fix"
