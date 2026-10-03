@@ -1,6 +1,7 @@
 """Split a draft .docx into heading sections and word-bounded batches for /kb:doc-fact-check.
 
     python sections.py <draft.docx> --out <dir> [--max-words 1500]
+    python sections.py --check        (dependency check for step 0)
 
 Writes into <dir>:
 - sections.json  one record per heading section, in document order: section_id, section (the
@@ -271,12 +272,36 @@ def write_outputs(docx_path, out_dir, max_words: int = 1500) -> tuple[list[dict]
     return sections, index
 
 
+NEEDS_DOCX = ("doc-fact-check needs Python with python-docx ≥ 1.2 in this environment; "
+              "none is available here. Run it in Claude Code.")
+
+
+def check_dependencies() -> int:
+    """Step 0: print the versions the skill needs, or the stop message (exit 2)."""
+    try:
+        import docx
+        ok = hasattr(docx.Document(), "comments")          # the comments API exists only from 1.2
+        ver = getattr(docx, "__version__", "?")
+    except Exception:
+        ok, ver = False, None
+    if not ok:
+        print(NEEDS_DOCX, file=sys.stderr)
+        return 2
+    print(f"python {sys.version.split()[0]} python-docx {ver}")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("docx", help="the draft .docx")
-    ap.add_argument("--out", required=True, help="directory for sections.json, batches.json, batch_<k>.json")
+    ap.add_argument("docx", nargs="?", help="the draft .docx")
+    ap.add_argument("--out", help="directory for sections.json, batches.json, batch_<k>.json")
+    ap.add_argument("--check", action="store_true", help="print the Python and python-docx versions, then exit")
     ap.add_argument("--max-words", type=int, default=1500, help="word budget per batch (default 1500)")
     a = ap.parse_args(argv)
+    if a.check:
+        return check_dependencies()
+    if not a.docx or not a.out:
+        ap.error("the draft .docx and --out are required (or use --check)")
     src = Path(a.docx)
     if not src.is_file():
         print(f"sections.py: no such file: {src}", file=sys.stderr)

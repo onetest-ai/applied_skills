@@ -38,7 +38,6 @@ class ScriptCommandsUseTheSkillDir(unittest.TestCase):
 class DependencyPreCheck(unittest.TestCase):
     def test_step_0_checks_python_docx_before_extraction(self):
         step0 = SKILL[SKILL.index("### 0. Resolve"):SKILL.index("### 1. Extract")]
-        self.assertIn('import docx, sys; print(sys.version.split()[0], docx.__version__)', step0)
         self.assertIn("doc-fact-check needs Python with python-docx ≥ 1.2 in this environment", step0)
 
     def test_impossible_fallback_is_gone(self):
@@ -69,3 +68,23 @@ class ScriptsAreSelfContained(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DependencyCheckFlag(unittest.TestCase):
+    def test_check_prints_versions_and_exits_zero(self):
+        r = subprocess.run([sys.executable, str(SKILL_DIR / "sections.py"), "--check"],
+                           capture_output=True, text=True, cwd="/")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(r.stdout.strip(), r"^python \d+\.\d+\.\d+ python-docx \d+\.\d+")
+
+    def test_check_fails_cleanly_without_python_docx(self):
+        # run with an empty site so `import docx` fails
+        r = subprocess.run([sys.executable, "-S", "-I", str(SKILL_DIR / "sections.py"), "--check"],
+                           capture_output=True, text=True, cwd="/")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("doc-fact-check needs Python with python-docx ≥ 1.2", r.stderr)
+
+    def test_step_0_uses_the_check_flag_not_inline_python(self):
+        step0 = SKILL[SKILL.index("### 0. Resolve"):SKILL.index("### 0b.")]
+        self.assertIn('python "<skill dir>/sections.py" --check', step0)
+        self.assertNotIn("python -c", SKILL)
