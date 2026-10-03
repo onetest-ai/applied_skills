@@ -75,7 +75,7 @@ class TestFactCheckRules(unittest.TestCase):
     # FX-1
     def test_6b_dispatch_scope_and_verdicts(self):
         s = self.s6b
-        self.has(s, "only for findings whose evidence is a **chunk id** (pass the chunk ids exactly as returned; do not reformat them) or a **governed metric row**",
+        self.has(s, "only for findings whose `trail` cites a **chunk id** (pass the chunk ids exactly as returned; do not reformat them) or a **governed metric row**",
                  "not Outdated or Controversial findings",
                  "For a finding on a draft figure, a verifier \"uncited-number\" leaves the verdict unchanged, because the draft carries no citation tags; No Evidence applies only when the finding's own evidence figure has no tool source")
         self.assertNotIn("A finding whose citation it cannot re-resolve drops to No Evidence", s)
@@ -122,7 +122,7 @@ class TestFactCheckRules(unittest.TestCase):
 
     def test_prose_figure_ruling(self):
         for hay in (self.step4, self.rules):
-            self.has(hay, "A figure from a narrative chunk may be used only as a verbatim quotation of the chunk span, attributed with its chunk id and date",
+            self.has(hay, "A figure from a narrative chunk may be used only as a verbatim quotation of the chunk span, attributed with its document and date (its chunk id goes in `trail`)",
                      "never restate, convert or compute with it")
         self.assertNotIn("never take a number from prose", self.step4)
         self.has(self.step4, "Governed figures come only from `get_metric`, `get_metric_history` or an extracted table cell")
@@ -135,7 +135,7 @@ class TestFactCheckRules(unittest.TestCase):
 
     def test_6b_dispatch_payload_and_reexamination(self):
         s = self.s6b
-        self.has(s, "pass the draft's verbatim quote as the claim, plus the chunk ids or metric reference of the evidence, never the Brain-side value as the claim",
+        self.has(s, "pass the draft's verbatim quote as the claim, plus the chunk ids or metric reference from its `trail`, never the Brain-side value as the claim",
                  "if it still contradicts the draft, the finding stands and both readings are recorded; if it supports the draft, the claim becomes Verified; if it cannot be re-opened, it is No Evidence",
                  "An Incorrect finding with `grain-mismatch` is re-checked for Misleading (right value at another grain)")
         self.assertNotIn("any other finding", s)
@@ -526,8 +526,12 @@ class FinalReviewPins(unittest.TestCase):
         self.assertNotIn("run `pip install", self.all)
 
     def test_no_evidence_names_its_own_queries(self):
-        self.assertIn("A No Evidence finding's `evidence` names this claim's own queries and tools and what each returned.",
+        self.assertIn("A No Evidence finding's `trail` names this claim's own queries and tools and what each returned",
                       self.all)
+
+    def test_evidence_is_for_the_reader_and_trail_is_the_audit(self):
+        self.assertIn("It never names a tool, a query, `latest_only` or a chunk id.", self.all)
+        self.assertIn("The merge refuses an `evidence` that breaks this rule.", self.all)
 
     def test_baseline_full_match_reuses_the_merged_files(self):
         self.assertIn("On a full match, reuse `<run dir>/findings.json`, `coverage.json` and `run.json` and continue at step 7; "

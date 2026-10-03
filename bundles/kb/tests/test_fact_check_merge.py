@@ -29,7 +29,7 @@ BATCHES = [
 
 def finding(fid, section, verdict="Incorrect", **kw):
     f = {"id": fid, "p_id": "p3", "section": section, "quote": "runs 12 services", "type": "NUM",
-         "verdict": verdict, "severity": "Major", "confidence": "High", "evidence": "e", "fix": "f",
+         "verdict": verdict, "severity": "Major", "confidence": "High", "evidence": "e", "trail": "t", "fix": "f",
          "source": "s", "sources": [{"name": "s", "link": "", "folder": ""}]}
     f.update(kw)
     return f
@@ -261,6 +261,37 @@ class TestMergeFailsLoudly(MergeCase):
         findings, _, _, errors = M.merge(self.dir, scope="all")
         self.assertEqual(errors, [])
         self.assertEqual(sorted(len(f["sources"]) for f in findings), [0, 1, 1])
+
+    def test_trail_is_required(self):
+        rows = [finding("B1-C01", S1), finding("B1-C02", S2), finding("B2-C01", S3)]
+        del rows[0]["trail"]
+        self.write("findings_chunk_1.json", rows)
+        self.has_error("B1-C01", "trail")
+
+    # A real stage-V evidence text from a Cowork run: the audit trail written where the reader looks.
+    AUDIT_IN_EVIDENCE = (
+        'No governed metric: get_metric(name="vendor_data_retention_days") returned "Unknown metric". The source '
+        'states: "Phone recordings are retained for 60 days" (chunk 6028315016624218065, Questions.docx, section 7).')
+
+    def test_evidence_with_tool_calls_or_chunk_ids_is_refused(self):
+        for bad in (self.AUDIT_IN_EVIDENCE, 'search_knowledge("x", latest_only=false) found nothing',
+                    'The source states "60 days" (chunk 6028315016624218065).'):
+            with self.subTest(bad=bad[:40]):
+                self.write("findings_chunk_1.json", [finding("B1-C01", S1, evidence=bad), finding("B1-C02", S2),
+                                                     finding("B2-C01", S3)])
+                self.has_error("B1-C01", "trail")
+
+    def test_evidence_over_the_word_limit_is_refused(self):
+        long = " ".join(["word"] * (M.MAX_EVIDENCE_WORDS + 1))
+        self.write("findings_chunk_1.json", [finding("B1-C01", S1, evidence=long), finding("B1-C02", S2),
+                                             finding("B2-C01", S3)])
+        self.has_error("B1-C01", "words")
+
+    def test_plain_quoted_evidence_passes(self):
+        ok = 'The source says "Phone recordings are retained for 60 days" (Questions.docx, §7, 2026-09-21).'
+        self.write("findings_chunk_1.json", [finding("B1-C01", S1, evidence=ok), finding("B1-C02", S2),
+                                             finding("B2-C01", S3)])
+        self.assertEqual(M.merge(self.dir, scope="all")[3], [])
 
     def test_figure_claim_ids_must_start_with_i(self):
         self.write("claims_figures.json", [fclaim(1), {**fclaim(2), "claim_id": "C09"}])

@@ -17,7 +17,7 @@ SKILL_DIR = KB_ROOT / "skills" / "doc-fact-check"
 def f(id, verdict, severity, destination, quote="", **kw):
     return dict(id=id, verdict=verdict, severity=severity, destination=destination, quote=quote,
                 where=kw.pop("where", "§1"), evidence=kw.pop("evidence", "Brain: x (2026-01-01)"),
-                fix="Fix it", sources=kw.pop("sources", [{"name": "f.vtt", "link": "https://tenant.example/site/f.vtt"}]), **kw)
+                fix=kw.pop("fix", "Fix it"), sources=kw.pop("sources", [{"name": "f.vtt", "link": "https://tenant.example/site/f.vtt"}]), **kw)
 
 
 FINDINGS = [
@@ -120,7 +120,30 @@ class TestFindingsReport(unittest.TestCase):
     def test_ledger_headers_exact(self):
         html = self.render()
         self.assertEqual(re.findall(r"<th>(.*?)</th>", html),
-                         ["ID", "Where", "Claim", "Verdict", "Severity", "Conf.", "Brain evidence (dated)", "Source", "Action"])
+                         ["ID", "Where", "Claim", "Verdict", "Severity", "Conf.", "What the source says", "Fix",
+                          "Source", "Action", "How it was checked"])
+
+    def test_ledger_shows_the_fix(self):
+        html = self.render([f("C01", "Incorrect", "Major", "Word comment", "q", fix="Change 40 to 28.")])
+        self.assertIn("<td>Change 40 to 28.</td>", html)
+
+    def test_majors_panel_says_what_is_wrong_and_the_fix(self):
+        html = self.render([f("C01", "Incorrect", "Major", "Word comment", "40 million",
+                              evidence="The source says \"28 million\" (plan.docx, 2026-01-01).", fix="Change 40 to 28.")])
+        majors = html[html.index('<ul class="majors">'):html.index("</ul>", html.index('<ul class="majors">'))]
+        self.assertIn("40 million", majors)
+        self.assertIn("The source says &quot;28 million&quot;", majors)
+        self.assertIn("Fix: Change 40 to 28.", majors)
+
+    def test_trail_is_collapsed_and_absent_when_missing(self):
+        trail = 'search_knowledge("x", latest_only=false): no hit; chunk 6028315016624218065'
+        html = self.render([f("C01", "No Evidence", "Minor", "log only", "q", trail=trail),
+                            f("C02", "Verified", "—", "count only", "q")])
+        rows = re.findall(r'<tr data-tags="[^"]*">(.*?)</tr>', html, re.S)
+        self.assertIn("<details><summary>Show</summary>", rows[0])
+        self.assertIn("6028315016624218065", rows[0])
+        self.assertNotIn("<details>", rows[1])
+        self.assertNotIn("search_knowledge", html.split('<table>')[0])   # never in the summary panels
 
     def test_section_headings(self):
         html = self.render()

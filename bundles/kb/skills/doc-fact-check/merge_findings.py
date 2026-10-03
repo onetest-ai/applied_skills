@@ -37,7 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling imports work
 
 from chunk_claims import FIGURES_CLAIMS_FILE, _risk_by_s_id, risk_coverage_errors
 from fact_check_invariants import (COVERAGE_REASON, RISK_COVERAGE_REASON, FIGURE_KEYS, FINDING_KEYS, LATE_KEYS,
-                                   SEVERITIES, VERDICTS, _last_heading, section_coverage, section_key)
+                                   MAX_EVIDENCE_WORDS, SEVERITIES, VERDICTS, _last_heading, evidence_problem,
+                                   section_coverage, section_key)
 
 REQUIRED = tuple(k for k in FINDING_KEYS if k not in LATE_KEYS)
 OLD_FIGURES_FILE = "findings_figures.json"
@@ -84,6 +85,8 @@ def _check_finding(f, where: str, errors: list[str]) -> str | None:
         errors.append(f"{label}: unknown severity {f['severity']!r}")
     if "sources" in f and not isinstance(f["sources"], list):
         errors.append(f"{label}: sources must be a list of {{name, link, folder}}")
+    if "evidence" in f and (why := evidence_problem(f["evidence"])):
+        errors.append(f"{label}: {why} (re-dispatch stage V for this chunk; the main session never edits findings)")
     return fid or None
 
 

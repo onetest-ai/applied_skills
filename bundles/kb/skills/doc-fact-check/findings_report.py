@@ -68,6 +68,12 @@ def _safe_link(url) -> str | None:
     return url if url.lower().startswith(("http://", "https://")) else None
 
 
+def _trail(f: dict) -> str:
+    """The audit trail (tool calls, queries, chunk ids), collapsed: for reviewers, not the reader's first look."""
+    t = str(f.get("trail") or "").strip()
+    return f"<details><summary>Show</summary>{_e(t)}</details>" if t else ""
+
+
 def _sources(f: dict) -> str:
     out = []
     for s in f.get("sources") or []:
@@ -139,6 +145,7 @@ tr:last-child td{border-bottom:0}
 .q{font-style:italic;color:var(--ink-2);max-width:32ch}.src{display:block;color:var(--muted);font-size:12.5px}.cap{display:block;color:var(--muted);font-size:12px}
 .sev-major{color:var(--s-incorrect);font-weight:600}.sev-blocker{color:var(--s-incorrect);font-weight:700;text-transform:uppercase;letter-spacing:.04em}
 .dest{font-family:var(--mono);font-size:12px;white-space:nowrap}
+.trail{font-size:12px;color:var(--muted);min-width:90px}.trail summary{cursor:pointer}.mtext .q{font-style:italic}
 footer{font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:14px}footer p{margin:0 0 6px}
 @media(max-width:820px){.tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.band{grid-template-columns:1fr}}
 @media(max-width:420px){.vbar{grid-template-columns:92px 1fr 28px}.majors li{grid-template-columns:40px 1fr}.majors .mtext{grid-column:1/-1}}
@@ -215,7 +222,8 @@ def render_html(findings, *, document="", brain_version="", run_date=None,
         majors_html = (f'<h2>Blocker and Major findings</h2><ul class="majors">' + "".join(
             f'<li><span class="mid">{_e(f.get("id"))}</span>'
             f'<span class="pill s-{_slug(f.get("verdict"))}">{_e(f.get("verdict"))}</span>'
-            f'<span class="mtext">{_e(f.get("evidence"))}</span></li>' for f in majors) + "</ul>")
+            f'<span class="mtext"><span class="q">{_e(f.get("quote"))}</span> — {_e(f.get("evidence"))}'
+            f'{" Fix: " + _e(f.get("fix")) if f.get("fix") else ""}</span></li>' for f in majors) + "</ul>")
     else:
         majors_html = '<h2>Blocker and Major findings</h2><p class="note">None.</p>'
 
@@ -237,8 +245,9 @@ def render_html(findings, *, document="", brain_version="", run_date=None,
         f'<td class="q">{_e(f.get("quote"))}</td>'
         f'<td><span class="pill s-{_slug(f.get("verdict"))}">{_e(f.get("verdict"))}</span></td>'
         f'{_sev_cell(f)}<td>{_e(f.get("confidence"))}</td>'
-        f'<td>{_e(f.get("evidence"))}</td><td>{_sources(f)}</td>'
-        f'<td class="dest">{"Comment" if _has_comment(f) else "Log"}</td></tr>' for f in findings)
+        f'<td>{_e(f.get("evidence"))}</td><td>{_e(f.get("fix"))}</td><td>{_sources(f)}</td>'
+        f'<td class="dest">{"Comment" if _has_comment(f) else "Log"}</td>'
+        f'<td class="trail">{_trail(f)}</td></tr>' for f in findings)
 
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -259,7 +268,7 @@ def render_html(findings, *, document="", brain_version="", run_date=None,
 <section>
 <h2>Claim ledger</h2>
 <div class="chips" role="group" aria-label="Filter claims">{chips_html}<span class="shown" id="shown"></span></div>
-<div class="scroll"><table><thead><tr><th>ID</th><th>Where</th><th>Claim</th><th>Verdict</th><th>Severity</th><th>Conf.</th><th>Brain evidence (dated)</th><th>Source</th><th>Action</th></tr></thead>
+<div class="scroll"><table><thead><tr><th>ID</th><th>Where</th><th>Claim</th><th>Verdict</th><th>Severity</th><th>Conf.</th><th>What the source says</th><th>Fix</th><th>Source</th><th>Action</th><th>How it was checked</th></tr></thead>
 <tbody id="ledger">
 {rows}
 </tbody></table></div>

@@ -29,14 +29,30 @@ VERDICTS = {"Verified", "Incorrect", "Misleading", "Outdated", "Controversial", 
 DEFECTS = VERDICTS - {"Verified", "No Evidence"}
 SEVERITIES = {"Blocker", "Major", "Minor"}
 MAX_COMMENT_WORDS = 60
+# `evidence` is what a reader sees (page, comments): a quoted source span with its document and date.
+# How the claim was checked (tool calls, queries, chunk ids) belongs in `trail`.
+MAX_EVIDENCE_WORDS = 60
+_TRAIL_IN_EVIDENCE = re.compile(
+    r"\b(search_knowledge|get_metric(_history)?|get_evidence|get_current_fact|get_question_status|get_taxonomy|"
+    r"find_related_content|list_metrics|list_sources|read_document|latest_only)\b|\b\d{12,}\b")
 # The step-9 findings.json keys, in SKILL.md order (a test pins this to the SKILL.md text).
 # `destination` is set in step 8, so it may be absent before then (e.g. at merge_findings.py).
 FINDING_KEYS = ("id", "p_id", "section", "quote", "type", "verdict", "severity", "confidence",
-                "evidence", "fix", "source", "sources", "destination")
+                "evidence", "trail", "fix", "source", "sources", "destination")
 LATE_KEYS = frozenset({"destination"})
 # Figure findings (`I*` ids only) also carry what step 8's `annotate` needs to anchor on the drawing.
 FIGURE_KEYS = ("anchor", "figure")
 HEADER = re.compile(r"^\[(?P<verdict>[^·\]]+?) · (?P<severity>[^·\]]+?) · (?P<id>[^\]\s]+)\]")
+
+
+def evidence_problem(text) -> str | None:
+    """Why a finding's `evidence` is not reader-facing, or None: no tool calls, no chunk ids, at most the word limit."""
+    t = str(text or "")
+    if _TRAIL_IN_EVIDENCE.search(t):
+        return "evidence names a tool, query option or chunk id: move how it was checked to `trail`"
+    if len(t.split()) > MAX_EVIDENCE_WORDS:
+        return f"evidence is {len(t.split())} words (limit {MAX_EVIDENCE_WORDS}): quote the source span, move the rest to `trail`"
+    return None
 
 
 def _has_comment(f: dict) -> bool:
