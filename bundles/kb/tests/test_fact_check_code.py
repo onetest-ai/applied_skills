@@ -14,11 +14,9 @@ from test_plugin_structure import KB_ROOT, read_text
 
 
 def load_helpers():
-    text = read_text(KB_ROOT / "skills" / "doc-fact-check" / "SKILL.md")
-    code = text.split("```python", 1)[1].split("```", 1)[0]
-    ns: dict = {}
-    exec(compile(code, "SKILL.md:python", "exec"), ns)
-    return ns
+    import importlib
+    mod = importlib.import_module("annotate")  # conftest puts every skill dir on sys.path
+    return {k: getattr(mod, k) for k in ("split_run", "isolate", "paragraphs", "mark_destinations", "annotate")}
 
 
 def _tiny_png() -> bytes:
@@ -244,3 +242,31 @@ class TestReferenceCode(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAVE_DOCX, "needs python-docx >= 1.2")
+class AnnotateCli(unittest.TestCase):
+    SCRIPT = KB_ROOT / "skills" / "doc-fact-check" / "annotate.py"
+
+    def test_cli_annotates_marks_destinations_and_reports(self):
+        import json, subprocess, sys, tempfile
+        from docx import Document
+        d = Path(tempfile.mkdtemp()); src = d / "draft.docx"
+        doc = Document(); doc.add_paragraph("Revenue was 40 million in 2025."); doc.save(str(src))
+        base = dict(section="1", evidence="e (2026-01-01, f.md)", fix="x", source="f.md")
+        approved = [dict(id="C01", verdict="Incorrect", severity="Major", quote="40 million", **base)]
+        findings = approved + [dict(id="C02", verdict="Verified", severity="Minor", quote="2025", **base)]
+        (d / "approved.json").write_text(json.dumps(approved)); (d / "findings.json").write_text(json.dumps(findings))
+        r = subprocess.run([sys.executable, str(self.SCRIPT), str(src), str(d / "out.docx"),
+                            "--approved", str(d / "approved.json"), "--findings", str(d / "findings.json")],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout), {"written": ["C01"], "skipped": []})
+        dest = {f["id"]: f["destination"] for f in json.loads((d / "findings.json").read_text())}
+        self.assertEqual(dest, {"C01": "Word comment", "C02": "count only"})
+
+    def test_skill_md_ships_no_python_block_and_documents_the_command(self):
+        skill = (KB_ROOT / "skills" / "doc-fact-check" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertNotIn("```python", skill)
+        self.assertIn('python "<skill dir>/annotate.py" "<draft>.docx" "<name> \u2014 fact-checked.docx" '
+                      '--approved <work dir>/approved.json --findings <run dir>/findings.json', skill)

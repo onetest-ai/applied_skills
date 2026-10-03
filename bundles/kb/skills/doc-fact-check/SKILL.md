@@ -174,73 +174,9 @@ Brain: <verified value or fact, with date> (source: <file / section>)
 Fix: <one sentence, or "needs owner input">
 Source: <source file name>
 ```
-Reference implementation (keep in the session, adapt paths):
-```python
-import copy, json; from docx import Document; from docx.oxml.ns import qn
-def split_run(run, off):
-    t=run._r.findall(qn('w:t'))
-    if len(t)!=1 or off<=0 or off>=len(t[0].text or ''): return
-    right=copy.deepcopy(run._r); txt=t[0].text; t[0].text=txt[:off]; t[0].set(qn('xml:space'),'preserve')
-    rt=right.find(qn('w:t')); rt.text=txt[off:]; rt.set(qn('xml:space'),'preserve'); run._r.addnext(right)
-def isolate(p, quote):
-    s=p.text.find(quote); e=s+len(quote)
-    if s<0: return []
-    if sum(len(r.text) for r in p.runs)!=len(p.text):
-        # hyperlink/field runs are not in p.runs; offsets would drift -> anchor the whole paragraph, log "paragraph-anchored"
-        return [r for r in p.runs if r.text]
-    for b in (e,s):
-        pos=0
-        for r in list(p.runs):
-            n=len(r.text)
-            if pos<b<pos+n: split_run(r,b-pos); break
-            pos+=n
-    out=[];pos=0
-    for r in p.runs:
-        n=len(r.text)
-        if pos>=s and pos+n<=e and n: out.append(r)
-        pos+=n
-    return out
-def paragraphs(doc, textbox=False):   # every paragraph in true document order, table cells included, each once
-    # body paragraphs only by default; textbox=True yields only text-box paragraphs (w:txbxContent), the fallback anchor
-    from docx.text.paragraph import Paragraph
-    for p in doc.element.body.iter(qn('w:p')):
-        in_box=any(a.tag==qn('w:txbxContent') for a in p.iterancestors())
-        if in_box==textbox: yield Paragraph(p, doc)
-def mark_destinations(findings, written_ids):   # call after annotate; pure, returns a new list
-    out=[]
-    for f in findings:
-        dest='Word comment' if f['id'] in written_ids else ('count only' if f.get('verdict')=='Verified' else 'log only')
-        out.append({**f,'destination':dest})
-    return out
-def annotate(src,dst,findings,author='Fact Checker · Brain'):   # returns (written, skipped) id lists
-    doc=Document(src)
-    if not hasattr(doc,'comments'): raise SystemExit('python-docx >= 1.2 required for comments')
-    import re, sys
-    hdr=re.compile(r'^\[[^·\]]+ · [^·\]]+ · ([^\]\s]+)\]')   # only a comment's own header line names its id
-    have={m[1] for c in doc.comments if (m:=hdr.match((c.text.strip().splitlines() or [''])[0]))}; written=[]; skipped=[]
-    for f in findings:
-        if f['id'] in have: written.append(f['id']); continue   # exact id: C1 is not C10, a mention in another comment's body is not a header
-        text=f"[{f['verdict']} · {f['severity']} · {f['id']}] §{f['section']}\nBrain: {f['evidence']}\nFix: {f['fix']}\nSource: {f['source']}"
-        before=len(written)
-        if f.get('anchor')=='drawing':
-            k=0
-            for p in paragraphs(doc):
-                runs=[r for r in p.runs if r._r.findall('.//'+qn('w:drawing'))]
-                if runs and (k:=k+1)==f.get('figure',1): doc.add_comment(runs,text=text,author=author,initials='FC'); written.append(f['id']); break
-        else:
-            for box in (False,True):   # body first; text boxes only when the body lacks the quote
-                for p in paragraphs(doc,textbox=box):
-                    if f['quote'] in p.text:
-                        runs=isolate(p,f['quote'])
-                        if runs:
-                            doc.add_comment(runs,text=text,author=author,initials='FC'); written.append(f['id'])
-                            if box: print('anchored: textbox',f['id'],file=sys.stderr)
-                            break
-                if len(written)>before: break
-        if len(written)==before: skipped.append(f['id'])   # quote/figure not found: logged, no comment
-    doc.save(dst)
-    return written, skipped
-```
+Write the approved findings (the table rows the user approved in step 7) to `<work dir>/approved.json`, then run:
+`python "<skill dir>/annotate.py" "<draft>.docx" "<name> — fact-checked.docx" --approved <work dir>/approved.json --findings <run dir>/findings.json`
+It anchors each comment to the exact quoted span (runs split at the span edges; a figure on the run holding its drawing; text boxes only when the body lacks the quote), skips ids already present (idempotent re-runs), never overwrites the draft, sets every finding's `destination` in `findings.json`, and prints the written and skipped ids. A skipped id means the quote was not found verbatim: log it, no comment.
 
 ### 9. Build the findings page
 **findings.json schema.** Write findings.json as a **top-level JSON array of finding objects**, never an object wrapper like `{"findings": […], "document": …}`. The coverage record from step 2 goes to `coverage.json` beside findings.json, a list of `{"heading": …, "reason": "no checkable statement"}`, so findings.json stays a pure list. One object per claim (every claim, whatever its verdict) and exactly these keys: `id`, `p_id`, `section`, `quote`, `type`, `verdict`, `severity`, `confidence`, `evidence`, `fix`, `source`, `sources` (a list of `{name, link, folder}`), `destination`. Every figure claim (`I01…`) is its own row, with `type` and `section` "Figure". `destination` is one of the exact strings "Word comment", "log only", "count only" (the step 7 table): "Word comment" only for a finding whose comment was actually written in step 8 (the ids `annotate` returned as `written`), otherwise "log only" (non-Verified, no comment) or "count only" (Verified); `mark_destinations` in step 8 sets it. The page's comment tile counts these values, so write or update `findings.json` after step 8, never before; a file with no `destination` key shows "n/a" and a warning rather than a silent 0.
