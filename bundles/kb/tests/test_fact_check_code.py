@@ -314,6 +314,42 @@ class AnnotateCli(unittest.TestCase):
         self.assertEqual(f.read_text(), before)
         self.assertIsInstance(json.loads(before), list)
 
+    def test_drawing_finding_without_an_integer_figure_exits_2(self):
+        _, f = self._good()
+        before = f.read_text()
+        drawing = dict(id="I01", verdict="Incorrect", severity="Major", anchor="drawing", **self.BASE)
+        for extra in ({}, {"figure": 0}, {"figure": "1"}, {"figure": True}, {"figure": 1.0}):
+            with self.subTest(extra=extra):
+                a = self._write("a_fig.json", [{**drawing, **extra}])
+                r = self._run(a, f)
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertIn(f'annotate.py: {a}: I01: anchor "drawing" needs an integer figure >= 1', r.stderr)
+                self.assertFalse(self.out.exists())
+                self.assertEqual(f.read_text(), before)
+
+    def test_approved_finding_missing_a_comment_key_exits_2_naming_it(self):
+        _, f = self._good()
+        good = dict(id="C01", verdict="Incorrect", severity="Major", quote="40 million", **self.BASE)
+        for key in ("verdict", "severity", "section", "evidence", "fix", "source"):
+            for bad in (None, "", " ") + ((3,) if key != "section" else ()):   # section: any non-empty value
+                with self.subTest(key=key, bad=bad):
+                    row = {k: v for k, v in good.items() if k != key}
+                    if bad is not None:
+                        row[key] = bad
+                    a = self._write("a_key.json", [row])
+                    r = self._run(a, f)
+                    self.assertEqual(r.returncode, 2, r.stderr)
+                    self.assertIn(f"annotate.py: {a}: C01: ", r.stderr)
+                    self.assertIn(f"`{key}`", r.stderr)
+                    self.assertFalse(self.out.exists())
+
+    def test_section_may_be_any_non_empty_value(self):
+        _, f = self._good()
+        a = self._write("a_sec.json", [dict(id="C01", verdict="Incorrect", severity="Major", quote="40 million",
+                                            **{**self.BASE, "section": 4})])
+        r = self._run(a, f)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_non_list_or_idless_input_exits_2(self):
         _, f = self._good()
         for data in ({"findings": []}, [{"quote": "x"}], ["C01"]):

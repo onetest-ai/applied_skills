@@ -99,7 +99,7 @@ def annotate(src, dst, findings, author='Fact Checker · Brain'):
             k = 0
             for p in paragraphs(doc):
                 runs = [r for r in p.runs if r._r.findall('.//' + qn('w:drawing'))]
-                if runs and (k := k + 1) == f.get('figure', 1):
+                if runs and (k := k + 1) == f['figure']:
                     doc.add_comment(runs, text=text, author=author, initials='FC')
                     written.append(f['id'])
                     break
@@ -133,9 +133,31 @@ def _load_list(path, what, need_anchor=False):
     for i, f in enumerate(data):
         if not isinstance(f, dict) or not f.get("id") or not isinstance(f["id"], str):
             sys.exit(_bad(path, f"item {i} is not an object with a non-empty id"))
-        if need_anchor and not (f.get("quote") or f.get("anchor") == "drawing"):
-            sys.exit(_bad(path, f"finding {f['id']} needs a quote or anchor: \"drawing\""))
+        reason = _comment_error(f) if need_anchor else None
+        if reason:
+            sys.exit(_bad(path, f"{f['id']}: {reason}"))
     return data
+
+
+COMMENT_KEYS = ("verdict", "severity", "section", "evidence", "fix", "source")
+
+
+def _comment_error(f) -> str | None:
+    """Why an approved finding cannot become a comment, or None: the comment's keys and its anchor."""
+    for key in COMMENT_KEYS:
+        v = f.get(key)
+        if key == "section":                     # a heading path or a section number: any non-empty value
+            if v is None or not str(v).strip() or v in ([], {}):
+                return "`section` must be non-empty"
+        elif not (isinstance(v, str) and v.strip()):
+            return f"`{key}` must be a non-empty string"
+    if f.get("anchor") == "drawing":
+        fig = f.get("figure")
+        if not (type(fig) is int and fig >= 1):
+            return 'anchor "drawing" needs an integer figure >= 1'
+    elif not f.get("quote"):
+        return 'needs a quote or anchor: "drawing"'
+    return None
 
 
 def _bad(path, reason):
