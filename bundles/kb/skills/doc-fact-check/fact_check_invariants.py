@@ -23,6 +23,8 @@ import sys
 import zipfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling imports work under python -I too
+
 VERDICTS = {"Verified", "Incorrect", "Misleading", "Outdated", "Controversial", "No Evidence"}
 DEFECTS = VERDICTS - {"Verified", "No Evidence"}
 SEVERITIES = {"Blocker", "Major", "Minor"}

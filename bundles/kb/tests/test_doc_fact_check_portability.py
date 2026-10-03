@@ -59,11 +59,26 @@ class ScriptsAreSelfContained(unittest.TestCase):
 
     @unittest.skipUnless(HAVE_DOCX, "needs python-docx >= 1.2")
     def test_every_script_help_runs_from_any_working_directory(self):
+        # -I (isolated: safe path, no script dir on sys.path) is how a locked-down host may run them
         for name in SCRIPTS:
+            for flags in ((), ("-I",)):
+                with self.subTest(script=name, flags=flags):
+                    r = subprocess.run([sys.executable, *flags, str(SKILL_DIR / f"{name}.py"), "--help"],
+                                       capture_output=True, text=True, cwd="/")
+                    self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_every_sibling_import_follows_the_one_sys_path_idiom(self):
+        # a sibling import (even a lazy one) needs the script dir on sys.path: python -I drops it
+        idiom = "sys.path.insert(0, str(Path(__file__).resolve().parent))"
+        for name in SCRIPTS:
+            src = (SKILL_DIR / f"{name}.py").read_text(encoding="utf-8")
+            sib = [n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.ImportFrom) and n.module in SCRIPTS]
+            if not sib:
+                continue
             with self.subTest(script=name):
-                r = subprocess.run([sys.executable, str(SKILL_DIR / f"{name}.py"), "--help"],
-                                   capture_output=True, text=True, cwd="/")
-                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertTrue(idiom in src, f"{name}.py imports a sibling without the sys.path idiom")
+                first = min(n.lineno for n in sib)
+                self.assertLess(src[:src.index(idiom)].count("\n") + 1, first)
 
 
 

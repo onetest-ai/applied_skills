@@ -23,6 +23,8 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling imports work under python -I too
+
 from fact_check_invariants import COVERAGE_REASON, _norm, section_coverage
 
 
