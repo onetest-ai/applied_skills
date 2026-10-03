@@ -335,16 +335,116 @@ class MediaAndSummaryTests(unittest.TestCase):
                 zout.writestr(name, data)
         return out
 
-    def test_embedded_objects_and_diagrams_are_extracted_flat_and_listed(self):
+    def _xlsx_bytes(self, extra=None):
+        import zipfile
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("[Content_Types].xml", "<Types/>")
+            z.writestr("xl/sharedStrings.xml", "<sst><si><t>Total 12</t></si></sst>")
+            z.writestr("xl/worksheets/sheet1.xml", "<worksheet/>")
+            z.writestr("xl/media/image1.png", _tiny_png())          # not XML: not expanded
+            for name, data in (extra or {}).items():
+                z.writestr(name, data)
+        return buf.getvalue()
+
+    def _run_cli(self, docx, out):
+        return subprocess.run([sys.executable, str(SCRIPT), str(docx), "--out", str(out)],
+                              capture_output=True, text=True)
+
+    def test_embedded_ooxml_package_is_expanded_into_its_xml_parts(self):
+        d = Path(tempfile.mkdtemp()); src = self._doc_with_figure(d)
+        docx = self._with_members(src, d, {"word/embeddings/Microsoft_Excel_Worksheet1.xlsx": self._xlsx_bytes()})
+        r = self._run_cli(docx, d / "out")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        obj = d / "out" / "embedded" / "Microsoft_Excel_Worksheet1"
+        self.assertIn(b"Total 12", (obj / "xl" / "sharedStrings.xml").read_bytes())
+        self.assertTrue((obj / "xl" / "worksheets" / "sheet1.xml").is_file())
+        self.assertTrue((obj / "[Content_Types].xml").is_file())
+        self.assertFalse((obj / "xl" / "media").exists())
+        self.assertIn("embedded objects: 1 (embedded/Microsoft_Excel_Worksheet1/: 3 XML parts)", r.stdout)
+
+    def test_expanded_parts_never_escape_the_out_dir(self):
+        d = Path(tempfile.mkdtemp()); src = self._doc_with_figure(d)
+        evil = self._xlsx_bytes({"../../escaped.xml": "<x/>", "/abs.xml": "<x/>", "xl/../../up.xml": "<x/>"})
+        docx = self._with_members(src, d, {"word/embeddings/Book1.xlsx": evil})
+        r = self._run_cli(docx, d / "out")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse((d / "escaped.xml").exists())
+        self.assertFalse((d / "out" / "escaped.xml").exists())
+        self.assertFalse((d / "out" / "embedded" / "up.xml").exists())
+        found = sorted(p.relative_to(d / "out" / "embedded" / "Book1").as_posix()
+                       for p in (d / "out" / "embedded" / "Book1").rglob("*.xml"))
+        self.assertEqual(found, ["[Content_Types].xml", "abs.xml", "xl/sharedStrings.xml", "xl/worksheets/sheet1.xml"])
+
+    def test_ole_binary_is_copied_and_reported_not_readable(self):
         d = Path(tempfile.mkdtemp()); src = self._doc_with_figure(d)
         docx = self._with_members(src, d, {"word/embeddings/oleObject1.bin": b"OLE",
                                            "word/diagrams/data1.xml": b"<x/>"})
-        r = subprocess.run([sys.executable, str(SCRIPT), str(docx), "--out", str(d / "out")],
-                           capture_output=True, text=True)
+        r = self._run_cli(docx, d / "out")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual((d / "out" / "embedded" / "oleObject1.bin").read_bytes(), b"OLE")
-        self.assertEqual((d / "out" / "embedded" / "data1.xml").read_bytes(), b"<x/>")
-        self.assertIn("embedded objects: 1 (embedded/oleObject1.bin), diagrams: 1 (embedded/data1.xml)", r.stdout)
+        self.assertEqual((d / "out" / "embedded" / "oleObject1" / "oleObject1.bin").read_bytes(), b"OLE")
+        self.assertEqual((d / "out" / "embedded" / "diagrams" / "data1.xml").read_bytes(), b"<x/>")
+        self.assertIn("embedded objects: 1 (embedded/oleObject1/oleObject1.bin: not readable), "
+                      "diagrams: 1 (embedded/diagrams/data1.xml)", r.stdout)
+
+    def test_chart_parts_are_extracted_without_their_rels(self):
+        d = Path(tempfile.mkdtemp()); src = self._doc_with_figure(d)
+        docx = self._with_members(src, d, {"word/charts/chart1.xml": b"<c:chartSpace/>",
+                                           "word/charts/_rels/chart1.xml.rels": b"<Relationships/>",
+                                           "word/charts/embeddings/Microsoft_Excel_Worksheet.xlsx": self._xlsx_bytes()})
+        r = self._run_cli(docx, d / "out")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        charts = d / "out" / "embedded" / "charts"
+        self.assertEqual((charts / "chart1.xml").read_bytes(), b"<c:chartSpace/>")
+        self.assertEqual(sorted(p.name for p in charts.rglob("*")), ["chart1.xml"])
+        self.assertIn("charts: 1 (embedded/charts/chart1.xml)", r.stdout)
+
+    def test_two_embeddings_with_one_stem_get_separate_folders(self):
+        d = Path(tempfile.mkdtemp()); src = self._doc_with_figure(d)
+        docx = self._with_members(src, d, {"word/embeddings/obj.bin": b"OLE", "word/embeddings/obj.xlsx": self._xlsx_bytes()})
+        r = self._run_cli(docx, d / "out")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((d / "out" / "embedded" / "obj" / "obj.bin").read_bytes(), b"OLE")
+        self.assertTrue((d / "out" / "embedded" / "obj-xlsx" / "xl" / "sharedStrings.xml").is_file())
+
+    def _doc_with_chart_figure(self, d, smartart=False):
+        """A drawing whose graphicData is a c:chart pointing at word/charts/chart1.xml (no image), or with
+        smartart=True a dgm:relIds whose r:dm points at word/diagrams/data1.xml."""
+        from docx import Document
+        from docx.opc.constants import CONTENT_TYPE as CT, RELATIONSHIP_TYPE as RT
+        from docx.opc.packuri import PackURI
+        from docx.opc.part import Part
+        from docx.oxml.ns import qn
+        from lxml import etree
+        png = d / "fig.png"; png.write_bytes(_tiny_png())
+        doc = Document(); doc.add_heading("Scope", 1)
+        doc.add_paragraph("Figure 1 shows the volumes."); doc.add_picture(str(png))
+        name, ct, rt, tag, attr = (("/word/diagrams/data1.xml", CT.DML_DIAGRAM_DATA, RT.DIAGRAM_DATA, "dgm:relIds", "r:dm")
+                                   if smartart else ("/word/charts/chart1.xml", CT.DML_CHART, RT.CHART, "c:chart", "r:id"))
+        rid = doc.part.relate_to(Part(PackURI(name), ct, b"<x/>", doc.part.package), rt)
+        gd = next(doc.element.body.iter(qn("a:graphicData")))
+        for child in list(gd):
+            gd.remove(child)
+        etree.SubElement(gd, qn(tag)).set(qn(attr), rid)
+        src = d / "chart.docx"; doc.save(str(src))
+        return src
+
+    def test_smartart_figure_names_its_diagram_data_part(self):
+        d = Path(tempfile.mkdtemp()); src = self._doc_with_chart_figure(d, smartart=True)
+        r = self._run_cli(src, d / "out")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(r.stdout, r"figures: 1 \(figure 1 in p\d+ -> embedded/diagrams/data1\.xml\)")
+
+    def test_chart_figure_names_the_part_it_points_to(self):
+        d = Path(tempfile.mkdtemp()); src = self._doc_with_chart_figure(d)
+        r = self._run_cli(src, d / "out")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        fig = [f for s in json.loads((d / "out" / "sections.json").read_text()) for f in s["figures"]][0]
+        self.assertIsNone(fig["image"])
+        self.assertEqual(fig["part"], "embedded/charts/chart1.xml")
+        self.assertTrue((d / "out" / fig["part"]).is_file())
+        self.assertRegex(r.stdout, r"figures: 1 \(figure 1 in p\d+ -> embedded/charts/chart1\.xml\)")
+        self.assertNotIn("not extracted", r.stdout)
 
     def test_rerun_into_the_same_out_dir_drops_stale_media_and_embedded(self):
         from docx import Document
@@ -356,6 +456,33 @@ class MediaAndSummaryTests(unittest.TestCase):
         S.write_outputs(plain, d / "out")
         self.assertEqual(list((d / "out").glob("media/*")), [])
         self.assertEqual(list((d / "out").glob("embedded/*")), [])
+
+    def test_refuses_to_clear_media_in_a_folder_it_did_not_create(self):
+        d = Path(tempfile.mkdtemp()); src = self._doc_with_figure(d)
+        for sub in ("media", "embedded"):
+            with self.subTest(sub=sub):
+                out = d / f"foreign_{sub}"
+                (out / sub).mkdir(parents=True)
+                keep = out / sub / "precious.txt"; keep.write_text("keep")
+                r = self._run_cli(src, out)
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertIn(f"refusing to clear {sub}/ in a folder sections.py did not create", r.stderr)
+                self.assertEqual(keep.read_text(), "keep")
+                self.assertFalse((out / "sections.json").exists())
+
+    def test_refuses_to_clear_a_symlinked_media_dir(self):
+        d = Path(tempfile.mkdtemp()); src = self._doc_with_figure(d)
+        out = d / "out"
+        S.write_outputs(src, out)
+        elsewhere = d / "elsewhere"; elsewhere.mkdir()
+        keep = elsewhere / "precious.txt"; keep.write_text("keep")
+        import shutil
+        shutil.rmtree(out / "media")
+        (out / "media").symlink_to(elsewhere, target_is_directory=True)
+        r = self._run_cli(src, out)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("refusing to clear media/", r.stderr)
+        self.assertEqual(keep.read_text(), "keep")
 
     def test_batch_files_carry_the_media_link(self):
         d = Path(tempfile.mkdtemp()); src = self._doc_with_figure(d)

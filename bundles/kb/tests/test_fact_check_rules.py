@@ -291,6 +291,14 @@ class TestSectionParallelRules(unittest.TestCase):
         self.assertIn("Never rely on a summary to read the draft", self.step1)
         self.assertIn("word/embeddings/*", self.step1)            # embedded objects still read
 
+    def test_step_1_reads_the_expanded_embedded_xml_and_logs_unreadable_objects(self):
+        for t in ("XML parts under `<work dir>/embedded/<object>/`", "`<work dir>/embedded/charts/`",
+                  "`xl/sharedStrings.xml` and `xl/worksheets/*.xml` for a workbook", "`word/document.xml` for a document",
+                  "the cached values in a chart's XML",
+                  'An object the summary reports as "not readable" becomes one `I*` claim with verdict No Evidence '
+                  'and evidence "embedded object not readable (<name>)"'):
+            self.assertIn(t, self.step1)
+
     def test_dispatch_step_sits_between_1_and_2(self):
         t = self.text
         self.assertLess(t.index("### 1."), t.index("### 1b. Extract, chunk, verify (two stages)"))

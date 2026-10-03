@@ -13,7 +13,11 @@ Writes into <dir>:
                  list of tags (num, date, absolute, ownership) from RISK_PATTERNS.
 - batches.json   the batch index: [{batch, file, words, sections [{section_id, section, part?}]}].
 - media/        every image a figure references (flat); each figure gains media = "media/<file>".
-- embedded/     every word/embeddings/* and word/diagrams/* part, flat file names.
+- embedded/     one folder per word/embeddings/* object: an OOXML package (.xlsx/.docx/.pptx, a zip) is
+                 expanded into its *.xml parts under embedded/<stem>/; anything else (an OLE .bin) is copied
+                 there as-is and reported "not readable". word/diagrams/* go to embedded/diagrams/ and
+                 word/charts/*.xml to embedded/charts/; a figure with no image but a chart or SmartArt part
+                 gains part = "embedded/charts/<file>" (or embedded/diagrams/<file>).
 - batch_<k>.json one file per batch: {batch, document, max_words, sections [...]}, each entry a
                  section record (or, for a split section, one part of it with part/parts).
 
@@ -103,6 +107,17 @@ def _figure_numbers(doc) -> dict:
     return out
 
 
+def _drawing_part(doc, p_el) -> str | None:
+    """The package part a chart (c:chart r:id) or SmartArt (dgm:relIds r:dm) drawing points to, or None."""
+    refs = [el.get(_q("r:id")) for el in p_el.iter(_q("c:chart"))]
+    refs += [el.get(_q("r:dm")) for el in p_el.iter(_q("dgm:relIds"))]
+    for rid in refs:
+        part = doc.part.related_parts.get(rid) if rid else None
+        if part is not None:
+            return str(part.partname).lstrip("/")
+    return None
+
+
 def _image_name(doc, p_el) -> str | None:
     for blip in p_el.iter(_q("a:blip")):
         rid = blip.get(_q("r:embed")) or blip.get(_q("r:link"))
@@ -160,8 +175,10 @@ def extract_sections(docx_path) -> list[dict]:
 
     def figure(p_el, holder_id):
         if p_el in figs:
-            current()["blocks"].append(("f", {"figure": figs[p_el], "p_id": holder_id,
-                                              "image": _image_name(doc, p_el)}, 0))
+            rec = {"figure": figs[p_el], "p_id": holder_id, "image": _image_name(doc, p_el)}
+            if rec["image"] is None and (part := _drawing_part(doc, p_el)):
+                rec["drawing_part"] = part          # mapped to its extracted path by extract_embedded
+            current()["blocks"].append(("f", rec, 0))
 
     for kind, obj in _blocks(doc):
         if kind == "p":
@@ -271,39 +288,119 @@ def extract_media(docx_path, out_dir: Path, sections: list[dict]) -> list[str]:
     return written
 
 
-def embedded_members(docx_path) -> tuple[list[str], list[str]]:
-    """Package parts under word/embeddings/ and word/diagrams/ (files only), sorted."""
+class Refusal(Exception):
+    """sections.py will not touch the out dir (exit 2, nothing written)."""
+
+
+EMBED_DIRS = {"word/diagrams/": "diagrams", "word/charts/": "charts"}
+
+
+def embedded_members(docx_path) -> tuple[list[str], list[str], list[str]]:
+    """Package parts: word/embeddings/* and word/diagrams/* (files), word/charts/*.xml (no _rels), sorted."""
     import zipfile
     with zipfile.ZipFile(docx_path) as z:
         n = [x for x in z.namelist() if not x.endswith("/")]
     return (sorted(x for x in n if x.startswith("word/embeddings/")),
-            sorted(x for x in n if x.startswith("word/diagrams/")))
+            sorted(x for x in n if x.startswith("word/diagrams/")),
+            sorted(x for x in n if x.startswith("word/charts/") and "/" not in x[len("word/charts/"):]
+                   and x.endswith(".xml")))
 
 
-def extract_embedded(docx_path, out_dir: Path) -> None:
-    """Write every embedded object and diagram part flat into <out>/embedded/."""
+def _safe_rel(name: str) -> Path | None:
+    """A zip part name as a relative path that cannot leave its folder, or None."""
+    parts = [p for p in name.replace("\\", "/").split("/") if p not in ("", ".")]
+    if not parts or any(p == ".." or ":" in p for p in parts):
+        return None
+    return Path(*parts)
+
+
+def _object_dirs(names: list[str]) -> dict[str, str]:
+    """embedded/<stem>/ per object; a stem already taken (or "charts"/"diagrams") gets <stem>-<ext>."""
+    taken, out = set(EMBED_DIRS.values()), {}
+    for name in names:
+        p = Path(name)
+        folder = p.stem if p.stem not in taken else f"{p.stem}-{p.suffix.lstrip('.') or 'bin'}"
+        while folder in taken:
+            folder += "_"
+        taken.add(folder)
+        out[name] = folder
+    return out
+
+
+def extract_embedded(docx_path, out_dir: Path, sections: list[dict] | None = None) -> list[dict]:
+    """Write embedded objects, diagram and chart parts under <out>/embedded/ and return one record per object
+    ({member, path, xml_parts} for an expanded OOXML package, {member, path, readable: False} otherwise).
+    Figures pointing at a chart/diagram part gain part = its extracted path."""
+    import io
     import zipfile
-    emb, dia = embedded_members(docx_path)
-    if not (emb or dia):
-        return
+    emb, dia, charts = embedded_members(docx_path)
+    objects: list[dict] = []
+    extracted: dict[str, str] = {}
+    if not (emb or dia or charts):
+        return objects
     dest = Path(out_dir) / "embedded"
-    dest.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(docx_path) as z:
-        for name in emb + dia:
-            (dest / Path(name).name).write_bytes(z.read(name))
+        for name, folder in _object_dirs(emb).items():
+            data, obj = z.read(name), dest / folder
+            obj.mkdir(parents=True, exist_ok=True)
+            if zipfile.is_zipfile(io.BytesIO(data)):
+                count = 0
+                with zipfile.ZipFile(io.BytesIO(data)) as inner:
+                    for part in sorted(inner.namelist()):
+                        rel = _safe_rel(part)
+                        if rel is None or rel.suffix.lower() != ".xml":
+                            continue
+                        target = obj / rel
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes(inner.read(part))
+                        count += 1
+                objects.append({"member": name, "path": f"embedded/{folder}/", "xml_parts": count})
+            else:
+                (obj / Path(name).name).write_bytes(data)
+                objects.append({"member": name, "path": f"embedded/{folder}/{Path(name).name}", "readable": False})
+        for prefix, folder in EMBED_DIRS.items():
+            for name in (dia if folder == "diagrams" else charts):
+                rel = _safe_rel(name[len(prefix):])
+                if rel is None:
+                    continue
+                target = dest / folder / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(z.read(name))
+                extracted[name] = f"embedded/{folder}/{rel.as_posix()}"
+    for s in sections or []:
+        for k, rec, _ in s["blocks"]:
+            if k == "f" and rec.get("drawing_part") in extracted:
+                rec["part"] = extracted[rec["drawing_part"]]
+    return objects
 
 
-def write_outputs(docx_path, out_dir, max_words: int = 1500) -> tuple[list[dict], list[dict]]:
+def _clear_stale(out_dir: Path) -> None:
+    """Remove media/ and embedded/ from an earlier run of this script; refuse anything else."""
+    for sub in ("media", "embedded"):
+        path = out_dir / sub
+        if path.is_symlink():
+            raise Refusal(f"refusing to clear {sub}/: it is a symlink")
+        if path.exists() and not (out_dir / "sections.json").is_file():
+            raise Refusal(f"refusing to clear {sub}/ in a folder sections.py did not create")
+    for sub in ("media", "embedded"):
+        shutil.rmtree(out_dir / sub, ignore_errors=True)
+
+
+def write_outputs(docx_path, out_dir, max_words: int = 1500) -> tuple[list[dict], list[dict], list[dict]]:
+    """Returns (sections, batch index, embedded-object records from extract_embedded)."""
     out_dir = Path(out_dir)
+    _clear_stale(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     sections = extract_sections(docx_path)
     batches = build_batches(sections, max_words)
-    for stale_dir in ("media", "embedded"):
-        shutil.rmtree(out_dir / stale_dir, ignore_errors=True)
     for stale in out_dir.glob("batch_*.json"):
         stale.unlink()
     extract_media(docx_path, out_dir, sections)
-    extract_embedded(docx_path, out_dir)
+    objects = extract_embedded(docx_path, out_dir, sections)
+    for s in sections:                           # the package part name is internal; `part` is the extracted path
+        for k, rec, _ in s["blocks"]:
+            if k == "f":
+                rec.pop("drawing_part", None)
     _dump(out_dir / "sections.json", [_render(s, s["blocks"], s["words"]) for s in sections])
     statements = [s for sec in sections for kind, rec, _ in sec["blocks"]
                   for s in (rec["sentences"] if kind == "p" else [rec] if kind == "r" else [])]
@@ -320,7 +417,7 @@ def write_outputs(docx_path, out_dir, max_words: int = 1500) -> tuple[list[dict]
                       "sections": [{"section_id": u["section_id"], "section": u["section"],
                                     **({"part": u["part"]} if "part" in u else {})} for u in units]})
     _dump(out_dir / "batches.json", index)
-    return sections, index
+    return sections, index, objects
 
 
 NEEDS_DOCX = ("doc-fact-check needs Python with python-docx ≥ 1.2 in this environment; "
@@ -361,22 +458,30 @@ def main(argv=None) -> int:
         print("sections.py: --max-words must be at least 1", file=sys.stderr)
         return 2
     try:
-        sections, index = write_outputs(src, a.out, a.max_words)
+        sections, index, objects = write_outputs(src, a.out, a.max_words)
+    except Refusal as e:
+        print(f"sections.py: {e}", file=sys.stderr)
+        return 2
     except Exception as e:  # not a .docx, corrupt package
         print(f"sections.py: cannot read {src}: {e}", file=sys.stderr)
         return 2
     out = Path(a.out)
     st = json.loads((out / "stats.json").read_text(encoding="utf-8"))
     figs = [f for s in json.loads((out / "sections.json").read_text(encoding="utf-8")) for f in s["figures"]]
-    emb, dia = embedded_members(src)
-    listed = lambda names: f"{len(names)}" + (" (" + ", ".join(f"embedded/{Path(x).name}" for x in names) + ")" if names else "")
+    _, dia, charts = embedded_members(src)
+    part_dirs = {"diagrams": dia, "charts": charts}
+    listed = lambda folder: f"{len(part_dirs[folder])}" + (" (" + ", ".join(
+        f"embedded/{folder}/{x.split('/', 2)[2]}" for x in part_dirs[folder]) + ")" if part_dirs[folder] else "")
+    obj_line = lambda o: (f"{o['path']}: {o['xml_parts']} XML parts" if "xml_parts" in o
+                          else f"{o['path']}: not readable")
     print(f"{len(sections)} sections, {len(index)} batches -> {out}")
     print(f"statements {st['statements_total']}, high-risk {st['statements_risk']}, "
           f"estimate fast ~{st['estimate_minutes']['fast']} min, deep ~{st['estimate_minutes']['deep']} min")
     print(f"figures: {len(figs)}" + (" (" + "; ".join(
-        f"figure {f['figure']} in {f['p_id']} -> {f.get('media', 'not extracted')}" for f in figs) + ")"
+        f"figure {f['figure']} in {f['p_id']} -> {f.get('media') or f.get('part') or 'not extracted'}" for f in figs) + ")"
         if figs else ""))
-    print(f"embedded objects: {listed(emb)}, diagrams: {listed(dia)}")
+    print(f"embedded objects: {len(objects)}" + (" (" + "; ".join(map(obj_line, objects)) + ")" if objects else "")
+          + f", diagrams: {listed('diagrams')}, charts: {listed('charts')}")
     return 0
 
 
