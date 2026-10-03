@@ -13,7 +13,7 @@ Lessons this skill encodes: a numeric error is often invisible to prose retrieva
 - The draft `.docx` (attached, or in a connected folder).
 - A Brain, resolved per the contract below. Never blend two Brains.
 - Optional: a source inventory (xlsx/csv with file `Name` and `Folder Path`, or a URL base) so evidence can link to the real file. Without one, ask for it once; evidence then cites the Brain's `source_file` only.
-- Optional: a previous run's baseline (`docs/kb/fact-check/<doc-slug>/baseline.md`) for idempotent reruns.
+- Optional: a previous run's baseline (`docs/kb/doc-fact-check/<doc-slug>/baseline.md`) for idempotent reruns.
 
 **Reusing a baseline.** When a baseline exists: (1) print its claim count, its date and the Brain `knowledge_version` it was written against, and the current `knowledge_version` from the health check; (2) reuse it only when the document's checksum and the `knowledge_version` are unchanged AND its mode equals the requested mode (a Fast baseline is never reused for a Deep run, nor the reverse) AND its claim count is at least the number of atomic claims step 2 extracts from the document now; otherwise re-run step 2 and verify the claims that are new or whose verdict rested on a single source; (3) never present a reused baseline as a fresh run: the reply's second line, after the coverage line (step 10), says "reused baseline of <date>, N claims"; (4) a reused baseline's Verified claims of type TIME/STATUS/OWN/TOPO that lack the two-sided record from step 4 are re-verified, not carried over.
 - `python-docx >= 1.2` in the session (`pip install "python-docx>=1.2"`); the comments API does not exist below 1.2. If it cannot be installed, run through step 7 and deliver `findings.json` instead of writing comments.
@@ -30,7 +30,7 @@ The mode only sets which claims stage V verifies (`scope`, step 1b); every other
 - In a non-interactive run (the prompt says so, or there is no user to ask) the prompt must state the mode; if it does not, stop at this step, before step 1, with "mode required: fast or deep" and write nothing.
 
 ### 1. Extract the document — text, tables, figures
-The run directory is `docs/kb/fact-check/<doc-slug>/` (`<run dir>`); its `work/` subdirectory is the `<work dir>`. Run the extractor that sits beside this file (python-docx only, deterministic: the same draft gives byte-identical output):
+The run directory is `docs/kb/doc-fact-check/<doc-slug>/` (`<run dir>`); its `work/` subdirectory is the `<work dir>`. Run the extractor that sits beside this file (python-docx only, deterministic: the same draft gives byte-identical output):
 ```
 python sections.py "<draft>.docx" --out <work dir> --max-words 1500
 ```
@@ -79,7 +79,7 @@ This step runs in the main session (figures are document-level and few), not in 
 - **Reverse pass, as omission claims**: list every system or integration the text says is connected, and confirm each appears in the figure with its edge. A missing one is written as its own `I*` claim, phrased "<element> absent from figure <n>" (an omission claim); stage V then checks it against the document's own text and the Brain like any claim. An omission counts only when the document's text describes the missing element (then verdict Misleading, note "omission").
 - Figure claims are verified like text claims, against the Brain and against **the document's own text** (a diagram/text contradiction is a finding on the diagram); that is stage V's work, not this step's.
 Every figure claim (`I01…`) **must** appear in `findings.json` as its own row, with `type` and `section` "Figure"; a figure read but not written to `claims_figures.json` is a skipped step. **Self-check:** if the document has referenced images (`word/media` referenced from document.xml) and `claims_figures.json` has no claim (so `findings.json` would have no `I*` row), step 3 was skipped: do it before step 1b's chunking.
-Cache transcriptions by image hash in `docs/kb/fact-check/<doc-slug>/figures.json` for reruns.
+Cache transcriptions by image hash in `docs/kb/doc-fact-check/<doc-slug>/figures.json` for reruns.
 Run step 3 before `chunk_claims.py`: the chunker reads `claims_figures.json`, so it must exist first. Figure claims are always in scope (Deep and Fast), are chunked after the text claims, and need no stage-E coverage entry.
 
 ### 4. Verify — route by type, numbers only from get_metric
@@ -253,7 +253,7 @@ The page holds: a header (eyebrow, title, lede, then a meta row of Document/Brai
 - **Final self-check, before the reply:** run `python fact_check_invariants.py <run dir>/findings.json "<name> — fact-checked.docx" --original "<draft>.docx"`; it must print `clean`. It reads `coverage.json` and `run.json` beside findings.json and checks that the findings page's coverage banner equals the one `run.json` gives (a missing or stale banner is a violation: re-render step 9 after the final merge).
 - **The reply's** first line is the output of `python findings_report.py --coverage-line <run dir>/run.json`, verbatim. When a baseline was reused, the 'reused baseline of <date>, N claims' line comes second. Then the one-or-two-sentence answer.
 - Reply in the contract's answer format: one or two sentences (claims checked, comments written), then the Blocker and Major findings one line each with numbered footnotes, then coverage (% claims the Brain could adjudicate) and what stayed in the log, closing with a `**Sources**` list. Offer to notify the owner; do not send anything unasked.
-- Emit `docs/kb/fact-check/<doc-slug>/baseline.md` (the full findings table with evidence and source links, under a short header recording the document checksum, the mode (from `run.json`), the `knowledge_version` and the claim count, so the reuse checks in Inputs are possible) and `baseline.sources.json` in the shape `_shared/authoring.md` defines, so the next run can be diffed and the citations re-traced. Projects may redirect `docs/kb/` via `.claude/settings.json`.
+- Emit `docs/kb/doc-fact-check/<doc-slug>/baseline.md` (the full findings table with evidence and source links, under a short header recording the document checksum, the mode (from `run.json`), the `knowledge_version` and the claim count, so the reuse checks in Inputs are possible) and `baseline.sources.json` in the shape `_shared/authoring.md` defines, so the next run can be diffed and the citations re-traced. Projects may redirect `docs/kb/` via `.claude/settings.json`.
 - Deliver the annotated `.docx` (`<name> — fact-checked.docx`) and the findings page (`<name> — findings.html`) beside the original, and give both absolute paths; never overwrite the original.
 
 ## Rules

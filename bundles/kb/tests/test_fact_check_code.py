@@ -1,4 +1,4 @@
-"""The python block shipped in fact-check/SKILL.md is executed, not just read."""
+"""The python block shipped in doc-fact-check/SKILL.md is executed, not just read."""
 from __future__ import annotations
 
 import unittest
@@ -14,7 +14,7 @@ from test_plugin_structure import KB_ROOT, read_text
 
 
 def load_helpers():
-    text = read_text(KB_ROOT / "skills" / "fact-check" / "SKILL.md")
+    text = read_text(KB_ROOT / "skills" / "doc-fact-check" / "SKILL.md")
     code = text.split("```python", 1)[1].split("```", 1)[0]
     ns: dict = {}
     exec(compile(code, "SKILL.md:python", "exec"), ns)

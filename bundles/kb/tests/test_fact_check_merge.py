@@ -13,8 +13,8 @@ from test_plugin_structure import KB_ROOT
 
 import merge_findings as M
 
-SCRIPT = KB_ROOT / "skills" / "fact-check" / "merge_findings.py"
-SKILL = KB_ROOT / "skills" / "fact-check" / "SKILL.md"
+SCRIPT = KB_ROOT / "skills" / "doc-fact-check" / "merge_findings.py"
+SKILL = KB_ROOT / "skills" / "doc-fact-check" / "SKILL.md"
 
 S1 = "Overview > 1 Scope"
 S2 = "Overview > 1 Scope > 1.1 Systems"

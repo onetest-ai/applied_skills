@@ -1,4 +1,4 @@
-"""Pin the fact-check SKILL.md rules that came out of the smoke baseline."""
+"""Pin the doc-fact-check SKILL.md rules that came out of the smoke baseline."""
 from __future__ import annotations
 
 import re
@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 KB_ROOT = Path(__file__).resolve().parent.parent
-SKILL = Path(__file__).resolve().parent.parent / "skills" / "fact-check" / "SKILL.md"
+SKILL = Path(__file__).resolve().parent.parent / "skills" / "doc-fact-check" / "SKILL.md"
 
 
 def section(text: str, start: str, end: str) -> str:
@@ -353,7 +353,7 @@ class TestSectionParallelRules(unittest.TestCase):
 
 class TwoModeTwoStageTests(unittest.TestCase):
     def setUp(self):
-        self.all = (KB_ROOT / "skills" / "fact-check" / "SKILL.md").read_text(encoding="utf-8")
+        self.all = (KB_ROOT / "skills" / "doc-fact-check" / "SKILL.md").read_text(encoding="utf-8")
 
     def test_step0b_mode_selection(self):
         for t in ("### 0b. Choose the mode", '"fast", "quick", "scan"', '"deep", "full", "thorough", "sign-off", "final"',
@@ -380,13 +380,13 @@ class TwoModeTwoStageTests(unittest.TestCase):
         self.assertNotIn("findings_batch_", self.all)
         for word in ("consistent across", "operated by", "managed by"):
             self.assertNotIn(word, self.all.split("### 2. Extract atomic claims")[0])
-        sections_src = (KB_ROOT / "skills" / "fact-check" / "sections.py").read_text(encoding="utf-8")
+        sections_src = (KB_ROOT / "skills" / "doc-fact-check" / "sections.py").read_text(encoding="utf-8")
         self.assertIn("RISK_PATTERNS", sections_src)
 
 
 class FixRound1Tests(unittest.TestCase):
     def setUp(self):
-        self.all = flat((KB_ROOT / "skills" / "fact-check" / "SKILL.md").read_text(encoding="utf-8"))
+        self.all = flat((KB_ROOT / "skills" / "doc-fact-check" / "SKILL.md").read_text(encoding="utf-8"))
 
     def test_fix_round_1_sentences(self):
         for t in (
@@ -415,7 +415,7 @@ class FixRound1Tests(unittest.TestCase):
 
 class FixRound2Tests(unittest.TestCase):
     def setUp(self):
-        self.all = flat((KB_ROOT / "skills" / "fact-check" / "SKILL.md").read_text(encoding="utf-8"))
+        self.all = flat((KB_ROOT / "skills" / "doc-fact-check" / "SKILL.md").read_text(encoding="utf-8"))
 
     def test_baseline_line_is_second(self):
         self.assertNotIn("first line of the report says", self.all)
@@ -428,7 +428,7 @@ class FixRound2Tests(unittest.TestCase):
 
 class FinalFixWaveRules(unittest.TestCase):
     def setUp(self):
-        self.all = flat((KB_ROOT / "skills" / "fact-check" / "SKILL.md").read_text(encoding="utf-8"))
+        self.all = flat((KB_ROOT / "skills" / "doc-fact-check" / "SKILL.md").read_text(encoding="utf-8"))
 
     def test_rerunning_stage_e_means_rechunk_and_reverify(self):
         self.assertIn("After re-running a batch's stage E, re-run `chunk_claims.py` and re-verify every chunk "

@@ -13,7 +13,7 @@ from pathlib import Path
 from test_fact_check_code import HAVE_DOCX, _tiny_png
 from test_plugin_structure import KB_ROOT
 
-SCRIPT = KB_ROOT / "skills" / "fact-check" / "sections.py"
+SCRIPT = KB_ROOT / "skills" / "doc-fact-check" / "sections.py"
 MAX = 100
 LONG_PARAS = 8          # 8 x 20 words = 160 words > MAX: section "2 Roadmap" must split
 

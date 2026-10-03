@@ -96,14 +96,14 @@ class TestSkillsNameNoServer(unittest.TestCase):
 
     def test_no_skill_hardcodes_a_server_name(self):
         from test_plugin_structure import KB_ROOT, read_text
-        for name in ("ask", "brief", "challenge", "explore", "fact-check", "report"):
+        for name in ("ask", "brief", "challenge", "explore", "doc-fact-check", "report"):
             text = read_text(KB_ROOT / "skills" / name / "SKILL.md")
             for token in self.FORBIDDEN:
                 self.assertNotIn(token, text, f"{name}: hardcodes {token!r}")
 
     def test_answer_skills_defer_to_the_discovery_contract(self):
         from test_plugin_structure import KB_ROOT, read_text
-        for name in ("ask", "brief", "challenge", "explore", "fact-check", "report"):
+        for name in ("ask", "brief", "challenge", "explore", "doc-fact-check", "report"):
             text = read_text(KB_ROOT / "skills" / name / "SKILL.md")
             self.assertIn("Brain Discovery", text,
                           f"{name}: must defer to the doctrine Brain Discovery contract")
@@ -132,7 +132,7 @@ class TestFactCheckSkill(unittest.TestCase):
 
     def _text(self):
         from test_plugin_structure import KB_ROOT, read_text
-        return read_text(KB_ROOT / "skills" / "fact-check" / "SKILL.md")
+        return read_text(KB_ROOT / "skills" / "doc-fact-check" / "SKILL.md")
 
     def test_every_non_verified_defect_is_highlighted_in_the_document(self):
         """Minor Incorrect/Misleading/Outdated/Controversial get a Word comment too;
@@ -214,7 +214,7 @@ class TestBrainContractIsInlined(unittest.TestCase):
     def test_every_answering_skill_inlines_the_contract(self):
         from test_plugin_structure import KB_ROOT, read_text
         canonical = self._canonical()
-        for name in ("ask", "brief", "challenge", "explore", "fact-check", "report"):
+        for name in ("ask", "brief", "challenge", "explore", "doc-fact-check", "report"):
             text = read_text(KB_ROOT / "skills" / name / "SKILL.md")
             self.assertEqual(_contract(text), canonical,
                              f"{name}: inlined contract differs from doctrine.md")
@@ -245,7 +245,7 @@ class TestBrainContractIsInlined(unittest.TestCase):
     def test_no_skill_depends_on_a_parent_directory_reference_for_its_rules(self):
         """Depth may live in _shared/; the rules may not."""
         from test_plugin_structure import KB_ROOT, read_text
-        for name in ("ask", "brief", "challenge", "explore", "fact-check", "report"):
+        for name in ("ask", "brief", "challenge", "explore", "doc-fact-check", "report"):
             text = read_text(KB_ROOT / "skills" / name / "SKILL.md")
             head = text.split(CONTRACT_START, 1)[0]
             self.assertNotIn("Follow `../_shared/doctrine.md`", head,

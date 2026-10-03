@@ -1,4 +1,4 @@
-"""Eval invariants for a /kb:fact-check run: what any run must satisfy whatever the Brain or corpus."""
+"""Eval invariants for a /kb:doc-fact-check run: what any run must satisfy whatever the Brain or corpus."""
 from __future__ import annotations
 
 import hashlib
@@ -285,7 +285,7 @@ class TestRunInvariants(unittest.TestCase):
     def test_cli_reads_coverage_json_beside_findings(self):
         import json, subprocess, sys
         from test_plugin_structure import KB_ROOT
-        cli = KB_ROOT / "skills" / "fact-check" / "fact_check_invariants.py"
+        cli = KB_ROOT / "skills" / "doc-fact-check" / "fact_check_invariants.py"
         self._three_heading_docx()
         fs = [dict(f, section="Alpha > Beta") for f in GOOD]
         self._annotate(fs)
@@ -321,7 +321,7 @@ class TestRunInvariants(unittest.TestCase):
     def test_cli_checks_the_findings_page_beside_the_document(self):
         import json, subprocess, sys
         from test_plugin_structure import KB_ROOT
-        cli = KB_ROOT / "skills" / "fact-check" / "fact_check_invariants.py"
+        cli = KB_ROOT / "skills" / "doc-fact-check" / "fact_check_invariants.py"
         self._annotate(GOOD)
         out = self.tmp / "Draft — fact-checked.docx"
         self.out.rename(out)
@@ -339,7 +339,7 @@ class TestRunInvariants(unittest.TestCase):
     def test_cli_reports_a_missing_findings_page_when_run_json_exists(self):
         import json, subprocess, sys
         from test_plugin_structure import KB_ROOT
-        cli = KB_ROOT / "skills" / "fact-check" / "fact_check_invariants.py"
+        cli = KB_ROOT / "skills" / "doc-fact-check" / "fact_check_invariants.py"
         self._annotate(GOOD)
         out = self.tmp / "Draft — fact-checked.docx"
         self.out.rename(out)
@@ -368,7 +368,7 @@ class TestRunInvariants(unittest.TestCase):
     def _cli(self, fs, run=None, coverage=None):
         import json, subprocess, sys
         from test_plugin_structure import KB_ROOT
-        cli = KB_ROOT / "skills" / "fact-check" / "fact_check_invariants.py"
+        cli = KB_ROOT / "skills" / "doc-fact-check" / "fact_check_invariants.py"
         (self.tmp / "findings.json").write_text(json.dumps(fs))
         for name, obj in (("run.json", run), ("coverage.json", coverage)):
             (self.tmp / name).unlink(missing_ok=True)
@@ -407,7 +407,7 @@ class TestRunInvariants(unittest.TestCase):
     def test_cli_reports_object_findings(self):
         import json, subprocess, sys
         from test_plugin_structure import KB_ROOT
-        cli = KB_ROOT / "skills" / "fact-check" / "fact_check_invariants.py"
+        cli = KB_ROOT / "skills" / "doc-fact-check" / "fact_check_invariants.py"
         self._annotate(GOOD)
         p = self.tmp / "findings.json"
         p.write_text(json.dumps({"findings": GOOD}))
@@ -419,7 +419,7 @@ class TestRunInvariants(unittest.TestCase):
         import subprocess
         import sys
         from test_plugin_structure import KB_ROOT
-        cli = KB_ROOT / "skills" / "fact-check" / "fact_check_invariants.py"
+        cli = KB_ROOT / "skills" / "doc-fact-check" / "fact_check_invariants.py"
         self.assertTrue(cli.exists())
         self.assertFalse((KB_ROOT / "tests" / "fact_check_invariants.py").exists())
         r = subprocess.run([sys.executable, str(cli), "--help"], capture_output=True, text=True)
@@ -427,7 +427,7 @@ class TestRunInvariants(unittest.TestCase):
         self.assertIn("fact_check_invariants.py", r.stdout)
 
 
-SKILL_MD = Path(__file__).resolve().parents[1] / "skills" / "fact-check" / "SKILL.md"
+SKILL_MD = Path(__file__).resolve().parents[1] / "skills" / "doc-fact-check" / "SKILL.md"
 
 
 

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from test_plugin_structure import KB_ROOT, read_text
 
-SKILL_DIR = KB_ROOT / "skills" / "fact-check"
+SKILL_DIR = KB_ROOT / "skills" / "doc-fact-check"
 
 
 def f(id, verdict, severity, destination, quote="", **kw):

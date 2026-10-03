@@ -1,4 +1,4 @@
-"""Turn stage-E claim files into stage-V verify chunks for /kb:fact-check (spec §15).
+"""Turn stage-E claim files into stage-V verify chunks for /kb:doc-fact-check (spec §15).
 
     python chunk_claims.py <dir> [--scope all|risk] [--chunk-size 8]
 

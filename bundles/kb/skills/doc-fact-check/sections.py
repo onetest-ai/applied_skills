@@ -1,4 +1,4 @@
-"""Split a draft .docx into heading sections and word-bounded batches for /kb:fact-check.
+"""Split a draft .docx into heading sections and word-bounded batches for /kb:doc-fact-check.
 
     python sections.py <draft.docx> --out <dir> [--max-words 1500]
 

@@ -11,7 +11,7 @@ from pathlib import Path
 import chunk_claims as C
 from test_plugin_structure import KB_ROOT
 
-SCRIPT = KB_ROOT / "skills" / "fact-check" / "chunk_claims.py"
+SCRIPT = KB_ROOT / "skills" / "doc-fact-check" / "chunk_claims.py"
 
 
 def claim(k, n, s_id, section="Scope"):

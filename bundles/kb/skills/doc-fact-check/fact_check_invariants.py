@@ -1,4 +1,4 @@
-"""Invariants every /kb:fact-check run must satisfy, whatever the Brain or the corpus.
+"""Invariants every /kb:doc-fact-check run must satisfy, whatever the Brain or the corpus.
 
 Library: `check_run(findings, docx_path, original_sha256=..., original_path=...)` -> list of
 violation strings (empty = clean). CLI, for a run saved by a project:
