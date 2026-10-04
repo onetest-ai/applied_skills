@@ -140,7 +140,7 @@ class TestFactCheckRules(unittest.TestCase):
 
     def test_entity_checks_what_the_name_is(self):
         # A vendor name copied from an auto-transcript was a meeting participant's surname; the Brain shows the person.
-        self.has(self.step4, "**ENTITY: check what the name is, not only how it is spelled.** Search the name on its own",
+        self.has(self.step4, "check what the name is, not only how it is spelled.** A claim typed TOPO, OWN or STATUS",
                  "(a meeting participant or speaker, when the draft names a vendor, company or system), the claim is never Verified",
                  "The verdict is Controversial, citing both spans")
 
@@ -156,6 +156,11 @@ class TestFactCheckRules(unittest.TestCase):
                              "grain and period, run `search_knowledge` for a chunk that states a value for the same subject "
                              "and compare it as above",
                  "No Evidence only when no row or chunk covers the subject.")
+
+    def test_name_check_covers_every_claim_type_and_is_recorded(self):
+        self.has(self.step4, "**Every claim that names a company, vendor, product, system or person, whatever its type: check what the name is, not only how it is spelled.**",
+                 "`name check: <name> → <what the Brain uses that name for>`",
+                 "the merge refuses a Verified finding that is not a number claim and has no `name check:` entry in its `trail`")
 
     def test_6b_dispatch_payload_and_reexamination(self):
         s = self.s6b

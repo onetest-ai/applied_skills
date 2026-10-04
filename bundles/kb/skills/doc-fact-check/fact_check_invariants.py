@@ -55,6 +55,18 @@ def evidence_problem(text) -> str | None:
     return None
 
 
+# Claim-record fields a stage-V worker sometimes copies into its finding; the merge drops them rather than refusing.
+CLAIM_ONLY_KEYS = ("s_id", "s_ids", "kind", "risk")
+NAME_CHECK = re.compile(r"name check:", re.I)
+
+
+def name_check_problem(f: dict) -> str | None:
+    """A Verified finding that is not a number claim must show the name check ran (`name check:` in its trail)."""
+    if f.get("verdict") == "Verified" and f.get("type") != "NUM" and not NAME_CHECK.search(str(f.get("trail") or "")):
+        return "Verified without a `name check:` entry in `trail` (record the name check, or `name check: none`)"
+    return None
+
+
 def _has_comment(f: dict) -> bool:
     return "comment" in str(f.get("destination", "")).lower()
 

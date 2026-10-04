@@ -293,6 +293,34 @@ class TestMergeFailsLoudly(MergeCase):
                                              finding("B2-C01", S3)])
         self.assertEqual(M.merge(self.dir, scope="all")[3], [])
 
+    def test_verified_non_number_needs_a_name_check_in_its_trail(self):
+        # Stage E typed "hosted by <vendor>" as TOPO/OWN half the time, so an ENTITY-only rule was skipped.
+        rows = [finding("B1-C01", S1, verdict="Verified", type="TOPO", trail="searched; supported"),
+                finding("B1-C02", S2, verdict="Verified", type="OWN", trail="name check: none"),
+                finding("B2-C01", S3, verdict="Verified", type="NUM", trail="get_metric row")]
+        self.write("findings_chunk_1.json", rows)
+        errors = self.errors()
+        self.assertTrue(any("B1-C01" in e and "name check:" in e for e in errors), errors)
+        self.assertFalse(any("B1-C02" in e or "B2-C01" in e for e in errors), errors)
+
+    def test_a_defect_finding_needs_no_name_check(self):
+        rows = [finding("B1-C01", S1, type="TOPO", trail="searched"), finding("B1-C02", S2), finding("B2-C01", S3)]
+        self.write("findings_chunk_1.json", rows)
+        self.assertEqual(M.merge(self.dir, scope="all")[3], [])
+
+    def test_claim_fields_copied_into_a_finding_are_dropped_not_refused(self):
+        # Workers copied s_id / kind from the claim record; the merge refused and the main session hand-edited files.
+        rows = [finding("B1-C01", S1, s_id="b1s1", s_ids=["b1s1"], risk=["num"]), finding("B1-C02", S2),
+                finding("B2-C01", S3, kind="figure")]
+        self.write("findings_chunk_1.json", rows)
+        findings, _, _, errors = M.merge(self.dir, scope="all")
+        self.assertEqual(errors, [])
+        self.assertFalse(any(k in f for f in findings for k in ("s_id", "s_ids", "risk", "kind")))
+
+    def test_other_unknown_keys_are_still_refused(self):
+        self.write("findings_chunk_1.json", [finding("B1-C01", S1, note="x"), finding("B1-C02", S2), finding("B2-C01", S3)])
+        self.has_error("B1-C01", "unknown key(s) note")
+
     def test_figure_claim_ids_must_start_with_i(self):
         self.write("claims_figures.json", [fclaim(1), {**fclaim(2), "claim_id": "C09"}])
         self.has_error("C09", "start with I")

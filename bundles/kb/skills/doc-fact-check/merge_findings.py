@@ -37,8 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling imports work
 
 from chunk_claims import FIGURES_CLAIMS_FILE, _risk_by_s_id, risk_coverage_errors
 from fact_check_invariants import (COVERAGE_REASON, RISK_COVERAGE_REASON, FIGURE_KEYS, FINDING_KEYS, LATE_KEYS,
-                                   MAX_EVIDENCE_WORDS, SEVERITIES, VERDICTS, _last_heading, evidence_problem,
-                                   section_coverage, section_key)
+                                   CLAIM_ONLY_KEYS, MAX_EVIDENCE_WORDS, SEVERITIES, VERDICTS, _last_heading,
+                                   evidence_problem, name_check_problem, section_coverage, section_key)
 
 REQUIRED = tuple(k for k in FINDING_KEYS if k not in LATE_KEYS)
 OLD_FIGURES_FILE = "findings_figures.json"
@@ -70,6 +70,8 @@ def _check_finding(f, where: str, errors: list[str]) -> str | None:
     label = f"{where}: {fid or '(no id)'}"
     # No source links is a valid state (no inventory): default it here so the main session never hand-patches chunk files.
     f.setdefault("sources", [])
+    for k in CLAIM_ONLY_KEYS:   # copied from the claim record; the merge reads them from the claim, never the finding
+        f.pop(k, None)
     missing = [k for k in REQUIRED if k not in f]
     if missing:
         errors.append(f"{label}: missing key(s) {', '.join(missing)}")
@@ -86,6 +88,8 @@ def _check_finding(f, where: str, errors: list[str]) -> str | None:
     if "sources" in f and not isinstance(f["sources"], list):
         errors.append(f"{label}: sources must be a list of {{name, link, folder}}")
     if "evidence" in f and (why := evidence_problem(f["evidence"])):
+        errors.append(f"{label}: {why} (re-dispatch stage V for this chunk; the main session never edits findings)")
+    if why := name_check_problem(f):
         errors.append(f"{label}: {why} (re-dispatch stage V for this chunk; the main session never edits findings)")
     return fid or None
 
