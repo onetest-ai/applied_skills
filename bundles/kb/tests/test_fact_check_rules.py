@@ -162,6 +162,13 @@ class TestFactCheckRules(unittest.TestCase):
                  "`name check: <name> → <what the Brain uses that name for>`",
                  "the merge refuses a Verified finding that is not a number claim and has no `name check:` entry in its `trail`")
 
+    def test_a_refused_chunk_is_verified_again_never_patched(self):
+        # The main session sent "Fix schema errors" agents; two wrote name checks without one Brain call.
+        s6a = flat(section(self.text, "### 6a.", "### 6b."))
+        self.has(s6a, "When the merge refuses a chunk, re-dispatch stage V for that chunk exactly as step 1b dispatches it "
+                      "(the worker line, the chunk file, the output path), never a prompt to fix, patch or reformat the file: "
+                      "a worker that has not run the checks writes them from memory.")
+
     def test_6b_dispatch_payload_and_reexamination(self):
         s = self.s6b
         self.has(s, "pass the draft's verbatim quote as the claim, plus the chunk ids or metric reference from its `trail`, never the Brain-side value as the claim",

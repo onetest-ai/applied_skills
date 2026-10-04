@@ -88,9 +88,9 @@ def _check_finding(f, where: str, errors: list[str]) -> str | None:
     if "sources" in f and not isinstance(f["sources"], list):
         errors.append(f"{label}: sources must be a list of {{name, link, folder}}")
     if "evidence" in f and (why := evidence_problem(f["evidence"])):
-        errors.append(f"{label}: {why} (re-dispatch stage V for this chunk; the main session never edits findings)")
+        errors.append(f"{label}: {why} (re-dispatch stage V for this chunk exactly as step 1b does, never a fix prompt; the main session never edits findings)")
     if why := name_check_problem(f):
-        errors.append(f"{label}: {why} (re-dispatch stage V for this chunk; the main session never edits findings)")
+        errors.append(f"{label}: {why} (re-dispatch stage V for this chunk exactly as step 1b does, never a fix prompt; the main session never edits findings)")
     return fid or None
 
 

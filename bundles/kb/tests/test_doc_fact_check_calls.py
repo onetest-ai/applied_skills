@@ -22,6 +22,8 @@ SKILL = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
 WORKER_LINE = ("You are a doc-fact-check worker. The main session has already resolved the Brain and read its "
                "basics into `<work dir>/brain_context.json`: do not run step 0, step 0b or the Brain contract's "
                "resolution steps, and never call `health`, `list_metrics` or `list_sources`. "
+               "Every Verified finding that is not a number claim records the step-4 name check in its `trail` "
+               "(`name check: <name> → <what the Brain uses it for>`, or `name check: none`). "
                "Follow the command rules in Inputs.")
 
 
