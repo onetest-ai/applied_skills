@@ -56,7 +56,9 @@ def evidence_problem(text) -> str | None:
 
 
 # Claim-record fields a stage-V worker sometimes copies into its finding; the merge drops them rather than refusing.
-CLAIM_ONLY_KEYS = ("s_id", "s_ids", "kind", "risk")
+CLAIM_ONLY_KEYS = ("s_id", "s_ids", "kind", "risk", "summary")
+# Fields a finding copies from its claim unchanged; the merge fills a missing one from the claim (a differing one is refused).
+COPIED_FROM_CLAIM = ("p_id", "section", "quote", "type")
 NAME_CHECK = re.compile(r"name check:", re.I)
 
 

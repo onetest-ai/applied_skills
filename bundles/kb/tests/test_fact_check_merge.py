@@ -317,6 +317,25 @@ class TestMergeFailsLoudly(MergeCase):
         self.assertEqual(errors, [])
         self.assertFalse(any(k in f for f in findings for k in ("s_id", "s_ids", "risk", "kind")))
 
+    def test_a_finding_keyed_by_claim_id_takes_the_claims_copied_fields(self):
+        # Workers wrote the claim's own key (claim_id) and skipped p_id/section/quote/type; one shape slip forced
+        # a full re-verification of the chunk. Those fields must equal the claim's anyway, so the merge fills them.
+        rows = [finding("B1-C01", S1), finding("B1-C02", S2), finding("B2-C01", S3)]
+        bare = {k: v for k, v in rows[2].items() if k not in ("id", "p_id", "section", "quote", "type")}
+        bare.update(claim_id="B2-C01", summary="one line")
+        self.write("findings_chunk_1.json", rows[:2] + [bare])
+        findings, _, _, errors = M.merge(self.dir, scope="all")
+        self.assertEqual(errors, [])
+        got = [f for f in findings if f["section"] == S3][0]
+        self.assertEqual((got["quote"], got["p_id"], got["type"]), ("runs 12 services", "p3", "NUM"))
+        self.assertNotIn("claim_id", got)
+        self.assertNotIn("summary", got)
+
+    def test_a_copied_field_that_differs_is_still_refused(self):
+        rows = [finding("B1-C01", S1, quote="runs 99 services"), finding("B1-C02", S2), finding("B2-C01", S3)]
+        self.write("findings_chunk_1.json", rows)
+        self.has_error("B1-C01", "quote")
+
     def test_other_unknown_keys_are_still_refused(self):
         self.write("findings_chunk_1.json", [finding("B1-C01", S1, note="x"), finding("B1-C02", S2), finding("B2-C01", S3)])
         self.has_error("B1-C01", "unknown key(s) note")

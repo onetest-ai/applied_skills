@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling imports work
 
 from chunk_claims import FIGURES_CLAIMS_FILE, _risk_by_s_id, risk_coverage_errors
 from fact_check_invariants import (COVERAGE_REASON, RISK_COVERAGE_REASON, FIGURE_KEYS, FINDING_KEYS, LATE_KEYS,
-                                   CLAIM_ONLY_KEYS, MAX_EVIDENCE_WORDS, SEVERITIES, VERDICTS, _last_heading,
+                                   CLAIM_ONLY_KEYS, MAX_EVIDENCE_WORDS, SEVERITIES, VERDICTS, COPIED_FROM_CLAIM, _last_heading,
                                    evidence_problem, name_check_problem, section_coverage, section_key)
 
 REQUIRED = tuple(k for k in FINDING_KEYS if k not in LATE_KEYS)
@@ -225,6 +225,11 @@ def merge(d: Path, scope: str = "all", wave_size: int = 10) -> tuple[list[dict],
             errors.append(f"{fname}: looks unverified: every finding is No Evidence with the same evidence text "
                           f"(re-dispatch stage V for chunk {j}; the main session never writes findings itself)")
         for f in rows:
+            if isinstance(f, dict) and "id" not in f and f.get("claim_id") in claims:   # worker used the claim's key
+                f["id"] = f.pop("claim_id")
+            if isinstance(f, dict) and f.get("id") in claims:
+                for k in COPIED_FROM_CLAIM:
+                    f.setdefault(k, claims[f["id"]].get(k))
             fid = _check_finding(f, fname, errors)
             if fid is None:
                 continue
