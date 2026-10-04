@@ -169,6 +169,12 @@ class TestFactCheckRules(unittest.TestCase):
                       "(the worker line, the chunk file, the output path), never a prompt to fix, patch or reformat the file: "
                       "a worker that has not run the checks writes them from memory.")
 
+    def test_a_refused_chunk_is_re_dispatched_once(self):
+        # Merge refusals added in this PR (evidence rule, name check) must not loop on a long document.
+        s6a = flat(section(self.text, "### 6a.", "### 6b."))
+        self.has(s6a, "Re-dispatch a refused chunk once. If the merge refuses it again, stop before step 6b: report the chunk "
+                      "and the merge's message to the user, write nothing, and never edit the findings yourself.")
+
     def test_6b_dispatch_payload_and_reexamination(self):
         s = self.s6b
         self.has(s, "pass the draft's verbatim quote as the claim, plus the chunk ids or metric reference from its `trail`, never the Brain-side value as the claim",
