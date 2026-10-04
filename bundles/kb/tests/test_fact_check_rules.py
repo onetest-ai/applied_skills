@@ -144,6 +144,19 @@ class TestFactCheckRules(unittest.TestCase):
                  "(a meeting participant or speaker, when the draft names a vendor, company or system), the claim is never Verified",
                  "The verdict is Controversial, citing both spans")
 
+    def test_entity_name_conflict_is_not_explained_away(self):
+        # A worker found the participant of the same name, called it "a distinct entity" and marked the claim Verified.
+        self.has(self.step4, "Never settle it as two different things that happen to share a name: the Brain cannot tell "
+                             "which reading is right, and that is the reason to flag it.")
+
+    def test_num_without_a_metric_still_compares_the_chunk(self):
+        # "Do not fall through to search_knowledge" turned a scope error the worker had found into No Evidence.
+        self.assertNotIn("do not fall through to `search_knowledge`", self.step4)
+        self.has(self.step4, "When `get_metric` returns `status=not_modeled`, an error or zero rows for the exact subject, "
+                             "grain and period, run `search_knowledge` for a chunk that states a value for the same subject "
+                             "and compare it as above",
+                 "No Evidence only when no row or chunk covers the subject.")
+
     def test_6b_dispatch_payload_and_reexamination(self):
         s = self.s6b
         self.has(s, "pass the draft's verbatim quote as the claim, plus the chunk ids or metric reference from its `trail`, never the Brain-side value as the claim",
