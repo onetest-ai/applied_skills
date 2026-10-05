@@ -16,7 +16,7 @@
       "name": "kb",
       "source": "./bundles/kb",
       "description": "Knowledge-worker companion over the Brain: cited answers and Markdown deliverables.",
-      "version": "0.6.0"
+      "version": "0.7.0"
     },
     {
       "name": "scribe",
