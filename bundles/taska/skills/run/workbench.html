@@ -1,0 +1,694 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Taska Workbench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<style>
+/* Design read: dense internal ops workbench for one delivery manager. Calm, Linear-like.
+   Dials: variance 3, motion 3, density 7. One accent (cobalt). Radius scale: 6px controls, 8px panels. */
+:root{
+  --bg:#f6f7f9; --surface:#ffffff; --surface-2:#f0f2f5; --line:#e3e6eb; --line-strong:#cfd4dc;
+  --ink:#16181d; --ink-2:#4a505c; --ink-3:#7a8190;
+  --accent:#2f54d4; --accent-ink:#ffffff; --accent-soft:#e8edfc;
+  --done:#2d7a52; --done-soft:#e3f2ea; --warn:#a15c07; --warn-soft:#fbf0de; --risk:#b4233c; --risk-soft:#fbe7ea;
+  --shadow:0 1px 2px rgba(22,24,29,.05),0 8px 24px -12px rgba(22,24,29,.12);
+  --r-sm:6px; --r-md:8px;
+  --mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:"Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f1115; --surface:#16191f; --surface-2:#1c2028; --line:#262b34; --line-strong:#353c47;
+  --ink:#e8eaee; --ink-2:#a9b0bc; --ink-3:#757d8a;
+  --accent:#7d97ff; --accent-ink:#0f1115; --accent-soft:#1f2747;
+  --done:#6cc497; --done-soft:#16291f; --warn:#e3a54e; --warn-soft:#2c2214; --risk:#f07a8c; --risk-soft:#331a20;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px -12px rgba(0,0,0,.5); color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --bg:#0f1115; --surface:#16191f; --surface-2:#1c2028; --line:#262b34; --line-strong:#353c47;
+  --ink:#e8eaee; --ink-2:#a9b0bc; --ink-3:#757d8a;
+  --accent:#7d97ff; --accent-ink:#0f1115; --accent-soft:#1f2747;
+  --done:#6cc497; --done-soft:#16291f; --warn:#e3a54e; --warn-soft:#2c2214; --risk:#f07a8c; --risk-soft:#331a20;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px -12px rgba(0,0,0,.5); color-scheme:dark;}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 var(--sans);-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--ink-3)}
+i.ph{font-size:15px;vertical-align:-2px}
+
+/* header */
+header{position:sticky;top:0;z-index:20;background:var(--surface);border-bottom:1px solid var(--line)}
+.bar{display:grid;grid-template-columns:auto 1fr auto;gap:20px;align-items:center;padding:10px 20px;min-height:56px}
+.brand{display:flex;align-items:baseline;gap:10px;white-space:nowrap}
+.brand b{font-weight:600;font-size:15px;letter-spacing:-.01em}
+.brand span{color:var(--ink-3)}
+.scrub{display:flex;align-items:center;gap:10px;min-width:0}
+.callinfo{display:flex;align-items:baseline;gap:10px;min-width:0;white-space:nowrap;overflow:hidden}
+.callinfo b{font-weight:600;font-size:14px}
+.callinfo .pos{font:12px var(--mono);color:var(--ink-3)}
+.kindtag{font-size:11px;padding:2px 6px;border-radius:4px;border:1px solid var(--line);color:var(--ink-2)}
+.kindtag.client{border-color:var(--accent);color:var(--accent)}
+/* calendar strip: weekday columns grouped by week, weekends collapse into the gap between weeks */
+.timeline{position:relative;border-top:1px solid var(--line)}
+.tl-scroll{overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;padding:6px 20px 8px;
+  -webkit-mask-image:linear-gradient(90deg,transparent 0,#000 20px,#000 calc(100% - 20px),transparent 100%);mask-image:linear-gradient(90deg,transparent 0,#000 20px,#000 calc(100% - 20px),transparent 100%)}
+.tl-track{display:flex;gap:10px;width:max-content}
+.wk{display:flex;flex-direction:column;gap:3px}
+.wk-l{font-size:11px;color:var(--ink-3);height:14px;white-space:nowrap;padding-left:2px}
+.wk-l b{color:var(--ink-2);font-weight:600;margin-right:4px}
+.days{display:flex;gap:2px}
+.day{width:30px;display:flex;flex-direction:column;align-items:center;gap:3px;padding:3px 0 4px;border-radius:var(--r-sm)}
+.day.has{cursor:pointer}
+.day.has:hover{background:var(--surface-2)}
+.day.sel{background:var(--accent-soft)}
+.day .dn{font:500 11px/1 var(--mono);color:var(--ink-3)}
+.day.has .dn{color:var(--ink-2)}
+.day.sel .dn{color:var(--accent);font-weight:600}
+.day .wd{font-size:9px;line-height:1;color:var(--ink-3);text-transform:uppercase;letter-spacing:.04em}
+.slots{display:flex;flex-direction:column;gap:2px;min-height:14px;justify-content:center}
+.slot{display:block;width:20px;height:6px;border-radius:3px;border:0;padding:0;background:var(--line-strong);transition:background .15s ease, transform .15s ease}
+.slot.client{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink-3)}
+.slot.past{background:color-mix(in srgb,var(--accent) 40%,var(--surface-2))}
+.slot.client.past{background:transparent;box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--accent) 55%,var(--surface-2))}
+.slot.on{background:var(--accent);transform:scaleY(1.35)}
+.slot.client.on{background:var(--accent);box-shadow:none}
+.slot:hover{transform:scaleY(1.35)}
+.slot.k-event,.slot.k-file,.slot.k-pr,.slot.k-issue{width:8px;height:8px;border-radius:2px;background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink-3)}
+.slot.k-event{border-radius:50%}
+.slot.fstack{width:auto;min-width:8px;height:12px;padding:0 3px;border-radius:3px;font:600 8px/12px var(--mono);color:var(--ink-3)}
+.slot.fstack.on{color:var(--accent-ink)}
+.slot.k-file.past,.slot.k-event.past{box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--accent) 55%,var(--surface-2))}
+.slot.more{opacity:.6}
+.slot.k-pr,.slot.k-issue{transform:rotate(45deg)}
+.slot.k-event.on,.slot.k-file.on,.slot.k-pr.on,.slot.k-issue.on{background:var(--accent);box-shadow:none}
+.empty-day{width:4px;height:4px;border-radius:2px;background:var(--line);margin:5px 0}
+.legend{margin-left:auto;display:flex;gap:12px;font-size:11px;color:var(--ink-3)}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.iconbtn{border:1px solid var(--line);background:var(--surface);border-radius:var(--r-sm);height:30px;min-width:30px;display:inline-grid;place-items:center;padding:0 8px;gap:6px}
+.iconbtn:hover{border-color:var(--line-strong)}
+.iconbtn:active{transform:translateY(1px)}
+.right{display:flex;gap:8px;align-items:center}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden}
+.seg button{border:0;background:transparent;padding:5px 12px;color:var(--ink-2)}
+.seg button.on{background:var(--surface-2);color:var(--ink);font-weight:500}
+
+/* toolbar */
+.tools{display:flex;gap:8px;align-items:center;padding:8px 20px;border-top:1px solid var(--line);flex-wrap:wrap}
+.search{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:var(--r-sm);padding:0 8px;height:30px;background:var(--bg);min-width:220px}
+.search input{border:0;outline:0;background:transparent;width:100%}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:var(--r-sm);padding:4px 10px;color:var(--ink-2)}
+.chip.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.summary{margin-left:18px;color:var(--ink-3);display:flex;gap:14px}
+.summary b{color:var(--ink);font-weight:500}
+
+/* layout */
+main{display:grid;grid-template-columns:minmax(0,1fr) 440px;gap:0;min-height:calc(100dvh - var(--hdr,150px))}
+.pane{min-width:0}
+.left{padding:12px 20px 60px}
+.side{border-left:1px solid var(--line);background:var(--surface);position:sticky;top:var(--hdr,150px);height:calc(100dvh - var(--hdr,150px));overflow:auto}
+
+/* tree */
+.epic{margin:0 0 14px}
+.epic-h{display:grid;grid-template-columns:18px 1fr auto;gap:8px;align-items:center;padding:8px 4px;cursor:pointer;border-radius:var(--r-sm)}
+.epic-h:hover{background:var(--surface-2)}
+.epic-h .t{font-weight:600;font-size:13.5px;letter-spacing:-.005em}
+.epic-h .meta{color:var(--ink-3);display:flex;gap:12px;white-space:nowrap}
+.rows{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;box-shadow:var(--shadow)}
+.row{display:grid;grid-template-columns:18px 52px minmax(0,1fr) 112px 120px 74px;gap:10px;align-items:center;
+  padding:7px 12px;border-top:1px solid var(--line);cursor:pointer;position:relative}
+.row:first-child{border-top:0}
+.row:hover{background:var(--surface-2)}
+.row.sel{background:var(--accent-soft)}
+.row.task{padding-left:34px}
+.row.task .id{opacity:.85}
+.row.riskrow{cursor:pointer}
+.row.riskrow .id{font-weight:600}
+.row.rec{padding-left:34px}
+.row.closed .title{color:var(--ink-3)}
+.row.cancelled .title,.row.merged .title{text-decoration:line-through}
+.row.changed::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:0 3px 3px 0;background:var(--accent)}
+.row .id{font:500 11px/1 var(--mono);color:var(--ink-3)}
+.row .title{min-width:0;display:flex;gap:8px;align-items:center}
+.row .title .txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .who{color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .due{font:12px var(--mono);color:var(--ink-2);text-align:right}
+.row .due.late{color:var(--risk)}
+.caret{display:inline-block;color:var(--ink-3);transition:transform .15s ease}
+.caret.open{transform:rotate(90deg)}
+.state{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);white-space:nowrap}
+.state i{font-size:14px}
+.st-done{color:var(--done)} .st-in_progress{color:var(--accent)} .st-blocked{color:var(--warn)} .st-cancelled,.st-merged,.st-deleted{color:var(--ink-3)}
+.tag{display:inline-flex;align-items:center;gap:4px;font-size:11px;line-height:1;padding:3px 6px;border-radius:4px;white-space:nowrap;border:1px solid transparent}
+.tag.chg{color:var(--accent);background:var(--accent-soft)}
+.tag.risk{color:var(--risk);background:var(--risk-soft)}
+.tag.warn{color:var(--warn);background:var(--warn-soft)}
+.tag.dep{color:var(--ink-2);border-color:var(--line)}
+.tag.kind{color:var(--ink-3);border-color:var(--line)}
+.tag.you{color:var(--ink-2);border-color:var(--line-strong)}
+.empty-epics{margin-top:22px;color:var(--ink-3)}
+.empty-epics summary{cursor:pointer;padding:6px 4px}
+.empty-epics ul{margin:6px 0 0;padding-left:22px;columns:2}
+.notice{margin:0 0 12px;padding:9px 12px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);color:var(--ink-2);display:flex;gap:8px;align-items:center}
+
+/* side */
+.side-tabs{display:flex;gap:2px;padding:10px 16px 0;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface);z-index:2}
+.side-tabs button{border:0;background:transparent;padding:8px 10px;color:var(--ink-3);border-bottom:2px solid transparent;margin-bottom:-1px}
+.side-tabs button.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:500}
+.side-body{padding:16px}
+.crumb{color:var(--ink-3);font-size:12px;margin-bottom:6px}
+.title-edit{width:100%;font-size:17px;font-weight:600;letter-spacing:-.01em;border:1px solid transparent;border-radius:var(--r-sm);padding:4px 6px;margin-left:-7px;background:transparent;resize:none;line-height:1.3}
+.title-edit:hover:not([readonly]){border-color:var(--line)}
+.title-edit:focus{outline:0;border-color:var(--accent);background:var(--bg)}
+.fields{display:grid;grid-template-columns:96px 1fr;gap:6px 10px;align-items:center;margin:12px 0 4px}
+.fields label{color:var(--ink-3)}
+.fields input,.fields select{height:30px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--bg);padding:0 8px;min-width:0;width:100%}
+.fields input:focus,.fields select:focus{outline:0;border-color:var(--accent)}
+.fields input[readonly],.fields select:disabled{background:transparent;border-color:transparent;padding-left:0;-webkit-appearance:none;appearance:none}
+.pin{color:var(--ink-3);font-size:11px;margin-left:4px}
+h3{font-size:12px;font-weight:600;margin:20px 0 8px;color:var(--ink-2);display:flex;align-items:center;gap:8px}
+h3 .count{color:var(--ink-3);font-weight:400}
+.ac{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:var(--r-md)}
+.ac li{display:grid;grid-template-columns:20px 1fr auto;gap:8px;padding:8px 10px;border-top:1px solid var(--line);align-items:start}
+.ac li:first-child{border-top:0}
+.ac li.met .txt{color:var(--ink-3)}
+.ac input[type=checkbox]{margin:2px 0 0;accent-color:var(--accent)}
+.ac .ev{grid-column:2/4;font-size:12px;color:var(--ink-3)}
+.ac .src{font-size:11px;color:var(--ink-3)}
+.add{display:flex;gap:6px;margin-top:8px}
+.add input,.add select{flex:1;height:30px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--bg);padding:0 8px;min-width:0}
+.btn{height:30px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--surface);padding:0 12px;white-space:nowrap}
+.btn:hover{border-color:var(--line-strong)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn:active{transform:translateY(1px)}
+.links{display:flex;flex-direction:column;gap:4px}
+.link{display:grid;grid-template-columns:52px 1fr auto auto;gap:8px;align-items:center;padding:6px 8px;border:1px solid var(--line);border-radius:var(--r-sm);cursor:pointer}
+.link:hover{border-color:var(--line-strong)}
+.x{border:0;background:transparent;color:var(--ink-3);padding:2px 4px;border-radius:4px}
+.x:hover{color:var(--risk);background:var(--risk-soft)}
+.sugg{border:1px dashed var(--line-strong);border-radius:var(--r-md);padding:10px;margin-bottom:6px}
+.sugg .q{color:var(--ink-2);font-size:12px;margin:6px 0 8px}
+.timeline{position:relative;margin:0;padding:0;list-style:none}
+.timeline li{position:relative;padding:0 0 14px 18px}
+.timeline li::before{content:"";position:absolute;left:4px;top:7px;bottom:-2px;width:1px;background:var(--line)}
+.timeline li:last-child::before{display:none}
+.timeline li::after{content:"";position:absolute;left:1px;top:4px;width:7px;height:7px;border-radius:50%;background:var(--surface);border:1px solid var(--line-strong)}
+.timeline li.applied::after{background:var(--accent);border-color:var(--accent)}
+.timeline li.future{opacity:.38}
+.tl-h{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tl-h b{font-weight:500}
+.tl-q{margin-top:4px;color:var(--ink-2);font-size:12.5px;border-left:2px solid var(--line);padding-left:8px}
+.tl-m{font-size:11.5px;color:var(--ink-3);margin-top:3px}
+.ask{padding:10px 0;border-top:1px solid var(--line)}
+.ask:first-child{border-top:0}
+.ask .q{cursor:pointer}
+.ask .q:hover{color:var(--accent)}
+.who-h{font-weight:600;margin:16px 0 4px;display:flex;justify-content:space-between}
+.who-h:first-child{margin-top:0}
+.chg-group{margin-bottom:14px}
+.chg-item{display:grid;grid-template-columns:76px 52px 1fr;gap:8px;padding:5px 0;cursor:pointer;align-items:baseline}
+.chg-item:hover .t{color:var(--accent)}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%) translateY(20px);opacity:0;background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:var(--r-md);transition:opacity .2s ease, transform .2s ease;z-index:50;pointer-events:none}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+.blank{color:var(--ink-3);padding:30px 4px;text-align:left}
+.blank b{display:block;color:var(--ink-2);font-weight:500;margin-bottom:4px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+@media (max-width:1100px){main{grid-template-columns:1fr}.side{position:static;height:auto;border-left:0;border-top:1px solid var(--line)}
+  .row{grid-template-columns:18px 44px minmax(0,1fr) 90px 64px}.row .who{display:none}}
+@media (max-width:720px){.bar{grid-template-columns:1fr;gap:8px;padding:10px 16px}.tools,.left{padding-left:16px;padding-right:16px}
+  .row{grid-template-columns:18px minmax(0,1fr) 84px}.row .id,.row .due{display:none}.legend{display:none}.summary{display:none}}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="brand"><b>Taska</b><span id="project"></span></div>
+    <div class="callinfo" id="callname"></div>
+    <div class="right">
+      <button class="iconbtn" id="prev" title="Previous call (←)"><i class="ph ph-caret-left"></i></button>
+      <button class="iconbtn" id="play" title="Play through calls"><i class="ph ph-play"></i></button>
+      <button class="iconbtn" id="next" title="Next call (→)"><i class="ph ph-caret-right"></i></button>
+      <div class="seg" id="views">
+        <button data-v="tree" class="on">Tree</button><button data-v="board">Board</button>
+      </div>
+      <button class="iconbtn" id="theme" title="Theme"><i class="ph ph-circle-half"></i></button>
+    </div>
+  </div>
+  <div class="timeline">
+    <div class="tl-scroll" id="tlscroll"><div class="tl-track" id="ticks"></div></div>
+  </div>
+  <div class="tools">
+    <label class="search"><i class="ph ph-magnifying-glass muted"></i><input id="q" placeholder="Filter by title, owner or id" aria-label="Filter"></label>
+    <button class="chip" data-f="changed">Changed in this call</button>
+    <button class="chip" data-f="attention">Needs attention</button>
+    <button class="chip" data-f="open">Hide closed</button>
+    <div class="legend"><span><i class="slot" style="display:inline-block"></i>Internal call</span><span><i class="slot client" style="display:inline-block"></i>Client call</span><span><i class="slot k-event" style="display:inline-block"></i>Calendar</span><span><i class="slot k-file" style="display:inline-block"></i>File</span><span><i class="slot k-pr" style="display:inline-block;transform:rotate(45deg)"></i>Code</span></div>
+    <div class="summary" id="summary"></div>
+  </div>
+</header>
+<main>
+  <section class="pane left" id="left"></section>
+  <aside class="pane side">
+    <div class="side-tabs" id="tabs">
+      <button data-t="detail" class="on">Details</button><button data-t="asks">Asks</button><button data-t="changes">This call</button>
+    </div>
+    <div class="side-body" id="side"></div>
+  </aside>
+</main>
+<div class="toast" id="toast"></div>
+<script>
+const EMBED = /*__DATA__*/null;
+const LIVE = !EMBED;
+let D = EMBED, ci = 0, sel = null, tab = "detail", view = "tree", playing = null;
+const F = {changed:false, attention:false, open:false, q:""};
+const openSet = new Set();
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmt = d => { if(!d) return ""; const x = new Date(d+"T12:00:00"); return x.toLocaleDateString("en-US",{month:"short",day:"numeric"}); };
+const ts = t => !t ? "" : (t.startsWith("00:") ? t.slice(3,8) : t.slice(0,8));
+const store = {get(k){try{return localStorage.getItem(k)}catch(e){return null}}, set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+
+const ICON = {open:"ph-circle", in_progress:"ph-circle-half", blocked:"ph-prohibit", done:"ph-check-circle",
+  cancelled:"ph-x-circle", merged:"ph-git-merge", deleted:"ph-trash"};
+const LABEL = {open:"Open", in_progress:"In progress", blocked:"Blocked", done:"Done", cancelled:"Cancelled", merged:"Merged", deleted:"Deleted"};
+const FLAG = {overdue:["Overdue","risk"], presumed_happened:["Did it happen?","risk"], slipping:["Slipping","warn"],
+  blocked:["Blocked","warn"], at_risk:["At risk","warn"], chase_client:["Chase client","risk"], dropped:["Gone quiet","warn"],
+  confirm_done:["Confirm done","dep"], close_out:["Close?","dep"], unconfirmed:["Unconfirmed","dep"]};
+const EFF = {create:"Created", held:"Took place", done:"Done", progress:"Progress", blocked:"Blocked", cancelled:"Cancelled",
+  reopen:"Reopened", due:"Date set", delayed:"Slipped", reassign:"Reassigned", mention:"Mentioned", revise:"Revised",
+  ac_met:"Criterion met", link:"Dependency", suggest_move:"Move suggested", suggest_merge:"Merge suggested",
+  edit:"You edited", ac_add:"You added a criterion", ac_set:"You changed a criterion", unlink:"You removed a dependency",
+  merge:"You merged", delete:"You deleted"};
+
+async function load(keep){
+  if (LIVE){ const r = await fetch("/api/data",{cache:"no-store"}); D = await r.json(); }
+  if (!keep){ const saved = +store.get("taska.ci"); ci = D.calls.length ? (Number.isFinite(saved) && saved < D.calls.length && store.get("taska.ci") !== null ? saved : D.calls.length-1) : 0; }
+  ci = Math.min(ci, Math.max(0, D.calls.length-1));
+  if (D.project) $("#project").textContent = D.project;
+  if (D.delta && !D._built){  // rebuild full node maps from the deltas, sharing unchanged node objects
+    let cur = {}, asks = {};
+    for (const c of D.calls){
+      const s = D.snaps[c.id];
+      cur = Object.assign({}, cur, s.nodes);
+      for (const g of s.gone || []) delete cur[g];
+      asks = Object.assign({}, asks, s.asks);
+      for (const g of s.asks_gone || []) delete asks[g];
+      s.nodes = cur;
+      s.asks = Object.values(asks).sort((a, b) => a.rank - b.rank);
+      s.notes = D.notes;
+    }
+    D._built = true;
+  }
+  render();
+}
+const call = () => D.calls[ci];
+const snap = () => D.snaps[call().id];
+const N = () => snap().nodes;
+const latest = () => ci === D.calls.length-1;
+const flagsOf = id => { const a = snap().asks.find(x => x.node === id); return a ? (a.tier==="close" ? ["close_out"] : a.flags.filter(f => f!=="unconfirmed" || a.flags.length===1)) : []; };
+const CLOSED = new Set(["done","cancelled","merged","deleted"]);
+
+function changeKind(id){
+  const h = (D.history[id]||[]).filter(x => x.evidence === call().id && x.by !== "human");
+  if (!h.length) return null;
+  if (h.some(x => x.op === "create")) return "New";
+  const a = h.find(x => x.op === "revise") ? "Revised" : h.find(x => x.op === "link") ? "Linked"
+    : h.find(x => x.applied && x.effect && x.effect !== "mention") ? EFF[h.find(x => x.applied && x.effect && x.effect !== "mention").effect]
+    : h.find(x => x.op === "ac_met" && x.applied) ? "Criterion met" : h.find(x => x.op && x.op.startsWith("suggest")) ? "Suggestion" : "Mentioned";
+  return a;
+}
+
+function visible(n){
+  if (["merged","deleted"].includes(n.state)) return false;
+  if (F.open && CLOSED.has(n.state)) return false;
+  if (F.changed && !changeKind(n.id)) return false;
+  if (F.attention && !flagsOf(n.id).length) return false;
+  if (F.q){ const s = (n.id+" "+n.title+" "+(n.internal_owner||"")+" "+(n.client_owner||"")).toLowerCase(); if (!s.includes(F.q)) return false; }
+  return true;
+}
+
+function render(){
+  if (!D.calls.length){ $("#left").innerHTML = `<div class="blank"><b>No calls extracted yet</b>Run the extraction for the first call, then reload.</div>`; return; }
+  store.set("taska.ci", ci);
+  renderTicks(); renderSummary();
+  view === "tree" ? renderTree() : renderBoard();
+  renderSide();
+}
+
+const KINDNAME = {internal:"Internal", client:"Client", event:"Calendar", file:"File", pr:"Pull request", issue:"Issue"};
+const iso = d => d.toISOString().slice(0,10);
+const addDays = (s, n) => { const d = new Date(s+"T12:00:00Z"); d.setUTCDate(d.getUTCDate()+n); return iso(d); };
+const dow = s => new Date(s+"T12:00:00Z").getUTCDay();
+function renderTicks(){
+  const byDay = {};
+  D.calls.forEach((c,i) => (byDay[c.date] ||= []).push(i));
+  const first = D.calls[0].date, last = D.calls[D.calls.length-1].date;
+  let d = addDays(first, -((dow(first)+6)%7));          // Monday of the first week
+  const end = addDays(last, (7-dow(last))%7);            // Sunday of the last week
+  const weeks = [];
+  let prevMonth = null;
+  while (d <= end){
+    const days = [];
+    for (let k = 0; k < 7; k++, d = addDays(d,1)){
+      if (k >= 5 && !byDay[d]) continue;                 // weekends only when something happened
+      days.push(d);
+    }
+    const m = new Date(days[0]+"T12:00:00Z").toLocaleDateString("en-US",{month:"short",timeZone:"UTC"});
+    weeks.push({days, label: m !== prevMonth ? m : null});
+    prevMonth = m;
+  }
+  const WD = ["S","M","T","W","T","F","S"];
+  const slot = i => `<button class="slot k-${D.calls[i].kind} ${D.calls[i].kind==="client"?"client":""} ${i<ci?"past":""} ${i===ci?"on":""}" data-i="${i}" title="${esc(KINDNAME[D.calls[i].kind]+": "+D.calls[i].title)}"></button>`;
+  const slotsFor = cs => {  // meetings and events one by one (max 4 events), a day's files as one counted glyph
+    const files = cs.filter(i => D.calls[i].kind==="file"), other = cs.filter(i => D.calls[i].kind!=="file");
+    const meet = other.filter(i => ["internal","client","pr","issue"].includes(D.calls[i].kind)), evs = other.filter(i => !meet.includes(i));
+    let h = meet.map(slot).join("") + evs.slice(0,4).map(slot).join("");
+    if (evs.length > 4) h += `<button class="slot k-event more ${evs.slice(4).includes(ci)?"on":""}" data-i="${evs.includes(ci)&&evs.indexOf(ci)>=4?ci:evs[4]}" title="${evs.length-4} more calendar items"></button>`;
+    if (files.length) h += `<button class="slot k-file fstack ${files.includes(ci)?"on":""} ${files.every(i=>i<ci)?"past":""}" data-i="${files.includes(ci)?ci:files[0]}" title="${files.length} file${files.length>1?"s":""}: ${esc(files.slice(0,6).map(i=>D.calls[i].title).join(", "))}${files.length>6?"…":""}"><span>${files.length>1?files.length:""}</span></button>`;
+    return h;
+  };
+  const cur = call().date;
+  $("#ticks").innerHTML = weeks.map(wk => `<div class="wk"><div class="wk-l">${wk.label?`<b>${wk.label}</b>`:""}${new Date(wk.days[0]+"T12:00:00Z").getUTCDate()}</div><div class="days">${wk.days.map(day => {
+    const cs = byDay[day] || [];
+    return `<div class="day ${cs.length?"has":""} ${day===cur?"sel":""}" ${cs.length?`data-i="${cs.includes(ci)?ci:cs[0]}"`:""} title="${esc(cs.map(i => KINDNAME[D.calls[i].kind]+": "+D.calls[i].title).join("\n") || "Nothing")}">
+      <span class="wd">${WD[dow(day)]}</span><span class="dn">${new Date(day+"T12:00:00Z").getUTCDate()}</span>
+      <span class="slots">${cs.length ? slotsFor(cs) : `<i class="empty-day"></i>`}</span></div>`;
+  }).join("")}</div></div>`).join("");
+  const c = call();
+  const name = c.title.replace(/\.(vtt|srt|docx|txt|mp4|m4a|mov|mp3|wav|webm)$/i,"");
+  const wd = new Date(c.date+"T12:00:00Z").toLocaleDateString("en-US",{weekday:"short",timeZone:"UTC"});
+  $("#callname").innerHTML = `<b>${wd} ${fmt(c.date)}</b><span class="kindtag ${c.kind}">${KINDNAME[c.kind]||c.kind}</span><span class="muted" style="overflow:hidden;text-overflow:ellipsis">${esc(name)}</span><span class="pos">${ci+1} / ${D.calls.length}</span>`;
+  const on = document.querySelector(".slot.on"), sc = $("#tlscroll");
+  if (on){ const r = on.getBoundingClientRect(), b = sc.getBoundingClientRect();
+    if (r.left < b.left + 40 || r.right > b.right - 40) sc.scrollTo({left: sc.scrollLeft + (r.left - b.left) - b.width/2, behavior: playing ? "smooth" : "auto"}); }
+}
+$("#tlscroll").addEventListener("wheel", e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX)){ $("#tlscroll").scrollLeft += e.deltaY; e.preventDefault(); } }, {passive:false});
+new ResizeObserver(() => document.documentElement.style.setProperty("--hdr", document.querySelector("header").offsetHeight + "px")).observe(document.querySelector("header"));
+
+function renderSummary(){
+  const ns = Object.values(N());
+  const st = ns.filter(n => n.kind==="story" && !["merged","deleted"].includes(n.state));
+  const tk = ns.filter(n => n.kind==="task" && !["merged","deleted"].includes(n.state));
+  const ch = ns.filter(n => changeKind(n.id)).length;
+  $("#summary").innerHTML = `<span><b>${st.length}</b> stories</span><span><b>${tk.length}</b> tasks</span><span><b>${snap().asks.filter(a=>a.top).length}</b> asks</span><span><b>${ch}</b> changed</span>`;
+}
+
+function stateHTML(n){ return `<span class="state st-${n.state}"><i class="ph ${ICON[n.state]||"ph-circle"}"></i>${LABEL[n.state]||n.state}</span>`; }
+function tags(n){
+  const out = [];
+  const ck = changeKind(n.id); if (ck) out.push(`<span class="tag chg">${esc(ck)}</span>`);
+  for (const f of flagsOf(n.id)){ const [l,c] = FLAG[f]||[f,"dep"]; out.push(`<span class="tag ${c}">${l}</span>`); }
+  if (n.kind==="story" && n.ac.length > 6 && !CLOSED.has(n.state)) out.push(`<span class="tag warn" title="${n.ac.length} acceptance criteria: probably more than one story">Split?</span>`);
+  if (n.kind==="story" && n.ac.length) out.push(`<span class="tag kind mono">${n.ac.filter(a=>a.met).length}/${n.ac.length} AC</span>`);
+  if (n.waiting_on && n.waiting_on.length && !CLOSED.has(n.state)) out.push(`<span class="tag dep" title="Waits on ${esc(n.waiting_on.join(", "))}"><i class="ph ph-arrow-bend-down-left"></i>${n.waiting_on.length}</span>`);
+  if (n.blocks && n.blocks.length) out.push(`<span class="tag dep" title="Holds up ${esc(n.blocks.join(", "))}"><i class="ph ph-arrow-bend-up-right"></i>${n.blocks.length}</span>`);
+  if (n.client_owed) out.push(`<span class="tag kind">client owes</span>`);
+  if (n.pinned && n.pinned.length) out.push(`<span class="tag you" title="Fields you set: ${esc(n.pinned.join(", "))}"><i class="ph ph-push-pin"></i></span>`);
+  return out.join("");
+}
+function who(n){ return [n.internal_owner, n.client_owner && n.client_owner+" (client)"].filter(Boolean).join(", "); }
+function dueHTML(n){
+  if (!n.due && !(n.due_history||[]).length) return "";
+  if (!n.due) return `<span class="due late">slipped</span>`;
+  const late = n.due < call().date && !CLOSED.has(n.state);
+  return `<span class="due ${late?"late":""}">${fmt(n.due)}</span>`;
+}
+
+function row(n, cls){
+  const kids = n.children.map(c => N()[c]).filter(Boolean);
+  const hasKids = n.kind==="story" && kids.length;
+  const isOpen = openSet.has(n.id) || F.changed || F.attention || F.q;
+  const icon = n.kind==="risk" ? `<i class="ph ph-warning muted" title="Risk"></i>` : n.kind==="decision" ? `<i class="ph ph-gavel muted" title="Decision"></i>`
+    : n.kind==="task" ? `<i class="ph ${n.type==="session"?"ph-calendar-blank":n.type==="dependency"?"ph-hourglass-medium":"ph-dot-outline"} muted" title="${esc(n.type)}"></i>` : "";
+  return `<div class="row ${cls} ${n.state} ${CLOSED.has(n.state)?"closed":""} ${changeKind(n.id)?"changed":""} ${sel===n.id?"sel":""}" data-id="${n.id}">
+    <span>${hasKids?`<i class="ph ph-caret-right caret ${isOpen?"open":""}" data-tog="${n.id}"></i>`:""}</span>
+    <span class="id">${n.id}</span>
+    <span class="title">${icon}<span class="txt">${esc(n.title)}</span>${tags(n)}</span>
+    <span class="who">${esc(who(n))}</span>
+    <span>${stateHTML(n)}</span>
+    ${dueHTML(n)||"<span></span>"}
+  </div>`;
+}
+
+// Risks are a register: under each story/epic they collapse into one row unless a filter or search is active.
+function pushGrouped(lines, kids, owner){
+  const risks = kids.filter(k => k.kind==="risk"), rest = kids.filter(k => k.kind!=="risk");
+  for (const k of rest) lines.push(row(k, k.kind==="task" ? "task" : "rec"));
+  if (!risks.length) return;
+  const key = "risks:" + owner, open = openSet.has(key) || F.changed || F.attention || F.q;
+  const fresh = risks.filter(r => changeKind(r.id)).length;
+  lines.push(`<div class="row rec riskrow" data-tog="${key}"><span><i class="ph ph-caret-right caret ${open?"open":""}"></i></span><span class="id">${risks.length}</span><span class="title"><i class="ph ph-warning muted"></i><span class="txt muted">${risks.length} risk${risks.length>1?"s":""} heard</span>${fresh?`<span class="tag chg">${fresh} new</span>`:""}</span><span></span><span></span><span></span></div>`);
+  if (open) for (const r of risks) lines.push(row(r, "rec"));
+}
+
+function renderTree(){
+  const nodes = N();
+  const epics = Object.values(nodes).filter(n => n.kind==="epic" && !["merged","deleted"].includes(n.state));
+  const withWork = [], empty = [];
+  for (const e of epics){
+    const kids = e.children.map(c => nodes[c]).filter(Boolean);
+    (kids.length ? withWork : empty).push(e);
+  }
+  const blocks = [];
+  if (!latest() && LIVE) blocks.push(`<div class="notice"><i class="ph ph-clock-counter-clockwise"></i>Viewing the tree as it stood after ${fmt(call().date)}. Edits apply to the latest call. <button class="btn" id="golatest">Jump to latest</button></div>`);
+  for (const e of withWork){
+    const kids = e.children.map(c => nodes[c]).filter(Boolean);
+    const stories = kids.filter(k => k.kind==="story"), recs = kids.filter(k => k.kind!=="story");
+    const lines = [];
+    for (const s of stories){
+      const tasks = s.children.map(c => nodes[c]).filter(Boolean);
+      const vt = tasks.filter(visible);
+      const showS = visible(s) || vt.length;
+      if (!showS) continue;
+      lines.push(row(s, "story"));
+      if (openSet.has(s.id) || F.changed || F.attention || F.q){
+        const shown = visible(s) && !F.changed && !F.attention && !F.q ? tasks.filter(t => !["merged","deleted"].includes(t.state) && (!F.open || !CLOSED.has(t.state))) : vt;
+        pushGrouped(lines, shown, s.id);
+      }
+    }
+    pushGrouped(lines, recs.filter(visible), e.id);
+    if (!lines.length) continue;
+    const ss = stories.filter(s => !["merged","deleted"].includes(s.state));
+    const done = ss.filter(s => s.state==="done").length;
+    const win = e.window && e.window.length ? `${fmt(e.window[0])} to ${fmt(e.window[1])}` : (e.plan==="Off-plan"?"not on the plan":"");
+    const collapsed = store.get("taska.c."+e.id) === "1";
+    blocks.push(`<section class="epic"><div class="epic-h" data-epic="${e.id}"><i class="ph ph-caret-right caret ${collapsed?"":"open"}"></i>
+      <span class="t">${esc(e.title)} <span class="mono muted" style="font-weight:400;font-size:11px">${e.id}</span></span>
+      <span class="meta"><span>${esc(win)}</span><span class="mono">${done}/${ss.length} stories done</span></span></div>
+      ${collapsed?"":`<div class="rows">${lines.join("")}</div>`}</section>`);
+  }
+  if (blocks.length === (latest()||!LIVE?0:1)) blocks.push(`<div class="blank"><b>Nothing matches</b>Clear the filters to see the whole tree.</div>`);
+  if (empty.length && !F.changed && !F.attention && !F.q) blocks.push(`<details class="empty-epics"><summary>${empty.length} plan activities with no work tracked yet</summary><ul>${empty.map(e => `<li>${esc(e.title)} <span class="mono">${e.window?fmt(e.window[0]):""}</span></li>`).join("")}</ul></details>`);
+  $("#left").innerHTML = blocks.join("");
+}
+
+function renderBoard(){
+  const cols = [["open","Open"],["in_progress","In progress"],["blocked","Blocked"],["done","Done"]];
+  const nodes = Object.values(N()).filter(n => (n.kind==="story"||n.kind==="task") && visible(n));
+  $("#left").innerHTML = `<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px">${cols.map(([k,l]) => {
+    const xs = nodes.filter(n => (k==="done" ? ["done","cancelled"].includes(n.state) : n.state===k));
+    return `<div><h3 style="margin-top:0">${l} <span class="count">${xs.length}</span></h3><div class="rows">${xs.map(n => `<div class="row ${n.kind==="task"?"task":"story"} ${changeKind(n.id)?"changed":""} ${sel===n.id?"sel":""} ${n.state}" data-id="${n.id}" style="grid-template-columns:44px minmax(0,1fr);padding-left:12px"><span class="id">${n.id}</span><span class="title" style="flex-wrap:wrap"><span class="txt" style="white-space:normal">${esc(n.title)}</span>${tags(n)}</span></div>`).join("") || `<div class="blank" style="padding:14px">Nothing here</div>`}</div></div>`;
+  }).join("")}</div>`;
+}
+
+/* ---------- side ---------- */
+function renderSide(){
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.t===tab));
+  if (tab==="asks") return renderAsks();
+  if (tab==="changes") return renderChanges();
+  renderDetail();
+}
+
+function askHTML(a){
+  return `<div class="ask"><div style="margin-bottom:4px">${a.flags.filter(f => f!=="unconfirmed").map(f => { const [l,c] = FLAG[f]||[f,"dep"]; return `<span class="tag ${c}">${l}</span>`; }).join(" ")} <span class="mono muted" style="font-size:11px">${a.node}</span></div>
+    <div class="q" data-go="${a.node}">${esc(a.q)}</div></div>`;
+}
+function byPerson(xs){
+  const by = {};
+  for (const a of xs) (by[a.ask] ||= []).push(a);
+  return Object.entries(by).sort((a,b) => Math.max(...b[1].map(x=>x.score)) - Math.max(...a[1].map(x=>x.score)))
+    .map(([p, ys]) => `<div class="who-h"><span>${esc(p)}</span><span class="muted mono">${ys.length}</span></div>` + ys.map(askHTML).join("")).join("");
+}
+function renderAsks(){
+  const all = snap().asks.filter(a => !a.shadow);
+  const top = all.filter(a => a.top), more = all.filter(a => !a.top && a.tier==="ask"), close = all.filter(a => a.tier==="close");
+  if (!all.length){ $("#side").innerHTML = `<div class="blank"><b>Nothing to chase after ${fmt(call().date)}</b>Asks appear when work goes quiet, slips, or waits on someone.</div>`; return; }
+  const ro = !(LIVE && latest());
+  const H = [`<p class="muted" style="margin:0 0 12px">Before the next status call, as of ${fmt(call().date)}: what the client owes, what holds other work up, what keeps slipping. At most two per story.</p>`, byPerson(top)];
+  if (more.length) H.push(`<details style="margin-top:18px"><summary class="muted" style="cursor:pointer">${more.length} more to ask, lower priority</summary>${byPerson(more)}</details>`);
+  if (close.length) H.push(`<h3 style="margin-top:22px">Confirm or close <span class="count mono">${close.length}</span></h3>
+    <p class="muted" style="margin:0 0 8px;font-size:12px">Nothing said for over a week. These usually finished without anyone saying so.</p>
+    <div class="links">${close.map(a => { const n = N()[a.node]; return `<div class="link" data-go="${a.node}"><span class="mono muted" style="font-size:11px">${a.node}</span><span>${esc(n.title)} <span class="muted">${esc(n.internal_owner||"")}</span></span>${ro?"<span></span>":`<button class="btn" data-close="${a.node}">Close</button>`}<span></span></div>`; }).join("")}</div>`);
+  $("#side").innerHTML = H.join("");
+}
+
+function renderChanges(){
+  const c = call(), nodes = N();
+  const groups = {};
+  for (const n of Object.values(nodes)){
+    for (const h of (D.history[n.id]||[]).filter(x => x.evidence===c.id && x.by!=="human")){
+      const ep = epicOf(n.id);
+      (groups[ep] ||= []).push([h, n]);
+    }
+  }
+  const keys = Object.keys(groups);
+  if (!keys.length){ $("#side").innerHTML = `<div class="blank"><b>No changes from this call</b></div>`; return; }
+  $("#side").innerHTML = `<p class="muted" style="margin:0 0 12px">Everything the ${fmt(c.date)} call changed, grouped by epic. Unverified status changes are shown but not applied.</p>` +
+    keys.map(k => `<div class="chg-group"><h3 style="margin-top:0">${esc(nodes[k]?nodes[k].title:k)}</h3>${groups[k].map(([h,n]) => `<div class="chg-item" data-go="${n.id}">
+      <span class="tag ${h.applied?"chg":"dep"}" style="justify-self:start">${esc(EFF[h.op==="status"?h.effect:h.op]||h.op)}</span><span class="mono muted" style="font-size:11px">${n.id}</span>
+      <span class="t">${esc(h.op==="revise"&&h.title? h.title : n.title)}${h.op==="link"?` <span class="muted">waits on ${esc(h.depends_on)}</span>`:""}${h.due?` <span class="mono muted">${fmt(h.due)}</span>`:""}</span></div>`).join("")}</div>`).join("");
+}
+
+function epicOf(id){ const ns = N(); let n = ns[id]; while (n && n.parent && ns[n.parent]) n = ns[n.parent]; return n ? n.id : id; }
+function pathOf(id){ const ns = N(), out = []; let n = ns[ns[id] && ns[id].parent]; while (n){ out.unshift(n.title); n = ns[n.parent]; } return out.join("  /  "); }
+
+function renderDetail(){
+  const ns = N(), n = sel && ns[sel];
+  if (!n){ $("#side").innerHTML = `<div class="blank"><b>Select a story or task</b>See its acceptance criteria, what it waits on, and how it changed call by call. Use ← and → to step through calls.</div>`; return; }
+  const ro = !(LIVE && latest()) ? "readonly" : "";
+  const dis = ro ? "disabled" : "";
+  const pin = f => n.pinned && n.pinned.includes(f) ? `<span class="pin" title="You set this. The agent will not overwrite it."><i class="ph ph-push-pin"></i></span>` : "";
+  const parents = Object.values(ns).filter(p => !["merged","deleted"].includes(p.state) && ({story:["epic"],task:["story"],risk:["epic","story"],decision:["epic","story"]}[n.kind]||[]).includes(p.kind));
+  const H = [];
+  H.push(`<div class="crumb">${esc(pathOf(n.id))}</div>`);
+  H.push(`<textarea class="title-edit" id="f-title" rows="2" ${ro}>${esc(n.title)}</textarea>`);
+  H.push(`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px"><span class="tag kind mono">${n.id}</span><span class="tag kind">${n.kind}${n.type?" / "+n.type:""}</span>${n.derived?`<span class="tag kind" title="${esc(n.derived)}">derived</span>`:""}${flagsOf(n.id).map(f => { const [l,c]=FLAG[f]||[f,"dep"]; return `<span class="tag ${c}">${l}</span>`; }).join("")}</div>`);
+  const stOpts = ["open","in_progress","blocked","done","cancelled"].map(s => `<option value="${s}" ${n.state===s?"selected":""}>${LABEL[s]}</option>`).join("");
+  H.push(`<div class="fields">
+    <label>Status${pin("state")}</label><select id="f-state" ${dis}>${stOpts}${["merged","deleted"].includes(n.state)?`<option selected>${LABEL[n.state]}</option>`:""}</select>
+    <label>Owner${pin("internal_owner")}</label><input id="f-internal_owner" value="${esc(n.internal_owner||"")}" placeholder="Nobody named" ${ro}>
+    <label>Client owner${pin("client_owner")}</label><input id="f-client_owner" value="${esc(n.client_owner||"")}" placeholder="None" ${ro}>
+    <label>Due${pin("due")}</label><input id="f-due" type="date" value="${n.due||""}" ${ro}>
+    ${n.kind!=="epic"?`<label>Under${pin("parent")}</label><select id="f-parent" ${dis}>${parents.map(p => `<option value="${p.id}" ${p.id===n.parent?"selected":""}>${p.id}  ${esc(p.title.slice(0,48))}</option>`).join("")}</select>`:""}
+  </div>`);
+  if ((n.due_history||[]).length > 1) H.push(`<div class="muted" style="font-size:12px;margin-top:2px">Date history: <span class="mono">${n.due_history.map(d => d.due?fmt(d.due):"slipped").join("  >  ")}</span></div>`);
+
+  if (n.kind==="story"){
+    H.push(`<h3>Acceptance criteria <span class="count mono">${n.ac.filter(a=>a.met).length}/${n.ac.length}</span></h3>`);
+    H.push(`<ul class="ac">${n.ac.map((a,i) => { const ev = a.met_by && (D.history[n.id]||[]).find(h => h.mid===a.met_by);
+      return `<li class="${a.met?"met":""}"><input type="checkbox" data-ac="${i+1}" ${a.met?"checked":""} ${dis} aria-label="Met"><span class="txt">${esc(a.text)}</span><span class="src">${a.source==="human"?"you":a.human?"you ticked":a.source==="agent"?"from call":""}</span>${ev?`<div class="ev">“${esc(ev.quote)}” <span class="mono">${fmt(ev.date)} ${ts(ev.ts)}</span></div>`:""}</li>`; }).join("") || `<li><span></span><span class="muted">No criteria yet</span><span></span></li>`}</ul>`);
+    if (!ro) H.push(`<div class="add"><input id="ac-new" placeholder="Add a criterion: what must be true when this is done"><button class="btn" id="ac-add">Add</button></div>`);
+  }
+
+  if (n.kind==="story" || n.kind==="task"){
+    H.push(`<h3>Waits on <span class="count mono">${n.depends_on.length}</span></h3><div class="links">${n.depends_on.map(d => linkHTML(d, !ro)).join("") || `<span class="muted">No dependencies recorded</span>`}</div>`);
+    if (!ro){
+      const cands = Object.values(ns).filter(x => (x.kind==="story"||x.kind==="task") && x.id!==n.id && !n.depends_on.includes(x.id) && !["merged","deleted"].includes(x.state));
+      H.push(`<div class="add"><select id="dep-new"><option value="">Add a dependency</option>${cands.map(x => `<option value="${x.id}">${x.id}  ${esc(x.title.slice(0,60))}</option>`).join("")}</select><button class="btn" id="dep-add">Link</button></div>`);
+    }
+    if (n.blocks && n.blocks.length) H.push(`<h3>Holds up <span class="count mono">${n.blocks.length}</span></h3><div class="links">${n.blocks.map(d => linkHTML(d, false)).join("")}</div>`);
+    const kids = n.children.map(c => ns[c]).filter(Boolean).filter(k => !["merged","deleted"].includes(k.state));
+    if (n.kind==="story"){
+      H.push(`<h3>Tasks <span class="count mono">${kids.filter(k=>k.kind==="task").length}</span></h3><div class="links">${kids.map(k => linkHTML(k.id,false)).join("") || `<span class="muted">No tasks yet</span>`}</div>`);
+      if (!ro) H.push(`<div class="add"><input id="task-new" placeholder="New task title"><button class="btn" id="task-add">Add task</button></div>`);
+    }
+  }
+
+  const pend = (n.suggestions||[]).filter(s => s.status==="pending");
+  if (pend.length){
+    H.push(`<h3>Suggested by the agent <span class="count mono">${pend.length}</span></h3>`);
+    for (const s of pend) H.push(`<div class="sugg"><b>${s.op==="suggest_merge"?"Merge into":"Move under"} ${esc(s.to)}</b> <span class="muted">${esc(ns[s.to]?ns[s.to].title:"")}</span><div class="q">“${esc(s.quote)}” <span class="mono">${fmt(s.date)}</span>${s.note?`<br>${esc(s.note)}`:""}</div>${ro?"":`<button class="btn primary" data-accept="${s.mid}">Accept</button> <button class="btn" data-reject="${s.mid}">Reject</button>`}</div>`);
+  }
+
+  if (!ro) H.push(`<div style="display:flex;gap:6px;margin-top:16px"><select id="merge-into" class="btn" style="flex:1;min-width:0"><option value="">Merge this into…</option>${Object.values(ns).filter(x => x.kind===n.kind && x.id!==n.id && !["merged","deleted"].includes(x.state)).map(x => `<option value="${x.id}">${x.id}  ${esc(x.title.slice(0,50))}</option>`).join("")}</select><button class="btn" id="merge-go">Merge</button><button class="btn" id="del" title="Delete"><i class="ph ph-trash"></i></button></div>`);
+
+  // history: all calls, future ones dimmed so playback shows what is coming
+  const allH = (D.history[n.id] || []);
+  const pos = Object.fromEntries(D.calls.map((c,i) => [c.id,i]));
+  H.push(`<h3>History <span class="count mono">${allH.length}</span></h3><ul class="timeline">${allH.slice().reverse().map(h => {
+    const fut = h.evidence && pos[h.evidence] > ci;
+    const lab = EFF[h.op==="status"?h.effect:h.op] || h.op;
+    const ver = h.verdict==="supports"?"verified":h.verdict?h.verdict:(h.op==="status"&&h.effect!=="mention")||h.op==="ac_met"?"unverified":"";
+    const extra = h.op==="revise" ? (h.title?`Renamed to “${esc(h.title)}”`:"") + (h.ac_add?` Added: ${h.ac_add.map(esc).join("; ")}`:"")
+      : h.op==="ac_set" ? `Criterion ${h.ac}: ${h.text!=null?"reworded":h.met?"marked met":"marked not met"}` : h.op==="edit" ? Object.entries(h.set||{}).map(([k,v]) => `${k.replace("_"," ")}: ${esc(v??"cleared")}`).join(", ") : h.op==="ac_add" ? esc(h.text) : (h.op==="link"||h.op==="unlink") ? `${h.op==="link"?"Waits on":"No longer waits on"} ${esc(h.depends_on)}` : h.due ? `Due ${fmt(h.due)}` : h.due_text ? esc(h.due_text) : "";
+    const undo = h.by==="human" && h.mid && LIVE && latest() ? ` <button class="x" data-undo="${h.mid}" title="Undo"><i class="ph ph-arrow-counter-clockwise"></i></button>` : "";
+    return `<li class="${h.applied?"applied":""} ${fut?"future":""}"><div class="tl-h"><b>${esc(lab)}</b>${ver?`<span class="tag ${ver==="verified"?"kind":"dep"}">${ver}</span>`:""}${h.merged_from?`<span class="tag kind">from ${h.merged_from}</span>`:""}${h.applied===false&&ver==="verified"?`<span class="tag you">kept your value</span>`:""}${undo}</div>
+      ${extra?`<div class="tl-m">${extra}</div>`:""}${h.quote?`<div class="tl-q">“${esc(h.quote)}”</div>`:""}
+      <div class="tl-m">${h.by==="human"?"You":esc(h.speaker||"")} <span class="mono">${fmt(h.date)} ${ts(h.ts)}</span>${h.kind==="client"?", client meeting":h.kind&&h.kind!=="internal"&&KINDNAME[h.kind]?", "+KINDNAME[h.kind].toLowerCase():""}${h.note?`  ${esc(h.note)}`:""}</div></li>`; }).join("")}</ul>`);
+  const posN = Object.fromEntries(D.calls.map((c,i) => [c.id,i]));
+  const notes = ((snap().notes||{})[n.id] || []).filter(x => !x.evidence || (posN[x.evidence] ?? 0) <= ci);
+  if (notes && notes.length) H.push(`<h3>Notes <span class="count mono">${notes.length}</span></h3>${notes.map(x => `<div class="tl-m" style="margin-bottom:8px"><span class="mono">${fmt(x.date)}</span> ${esc(x.text)}</div>`).join("")}`);
+  $("#side").innerHTML = H.join("");
+  if (!ro) bindDetail(n);
+}
+
+function linkHTML(id, removable){
+  const x = N()[id]; if (!x) return "";
+  return `<div class="link" data-go="${id}"><span class="mono muted" style="font-size:11px">${id}</span><span>${esc(x.title)}</span>${stateHTML(x)}${removable?`<button class="x" data-unlink="${id}" title="Remove"><i class="ph ph-x"></i></button>`:"<span></span>"}</div>`;
+}
+
+/* ---------- edits ---------- */
+async function send(body, msg){
+  if (!LIVE) return;
+  const r = await fetch("/api/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const j = await r.json();
+  if (!r.ok){ toast(j.error || "Could not save"); return; }
+  toast(msg || "Saved"); await load(true);
+}
+function toast(m){ const t = $("#toast"); t.textContent = m; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 1800); }
+
+function bindDetail(n){
+  const edit = (field, val, msg) => { const v = val === "" ? null : val; if ((n[field]??null) === v) return; send({op:"edit", node:n.id, set:{[field]:v}}, msg); };
+  $("#f-title").addEventListener("keydown", e => { if (e.key==="Enter" && !e.shiftKey){ e.preventDefault(); e.target.blur(); }});
+  $("#f-title").addEventListener("blur", e => edit("title", e.target.value.trim(), "Title saved, pinned"));
+  $("#f-state").addEventListener("change", e => edit("state", e.target.value, "Status saved, pinned"));
+  for (const f of ["internal_owner","client_owner"]) $("#f-"+f).addEventListener("change", e => edit(f, e.target.value.trim(), "Owner saved"));
+  $("#f-due").addEventListener("change", e => edit("due", e.target.value, "Date saved"));
+  const fp = $("#f-parent"); if (fp) fp.addEventListener("change", e => edit("parent", e.target.value, "Moved"));
+  document.querySelectorAll("[data-ac]").forEach(c => c.addEventListener("change", e => send({op:"ac_set", node:n.id, ac:+c.dataset.ac, met:c.checked}, c.checked?"Criterion met":"Criterion reopened")));
+  const aa = $("#ac-add"); if (aa) { const go = () => { const v = $("#ac-new").value.trim(); if (v) send({op:"ac_add", node:n.id, text:v}, "Criterion added"); }; aa.onclick = go; $("#ac-new").addEventListener("keydown", e => e.key==="Enter" && go()); }
+  const da = $("#dep-add"); if (da) da.onclick = () => { const v = $("#dep-new").value; if (v) send({op:"link", node:n.id, depends_on:v}, "Dependency added"); };
+  const ta = $("#task-add"); if (ta) { const go = () => { const v = $("#task-new").value.trim(); if (v) send({op:"create", kind:"task", parent:n.id, title:v, type:"action"}, "Task added"); }; ta.onclick = go; $("#task-new").addEventListener("keydown", e => e.key==="Enter" && go()); }
+  const mg = $("#merge-go"); if (mg) mg.onclick = () => { const v = $("#merge-into").value; if (v) { send({op:"merge", node:n.id, into:v}, `Merged into ${v}`); sel = v; } };
+  const dl = $("#del"); if (dl) dl.onclick = () => send({op:"delete", node:n.id}, "Deleted. Undo from its history.");
+}
+
+/* ---------- events ---------- */
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-close],.slot[data-i],[data-tog],[data-epic],[data-id],[data-go],[data-i],[data-unlink],[data-accept],[data-reject],[data-undo],#golatest");
+  if (!t) return;
+  if (t.dataset.close){ e.stopPropagation(); return send({op:"edit", node:t.dataset.close, set:{state:"done"}}, "Closed. Undo from its history."); }
+  if (t.id==="golatest"){ ci = D.calls.length-1; return render(); }
+  if (t.dataset.tog){ e.stopPropagation(); openSet.has(t.dataset.tog) ? openSet.delete(t.dataset.tog) : openSet.add(t.dataset.tog); return render(); }
+  if (t.dataset.epic){ const k = "taska.c."+t.dataset.epic; store.set(k, store.get(k)==="1"?"0":"1"); return render(); }
+  if (t.dataset.unlink){ e.stopPropagation(); return send({op:"unlink", node:sel, depends_on:t.dataset.unlink}, "Dependency removed"); }
+  if (t.dataset.accept) return send({op:"accept", target:t.dataset.accept}, "Accepted");
+  if (t.dataset.reject) return send({op:"reject", target:t.dataset.reject}, "Rejected");
+  if (t.dataset.undo) return send({op:"undo", target:t.dataset.undo}, "Undone");
+  if (t.dataset.i !== undefined){ ci = +t.dataset.i; stop(); return render(); }
+  const id = t.dataset.id || t.dataset.go;
+  if (id){ sel = id; tab = "detail"; const n = N()[id]; if (n && n.parent && N()[n.parent] && N()[n.parent].kind==="story") openSet.add(n.parent); if (n && n.kind==="story") openSet.add(id); render(); }
+});
+$("#tabs").addEventListener("click", e => { const b = e.target.closest("button"); if (b){ tab = b.dataset.t; renderSide(); }});
+$("#views").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; view = b.dataset.v; document.querySelectorAll("#views button").forEach(x => x.classList.toggle("on", x===b)); render(); });
+document.querySelectorAll("[data-f]").forEach(b => b.addEventListener("click", () => { F[b.dataset.f] = !F[b.dataset.f]; b.classList.toggle("on", F[b.dataset.f]); render(); }));
+$("#q").addEventListener("input", e => { F.q = e.target.value.trim().toLowerCase(); render(); });
+$("#prev").onclick = () => { if (ci > 0){ ci--; stop(); render(); } };
+$("#next").onclick = () => { if (ci < D.calls.length-1){ ci++; stop(); render(); } };
+function stop(){ if (playing){ clearInterval(playing); playing = null; $("#play").innerHTML = `<i class="ph ph-play"></i>`; } }
+$("#play").onclick = () => {
+  if (playing) return stop();
+  if (ci >= D.calls.length-1) ci = 0;
+  $("#play").innerHTML = `<i class="ph ph-pause"></i>`; render();
+  playing = setInterval(() => { if (ci >= D.calls.length-1) return stop(); ci++; render(); }, 1600);
+};
+document.addEventListener("keydown", e => {
+  if (["INPUT","TEXTAREA","SELECT"].includes(document.activeElement.tagName)) return;
+  if (e.key==="ArrowLeft") $("#prev").click();
+  if (e.key==="ArrowRight") $("#next").click();
+  if (e.key==="/"){ e.preventDefault(); $("#q").focus(); }
+});
+$("#theme").onclick = () => {
+  const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  const nx = cur==="dark" ? "light" : "dark"; document.documentElement.dataset.theme = nx; store.set("taska.theme", nx);
+};
+{ const th = store.get("taska.theme"); if (th) document.documentElement.dataset.theme = th; }
+load().catch(err => { $("#left").innerHTML = `<div class="blank"><b>Could not load the ledger</b>${esc(err.message)}. Start it with taska_v3.py serve.</div>`; });
+</script>
+</body>
+</html>

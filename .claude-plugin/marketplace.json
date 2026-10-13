@@ -1,8 +1,11 @@
 {
   "name": "applied-ai",
-  "owner": { "name": "onetest-ai", "url": "https://github.com/onetest-ai" },
+  "owner": {
+    "name": "onetest-ai",
+    "url": "https://github.com/onetest-ai"
+  },
   "metadata": {
-    "description": "Applied AI marketplace: the Brain knowledge engine, the kb knowledge-worker plugin, and Scribe living documents.",
+    "description": "Applied AI marketplace: the Brain knowledge engine, the kb knowledge-worker plugin, Scribe living documents, and Taska work tracking from meetings.",
     "version": "0.14.0"
   },
   "plugins": [
@@ -23,6 +26,12 @@
       "source": "./bundles/scribe",
       "description": "Living documents over the Brain: scheduled, versioned, cited docx/pdf with claim-level lineage.",
       "version": "0.1.3"
+    },
+    {
+      "name": "taska",
+      "source": "./bundles/taska",
+      "description": "A manager's Epic > Story > Task tree kept current from meetings, calendar and files: cited evidence, dependencies, staleness and asks.",
+      "version": "0.1.0"
     }
   ]
 }

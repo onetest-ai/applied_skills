@@ -49,3 +49,7 @@ retrieval-results.html
 
 # Local, never-committed denylist of client names for the scribe template check
 bundles/scribe/tests/.denylist.local
+
+# Third-party agent skills installed locally (npx skills add); never part of this marketplace
+.agents/
+skills-lock.json
