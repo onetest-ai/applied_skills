@@ -708,7 +708,7 @@ $("#theme").onclick = () => {
   const nx = cur==="dark" ? "light" : "dark"; document.documentElement.dataset.theme = nx; store.set("taska.theme", nx);
 };
 { const th = store.get("taska.theme"); if (th) document.documentElement.dataset.theme = th; }
-load().catch(err => { $("#left").innerHTML = `<div class="blank"><b>Could not load the ledger</b>${esc(err.message)}. Start it with taska_v3.py serve.</div>`; });
+load().catch(err => { $("#left").innerHTML = `<div class="blank"><b>Could not load the ledger</b>${esc(err.message)}. Start it with taska.py serve.</div>`; });
 </script>
 </body>
 </html>

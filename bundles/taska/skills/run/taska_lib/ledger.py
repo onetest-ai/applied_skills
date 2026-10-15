@@ -145,8 +145,9 @@ def fold(store, upto=None, evs=None, ev=None):
                 hist(n, e, ok)
             elif op == "revise":
                 ok = setf(n, "title", e["title"], e) if e.get("title") else True
-                n["ac"] += [{"text": x, "met": False, "met_by": None, "source": "agent"} for x in e.get("ac_add") or []]
-                hist(n, e, ok)
+                added = [{"text": x, "met": False, "met_by": None, "source": "agent"} for x in e.get("ac_add") or []]
+                n["ac"] += added
+                hist(n, e, ok or bool(added))  # ac_add applies even when a pinned title is refused — audit it
             elif op == "ac_met":
                 vis, k = _visible_ac(n), e["ac"] - 1
                 if ok and 0 <= k < len(vis) and not vis[k].get("human"):
@@ -487,8 +488,10 @@ def _apply(store, cfg, evid, proposals):
         if later:
             rej.append({"i": i, "why": f"{later} did not exist yet on {item['date']}"})
             continue
-        e = base(p, q, op, node, p.get("effect"), p.get("depends_on"), p.get("into"), p.get("parent"), p.get("ac"),
-                 p.get("what")) | {"type": "agent", "op": op, "node": node}
+        key = [p.get("effect"), p.get("depends_on"), p.get("into"), p.get("parent"), p.get("ac"), p.get("what")]
+        if op == "revise":  # title/ac_add distinguish two revisions of one node citing the same quote
+            key += [p.get("title"), tuple(p.get("ac_add") or ())]
+        e = base(p, q, op, node, *key) | {"type": "agent", "op": op, "node": node}
         if e["mid"] in seen:
             continue
         if op == "status":
