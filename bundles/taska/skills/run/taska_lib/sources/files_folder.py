@@ -118,6 +118,39 @@ def _digest(cfg, key, scfg, store, root, rels_sigs, cur):
     return new
 
 
+_MONTHS = {m[:3].lower(): i + 1 for i, m in enumerate(
+    ["January", "February", "March", "April", "May", "June",
+     "July", "August", "September", "October", "November", "December"])}
+
+
+def report_date(first_line, date_format=None, today=None):
+    """A status report's own date, read from its header (first) line, or None. ISO (2026-06-03) and
+    month-name (3 Jun 2026 / Jun 3, 2026) dates are always read; a numeric DD/MM/YY-style date is read
+    only when the source declares `date_format` ("dmy"|"mdy"|"ymd") — taska never guesses an ambiguous
+    date. A date after `today` (a sync-clock error) returns None."""
+    today = today or dt.date.today().isoformat()
+    s = (first_line or "").strip()
+    y = mo = d = None
+    if (m := re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", s)):                                   # ISO
+        y, mo, d = int(m[1]), int(m[2]), int(m[3])
+    elif (m := re.search(r"\b(\d{1,2})\s+([A-Za-z]{3,9})\.?,?\s+(\d{4})\b", s)):                  # 3 Jun 2026
+        d, mo, y = int(m[1]), _MONTHS.get(m[2][:3].lower()), int(m[3])
+    elif (m := re.search(r"\b([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})\b", s)):                  # Jun 3, 2026
+        mo, d, y = _MONTHS.get(m[1][:3].lower()), int(m[2]), int(m[3])
+    elif date_format and (m := re.search(r"\b(\d{1,2})[./](\d{1,2})[./](\d{2,4})\b", s)):          # numeric + declared format
+        a, b, c = int(m[1]), int(m[2]), int(m[3])
+        y, mo, d = {"dmy": (c, b, a), "mdy": (c, a, b), "ymd": (a, b, c)}[date_format]
+    if not (y and mo and d):
+        return None
+    if y < 100:
+        y += 2000
+    try:
+        iso = dt.date(y, mo, d).isoformat()
+    except ValueError:
+        return None
+    return iso if iso <= today else None
+
+
 def sync(cfg, key, scfg, store, cursor):
     root = scfg.get("path")
     if not root or not os.path.isdir(root):
@@ -143,10 +176,12 @@ def sync(cfg, key, scfg, store, cursor):
         if not text and st.st_size and rel.lower().endswith((".docx", ".pptx", ".xlsx")):
             skipped.append({"file": rel, "reason": "unreadable (corrupt, or the sync client has not finished it)"})
             continue  # retried next sync
+        rd = report_date(text.splitlines()[0] if text else "", scfg.get("date_format"))
+        ev_at, src = (f"{rd}T00:00:00", "file_content") if rd else (at, "file_mtime")
         head = (f"File {what}: {rel} (modified {at.replace('T', ' ')[:16]}, {max(1, st.st_size // 1024)} KB)."
                 + ("" if text else " No text could be read from it."))
-        item = {"id": S.make_id(at, key, f"{rel}|{sig}"), "source": key, "kind": "file", "at": at, "date_source": "file_mtime",
-                "title": Path(rel).stem, "text": head + ("\n\n" + text if text else ""),
+        item = {"id": S.make_id(ev_at, key, f"{rel}|{sig}"), "source": key, "kind": "file", "at": ev_at, "date_source": src,
+                "date": rd or ev_at[:10], "title": Path(rel).stem, "text": head + ("\n\n" + text if text else ""),
                 "meta": {"path": rel, "what": what, "folder": os.path.dirname(rel) or "."}}
         if S.write_evidence(store, item):
             (changed if what == "updated" else new).append(item["id"])
