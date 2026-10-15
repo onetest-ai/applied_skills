@@ -1,0 +1,9 @@
+{
+  "id": "taska",
+  "title": "Taska — a manager's work tree kept current from meetings",
+  "description": "Epic > Story > Task tracking for work nobody moves in a tracker: built incrementally from meeting transcripts and recordings, calendar and files, with cited evidence, dependencies, staleness and asks.",
+  "kind": "skills-bundle",
+  "targets": ["claude"],
+  "entrypoint": "run",
+  "skills": ["onboard", "run", "workbench", "prep"]
+}

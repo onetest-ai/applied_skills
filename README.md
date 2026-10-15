@@ -12,15 +12,16 @@ Everything lands in **one portable `knowledge.sqlite`** (no server) — narrativ
 
 ## Start here: build a Brain, or use one?
 
-This repo is the **`applied-ai`** marketplace with three plugins. Pick by what you're doing:
+This repo is the **`applied-ai`** marketplace with four plugins. Pick by what you're doing:
 
 | You want to… | Use | Surface | Start |
 |---|---|---|---|
 | **Build / maintain / deploy** a Brain from a corpus | **`brain`** (`/brain:*`) | Claude Code (CLI) | [Build a Brain](#build-a-brain-brain--claude-code) |
 | **Query & co-author** with an existing Brain | **`kb`** (`/kb:*`) | Claude Code **and** Claude Cowork | [Use a Brain in Claude Code](#use-a-brain-in-claude-code-kb) · [in Cowork](#use-a-brain-in-claude-cowork-kb) |
 | **Author scheduled, cited living documents** from a Brain | **`scribe`** (`/scribe:*`) | Claude Code (CLI), unattended-capable | [Author living documents](#author-living-documents-scribe--claude-code) |
+| **Track a project's work from its meetings** (no tracker needed) | **`taska`** (`/taska:*`) | Claude Code (CLI), unattended-capable | [Track work from meetings](#track-work-from-meetings-taska--claude-code) |
 
-`brain` is the heavy, interactive build side — it runs in **Claude Code only** (it needs local scripts, a venv, and source credentials). `kb` is the lightweight librarian that consumes a Brain's MCP and works in **both Claude Code and Cowork**. `scribe` is the author: it drafts, verifies and versions docx/pdf documents against a Brain, and can run unattended (cron/launchd) once set up. Most consumers only need `kb`.
+`brain` is the heavy, interactive build side — it runs in **Claude Code only** (it needs local scripts, a venv, and source credentials). `kb` is the lightweight librarian that consumes a Brain's MCP and works in **both Claude Code and Cowork**. `scribe` is the author: it drafts, verifies and versions docx/pdf documents against a Brain, and can run unattended (cron/launchd) once set up. `taska` is independent of the Brain: it keeps a manager's Epic → Story → Task tree current from meetings, calendar and files. Most consumers only need `kb`.
 
 ---
 
@@ -83,6 +84,26 @@ unattended on a schedule (`scribe.py schedule` prints a cron line or launchd pli
 installs one) and, for documents that shouldn't publish themselves, stage each new version for
 a human's `/scribe:review` instead. See [`bundles/scribe/README.md`](bundles/scribe/README.md)
 for setup and [`docs/scribe-guide.md`](docs/scribe-guide.md) for the document-owner's guide.
+
+---
+
+## Track work from meetings (`taska` · Claude Code)
+
+For the delivery manager whose senior team never updates a tracker. Taska reads the project's meetings
+(transcripts, or video/audio recordings it transcribes locally), Teams transcripts and calendar through the
+`msgraph` skill, and keeps an **Epic → Story → Task** tree current: stories with acceptance criteria, tasks with
+owners and dates, dependencies, and who is waiting on whom. Every change cites the words that caused it and is
+checked by a second agent; what went quiet becomes a ranked list of questions for the next status meeting.
+
+```bash
+claude plugin install taska@applied-ai
+/taska:onboard      # taska.toml: plan, people, sources
+/taska:run          # new meetings → tree (or --due, unattended)
+/taska:workbench    # look, replay meeting by meeting, edit (your edits are pinned)
+/taska:prep         # cited pack for the status meeting
+```
+Python 3.11 standard library only. See [`bundles/taska/README.md`](bundles/taska/README.md) and
+[`docs/taska-guide.md`](docs/taska-guide.md).
 
 ---
 

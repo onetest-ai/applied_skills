@@ -4,14 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is
 
-A **marketplace of three Claude Code plugins**, not an application. The product is the skills themselves — `SKILL.md` files plus the deterministic scripts they drive — and they ship to other people's projects.
+A **marketplace of four Claude Code plugins**, not an application. The product is the skills themselves — `SKILL.md` files plus the deterministic scripts they drive — and they ship to other people's projects.
 
 - **`bundles/brain`** — builds, maintains and deploys a *Brain*: one portable `knowledge.sqlite` over a mixed corpus. Heavy, interactive, Claude Code only (needs local scripts, a venv, source credentials).
 - **`bundles/kb`** — the librarian that queries an existing Brain over MCP. Works in Claude Code **and** Claude Cowork.
 - **`bundles/scribe`** — the author: scheduled, versioned, claim-level-cited living documents (docx/pdf) drafted from a Brain plus a synced raw-evidence folder. Claude Code only, unattended-capable (cron/launchd hand-off into `/scribe:run --due`). Imports `parse_corpus`/`chunking`/`semantic_core` straight from `bundles/brain`/`mcp/brain`, so its own `requirements.txt` is a self-contained superset of brain's (never a relative import across bundles).
+- **`bundles/taska`** — a manager's Epic → Story → Task tree kept current from meetings (transcripts, video and audio recordings), calendar and files. Stdlib-only Python (no venv); evidence-cited, verifier-gated, human edits pinned. Talks to Microsoft 365 only through the user's `msgraph` skill CLI, never with its own credentials. Independent of the Brain.
 - **`mcp/brain`** — the FastMCP server that exposes a built `knowledge.sqlite` as governed read-only tools. This is what `kb` and `scribe` talk to.
 
-`.claude-plugin/marketplace.json` lists all three plugins; each bundle has its own `.claude-plugin/plugin.json`.
+`.claude-plugin/marketplace.json` lists all four plugins; each bundle has its own `.claude-plugin/plugin.json`.
 
 **The rule everything obeys:** *meaning is agentic, numbers are computed.* RAG and the taxonomy graph explain what things mean; deterministic marts compute every figure. Every answer is cited or an honest "not modeled". Gaps beat fabrication — this is why so much of the code below refuses rather than guesses.
 
@@ -20,11 +21,12 @@ A **marketplace of three Claude Code plugins**, not an application. The product 
 ## Commands
 
 ```bash
-# The four suites (from the repo root)
+# The five suites (from the repo root)
 uv run --with-requirements bundles/brain/requirements.txt --with pytest python -m pytest bundles/brain/tests
 uv run --with pytest python -m pytest bundles/kb/tests
 uv run --with-requirements bundles/scribe/requirements.txt --with pytest python -m pytest bundles/scribe/tests
 uv run --with-requirements bundles/brain/requirements.txt --with pytest python -m pytest mcp/brain/test_semantic_mcp.py
+uv run --with pytest --with pyyaml python -m pytest bundles/taska/tests
 
 # One file, one test
 uv run --with-requirements bundles/brain/requirements.txt --with pytest python -m pytest bundles/brain/tests/test_parse_corpus_markdown.py -v
@@ -107,6 +109,12 @@ These are the things that take several files to see, and that tests pass while v
 **`scribe_marker.py` exists twice and the copies must stay byte-identical** (`corpus-taxonomy-extraction/` and `knowledge-pipeline/`, the same pattern as `chunking.py`), so registration and parsing can never disagree about what to skip; a drift test (`test_scribe_loop_guard_parse.py`) pins it. Change one, change both.
 
 **Scribe's publish journal lives under `_src/.pending/`, distinct from propose mode's `_pending/`.** An `auto`-publish records each finished step (`stage`, `archive_previous`, `place_new`, `write_src`, `write_state`) to `_src/.pending/journal.json` before starting the next, so a crash (process kill, a locked docx, `_write_state` raising) resumes exactly where it stopped on the next run instead of double-archiving the previous version or leaving neither the old nor the new stable file in place. The journal carries the version's whole `state.json` (`state_snapshot`), computed at `stage` time for `auto` and at propose time for `approve`, so a resume never reads a later `prepare`'s `work/<task>/fingerprint.json`. Before `archive_previous`, a resume (and `approve`) checks `config.docx_edited`: a person's edit saved into the live docx after the failed publish (or after the proposal) discards the journal / refuses the approval (`human_edit_during_publish` / `human_edit_since_proposal`) and leaves the file untouched, so the next `prepare` drafts from it. This is unrelated to `out/<task>/_pending/`, where `publish: propose` stages a version awaiting `/scribe:review` — same word, two different directories with different lifetimes; do not conflate them when reasoning about what a crash mid-publish can leave behind.
+
+**Taska's ledger is append-only and every change is evidence-gated** (`bundles/taska/skills/run/taska_lib/ledger.py`). `events.jsonl` only grows; the tree is `fold()`. Agent ops must quote one evidence item verbatim (`apply` checks against the item's text with and without backchannel turns) and may not touch a node created after that item's date. Status changes, `ac_met`, `link` and `waiting` apply only after a `supports` verdict (`needs_verdict`) — `context`, staleness, the workbench and the pack all read the fold, so an unverified claim is visible in history but changes nothing. Human events (`by: human`, from the workbench server only) pin the fields they set; an agent write to a pinned field is recorded with `applied: false`, never applied. `undo`, `accept` and `reject` reference event `mid`s, so a mid must stay stable: it is derived from the evidence id, the normalised quote and the op's arguments.
+
+**Taska prefers a meeting's own transcript over transcribing it.** For a recording without a sidecar transcript, `meetings_folder` first asks Microsoft Graph (via the user's msgraph CLI, when the project has an msgraph source) for the Teams transcript matched by title tokens and a start time within 90 minutes of the recording's container creation time (UTC); local whisper.cpp (`-mc 0`, repetition-loop guard, hallucination-phrase filter) is the fallback. Speech-recognition output has no speakers (`?`) and is stitched into one-minute paragraphs; never feed it to a path that expects named speakers.
+
+**Taska evidence is one item per meeting, deduplicated across sources** (`store.write_evidence` → `duplicate_of`: same date + same first 40 normalised words). A synced `.vtt` and the Teams copy of the same call must not both enter the ledger. A source's cursor advances past a file only once its evidence is written; unreadable or not-yet-transcribed recordings stay pending and are retried. Calendar evidence is timestamped when it became known (an event's end, or now for a future event), never its future start — `staleness` takes "today" from the newest processed item.
 
 ## Conventions
 
