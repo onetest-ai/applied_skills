@@ -149,7 +149,11 @@ def fold(store, upto=None, evs=None, ev=None):
                 n["ac"] += added
                 hist(n, e, ok or bool(added))  # ac_add applies even when a pinned title is refused — audit it
             elif op == "ac_met":
-                vis, k = _visible_ac(n), e["ac"] - 1
+                # by the criterion the claim was about (its text), wherever it sits now; the number is only a
+                # fallback for events recorded before ac_text existed
+                vis = _visible_ac(n)
+                k = next((j for j, a in enumerate(vis) if a["text"] == e["ac_text"]), -1) if e.get("ac_text") \
+                    else e["ac"] - 1
                 if ok and 0 <= k < len(vis) and not vis[k].get("human"):
                     vis[k].update(met=True, met_by=e["mid"])
                 hist(n, e, ok)
@@ -516,6 +520,11 @@ def _apply(store, cfg, evid, proposals):
             live = _visible_ac(N[node])
             if N[node]["kind"] != "story" or not isinstance(p.get("ac"), int) or not 0 < p["ac"] <= len(live):
                 rej.append({"i": i, "why": "ac_met needs a story node and the 1-based number of one of its criteria"})
+                continue
+            agent_saw = p.get("ac_text")
+            if agent_saw and norm(agent_saw) != norm(live[p["ac"] - 1]["text"]):
+                rej.append({"i": i, "why": f"criterion {p['ac']} of {node} is now “{live[p['ac'] - 1]['text']}”, not "
+                                          f"“{agent_saw}”: the criteria changed since you read context; re-read it"})
                 continue
             e |= {"ac": p["ac"], "ac_text": live[p["ac"] - 1]["text"]}  # what the agent saw, for the verifier
         elif op == "link":

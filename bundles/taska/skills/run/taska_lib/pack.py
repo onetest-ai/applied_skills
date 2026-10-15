@@ -26,7 +26,7 @@ def build(store, cfg, days=7):
     by_src = defaultdict(int)
     for c in in_window:
         by_src[ev[c]["kind"]] += 1
-    L_ = [f"# {cfg.name}: status pack, {fmt_date(start)} to {fmt_date(today)}",
+    L_ = [f"# {cfg.name}: status pack, {fmt_date(start, today)} to {fmt_date(today, today)}",
           f"_{', '.join(f'{v} {k}s' for k, v in by_src.items()) or 'no new evidence'} · "
           f"{sum(n['kind'] == 'story' for n in live)} stories · {sum(n['kind'] == 'task' for n in live)} tasks · "
           "status colour: **yours to set**_", ""]
@@ -35,10 +35,10 @@ def build(store, cfg, days=7):
     sig = []
     for n in live:
         for h in _applied_in(n, start, lambda h: h.get("effect") == "delayed"):
-            sig.append(f"- **Slipped:** {n['title']}: “{h['quote']}” {ST.cite(h)}")
+            sig.append(f"- **Slipped:** {n['title']}: “{h['quote']}” {ST.cite(h, today)}")
         for h in _applied_in(n, start, lambda h: h.get("effect") == "due" and h.get("due")):
             if len([d for d in n["due_history"] if d["due"]]) > 1:
-                sig.append(f"- **Date moved:** {n['title']} → {fmt_date(h['due'])} {ST.cite(h)}")
+                sig.append(f"- **Date moved:** {n['title']} → {fmt_date(h['due'], today)} {ST.cite(h, today)}")
     for n in live:
         if n["kind"] == "epic" and n.get("plan") == "Off-plan":
             grew = sum(1 for m in live if m["created"] and m["created"] >= start and _epic(N, m["id"]) == n["id"])
@@ -47,7 +47,7 @@ def build(store, cfg, days=7):
     for r in rows:
         if "slipping" in r["flags"] and not r["shadow"]:
             sig.append(f"- **Keeps slipping:** {r['node']['title']} "
-                       f"({' → '.join(fmt_date(d['due']) if d['due'] else '?' for d in r['node']['due_history'])})")
+                       f"({' → '.join(fmt_date(d['due'], today) if d['due'] else '?' for d in r['node']['due_history'])})")
     L_ += sig or ["_No schedule or scope signals in this window._"]
     L_.append("")
 
@@ -69,11 +69,11 @@ def build(store, cfg, days=7):
     L_.append("## Sessions")
     held = [(n, h) for n in live for h in _applied_in(n, start, lambda h: h.get("effect") == "held")]
     if held:
-        L_.append("Held: " + "; ".join(f"{n['title']} {ST.cite(h)}" for n, h in sorted(held, key=lambda x: x[1]["date"])))
+        L_.append("Held: " + "; ".join(f"{n['title']} {ST.cite(h, today)}" for n, h in sorted(held, key=lambda x: x[1]["date"])))
     nxt = [n for n in live if n.get("type") == "session" and n["state"] not in L.CLOSED and n["due"]
            and today <= n["due"] <= ahead]
     if nxt:
-        L_.append("Coming up: " + "; ".join(f"{n['title']} ({fmt_date(n['due'])})" for n in sorted(nxt, key=lambda n: n["due"])))
+        L_.append("Coming up: " + "; ".join(f"{n['title']} ({fmt_date(n['due'], today)})" for n in sorted(nxt, key=lambda n: n["due"])))
     if not held and not nxt:
         L_.append("_None recorded._")
     L_.append("")
@@ -86,7 +86,7 @@ def build(store, cfg, days=7):
     for n in owed[:12]:
         w = n.get("waiting_for")
         who = n.get("client_owner") or (w or {}).get("who") or "client"
-        L_.append(f"- {n['title']}: {who}" + (f" ({w['what']}, since {fmt_date(w['since'])})" if w else "")
+        L_.append(f"- {n['title']}: {who}" + (f" ({w['what']}, since {fmt_date(w['since'], today)})" if w else "")
                   + (f"; holds up {len(n['blocks'])}" if n["blocks"] else ""))
     if more > 0:
         L_.append(f"_+{more} more in the workbench._")
@@ -94,13 +94,13 @@ def build(store, cfg, days=7):
         L_.append("_Nothing recorded._")
     L_.append("")
 
-    dl = [d for d in deliverables(N, ev) if d["state"] not in ("merged", "deleted")]
+    dl = deliverables(N, ev)
     if dl:
         L_.append(f"## Deliverables ({len(dl)})")
         for d in dl:
             owner = f", {d['internal_owner']}" if d["internal_owner"] else ""
-            due = f", due {fmt_date(d['due'])}" if d["due"] else ""
-            landed = f" · file: {d['landed']['title']} (synced {fmt_date(d['landed']['date'])})" if d["landed"] else ""
+            due = f", due {fmt_date(d['due'], today)}" if d["due"] else ""
+            landed = f" · file: {d['landed']['title']} (synced {fmt_date(d['landed']['date'], today)})" if d["landed"] else ""
             L_.append(f"- {d['title']} — {d['ac_met']}/{d['ac_total']} AC, {d['state']}{owner}{due}{landed}")
         L_.append("")
 

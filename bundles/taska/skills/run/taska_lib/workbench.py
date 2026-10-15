@@ -4,7 +4,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import ledger as L, staleness as ST, store as S
-from .deliverables import deliverables
 
 PAGE = Path(__file__).resolve().parent.parent / "workbench.html"
 KEEP = ("id", "kind", "type", "title", "parent", "state", "derived", "internal_owner", "client_owner", "client_owed",
@@ -42,10 +41,9 @@ def data(store, cfg):
         sn["asks_gone"] = [i for i in prev_asks if i not in asks]
         snaps[c], prev, prev_asks = sn, cur, asks
     return {"project": cfg.name, "history": hist, "notes": notes, "snaps": snaps, "delta": True,
-            "deliverables": deliverables(L.fold(store, evs=evs, ev=ev)[0], ev),
             "calls": [{"id": c, "date": ev[c]["date"], "at": ev[c]["at"], "evidence_kind": ev[c]["kind"],
                        "kind": ev[c].get("meeting_kind") or ev[c]["kind"], "title": ev[c]["title"],
-                       "source": ev[c]["source"]} for c in order]}
+                       "source": ev[c]["source"], "date_source": ev[c].get("date_source")} for c in order]}
 
 
 def _local_origin(headers, port):
