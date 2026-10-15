@@ -478,6 +478,9 @@ def _apply(store, cfg, evid, proposals):
             if node not in N:
                 rej.append({"i": i, "why": f"note needs a known node, got {node!r}"})
                 continue
+            if not (p.get("note") or "").strip():
+                rej.append({"i": i, "why": "note needs its text in `note`"})
+                continue
             out.append(base(p, q, "note", node) | {"type": "note", "node": node, "text": p.get("note") or ""})
             continue
         if node not in N:

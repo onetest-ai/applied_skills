@@ -99,3 +99,17 @@ def test_two_revisions_of_one_node_from_one_quote_both_apply(project):
     N, *_ = L.fold(st)
     assert N["S001"]["title"] == "Renamed"
     assert any(a["text"] == "extra criterion" for a in N["S001"]["ac"]), "second revise silently dropped (mid collision)"
+
+
+def test_note_without_note_text_is_rejected_not_stored_empty(project):
+    """A `note` whose text sits under the wrong key ("text") must be rejected so the agent fixes it, not
+    stored as an empty note that loses the content silently."""
+    from taska_lib import config as C, ledger as L, store as S
+    run_cli(project, "setup"); run_cli(project, "sync")
+    cfg = C.load(project); st = cfg.store
+    d1, _ = [x["id"] for x in run_cli(project, "pending")["items"]]
+    L.apply(st, cfg, d1, [{"op": "create", "kind": "story", "parent": "E01", "title": "Stock reporting",
+                           "ac": ["a"], "quote": Q_WAIT}])
+    r = L.apply(st, cfg, d1, [{"op": "note", "node": "S001", "text": "LCP up 10%", "quote": Q_WAIT}])
+    assert r["rejected"] and "note" in r["rejected"][0]["why"], r
+    assert not [e for e in S.events(st) if e.get("type") == "note"]
