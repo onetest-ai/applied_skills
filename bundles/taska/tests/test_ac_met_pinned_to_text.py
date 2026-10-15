@@ -1,14 +1,6 @@
-"""Hardening for finding B4: an `ac_met` claim must be pinned to the *criterion the agent meant*,
-not to a bare 1-based number that is re-counted later. The number is chosen against the visible
-list at proposal time; if a criterion is dropped afterwards, the number points elsewhere. Two
-consequences on the as-submitted code:
-
-  1. verify_prep briefs the verifier about the *shifted* criterion (wrong claim) — so a correct
-     report can be judged against the wrong criterion.
-  2. apply accepts an out-of-range ac number silently (it only checks the value is an int).
-
-Both are reproduced below and fail as-submitted. Invented data (Harbor Logistics); public repo.
-"""
+"""An `ac_met` claim is pinned to the criterion the agent meant, not to a bare number that is re-counted
+later: the verifier is briefed on that criterion's text even after a later drop, and a number outside
+the visible criteria is rejected. All names are invented."""
 from taska_lib import config as C, ledger as L
 from conftest import run_cli
 

@@ -1,19 +1,8 @@
-"""End-to-end reproduction for finding B3. All data below is invented (same fictional world as
-conftest.py); it must never contain client-identifying content — this is a public repo.
+"""A `mention` changes nothing. A passing remark that cites a date ("that was targeted for Christmas Eve")
+must not set the story's due date: a mention is not verified, so letting it write `due_history` would let
+an unverified remark drive overdue/slipping and the asks.
 
-Scenario: a story exists, and later someone merely *mentions* a closed pull request in passing,
-citing a date it had been targeted for. The extraction agent is told (EXTRACT.md) to use
-effect="mention" for a closed-unmerged PR — "referred to, no change".
-
-The taska invariant (CLAUDE.md) says an unverified claim "changes nothing". But a `mention` is
-not in the verifier's STATUS set, so it skips verification AND `_apply_status` still appends the
-resolved date to `due_history`. Result: a passing remark sets a due date on the story, with no
-verdict — and that date drives overdue / slipping / the asks.
-
-This test asserts the CORRECT behavior (a mention leaves the due unset). It FAILS on the
-as-submitted code, which is the reproduction. Throwaway repro — convert to a regression test
-alongside the fix, or delete.
-"""
+End to end through the CLI. All names are invented (the fictional world in conftest.py)."""
 import json
 import textwrap
 
@@ -68,8 +57,7 @@ def test_a_mention_of_a_date_must_not_set_the_due_date(tmp_path):
     (tmp_path / "proposals.json").write_text(json.dumps(proposals))
     applied = run_cli(tmp_path, "apply", "--evidence", evid, "--proposals", str(tmp_path / "proposals.json"))
 
-    # Guard: both proposals were accepted (nothing silently rejected) — so the test exercises the
-    # real path, and a failure below is the finding, not a quote mismatch.
+    # Guard: both proposals were accepted (nothing silently rejected), so the test exercises the real path.
     assert applied["rejected"] == [], applied["rejected"]
     assert applied["by_op"].get("create_story") == 1 and applied["by_op"].get("status") == 1
 
@@ -77,6 +65,5 @@ def test_a_mention_of_a_date_must_not_set_the_due_date(tmp_path):
     ctx = run_cli(tmp_path, "context")
     story = next(s for e in ctx["epics"] for s in e.get("stories", []) if s["id"] == "S001")
 
-    # CORRECT: a mention changes nothing, so the story has no due date.
-    # AS-SUBMITTED: the mention set due = 2026-12-24 with an empty verdict list (finding B3).
+    # A mention changes nothing, so the story has no due date.
     assert story.get("due") is None, f"a mention moved the due date to {story.get('due')!r}"

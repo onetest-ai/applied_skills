@@ -1,17 +1,8 @@
-"""Reproduction for finding D-1 (real-data: a recording exported/copied long after the meeting).
-
-A manager drops a meeting recording into the meetings folder weeks after the call. Many exported
-recordings carry NO embedded `creation_time` in their container, so `meeting_time()` must fall back
-to the date in the file name — which these exports always carry ("25_Aug_<title>"). As submitted,
-the file-name date parser only accepts whitespace between the day and the month, so an underscore-
-or hyphen-separated name ("25_Aug", "06-Aug") is skipped and the meeting is dated by the file's
-mtime instead — the day it was copied in. Every meeting then collapses onto the copy date, and that
-wrong date flows into the evidence id, `date`, and everything staleness/prep compute from it.
-
-This asserts the CORRECT behaviour (the meeting is dated from the file name). It FAILS on the
-as-submitted code, which is the reproduction. All names are invented (the Harbor Logistics world
-from conftest.py) and must never be client-identifying — this is a public repo.
-"""
+"""A recording copied in long after the call is dated from its file name, not the copy day. Many exported
+recordings carry no embedded `creation_time`, so `meeting_time()` falls back to the date in the name —
+including underscore- and hyphen-separated forms ("25_Aug", "06-Aug"). Otherwise every meeting
+collapses onto the copy date, and that wrong date flows into the evidence id and everything staleness
+and prep compute. All names are invented (the fictional world in conftest.py)."""
 import datetime as dt
 import os
 

@@ -1,6 +1,6 @@
 """Workbench timeline: one old meeting must not stretch the strip over years of empty weeks, and the year must be
 visible where the reader looks. The strip's week plan is a pure JS function (between PURE markers in
-workbench.html), run here with node. Invented dates; public repo."""
+workbench.html), run here with node. Invented dates."""
 import json
 import re
 import shutil

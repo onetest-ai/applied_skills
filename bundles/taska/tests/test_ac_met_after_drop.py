@@ -1,12 +1,8 @@
-"""Reproduction for finding B4 (from the PR #47 review): after a human drops an acceptance
-criterion, an agent `ac_met` on a *visible* criterion number marks the WRONG criterion. The fold
-indexes the unfiltered `n["ac"]` during the event loop (dropped criteria are removed only after the
-loop), while the agent and the verifier both use the visible numbering — so the number is off by
-the count of earlier dropped criteria, and a story can auto-close on evidence about something else.
+"""After the manager drops an acceptance criterion, an agent's `ac_met` on a visible criterion number
+marks that visible criterion — never the one at the same position in the unfiltered list, which would
+let a story close on evidence about something else.
 
-Driven through a real-shaped story (three criteria, one dropped). All names invented (the Harbor
-Logistics world from conftest.py); never client-identifying — public repo.
-"""
+A story with three criteria, one dropped. All names are invented (the fictional world in conftest.py)."""
 from taska_lib import config as C, ledger as L
 from conftest import run_cli
 

@@ -1,7 +1,7 @@
 """File/deliverable evidence must record how its date was found, the way meetings do. A file carries
 no embedded date, so taska dates it by the file's mtime — the sync/copy day. That is a guess (the
 artifact's real date may be older), so it must be marked `date_source="file_mtime"`, not silently
-trusted. Surfaced on a real document-deliverables corpus (PDFs dated by copy-day). Invented data; public repo.
+trusted: a synced library otherwise dates every document by the day it was copied. Invented data.
 """
 import json
 import textwrap

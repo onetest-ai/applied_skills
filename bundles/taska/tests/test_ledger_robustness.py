@@ -1,4 +1,6 @@
-"""Regression tests from the PR #47 review: each one failed before its fix. Every name below is invented."""
+"""Ledger robustness: merge cycles, criterion numbering after a drop, idempotent re-apply, human edits
+that survive later passes, atomic writes, a safe export and a workbench server that refuses foreign writes.
+All names are invented."""
 import json
 import threading
 import time
