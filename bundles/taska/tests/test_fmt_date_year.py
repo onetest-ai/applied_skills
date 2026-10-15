@@ -1,5 +1,5 @@
 """A date from another year must say so: "nothing since Oct 6 (1105 days)" hides that the last word is from three
-years earlier. The year appears only when it differs from the project's today. Invented data; public repo."""
+years earlier. The year appears only when it differs from the project's today. Invented data."""
 from taska_lib.text import fmt_date
 from taska_lib import staleness as ST
 

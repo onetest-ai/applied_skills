@@ -1,12 +1,7 @@
-"""+flag follow-up to finding D-1: when taska can only *guess* a meeting's date from the file's
-mtime — no embedded creation_time, no date in the file name, no Teams .docx header — the evidence
-item must say so (date_source="file_mtime"), so staleness/prep can treat that date as uncertain
-instead of trusting it silently. A date read from the file name is marked "filename".
-
-These assert the evidence item carries that provenance; they FAIL on code that doesn't stamp it.
-All names are invented (the Harbor Logistics world from conftest.py) — never client-identifying,
-this is a public repo.
-"""
+"""Every meeting says where its date came from. When the only source is the file's modification time (no
+embedded creation_time, no date in the name, no Teams .docx header) the item carries
+`date_source="file_mtime"`, so that date can be treated as uncertain; a date read from the file name is
+`"filename"`. All names are invented (the fictional world in conftest.py)."""
 import json
 import textwrap
 

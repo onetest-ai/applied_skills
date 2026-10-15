@@ -1,4 +1,7 @@
-"""Review-3 fixes (spec: review3-fixes-design). Invented data; public repo."""
+"""Dates, criteria and evidence: a month must be a whole word (no date from "Decisions"); a file counts as
+landed only for an applied agent change; a criterion is met by its text, not its position; the workbench
+knows where each call's date came from; the verifier sees a quote that sits late in a document.
+All names are invented."""
 import pytest
 
 from taska_lib.text import month_day, resolve_due
@@ -92,7 +95,7 @@ def test_ac_met_with_text_the_agent_saw_is_rejected_when_numbering_moved(project
 
 
 def test_workbench_calls_carry_their_date_source(project):
-    """F7: the page can only flag an uncertain date (dated by the file copy) if each call says where its date came
+    """The page can only flag an uncertain date (dated by the file copy) if each call says where its date came
     from; the fixture's files are named with their date, so they read 'filename'."""
     from taska_lib import workbench as W
     run_cli(project, "setup"); run_cli(project, "sync")

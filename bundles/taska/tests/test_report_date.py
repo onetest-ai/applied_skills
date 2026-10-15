@@ -1,5 +1,5 @@
 """Status-report ingestion — the document-date layer: a report lands on its own (header) date, so it
-slots into the right week instead of the copy day. Invented data; public repo."""
+slots into the right week instead of the copy day. Invented data."""
 import json
 import textwrap
 

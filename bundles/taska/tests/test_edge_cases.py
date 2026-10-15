@@ -1,5 +1,6 @@
-"""Second-pass review: crash / brick / data-loss / correctness issues that the first review and the
-consolidation both missed. All invented data (Harbor Logistics); public repo."""
+"""Inputs that used to crash or silently lose data: a leap-day due date, an empty working week, a 7-digit
+timestamp fraction, a scheduled run's PATH, a plan without activities, a stuck subprocess, revisions under
+a pinned title, and a note without text. All names are invented."""
 import textwrap
 
 import pytest

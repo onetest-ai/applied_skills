@@ -3,7 +3,7 @@ tree into one row per story (the shippable unit), carrying its status/owner/due/
 whether a *file*-kind evidence item has landed for it (an actual artifact appeared in the document
 source). No new stored concept — everything is derived from the node and the evidence already there.
 
-All names invented (Harbor Logistics); public repo.
+All names invented (Harbor Logistics).
 """
 from taska_lib.deliverables import deliverables
 
