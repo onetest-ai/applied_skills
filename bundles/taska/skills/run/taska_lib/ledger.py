@@ -10,6 +10,7 @@
 import datetime as dt
 import hashlib
 import json
+import re
 from collections import defaultdict
 
 from . import store as S
@@ -565,6 +566,18 @@ def mark_processed(store, evid, note=""):
 
 
 # ---------- verify ----------
+def _window(text, quote, size=1200):
+    """The part of a document the verifier reads: `size` characters around the quote (a file's quote can sit past
+    the first `size`, where it was invisible and the claim could only ever be judged weak); the start when the quote
+    cannot be located. Quotes are matched normalised, so spacing, case and punctuation may differ in the raw text."""
+    words = re.findall(r"\w+", quote)
+    m = re.search(r"\W+".join(map(re.escape, words)), text, re.I) if words else None
+    if not m:
+        return text[:size]
+    start = max(0, min(m.start() - (size - (m.end() - m.start())) // 2, len(text) - size))
+    return text[start:start + size]
+
+
 def verify_prep(store, weak=False):
     ev = S.evidence(store)
     evs = S.events(store)
@@ -581,7 +594,7 @@ def verify_prep(store, weak=False):
         turns = item.get("turns") or []
         k = next((i for i, t in enumerate(turns) if e["quote_norm"][:40] in norm(t["text"])), None)
         ctx = [f"[{t['ts']}] {t['speaker']}: {t['text']}" for t in turns[max(0, k - 2):k + 3] if not t.get("bc")] \
-            if k is not None else [(item.get("text") or "")[:1200]]
+            if k is not None else [_window(item.get("text") or "", e["quote"])]
         n = N.get(e["node"], {})
         if e["op"] == "ac_met":
             claim = f"acceptance criterion {e['ac']} met: " + (

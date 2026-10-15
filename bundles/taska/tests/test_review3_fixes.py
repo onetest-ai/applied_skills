@@ -101,3 +101,36 @@ def test_workbench_calls_carry_their_date_source(project):
         L.mark_processed(st, d)
     calls = W.data(st, cfg)["calls"]
     assert calls and all(c.get("date_source") == "filename" for c in calls), calls
+
+
+def test_verifier_sees_a_quote_that_sits_late_in_a_document(tmp_path):
+    """A file's quote past the first 1200 characters was cut from the verifier's context, so the claim could only
+    ever be judged 'weak'. The window must sit around the quote."""
+    import textwrap
+    docs = tmp_path / "docs"; docs.mkdir()
+    filler = "\n".join(f"- routine line {i} about unrelated monitoring of the warehouse dashboards" for i in range(17))
+    late = "In Progress: migrated the stock feed to the new warehouse ledger endpoint"
+    (docs / "Weekly status.md").write_text(f"2026-03-04 Weekly status\n\n{filler}\n{late}\n")
+    (tmp_path / "taska.toml").write_text(textwrap.dedent(f"""
+        [project]
+        name = "Harbor Logistics"
+        [plan]
+        epics = ["Onboarding"]
+        [[people]]
+        name = "Nora Quill"
+        side = "internal"
+        [sources.docs]
+        adapter = "files_folder"
+        path = "{docs}"
+        include = ["*.md"]
+    """))
+    run_cli(tmp_path, "setup"); run_cli(tmp_path, "sync")
+    cfg = C.load(tmp_path); st = cfg.store
+    (d,) = [x["id"] for x in run_cli(tmp_path, "pending")["items"]]
+    r = L.apply(st, cfg, d, [{"op": "create", "ref": "s1", "kind": "story", "parent": "E01", "title": "Stock feed migration",
+                          "ac": ["Feed runs on the new endpoint"], "quote": late[13:]},
+                         {"op": "status", "node": "s1", "effect": "progress", "quote": late[13:]}])
+    assert not r["rejected"], r
+    L.mark_processed(st, d)
+    pk = [p for p in L.verify_prep(st) if p["claimed"] == "progress"]
+    assert pk and late[13:] in " ".join(pk[0]["context"]), pk
