@@ -38,8 +38,11 @@ def probe(path):
     """Duration (s), whether it has audio/video, and the recording's creation time when the container has one."""
     if not shutil.which("ffprobe"):
         raise MediaError("ffprobe not found on PATH")
-    out = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", path],
-                         capture_output=True, text=True)
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", path],
+                             capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        raise MediaError("ffprobe timed out (corrupt or unreadable recording)")
     if out.returncode:
         raise MediaError(out.stderr.strip()[:300])
     j = json.loads(out.stdout or "{}")
@@ -69,15 +72,21 @@ def transcribe(path, out_vtt, model, language="auto"):
         raise MediaError(f"whisper model not found: {model!r}; set [media].whisper_model in taska.toml")
     with tempfile.TemporaryDirectory() as td:
         wav = os.path.join(td, "a.wav")
-        r = subprocess.run([t["ffmpeg"], "-y", "-i", path, "-vn", "-ac", "1", "-ar", "16000", wav],
-                           capture_output=True, text=True)
+        try:
+            r = subprocess.run([t["ffmpeg"], "-y", "-i", path, "-vn", "-ac", "1", "-ar", "16000", wav],
+                               capture_output=True, text=True, timeout=1800)
+        except subprocess.TimeoutExpired:
+            raise MediaError("ffmpeg timed out extracting audio")
         if r.returncode:
             raise MediaError("ffmpeg failed: " + r.stderr.strip()[-300:])
         base = os.path.join(td, "out")
         # -mc 0: no text context carried between segments; without it one hallucinated line ("Let's preview.")
         # can repeat for the rest of a long recording
-        r = subprocess.run([t["whisper"], "-m", os.path.expanduser(model), "-f", wav, "-l", language or "auto",
-                            "-mc", "0", "-ovtt", "-of", base, "-np"], capture_output=True, text=True)
+        try:
+            r = subprocess.run([t["whisper"], "-m", os.path.expanduser(model), "-f", wav, "-l", language or "auto",
+                                "-mc", "0", "-ovtt", "-of", base, "-np"], capture_output=True, text=True, timeout=3600)
+        except subprocess.TimeoutExpired:
+            raise MediaError("whisper timed out (stuck decode loop or recording too long)")
         if r.returncode or not os.path.exists(base + ".vtt"):
             raise MediaError("whisper failed: " + (r.stderr or r.stdout).strip()[-300:])
         os.makedirs(os.path.dirname(out_vtt) or ".", exist_ok=True)

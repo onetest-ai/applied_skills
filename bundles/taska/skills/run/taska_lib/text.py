@@ -59,11 +59,11 @@ def resolve_due(text, ref_date, working_days=(1, 2, 3, 4, 5)):
     if md:
         try:
             x = dt.date(d.year, md[0], md[1])
-        except ValueError:
+            if x < d - dt.timedelta(days=180):  # "Jan 5" said in December
+                x = x.replace(year=x.year + 1)
+            return x.isoformat()
+        except ValueError:                      # e.g. "Feb 29" rolled into a non-leap year
             return None
-        if x < d - dt.timedelta(days=180):  # "Jan 5" said in December
-            x = x.replace(year=x.year + 1)
-        return x.isoformat()
     if "today" in t or "eod" in t or "end of day" in t:
         return d.isoformat()
     if "tomorrow" in t:
