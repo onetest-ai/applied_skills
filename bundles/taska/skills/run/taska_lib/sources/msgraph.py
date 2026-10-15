@@ -31,7 +31,10 @@ def run(scfg, *args, timeout=120):
         raise GraphError("node is not on PATH (the msgraph skill needs Node.js >= 18)")
     if not os.path.isfile(cli):
         raise GraphError(f"msgraph CLI not found at {cli}; install the msgraph skill or set [sources.<key>].cli")
-    r = subprocess.run(["node", cli, *args], capture_output=True, text=True, timeout=timeout)
+    try:
+        r = subprocess.run(["node", cli, *args], capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        raise GraphError(f"msgraph timed out after {timeout}s: {' '.join(args[:2])}") from e
     out = (r.stdout or "") + (r.stderr or "")
     if "NOT_LOGGED_IN" in out or "TOKEN_EXPIRED" in out:
         raise GraphError(f"msgraph is not signed in. Run: ! node {cli} login")

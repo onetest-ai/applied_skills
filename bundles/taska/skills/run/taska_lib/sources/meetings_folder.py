@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 
 from .. import media, store as S, transcripts as TR
-from ..text import MONTHS
+from ..text import month_day
 
 DEFAULT_INCLUDE = ["*.vtt", "*.srt", "*.docx", "*.txt"] + [f"*{e}" for e in media.MEDIA_EXT]
 
@@ -36,41 +36,45 @@ def _tz(name):
         return None
 
 
-def meeting_time(rel, abspath, docx_header=None, creation_time=None, tz=None):
-    """Best clock for when the meeting happened, in the project's timezone: the recording's creation time (UTC in
-    the container, the most reliable clock), a Teams .docx header, a date in the file name, else the file mtime."""
+def meeting_time_and_source(rel, abspath, docx_header=None, creation_time=None, tz=None):
+    """When the meeting happened (ISO, project timezone) AND how that was derived, best clock first:
+    the recording's creation time ("creation_time", UTC in the container, the most reliable), a Teams
+    .docx header ("teams_docx"), a date in the file name ("filename"), else the file mtime
+    ("file_mtime") — a guess (the day the file was seen), which the caller should treat as uncertain."""
     z = _tz(tz) if tz else None
     mtime = dt.datetime.fromtimestamp(os.path.getmtime(abspath), z).replace(tzinfo=None)
     if creation_time:
         try:
-            return dt.datetime.fromisoformat(creation_time.replace("Z", "+00:00")).astimezone(z).replace(tzinfo=None).isoformat(timespec="seconds")
+            return dt.datetime.fromisoformat(creation_time.replace("Z", "+00:00")).astimezone(z).replace(tzinfo=None).isoformat(timespec="seconds"), "creation_time"
         except ValueError:
             pass
     if docx_header:
         m = re.search(r"([A-Z][a-z]+ \d{1,2}, \d{4}),? (\d{1,2}:\d{2}\s*[AP]M)", docx_header)
         if m:
             try:
-                return dt.datetime.strptime(f"{m.group(1)} {m.group(2).replace(' ', '')}", "%B %d, %Y %I:%M%p").isoformat()
+                return dt.datetime.strptime(f"{m.group(1)} {m.group(2).replace(' ', '')}", "%B %d, %Y %I:%M%p").isoformat(), "teams_docx"
             except ValueError:
                 pass
     name = Path(rel).name
     m = re.search(r"(20\d\d)[-_]?(\d\d)[-_]?(\d\d)", name)
     if m:
-        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}T{mtime.strftime('%H:%M:%S')}"
-    m = re.search(r"\b(" + "|".join(MONTHS) + r")[a-z]*\.?\s*(\d{1,2})\b", name, re.I) or \
-        re.search(r"\b(\d{1,2})\s+(" + "|".join(MONTHS) + r")[a-z]*\b", name, re.I)
-    if m:
-        a, b = m.groups()
-        mon, day = (a, b) if a[0].isalpha() else (b, a)
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}T{mtime.strftime('%H:%M:%S')}", "filename"
+    md = month_day(name)
+    if md:
         y = mtime.year
         try:
-            d = dt.date(y, MONTHS.index(mon[:3].lower()) + 1, int(day))
+            d = dt.date(y, md[0], md[1])
             if d > mtime.date() + dt.timedelta(days=30):
                 d = d.replace(year=y - 1)
-            return f"{d.isoformat()}T{mtime.strftime('%H:%M:%S') if d == mtime.date() else '12:00:00'}"
+            return f"{d.isoformat()}T{mtime.strftime('%H:%M:%S') if d == mtime.date() else '12:00:00'}", "filename"
         except ValueError:
             pass
-    return mtime.isoformat(timespec="seconds")
+    return mtime.isoformat(timespec="seconds"), "file_mtime"
+
+
+def meeting_time(rel, abspath, docx_header=None, creation_time=None, tz=None):
+    """When the meeting happened (ISO, project timezone). See meeting_time_and_source for provenance."""
+    return meeting_time_and_source(rel, abspath, docx_header, creation_time, tz)[0]
 
 
 def _docx_header(path):
@@ -153,7 +157,8 @@ def sync(cfg, key, scfg, store, cursor):
                 info = media.probe(mpath)
             except media.MediaError as e:
                 info = {"error": str(e)}
-        at = meeting_time(rel, tpath or mpath, _docx_header(tpath) if tpath and tpath.endswith(".docx") else None,
+        at, date_source = meeting_time_and_source(rel, tpath or mpath,
+                          _docx_header(tpath) if tpath and tpath.endswith(".docx") else None,
                           info.get("creation_time"), cfg.timezone)
         if since and at[:10] < since:
             cur[rel] = sig
@@ -205,7 +210,7 @@ def sync(cfg, key, scfg, store, cursor):
             continue
         title = Path(m or t).stem
         item = {"id": eid, "source": key, "kind": "meeting", "meeting_kind": meeting_kind(title, scfg), "at": at,
-                "title": title, "turns": turns,
+                "date_source": date_source, "title": title, "turns": turns,
                 "meta": {"transcript": how, "file": rel, "recording": m, "duration_min":
                          round(info["duration"] / 60) if info.get("duration") else None,
                          "speakers": sorted({cfg.canonical(x["speaker"]) for x in turns if x["speaker"] != "?"})}}

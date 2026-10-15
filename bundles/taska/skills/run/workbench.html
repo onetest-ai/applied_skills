@@ -234,7 +234,7 @@ h3 .count{color:var(--ink-3);font-weight:400}
       <button class="iconbtn" id="play" title="Play through calls"><i class="ph ph-play"></i></button>
       <button class="iconbtn" id="next" title="Next call (→)"><i class="ph ph-caret-right"></i></button>
       <div class="seg" id="views">
-        <button data-v="tree" class="on">Tree</button><button data-v="board">Board</button>
+        <button data-v="tree" class="on">Tree</button><button data-v="board">Board</button><button data-v="deliverables">Deliverables</button>
       </div>
       <button class="iconbtn" id="theme" title="Theme"><i class="ph ph-circle-half"></i></button>
     </div>
@@ -336,7 +336,7 @@ function render(){
   if (!D.calls.length){ $("#left").innerHTML = `<div class="blank"><b>No calls extracted yet</b>Run the extraction for the first call, then reload.</div>`; return; }
   store.set("taska.ci", ci);
   renderTicks(); renderSummary();
-  view === "tree" ? renderTree() : renderBoard();
+  view === "tree" ? renderTree() : view === "board" ? renderBoard() : renderDeliverables();
   renderSide();
 }
 
@@ -351,16 +351,18 @@ function renderTicks(){
   let d = addDays(first, -((dow(first)+6)%7));          // Monday of the first week
   const end = addDays(last, (7-dow(last))%7);            // Sunday of the last week
   const weeks = [];
-  let prevMonth = null;
+  let prevMonth = null, prevYear = null;
   while (d <= end){
     const days = [];
     for (let k = 0; k < 7; k++, d = addDays(d,1)){
       if (k >= 5 && !byDay[d]) continue;                 // weekends only when something happened
       days.push(d);
     }
-    const m = new Date(days[0]+"T12:00:00Z").toLocaleDateString("en-US",{month:"short",timeZone:"UTC"});
-    weeks.push({days, label: m !== prevMonth ? m : null});
-    prevMonth = m;
+    const dt0 = new Date(days[0]+"T12:00:00Z");
+    const m = dt0.toLocaleDateString("en-US",{month:"short",timeZone:"UTC"}), y = dt0.getUTCFullYear();
+    const newYear = y !== prevYear;                      // show the year on the first week and whenever it changes
+    weeks.push({days, label: newYear ? `${m} ${y}` : (m !== prevMonth ? m : null)});
+    prevMonth = m; prevYear = y;
   }
   const WD = ["S","M","T","W","T","F","S"];
   const slot = i => `<button class="slot k-${D.calls[i].kind} ${D.calls[i].kind==="client"?"client":""} ${i<ci?"past":""} ${i===ci?"on":""}" data-i="${i}" title="${esc(KINDNAME[D.calls[i].kind]+": "+D.calls[i].title)}"></button>`;
@@ -494,6 +496,24 @@ function renderBoard(){
     const xs = nodes.filter(n => (k==="done" ? ["done","cancelled"].includes(n.state) : n.state===k));
     return `<div><h3 style="margin-top:0">${l} <span class="count">${xs.length}</span></h3><div class="rows">${xs.map(n => `<div class="row ${n.kind==="task"?"task":"story"} ${changeKind(n.id)?"changed":""} ${sel===n.id?"sel":""} ${n.state}" data-id="${n.id}" style="grid-template-columns:44px minmax(0,1fr);padding-left:12px"><span class="id">${n.id}</span><span class="title" style="flex-wrap:wrap"><span class="txt" style="white-space:normal">${esc(n.title)}</span>${tags(n)}</span></div>`).join("") || `<div class="blank" style="padding:14px">Nothing here</div>`}</div></div>`;
   }).join("")}</div>`;
+}
+
+function renderDeliverables(){
+  const q = (F.q||"").toLowerCase();
+  const dl = (D.deliverables||[]).filter(d => !q || (d.title+" "+(d.internal_owner||"")+" "+d.id).toLowerCase().includes(q));
+  if (!dl.length){ $("#left").innerHTML = `<div class="blank"><b>No deliverables</b>Stories show up here as deliverables, with the files that landed for them.</div>`; return; }
+  const landedN = dl.filter(d => d.landed).length;
+  const head = `<div class="muted" style="margin:2px 0 10px;font-size:13px">${dl.length} deliverables · ${landedN} with a file landed</div>`;
+  const rows = dl.map(d => {
+    const landed = d.landed ? `<span class="tag" title="file seen in the document source; date is when it synced, not the document's own date">📄 ${esc(d.landed.title)} · synced ${fmt(d.landed.date)}</span>` : `<span class="tag muted">awaiting file</span>`;
+    const owner = d.internal_owner ? `<span class="mono muted">${esc(d.internal_owner)}</span>` : "";
+    const due = d.due ? `<span class="mono muted">due ${fmt(d.due)}</span>` : "";
+    return `<div class="row story ${sel===d.id?"sel":""} ${d.state}" data-id="${d.id}" style="grid-template-columns:56px minmax(0,1fr);padding:10px 12px;align-items:start">
+      <span class="id">${d.id}</span>
+      <span class="title" style="flex-wrap:wrap;gap:6px"><span class="txt" style="white-space:normal;font-weight:600">${esc(d.title)}</span>
+        <span class="tag">${d.ac_met}/${d.ac_total} AC</span><span class="tag">${esc(d.state)}</span>${landed} ${owner} ${due}</span></div>`;
+  }).join("");
+  $("#left").innerHTML = head + `<div class="rows">${rows}</div>`;
 }
 
 /* ---------- side ---------- */

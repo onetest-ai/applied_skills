@@ -21,6 +21,23 @@ def _next_working(d, working_days):
     return d
 
 
+def month_day(s):
+    """A written-month date in a string -> (month, day), else None. Handles "March 14", "25 Aug",
+    "14th of October" and the "_"/"-" separators export file names use ("25_Aug", "06-Aug");
+    case-insensitive. No year is inferred here: the caller resolves it against its own clock."""
+    s = re.sub(r"[-_]+", " ", s)
+    m = re.search(r"\b(" + "|".join(MONTHS) + r")[a-z]*\.?\s*(\d{1,2})(?:st|nd|rd|th)?\b", s, re.I) or \
+        re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(" + "|".join(MONTHS) + r")[a-z]*\b", s, re.I)
+    if not m:
+        return None
+    a, b = m.groups()
+    mon, day = (a, b) if a[0].isalpha() else (b, a)
+    try:
+        return MONTHS.index(mon[:3].lower()) + 1, int(day)
+    except (ValueError, KeyError):
+        return None
+
+
 def resolve_due(text, ref_date, working_days=(1, 2, 3, 4, 5)):
     """Spoken date words -> ISO date, resolved against the date they were said. None when not a date.
 
@@ -34,14 +51,14 @@ def resolve_due(text, ref_date, working_days=(1, 2, 3, 4, 5)):
     d = dt.date.fromisoformat(ref_date)
     m = re.search(r"(\d{4}-\d{2}-\d{2})", t)
     if m:
-        return m.group(1)
-    m = re.search(r"\b(" + "|".join(MONTHS) + r")[a-z]*\.?\s+(\d{1,2})\b", t) or \
-        re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(" + "|".join(MONTHS) + r")", t)
-    if m:
-        g = m.groups()
-        mon, day = (g[0], g[1]) if g[0].isalpha() else (g[1], g[0])
         try:
-            x = dt.date(d.year, MONTHS.index(mon[:3]) + 1, int(day))
+            return dt.date.fromisoformat(m.group(1)).isoformat()
+        except ValueError:  # "2026-02-30": stored, it would make every later fmt_date/asks pass raise
+            return None
+    md = month_day(t)
+    if md:
+        try:
+            x = dt.date(d.year, md[0], md[1])
         except ValueError:
             return None
         if x < d - dt.timedelta(days=180):  # "Jan 5" said in December

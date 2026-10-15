@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import ledger as L, staleness as ST, store as S
+from .deliverables import deliverables
 
 PAGE = Path(__file__).resolve().parent.parent / "workbench.html"
 KEEP = ("id", "kind", "type", "title", "parent", "state", "derived", "internal_owner", "client_owner", "client_owed",
@@ -41,9 +42,20 @@ def data(store, cfg):
         sn["asks_gone"] = [i for i in prev_asks if i not in asks]
         snaps[c], prev, prev_asks = sn, cur, asks
     return {"project": cfg.name, "history": hist, "notes": notes, "snaps": snaps, "delta": True,
+            "deliverables": deliverables(L.fold(store, evs=evs, ev=ev)[0], ev),
             "calls": [{"id": c, "date": ev[c]["date"], "at": ev[c]["at"], "evidence_kind": ev[c]["kind"],
                        "kind": ev[c].get("meeting_kind") or ev[c]["kind"], "title": ev[c]["title"],
                        "source": ev[c]["source"]} for c in order]}
+
+
+def _local_origin(headers, port):
+    """Only the page itself may talk to this server. A web page in the same browser can POST to 127.0.0.1 (a
+    "simple" text/plain request needs no preflight) and DNS rebinding can read it back, so check both headers."""
+    hosts = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+    if headers.get("Host", "") not in hosts:
+        return False
+    origin = headers.get("Origin")
+    return origin is None or origin in {f"http://{h}" for h in hosts}
 
 
 def serve(store, cfg, port):
@@ -60,6 +72,8 @@ def serve(store, cfg, port):
             self.wfile.write(b)
 
         def do_GET(self):
+            if not _local_origin(self.headers, port):
+                return self._send(403, {"error": "forbidden host"})
             if self.path in ("/", "/index.html"):
                 return self._send(200, PAGE.read_bytes(), "text/html")
             if self.path == "/api/data":
@@ -69,11 +83,15 @@ def serve(store, cfg, port):
         def do_POST(self):
             if self.path != "/api/event":
                 return self._send(404, {"error": "not found"})
+            if not _local_origin(self.headers, port):
+                return self._send(403, {"error": "forbidden host"})
+            if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
+                return self._send(415, {"error": "Content-Type must be application/json"})
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
                 e = L.human_event(store, body)
-            except (ValueError, json.JSONDecodeError) as x:
-                return self._send(400, {"error": str(x)})
+            except (ValueError, TypeError, AttributeError, KeyError) as x:  # json errors are ValueErrors
+                return self._send(400, {"error": f"{type(x).__name__}: {x}"})
             self._send(200, {"ok": True, "event": e})
 
     srv = ThreadingHTTPServer(("127.0.0.1", port), H)
@@ -82,7 +100,10 @@ def serve(store, cfg, port):
 
 
 def export(store, cfg, out):
-    blob = json.dumps(data(store, cfg), ensure_ascii=False).replace("</", "<\\/")
+    # "<" -> \u003c: "</" alone leaves "<!--<script" able to switch the HTML parser into script-data-double-escaped
+    # state, where the page's own closing tag no longer ends the script; U+2028/9 are not valid in older JS strings
+    blob = json.dumps(data(store, cfg), ensure_ascii=False).replace("<", "\\u003c") \
+        .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(PAGE.read_text().replace("/*__DATA__*/null", blob))
     return str(out)

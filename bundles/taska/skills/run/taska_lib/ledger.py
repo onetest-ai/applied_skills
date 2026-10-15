@@ -29,7 +29,22 @@ AGENT_OPS = {"create", "status", "revise", "ac_met", "link", "waiting", "suggest
 HUMAN_OPS = {"edit", "ac_add", "ac_set", "link", "unlink", "merge", "delete", "accept", "reject", "undo", "create"}
 MAX_AC = 6
 HIST_KEYS = ("mid", "type", "op", "effect", "evidence", "date", "ts", "speaker", "quote", "note", "due_text", "due",
-             "by", "kind", "set", "text", "met", "ac", "depends_on", "into", "title", "ac_add", "who", "what", "source")
+             "by", "kind", "set", "text", "met", "ac", "ac_text", "depends_on", "into", "title", "ac_add", "who", "what", "source")
+
+
+def _chase(N, i):
+    """Follow `merged_into` to the surviving node. Cycle-safe: A merged into B and B into A (two accepted
+    suggestions that point at each other) must not hang every later fold."""
+    seen = set()
+    while i in N and N[i]["merged_into"] and i not in seen:
+        seen.add(i)
+        i = N[i]["merged_into"]
+    return i
+
+
+def _visible_ac(n):
+    """The criteria a person or agent sees and numbers from 1 (dropped ones are hidden but kept in order)."""
+    return [x for x in n["ac"] if not x.get("dropped")]
 
 
 def mid_of(*parts):
@@ -58,7 +73,7 @@ def _node(e):
             "internal_owner": f.get("internal_owner"), "client_owner": f.get("client_owner"),
             "client_owed": bool(f.get("client_owed")), "ac": [], "depends_on": [], "state": "open",
             "due_history": [], "history": [], "pinned": [], "suggestions": [], "merged_into": None,
-            "waiting_for": None, "created": e.get("date"), "created_in": e.get("evidence"),
+            "waiting_for": None, "unlinked": [], "created": e.get("date"), "created_in": e.get("evidence"),
             "creator": e.get("speaker"), "by": e.get("by", "agent"), "changed_in": []}
 
 
@@ -95,13 +110,13 @@ def fold(store, upto=None, evs=None, ev=None):
         return True
 
     def resolve(i):
-        while i in N and N[i]["merged_into"]:
-            i = N[i]["merged_into"]
-        return i
+        return _chase(N, i)
 
     for e in evs:
-        if e.get("evidence") and pos.get(e["evidence"], 1e9) > lim:
+        if e.get("evidence") and e.get("by") != "human" and pos.get(e["evidence"], 1e9) > lim:
             continue
+        if e.get("evidence") and e.get("by") == "human" and e["evidence"] in pos and pos[e["evidence"]] > lim:
+            continue  # playback: a human edit appears once the evidence it was made against has been reached
         if e.get("mid") in undone:
             continue
         t = e["type"]
@@ -133,13 +148,13 @@ def fold(store, upto=None, evs=None, ev=None):
                 n["ac"] += [{"text": x, "met": False, "met_by": None, "source": "agent"} for x in e.get("ac_add") or []]
                 hist(n, e, ok)
             elif op == "ac_met":
-                k = e["ac"] - 1
-                if ok and 0 <= k < len(n["ac"]) and not n["ac"][k].get("human"):
-                    n["ac"][k].update(met=True, met_by=e["mid"])
+                vis, k = _visible_ac(n), e["ac"] - 1
+                if ok and 0 <= k < len(vis) and not vis[k].get("human"):
+                    vis[k].update(met=True, met_by=e["mid"])
                 hist(n, e, ok)
             elif op == "link":
                 d = resolve(e["depends_on"])
-                if ok and d in N and d not in n["depends_on"] and d != n["id"]:
+                if ok and d in N and d not in n["depends_on"] and d not in n["unlinked"] and d != n["id"]:
                     n["depends_on"].append(d)
                 hist(n, e, ok)
             elif op == "waiting":
@@ -180,20 +195,22 @@ def fold(store, upto=None, evs=None, ev=None):
             elif op == "ac_add":
                 n["ac"].append({"text": e["text"], "met": False, "met_by": None, "source": "human"})
             elif op == "ac_set":
-                k = e["ac"] - 1
-                if 0 <= k < len(n["ac"]):
+                vis, k = _visible_ac(n), e["ac"] - 1
+                if 0 <= k < len(vis):
                     if "text" in e:
-                        n["ac"][k]["text"] = e["text"]
+                        vis[k]["text"] = e["text"]
                     if "met" in e:
-                        n["ac"][k].update(met=bool(e["met"]), human=True)
+                        vis[k].update(met=bool(e["met"]), human=True)
                     if e.get("drop"):
-                        n["ac"][k]["dropped"] = True
+                        vis[k]["dropped"] = True
             elif op == "link":
                 d = resolve(e["depends_on"])
                 if d in N and d not in n["depends_on"] and d != n["id"]:
                     n["depends_on"].append(d)
+                n["unlinked"] = [x for x in n["unlinked"] if x != d]
             elif op == "unlink":
                 n["depends_on"] = [x for x in n["depends_on"] if x != e["depends_on"]]
+                n["unlinked"].append(e["depends_on"])
             elif op == "merge":
                 _structural(N, n, "merge", e["into"], e, setf)
             elif op == "delete":
@@ -210,6 +227,8 @@ def fold(store, upto=None, evs=None, ev=None):
 
 def _apply_status(n, e, setf):
     eff = e["effect"]
+    if eff == "mention":  # not in STATUS, so never verified: it may be recorded, never applied
+        return False
     if "state" in n["pinned"] and eff not in ("due", "delayed", "reassign"):
         return False
     if eff in ("held", "done"):
@@ -240,6 +259,7 @@ def _apply_status(n, e, setf):
 
 
 def _structural(N, n, op, to, e, setf):
+    to = _chase(N, to)
     if to not in N or to == n["id"]:
         return
     if op == "move":
@@ -352,6 +372,11 @@ def context(store, cfg):
 
 # ---------- apply: agent proposals ----------
 def apply(store, cfg, evid, proposals):
+    with S.locked(store):
+        return _apply(store, cfg, evid, proposals)
+
+
+def _apply(store, cfg, evid, proposals):
     ev = S.evidence(store)
     if evid not in ev:
         raise ValueError(f"unknown evidence {evid!r}")
@@ -364,6 +389,7 @@ def apply(store, cfg, evid, proposals):
         if e["type"] == "create":
             counts[e["kind"]] += 1
     seen = {e.get("mid") for e in evs}
+    made = {e["mid"]: e["id"] for e in evs if e["type"] == "create" and e.get("mid")}
     handles, out, rej = {}, [], []
     wd = cfg.working_days
 
@@ -406,6 +432,8 @@ def apply(store, cfg, evid, proposals):
             elif k == "epic":
                 if p.get("plan") != "Off-plan":
                     why = "agents create epics only for off-plan work: plan must be 'Off-plan'"
+            elif not str(p.get("title") or "").strip():
+                why = "a create needs a title"
             elif pk not in PARENT_OK[k]:
                 why = f"a {k} needs a parent of kind {sorted(x for x in PARENT_OK[k] if x)}, got {par!r} ({pk})"
             elif k == "story" and not p.get("ac"):
@@ -421,6 +449,10 @@ def apply(store, cfg, evid, proposals):
             if why:
                 rej.append({"i": i, "why": why, "title": p.get("title")})
                 continue
+            cmid = mid_of(evid, q, "create", k, par, p["title"])  # not the new id: re-applying a batch adds nothing
+            if cmid in made:
+                handles[p.get("ref") or f"#{i}"] = made[cmid]
+                continue
             counts[k] += 1
             nid = f"{PREFIX[k]}{counts[k]:03d}" if k != "epic" else f"E{counts[k]:02d}"
             handles[p.get("ref") or f"#{i}"] = nid
@@ -430,7 +462,9 @@ def apply(store, cfg, evid, proposals):
                 "client_owner": owner(p.get("client_owner")), "client_owed": bool(p.get("client_owed")),
                 "ac": p.get("ac") or [], "due": resolve_due(p.get("due_text"), item["date"], wd),
                 "due_text": p.get("due_text")}}
+            e["mid"] = cmid
             out.append(e)
+            made[cmid] = nid
             N[nid] = _node(e)
             # dependencies named at creation are links like any other: verified before they count
             for j, d in enumerate(p.get("depends_on") or []):
@@ -473,10 +507,11 @@ def apply(store, cfg, evid, proposals):
                 continue
             e |= {"title": p.get("title"), "ac_add": p.get("ac_add")}
         elif op == "ac_met":
-            if N[node]["kind"] != "story" or not isinstance(p.get("ac"), int):
-                rej.append({"i": i, "why": "ac_met needs a story node and a 1-based ac number"})
+            live = _visible_ac(N[node])
+            if N[node]["kind"] != "story" or not isinstance(p.get("ac"), int) or not 0 < p["ac"] <= len(live):
+                rej.append({"i": i, "why": "ac_met needs a story node and the 1-based number of one of its criteria"})
                 continue
-            e |= {"ac": p["ac"]}
+            e |= {"ac": p["ac"], "ac_text": live[p["ac"] - 1]["text"]}  # what the agent saw, for the verifier
         elif op == "link":
             d = ref(p.get("depends_on"))
             if d not in N or N[d]["kind"] not in ("story", "task") or N[node]["kind"] not in ("story", "task"):
@@ -534,7 +569,8 @@ def verify_prep(store, weak=False):
             if k is not None else [(item.get("text") or "")[:1200]]
         n = N.get(e["node"], {})
         if e["op"] == "ac_met":
-            claim = f"acceptance criterion {e['ac']} met: " + (n["ac"][e["ac"] - 1]["text"] if 0 < e["ac"] <= len(n.get("ac", [])) else "?")
+            claim = f"acceptance criterion {e['ac']} met: " + (
+                e.get("ac_text") or (n["ac"][e["ac"] - 1]["text"] if 0 < e["ac"] <= len(n.get("ac", [])) else "?"))
         elif e["op"] == "link":
             claim = f"cannot finish until “{N.get(e['depends_on'], {}).get('title', e['depends_on'])}” ({e['depends_on']}) does"
         elif e["op"] == "waiting":
@@ -565,7 +601,40 @@ def verify_apply(store, verdicts):
 
 
 # ---------- human events (workbench) ----------
+HUMAN_STATES = {"open", "in_progress", "blocked", "done", "cancelled"}
+
+
+def _check_edit(sets, N):
+    """Values are checked when the edit is written: the ledger is append-only, so an event that makes every later
+    fold or staleness pass raise could only be removed by hand-editing it."""
+    if not isinstance(sets, dict) or not set(sets) <= HUMAN_FIELDS:
+        raise ValueError(f"editable fields: {sorted(HUMAN_FIELDS)}")
+    for k, v in sets.items():
+        if k == "due" and v is not None:
+            try:
+                dt.date.fromisoformat(str(v))
+            except ValueError as x:
+                raise ValueError(f"due must be an ISO date (YYYY-MM-DD) or null: {x}") from x
+        elif k == "state" and v not in HUMAN_STATES:
+            raise ValueError(f"state must be one of {sorted(HUMAN_STATES)}")
+        elif k == "waiting_for" and v is not None and not (isinstance(v, dict) and (v.get("what") or v.get("who"))):
+            raise ValueError("waiting_for is null or {who, what}")
+        elif k == "parent" and v not in N:
+            raise ValueError(f"unknown parent {v!r}")
+        elif k == "client_owed" and not isinstance(v, bool):
+            raise ValueError("client_owed is true or false")
+        elif k == "title" and not (isinstance(v, str) and v.strip()):
+            raise ValueError("title cannot be empty")
+        elif k in ("internal_owner", "client_owner", "type") and v is not None and not isinstance(v, str):
+            raise ValueError(f"{k} must be text")
+
+
 def human_event(store, body):
+    with S.locked(store):
+        return _human_event(store, body)
+
+
+def _human_event(store, body):
     evs = S.events(store)
     N, _, order, ev = fold(store, evs=evs)
     op = body.get("op")
@@ -596,8 +665,14 @@ def human_event(store, body):
         for k in ("set", "text", "ac", "met", "drop", "depends_on", "into"):
             if k in body:
                 e[k] = body[k]
-        if op == "edit" and not set(e.get("set") or {}) <= HUMAN_FIELDS:
-            raise ValueError(f"editable fields: {sorted(HUMAN_FIELDS)}")
+        if op == "edit":
+            _check_edit(e.get("set"), N)
+        if op in ("ac_set",) and not isinstance(body.get("ac"), int):
+            raise ValueError("ac must be a 1-based integer")
+        if op in ("link", "unlink") and body.get("depends_on") not in N:
+            raise ValueError(f"unknown node {body.get('depends_on')!r}")
+        if op == "merge" and body.get("into") not in N:
+            raise ValueError(f"unknown node {body.get('into')!r}")
     e["mid"] = mid_of("human", now, json.dumps(body, sort_keys=True))
     S.append(store, [e])
     return e

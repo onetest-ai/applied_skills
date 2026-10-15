@@ -8,6 +8,7 @@ Layout under `[project].store` (default `.taska/`):
   plan.json               epics as loaded at init
   proposals/ verify/ out/ working files
 """
+import contextlib
 import datetime as dt
 import hashlib
 import json
@@ -28,6 +29,25 @@ def ensure(store):
         P(store, d).mkdir(parents=True, exist_ok=True)
 
 
+@contextlib.contextmanager
+def locked(store):
+    """Serialise read-modify-append sections (id allocation in `apply` and in the workbench's human events): two
+    writers that both count `create` events would otherwise hand out the same S007. Advisory flock, per open file
+    description, so it also holds between threads; a platform without fcntl runs unlocked as before."""
+    try:
+        import fcntl
+    except ImportError:
+        yield
+        return
+    P(store).mkdir(parents=True, exist_ok=True)
+    fd = os.open(P(store, ".lock"), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)  # closing releases the lock
+
+
 def events(store):
     p = P(store, "events.jsonl")
     return [json.loads(l) for l in p.open()] if p.exists() else []
@@ -36,15 +56,20 @@ def events(store):
 def append(store, recs):
     if not recs:
         return
-    with P(store, "events.jsonl").open("a") as f:  # one write per call: concurrent appenders never interleave lines
-        f.write("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in recs))
+    data = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in recs).encode()
+    fd = os.open(P(store, "events.jsonl"), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    try:  # one O_APPEND write per call (as brain's decisions.jsonl): concurrent appenders never interleave lines
+        while data:
+            data = data[os.write(fd, data):]
+    finally:
+        os.close(fd)
 
 
 def evidence(store):
     d = P(store, "evidence")
     if not d.exists():
         return {}
-    return {x["id"]: x for x in (json.loads(f.read_text()) for f in sorted(d.glob("*.json")))}
+    return {x["id"]: x for x in (json.loads(f.read_text()) for f in sorted(d.glob("*.json")))}  # *.json.tmp is skipped
 
 
 def order(ev):
@@ -84,8 +109,11 @@ def write_evidence(store, item):
     body = json.dumps(item, ensure_ascii=False, indent=0)
     if p.exists() and p.read_text() == body:
         return False
-    p.write_text(body)
-    P(store, "evidence", item["id"] + ".md").write_text(render_md(item))
+    md = render_md(item)  # may raise on a malformed item: before anything is written
+    P(store, "evidence", item["id"] + ".md").write_text(md)
+    tmp = p.with_suffix(".json.tmp")  # the .json is the index: a half-written one would break every later command
+    tmp.write_text(body)
+    os.replace(tmp, p)
     return True
 
 
