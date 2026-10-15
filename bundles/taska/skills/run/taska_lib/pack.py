@@ -3,6 +3,7 @@ import datetime as dt
 from collections import defaultdict
 
 from . import ledger as L, staleness as ST
+from .deliverables import deliverables
 from .text import fmt_date
 
 
@@ -92,6 +93,16 @@ def build(store, cfg, days=7):
     if not owed:
         L_.append("_Nothing recorded._")
     L_.append("")
+
+    dl = [d for d in deliverables(N, ev) if d["state"] not in ("merged", "deleted")]
+    if dl:
+        L_.append(f"## Deliverables ({len(dl)})")
+        for d in dl:
+            owner = f", {d['internal_owner']}" if d["internal_owner"] else ""
+            due = f", due {fmt_date(d['due'])}" if d["due"] else ""
+            landed = f" · file: {d['landed']['title']} (synced {fmt_date(d['landed']['date'])})" if d["landed"] else ""
+            L_.append(f"- {d['title']} — {d['ac_met']}/{d['ac_total']} AC, {d['state']}{owner}{due}{landed}")
+        L_.append("")
 
     top = [r for r in rows if r["top"]]
     L_.append(f"## Asks ({len(top)})")

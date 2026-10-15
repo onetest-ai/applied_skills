@@ -109,7 +109,7 @@ def _digest(cfg, key, scfg, store, root, rels_sigs, cur):
                 + (f"\n- and {len(lines) - 80} more" if len(lines) > 80 else ""))
         at = max(f[2] for f in files)
         item = {"id": S.make_id(at, key, f"{day}|{top}|" + "|".join(f[1] for f in files)), "source": key,
-                "kind": "file", "at": at, "title": title.rstrip("/"), "text": text,
+                "kind": "file", "at": at, "date_source": "file_mtime", "title": title.rstrip("/"), "text": text,
                 "meta": {"digest": True, "folder": top, "files": len(files)}}
         if S.write_evidence(store, item):
             new.append(item["id"])
@@ -145,7 +145,7 @@ def sync(cfg, key, scfg, store, cursor):
             continue  # retried next sync
         head = (f"File {what}: {rel} (modified {at.replace('T', ' ')[:16]}, {max(1, st.st_size // 1024)} KB)."
                 + ("" if text else " No text could be read from it."))
-        item = {"id": S.make_id(at, key, f"{rel}|{sig}"), "source": key, "kind": "file", "at": at,
+        item = {"id": S.make_id(at, key, f"{rel}|{sig}"), "source": key, "kind": "file", "at": at, "date_source": "file_mtime",
                 "title": Path(rel).stem, "text": head + ("\n\n" + text if text else ""),
                 "meta": {"path": rel, "what": what, "folder": os.path.dirname(rel) or "."}}
         if S.write_evidence(store, item):

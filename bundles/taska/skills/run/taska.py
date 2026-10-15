@@ -172,14 +172,25 @@ def cmd_ingest(a):
         out({"status": "error", "error": "ingest takes a JSON array of evidence items"}, 1)
     new, bad = [], []
     for i, x in enumerate(items):
-        if x.get("kind") not in S.KINDS or not x.get("at") or not x.get("title") or not (x.get("text") or x.get("turns")):
+        if not isinstance(x, dict) or x.get("kind") not in S.KINDS or not isinstance(x.get("at"), str) \
+                or not x.get("title") or not (x.get("text") or x.get("turns")):
             bad.append({"i": i, "why": f"needs kind in {list(S.KINDS)}, at, title and text or turns"})
+            continue
+        try:
+            dt.datetime.fromisoformat(x["at"][:19])
+        except ValueError:
+            bad.append({"i": i, "why": f"at must be an ISO date or datetime, got {x['at']!r}"})
+            continue
+        if x.get("turns") and not (isinstance(x["turns"], list) and all(
+                isinstance(t, dict) and str(t.get("text") or "").strip() for t in x["turns"])):
+            bad.append({"i": i, "why": "turns must be a list of {speaker, text, ts?} with text"})
             continue
         src = x.get("source") or a.source
         item = {"id": S.make_id(x["at"], src, x.get("key") or x["title"] + x["at"]), "source": src, "kind": x["kind"],
                 "at": x["at"][:19], "title": x["title"], "url": x.get("url"), "meta": dict(x.get("meta") or {}, ingested=True)}
         if x.get("turns"):
-            item["turns"] = [dict(t, speaker=cfg.canonical(t.get("speaker")) or "?", bc=bool(t.get("bc"))) for t in x["turns"]]
+            item["turns"] = [dict(t, ts=t.get("ts") or "00:00:00", speaker=cfg.canonical(t.get("speaker")) or "?",
+                                  bc=bool(t.get("bc"))) for t in x["turns"]]
             item["meeting_kind"] = x.get("meeting_kind", "internal")
         else:
             item["text"] = x["text"]
