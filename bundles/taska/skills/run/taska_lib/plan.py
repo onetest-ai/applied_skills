@@ -16,8 +16,11 @@ def load_epics(plan_cfg):
         raise ValueError(f"[plan].file not found: {p}")
     if p.suffix == ".json":
         j = json.loads(p.read_text())
-        acts = j.get("activities", j) if isinstance(j, dict) else j
-        return [{k: a.get(k) for k in ("name", "start", "end", "kind", "phase")} for a in acts if a.get("name")]
+        acts = j.get("activities") if isinstance(j, dict) else j
+        if not isinstance(acts, list):
+            return []
+        return [{k: a.get(k) for k in ("name", "start", "end", "kind", "phase")}
+                for a in acts if isinstance(a, dict) and a.get("name")]
     if p.suffix == ".csv":
         rows = list(csv.DictReader(p.open()))
         return [{"name": r.get("name") or r.get("epic"), "start": r.get("start") or None, "end": r.get("end") or None,

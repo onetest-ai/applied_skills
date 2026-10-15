@@ -16,6 +16,7 @@ comment, so a busy repository does not flood the ledger.
 """
 import datetime as dt
 import json
+import re
 import shutil
 import subprocess
 
@@ -133,7 +134,7 @@ def _local(ts, tzname):
         z = ZoneInfo(tzname or "UTC")
     except Exception:
         z = None
-    x = dt.datetime.fromisoformat(ts.replace("Z", "+00:00")[:32])
+    x = dt.datetime.fromisoformat(re.sub(r"(\.\d{6})\d+", r"\1", ts.replace("Z", "+00:00")))  # trim Azure 7-digit fraction
     if x.tzinfo is None:
         x = x.replace(tzinfo=dt.timezone.utc)
     return x.astimezone(z).replace(tzinfo=None).isoformat(timespec="seconds")

@@ -175,7 +175,11 @@ def sync(cfg, key, scfg, store, cursor):
             except Exception as e:  # Graph offline or not signed in: fall back to local transcription
                 info["teams_error"] = str(e)[:200]
         if not tpath and os.path.exists(teams_vtt):
-            tpath, how = teams_vtt, "teams"
+            try:
+                if TR.read_cues(teams_vtt):  # an empty/stub Teams transcript must not block the ASR fallback
+                    tpath, how = teams_vtt, "teams"
+            except (ValueError, OSError):
+                pass
         if not tpath:  # a recording on its own: transcribe it (slow; only within `transcribe`'s budget)
             out_vtt = str(S.P(store, "media", eid + ".vtt"))
             if not os.path.exists(out_vtt):
@@ -183,12 +187,12 @@ def sync(cfg, key, scfg, store, cursor):
                     pending.append({"file": m, "reason": "needs transcription: run `taska.py transcribe`",
                                     "minutes": round(info.get("duration", 0) / 60) or None})
                     continue
-                cfg.asr_budget -= 1
                 try:
                     media.transcribe(mpath, out_vtt, media.whisper_model(cfg.media), cfg.media.get("language", "auto"))
                 except media.MediaError as e:
                     pending.append({"file": m, "reason": str(e)})
                     continue
+                cfg.asr_budget -= 1  # only a successful transcription consumes the budget (a failure is retried)
             tpath, how = out_vtt, "asr"
         elif how != "teams":
             how = "transcript"

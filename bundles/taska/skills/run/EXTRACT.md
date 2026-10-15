@@ -60,7 +60,8 @@ For every story/task this item touches:
   same quote.
 - `revise` — the work itself changed: new `title`, and/or `ac_add` (a new criterion). Prefer revise over creating
   a near-duplicate. A story never goes past 6 AC: create a second story and `link` them.
-- `ac_met` — one acceptance criterion of a story is now true (`ac`: its 1-based number from `context`).
+- `ac_met` — one acceptance criterion of a story is now true (`ac`: its 1-based number from `context`; `ac_text`:
+  that criterion's text exactly as `context` showed it, so a renumbering since you read it is caught, not misapplied).
 - `link` — `node` is the **waiting** work, `depends_on` is what it waits for: `{"node": "<session that needs
   access>", "depends_on": "<the access task>"}`. Both are stories or tasks, anywhere in the tree. (`depends_on` on a
   `create` means the same thing: the node being created waits for the listed ones.)
@@ -99,7 +100,7 @@ Only for work no existing node covers (check the whole tree: wording, nicknames,
 {"op": "status", "node": "T012", "effect": "held|done|progress|blocked|cancelled|reopen|due|delayed|reassign|mention",
  "due_text": "…", "internal_owner": "…", "client_owner": "…", "quote": "…", "note": "…"}
 {"op": "revise", "node": "S004", "title": "…", "ac_add": ["…"], "quote": "…", "note": "what changed"}
-{"op": "ac_met", "node": "S004", "ac": 2, "quote": "…"}
+{"op": "ac_met", "node": "S004", "ac": 2, "ac_text": "criterion 2 as shown in context", "quote": "…"}
 {"op": "link", "node": "T020", "depends_on": "T019", "quote": "…"}
 {"op": "waiting", "node": "T020", "who": "Dana Example", "what": "dates for the regroup session", "quote": "…"}
 {"op": "suggest_merge", "node": "T031", "into": "T014", "quote": "…", "note": "why the same"}

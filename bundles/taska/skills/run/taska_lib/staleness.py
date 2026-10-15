@@ -105,41 +105,44 @@ def classify(store, cfg=None, upto=None, folded=None):
     return rows, N
 
 
-def cite(h):
+def cite(h, today=None):
     ts = h.get("ts") or ""
     ts = ts[3:8] if ts.startswith("00:") else ts[:8]
-    return f"[{fmt_date(h['date'])}{' · ' + ts if ts else ''}{' · client' if h.get('kind') == 'client' else ''}]"
+    return f"[{fmt_date(h['date'], today)}{' · ' + ts if ts else ''}{' · client' if h.get('kind') == 'client' else ''}]"
 
 
 def question(r, N):
     n, a, f = r["node"], r["anchor"], r["flags"]
+    today = (dt.date.fromisoformat(r["since"][:10]) + dt.timedelta(days=r["days"])).isoformat() \
+        if r.get("since") and r.get("days") is not None else None
+    fd = lambda d: fmt_date(d, today)
     who = a.get("speaker") or {"file": "a file", "event": "the calendar", "pr": "a pull request"}.get(a.get("kind"), "someone")
-    said = f"last word: {who}, {fmt_date(a['date'])}: “{a['quote']}”" if a.get("quote") \
-        else f"raised {fmt_date(a['date'])}"
-    quiet = f"nothing since {fmt_date(r['since'])} ({r['days']} days)"
+    said = f"last word: {who}, {fd(a['date'])}: “{a['quote']}”" if a.get("quote") \
+        else f"raised {fd(a['date'])}"
+    quiet = f"nothing since {fd(r['since'])} ({r['days']} days)"
     holds = (f" It holds up {len(n['blocks'])}: " + "; ".join(N[b]["title"] for b in n["blocks"][:3]) + ".") \
         if n["blocks"] else ""
     if "confirm_done" in f:
         h = r["unconf"][-1]
-        return f"Can we close “{n['title']}”? The evidence suggests it is done: “{h['quote']}” {cite(h)}"
+        return f"Can we close “{n['title']}”? The evidence suggests it is done: “{h['quote']}” {cite(h, today)}"
     if "presumed_happened" in f:
-        return f"“{n['title']}” was set for {fmt_date(n['due'])}. Did it happen, and what came out of it?{holds} ({said})"
+        return f"“{n['title']}” was set for {fd(n['due'])}. Did it happen, and what came out of it?{holds} ({said})"
     if "slipping" in f:
-        hist = " → ".join(fmt_date(h["due"]) if h["due"] else "?" for h in n["due_history"])
+        hist = " → ".join(fd(h["due"]) if h["due"] else "?" for h in n["due_history"])
         return f"“{n['title']}” keeps moving ({hist}). What is the real date, and what moves it?{holds}"
     if "waiting" in f:
         w = n["waiting_for"]
-        return f"Still waiting on {w.get('who') or 'someone'} for {w.get('what')} (since {fmt_date(w['since'])})? “{n['title']}” is held until then.{holds}"
+        return f"Still waiting on {w.get('who') or 'someone'} for {w.get('what')} (since {fd(w['since'])})? “{n['title']}” is held until then.{holds}"
     if "overdue" in f:
-        return f"“{n['title']}” was due {fmt_date(n['due'])}. Where is it now?{holds} ({said})"
+        return f"“{n['title']}” was due {fd(n['due'])}. Where is it now?{holds} ({said})"
     if "blocked" in f:
         return f"“{n['title']}” is blocked. Who can unblock it, and by when?{holds} ({said})"
     if "at_risk" in f:
         d = N[r["stale_dep"][0]]
-        return f"“{n['title']}” waits on “{d['title']}”, due {fmt_date(d['due'])} and still open. Is it still on track?"
+        return f"“{n['title']}” waits on “{d['title']}”, due {fd(d['due'])} and still open. Is it still on track?"
     if "chase_client" in f:
         return f"Waiting on {n.get('client_owner') or 'the client'} for “{n['title']}”: {quiet}. Chased?{holds} ({said})"
     if "unconfirmed" in f:
         h = r["unconf"][-1]
-        return f"Is “{n['title']}” really {h.get('effect') or h.get('op')}? The evidence only says “{h['quote']}” {cite(h)}."
+        return f"Is “{n['title']}” really {h.get('effect') or h.get('op')}? The evidence only says “{h['quote']}” {cite(h, today)}."
     return f"“{n['title']}”: {quiet}. Still happening, and who has it?{holds} ({said})"

@@ -15,8 +15,11 @@ EV = {
 
 
 def _story(**kw):
+    """`changed_in` is shorthand here for applied agent changes from those evidence items."""
     base = {"kind": "story", "state": "open", "internal_owner": None, "due": None, "ac": [], "changed_in": []}
-    return {**base, **kw}
+    s = {**base, **kw}
+    s.setdefault("history", [{"evidence": e, "applied": True, "by": "agent"} for e in s["changed_in"]])
+    return s
 
 
 def test_only_stories_are_listed_with_ac_progress():

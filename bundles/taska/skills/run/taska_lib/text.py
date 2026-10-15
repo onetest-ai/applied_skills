@@ -21,13 +21,19 @@ def _next_working(d, working_days):
     return d
 
 
+# a whole month word: full name or standard abbreviation ("Sept" too), never a word that merely starts like one
+# ("Decisions", "Marketing", "Mayday"), so a file name or a spoken phrase cannot invent a date
+_MONTH_WORD = r"(january|february|march|april|may|june|july|august|september|october|november|december" \
+              r"|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec)(?![a-z])"
+
+
 def month_day(s):
     """A written-month date in a string -> (month, day), else None. Handles "March 14", "25 Aug",
     "14th of October" and the "_"/"-" separators export file names use ("25_Aug", "06-Aug");
     case-insensitive. No year is inferred here: the caller resolves it against its own clock."""
     s = re.sub(r"[-_]+", " ", s)
-    m = re.search(r"\b(" + "|".join(MONTHS) + r")[a-z]*\.?\s*(\d{1,2})(?:st|nd|rd|th)?\b", s, re.I) or \
-        re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(" + "|".join(MONTHS) + r")[a-z]*\b", s, re.I)
+    m = re.search(r"\b" + _MONTH_WORD + r"\.?\s*(\d{1,2})(?:st|nd|rd|th)?\b", s, re.I) or \
+        re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?" + _MONTH_WORD + r"(?!\w)", s, re.I)
     if not m:
         return None
     a, b = m.groups()
@@ -59,11 +65,11 @@ def resolve_due(text, ref_date, working_days=(1, 2, 3, 4, 5)):
     if md:
         try:
             x = dt.date(d.year, md[0], md[1])
-        except ValueError:
+            if x < d - dt.timedelta(days=180):  # "Jan 5" said in December
+                x = x.replace(year=x.year + 1)
+            return x.isoformat()
+        except ValueError:                      # e.g. "Feb 29" rolled into a non-leap year
             return None
-        if x < d - dt.timedelta(days=180):  # "Jan 5" said in December
-            x = x.replace(year=x.year + 1)
-        return x.isoformat()
     if "today" in t or "eod" in t or "end of day" in t:
         return d.isoformat()
     if "tomorrow" in t:
@@ -97,6 +103,7 @@ def resolve_due(text, ref_date, working_days=(1, 2, 3, 4, 5)):
     return None
 
 
-def fmt_date(d):
+def fmt_date(d, today=None):
+    """"Oct 6"; "Oct 6, 2023" when the year is not `today`'s, so an old date never reads as recent."""
     x = dt.date.fromisoformat(d[:10])
-    return f"{x.strftime('%b')} {x.day}"
+    return f"{x.strftime('%b')} {x.day}" + (f", {x.year}" if today and x.year != int(today[:4]) else "")

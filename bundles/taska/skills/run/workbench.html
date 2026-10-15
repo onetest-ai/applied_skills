@@ -62,6 +62,8 @@ header{position:sticky;top:0;z-index:20;background:var(--surface);border-bottom:
 .wk{display:flex;flex-direction:column;gap:3px}
 .wk-l{font-size:11px;color:var(--ink-3);height:14px;white-space:nowrap;padding-left:2px}
 .wk-l b{color:var(--ink-2);font-weight:600;margin-right:4px}
+.kindtag.datewarn{color:var(--warn,#9a6700);border-color:currentColor}
+.wk-gap .gap{font-size:11px;color:var(--ink-3);white-space:nowrap;padding:14px 10px 0;border-left:1px dashed var(--line);border-right:1px dashed var(--line)}
 .days{display:flex;gap:2px}
 .day{width:30px;display:flex;flex-direction:column;align-items:center;gap:3px;padding:3px 0 4px;border-radius:var(--r-sm)}
 .day.has{cursor:pointer}
@@ -269,7 +271,7 @@ const F = {changed:false, attention:false, open:false, q:""};
 const openSet = new Set();
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const fmt = d => { if(!d) return ""; const x = new Date(d+"T12:00:00"); return x.toLocaleDateString("en-US",{month:"short",day:"numeric"}); };
+const fmt = d => d ? fmtDate(d, D.calls.length ? D.calls[D.calls.length-1].date : null) : "";
 const ts = t => !t ? "" : (t.startsWith("00:") ? t.slice(3,8) : t.slice(0,8));
 const store = {get(k){try{return localStorage.getItem(k)}catch(e){return null}}, set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
 
@@ -340,6 +342,69 @@ function render(){
   renderSide();
 }
 
+/*PURE:START*/
+// Pure (no DOM, no globals) so a test can run it with node.
+const GAP_WEEKS = 4;                                       // a longer run of empty weeks collapses into one marker
+const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+// "Oct 6"; "Oct 6, 2023" when its year is not the latest call's year (or always, with `withYear`)
+function fmtDate(d, latest, withYear){
+  const x = new Date(d.slice(0,10)+"T12:00:00Z"), y = x.getUTCFullYear();
+  return `${MON[x.getUTCMonth()]} ${x.getUTCDate()}` + ((withYear || (latest && y !== +latest.slice(0,4))) ? `, ${y}` : "");
+}
+function gapText(weeks){
+  const mo = Math.round(weeks * 7 / 30.44), y = Math.floor(mo / 12), m = mo % 12;
+  return mo < 2 ? `${weeks} wk` : [y ? `${y} yr` : "", m ? `${m} mo` : ""].filter(Boolean).join(" ");
+}
+// Weeks of the strip, Monday first, weekends only when something happened. A month label on its first week, the
+// year on the first week, when it changes, and right after a gap, so the year is never far from what is in view.
+function weekPlan(dates){
+  const add = (s, n) => { const d = new Date(s+"T12:00:00Z"); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); };
+  const dw = s => new Date(s+"T12:00:00Z").getUTCDay();
+  const has = new Set(dates);
+  const first = dates[0], last = dates[dates.length-1];
+  let d = add(first, -((dw(first)+6)%7));
+  const end = add(last, (7-dw(last))%7);
+  const raw = [];
+  while (d <= end){
+    const days = [];
+    for (let k = 0; k < 7; k++, d = add(d,1)) if (!(k >= 5 && !has.has(d))) days.push(d);
+    raw.push({days, empty: !days.some(x => has.has(x))});
+  }
+  const out = [];
+  for (let i = 0; i < raw.length; ){
+    let j = i; while (j < raw.length && raw[j].empty) j++;
+    if (j - i > GAP_WEEKS){ out.push({gap: gapText(j - i), weeks: j - i, from: raw[i].days[0]}); i = j; continue; }
+    const stop = Math.max(j, i + 1);                      // the short empty run, or the one week with a call
+    for (; i < stop; i++) out.push({days: raw[i].days});
+  }
+  let pm = null, py = null, afterGap = false;
+  for (const w of out){
+    if (w.gap){ afterGap = true; continue; }
+    const x = new Date(w.days[0]+"T12:00:00Z"), m = MON[x.getUTCMonth()], y = x.getUTCFullYear();
+    w.label = (y !== py || afterGap) ? `${m} ${y}` : (m !== pm ? m : null);
+    pm = m; py = y; afterGap = false;
+  }
+  return out;
+}
+// The Deliverables rows for the call at position `ci`: the same rules as taska_lib/deliverables.py (stories only,
+// not merged/deleted; `landed` = the newest file whose change to the story was applied by the agent), using only
+// evidence up to that call, so the view follows the timeline like Tree and Board.
+function deliverableRows(nodes, history, calls, ci){
+  const pos = {}; calls.forEach((c, i) => pos[c.id] = i);
+  return Object.values(nodes).filter(n => n.kind==="story" && !["merged","deleted"].includes(n.state)).map(n => {
+    let landed = null;
+    for (const h of history[n.id] || []){
+      const c = h.evidence != null && pos[h.evidence] !== undefined && pos[h.evidence] <= ci ? calls[pos[h.evidence]] : null;
+      if (h.applied && h.by !== "human" && c && c.evidence_kind === "file" && (!landed || (c.date||"") > landed.date))
+        landed = {date: c.date, title: c.title};
+    }
+    const ac = n.ac || [];
+    return {id: n.id, title: n.title, internal_owner: n.internal_owner ?? null, due: n.due ?? null, state: n.state,
+            ac_met: ac.filter(x => x.met).length, ac_total: ac.length, landed};
+  });
+}
+/*PURE:END*/
+
 const KINDNAME = {internal:"Internal", client:"Client", event:"Calendar", file:"File", pr:"Pull request", issue:"Issue"};
 const iso = d => d.toISOString().slice(0,10);
 const addDays = (s, n) => { const d = new Date(s+"T12:00:00Z"); d.setUTCDate(d.getUTCDate()+n); return iso(d); };
@@ -347,23 +412,7 @@ const dow = s => new Date(s+"T12:00:00Z").getUTCDay();
 function renderTicks(){
   const byDay = {};
   D.calls.forEach((c,i) => (byDay[c.date] ||= []).push(i));
-  const first = D.calls[0].date, last = D.calls[D.calls.length-1].date;
-  let d = addDays(first, -((dow(first)+6)%7));          // Monday of the first week
-  const end = addDays(last, (7-dow(last))%7);            // Sunday of the last week
-  const weeks = [];
-  let prevMonth = null, prevYear = null;
-  while (d <= end){
-    const days = [];
-    for (let k = 0; k < 7; k++, d = addDays(d,1)){
-      if (k >= 5 && !byDay[d]) continue;                 // weekends only when something happened
-      days.push(d);
-    }
-    const dt0 = new Date(days[0]+"T12:00:00Z");
-    const m = dt0.toLocaleDateString("en-US",{month:"short",timeZone:"UTC"}), y = dt0.getUTCFullYear();
-    const newYear = y !== prevYear;                      // show the year on the first week and whenever it changes
-    weeks.push({days, label: newYear ? `${m} ${y}` : (m !== prevMonth ? m : null)});
-    prevMonth = m; prevYear = y;
-  }
+  const weeks = weekPlan(Object.keys(byDay).sort());
   const WD = ["S","M","T","W","T","F","S"];
   const slot = i => `<button class="slot k-${D.calls[i].kind} ${D.calls[i].kind==="client"?"client":""} ${i<ci?"past":""} ${i===ci?"on":""}" data-i="${i}" title="${esc(KINDNAME[D.calls[i].kind]+": "+D.calls[i].title)}"></button>`;
   const slotsFor = cs => {  // meetings and events one by one (max 4 events), a day's files as one counted glyph
@@ -375,16 +424,16 @@ function renderTicks(){
     return h;
   };
   const cur = call().date;
-  $("#ticks").innerHTML = weeks.map(wk => `<div class="wk"><div class="wk-l">${wk.label?`<b>${wk.label}</b>`:""}${new Date(wk.days[0]+"T12:00:00Z").getUTCDate()}</div><div class="days">${wk.days.map(day => {
+  $("#ticks").innerHTML = weeks.map(wk => wk.gap ? `<div class="wk wk-gap" title="${wk.weeks} empty weeks from ${fmtDate(wk.from, null, true)}"><div class="wk-l"></div><div class="gap">⋯ ${wk.gap} ⋯</div></div>` : `<div class="wk"><div class="wk-l">${wk.label?`<b>${wk.label}</b>`:""}${new Date(wk.days[0]+"T12:00:00Z").getUTCDate()}</div><div class="days">${wk.days.map(day => {
     const cs = byDay[day] || [];
-    return `<div class="day ${cs.length?"has":""} ${day===cur?"sel":""}" ${cs.length?`data-i="${cs.includes(ci)?ci:cs[0]}"`:""} title="${esc(cs.map(i => KINDNAME[D.calls[i].kind]+": "+D.calls[i].title).join("\n") || "Nothing")}">
+    return `<div class="day ${cs.length?"has":""} ${day===cur?"sel":""}" ${cs.length?`data-i="${cs.includes(ci)?ci:cs[cs.length-1]}"`:""} title="${esc(cs.map(i => KINDNAME[D.calls[i].kind]+": "+D.calls[i].title).join("\n") || "Nothing")}">
       <span class="wd">${WD[dow(day)]}</span><span class="dn">${new Date(day+"T12:00:00Z").getUTCDate()}</span>
       <span class="slots">${cs.length ? slotsFor(cs) : `<i class="empty-day"></i>`}</span></div>`;
   }).join("")}</div></div>`).join("");
   const c = call();
   const name = c.title.replace(/\.(vtt|srt|docx|txt|mp4|m4a|mov|mp3|wav|webm)$/i,"");
   const wd = new Date(c.date+"T12:00:00Z").toLocaleDateString("en-US",{weekday:"short",timeZone:"UTC"});
-  $("#callname").innerHTML = `<b>${wd} ${fmt(c.date)}</b><span class="kindtag ${c.kind}">${KINDNAME[c.kind]||c.kind}</span><span class="muted" style="overflow:hidden;text-overflow:ellipsis">${esc(name)}</span><span class="pos">${ci+1} / ${D.calls.length}</span>`;
+  $("#callname").innerHTML = `<b>${wd} ${fmtDate(c.date, null, true)}</b><span class="kindtag ${c.kind}">${KINDNAME[c.kind]||c.kind}</span>${c.date_source==="file_mtime"?`<span class="kindtag datewarn" title="No date in the file name or its contents: dated by when the file was copied, so the real date may be earlier">date from file copy</span>`:""}<span class="muted" style="overflow:hidden;text-overflow:ellipsis">${esc(name)}</span><span class="pos">${ci+1} / ${D.calls.length}</span>`;
   const on = document.querySelector(".slot.on"), sc = $("#tlscroll");
   if (on){ const r = on.getBoundingClientRect(), b = sc.getBoundingClientRect();
     if (r.left < b.left + 40 || r.right > b.right - 40) sc.scrollTo({left: sc.scrollLeft + (r.left - b.left) - b.width/2, behavior: playing ? "smooth" : "auto"}); }
@@ -457,7 +506,7 @@ function renderTree(){
     (kids.length ? withWork : empty).push(e);
   }
   const blocks = [];
-  if (!latest() && LIVE) blocks.push(`<div class="notice"><i class="ph ph-clock-counter-clockwise"></i>Viewing the tree as it stood after ${fmt(call().date)}. Edits apply to the latest call. <button class="btn" id="golatest">Jump to latest</button></div>`);
+  if (!latest() && LIVE) blocks.push(`<div class="notice"><i class="ph ph-clock-counter-clockwise"></i>Viewing the tree as it stood after ${fmt(call().date)}. You can still edit: changes apply to the current tree. <button class="btn" id="golatest">Jump to latest</button></div>`);
   for (const e of withWork){
     const kids = e.children.map(c => nodes[c]).filter(Boolean);
     const stories = kids.filter(k => k.kind==="story"), recs = kids.filter(k => k.kind!=="story");
@@ -499,8 +548,8 @@ function renderBoard(){
 }
 
 function renderDeliverables(){
-  const q = (F.q||"").toLowerCase();
-  const dl = (D.deliverables||[]).filter(d => !q || (d.title+" "+(d.internal_owner||"")+" "+d.id).toLowerCase().includes(q));
+  const ns = N();   // the snapshot being viewed; the same filters as Tree and Board
+  const dl = deliverableRows(ns, D.history, D.calls, ci).filter(d => visible(ns[d.id])).sort((a, b) => a.id < b.id ? -1 : 1);
   if (!dl.length){ $("#left").innerHTML = `<div class="blank"><b>No deliverables</b>Stories show up here as deliverables, with the files that landed for them.</div>`; return; }
   const landedN = dl.filter(d => d.landed).length;
   const head = `<div class="muted" style="margin:2px 0 10px;font-size:13px">${dl.length} deliverables · ${landedN} with a file landed</div>`;
@@ -538,7 +587,7 @@ function renderAsks(){
   const all = snap().asks.filter(a => !a.shadow);
   const top = all.filter(a => a.top), more = all.filter(a => !a.top && a.tier==="ask"), close = all.filter(a => a.tier==="close");
   if (!all.length){ $("#side").innerHTML = `<div class="blank"><b>Nothing to chase after ${fmt(call().date)}</b>Asks appear when work goes quiet, slips, or waits on someone.</div>`; return; }
-  const ro = !(LIVE && latest());
+  const ro = !LIVE;
   const H = [`<p class="muted" style="margin:0 0 12px">Before the next status call, as of ${fmt(call().date)}: what the client owes, what holds other work up, what keeps slipping. At most two per story.</p>`, byPerson(top)];
   if (more.length) H.push(`<details style="margin-top:18px"><summary class="muted" style="cursor:pointer">${more.length} more to ask, lower priority</summary>${byPerson(more)}</details>`);
   if (close.length) H.push(`<h3 style="margin-top:22px">Confirm or close <span class="count mono">${close.length}</span></h3>
@@ -570,7 +619,7 @@ function pathOf(id){ const ns = N(), out = []; let n = ns[ns[id] && ns[id].paren
 function renderDetail(){
   const ns = N(), n = sel && ns[sel];
   if (!n){ $("#side").innerHTML = `<div class="blank"><b>Select a story or task</b>See its acceptance criteria, what it waits on, and how it changed call by call. Use ← and → to step through calls.</div>`; return; }
-  const ro = !(LIVE && latest()) ? "readonly" : "";
+  const ro = !LIVE ? "readonly" : "";
   const dis = ro ? "disabled" : "";
   const pin = f => n.pinned && n.pinned.includes(f) ? `<span class="pin" title="You set this. The agent will not overwrite it."><i class="ph ph-push-pin"></i></span>` : "";
   const parents = Object.values(ns).filter(p => !["merged","deleted"].includes(p.state) && ({story:["epic"],task:["story"],risk:["epic","story"],decision:["epic","story"]}[n.kind]||[]).includes(p.kind));
@@ -626,7 +675,7 @@ function renderDetail(){
     const ver = h.verdict==="supports"?"verified":h.verdict?h.verdict:(h.op==="status"&&h.effect!=="mention")||h.op==="ac_met"?"unverified":"";
     const extra = h.op==="revise" ? (h.title?`Renamed to “${esc(h.title)}”`:"") + (h.ac_add?` Added: ${h.ac_add.map(esc).join("; ")}`:"")
       : h.op==="ac_set" ? `Criterion ${h.ac}: ${h.text!=null?"reworded":h.met?"marked met":"marked not met"}` : h.op==="edit" ? Object.entries(h.set||{}).map(([k,v]) => `${k.replace("_"," ")}: ${esc(v??"cleared")}`).join(", ") : h.op==="ac_add" ? esc(h.text) : (h.op==="link"||h.op==="unlink") ? `${h.op==="link"?"Waits on":"No longer waits on"} ${esc(h.depends_on)}` : h.due ? `Due ${fmt(h.due)}` : h.due_text ? esc(h.due_text) : "";
-    const undo = h.by==="human" && h.mid && LIVE && latest() ? ` <button class="x" data-undo="${h.mid}" title="Undo"><i class="ph ph-arrow-counter-clockwise"></i></button>` : "";
+    const undo = h.by==="human" && h.mid && LIVE ? ` <button class="x" data-undo="${h.mid}" title="Undo"><i class="ph ph-arrow-counter-clockwise"></i></button>` : "";
     return `<li class="${h.applied?"applied":""} ${fut?"future":""}"><div class="tl-h"><b>${esc(lab)}</b>${ver?`<span class="tag ${ver==="verified"?"kind":"dep"}">${ver}</span>`:""}${h.merged_from?`<span class="tag kind">from ${h.merged_from}</span>`:""}${h.applied===false&&ver==="verified"?`<span class="tag you">kept your value</span>`:""}${undo}</div>
       ${extra?`<div class="tl-m">${extra}</div>`:""}${h.quote?`<div class="tl-q">“${esc(h.quote)}”</div>`:""}
       <div class="tl-m">${h.by==="human"?"You":esc(h.speaker||"")} <span class="mono">${fmt(h.date)} ${ts(h.ts)}</span>${h.kind==="client"?", client meeting":h.kind&&h.kind!=="internal"&&KINDNAME[h.kind]?", "+KINDNAME[h.kind].toLowerCase():""}${h.note?`  ${esc(h.note)}`:""}</div></li>`; }).join("")}</ul>`);
@@ -648,12 +697,17 @@ async function send(body, msg){
   const r = await fetch("/api/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   const j = await r.json();
   if (!r.ok){ toast(j.error || "Could not save"); return; }
-  toast(msg || "Saved"); await load(true);
+  const past = !latest();
+  toast((msg || "Saved") + (past ? " · applied to the current tree" : "")); await load(true);
+  if (past){ ci = D.calls.length-1; render(); }
 }
 function toast(m){ const t = $("#toast"); t.textContent = m; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 1800); }
 
 function bindDetail(n){
-  const edit = (field, val, msg) => { const v = val === "" ? null : val; if ((n[field]??null) === v) return; send({op:"edit", node:n.id, set:{[field]:v}}, msg); };
+  const now = (D.snaps[D.calls[D.calls.length-1].id].nodes[n.id]) || n;   // edits apply to the current tree
+  const edit = (field, val, msg) => { const v = val === "" ? null : val;
+    if ((now[field]??null) === v){ if (!latest()){ ci = D.calls.length-1; render(); toast("Already set in the current tree"); } return; }
+    send({op:"edit", node:n.id, set:{[field]:v}}, msg); };
   $("#f-title").addEventListener("keydown", e => { if (e.key==="Enter" && !e.shiftKey){ e.preventDefault(); e.target.blur(); }});
   $("#f-title").addEventListener("blur", e => edit("title", e.target.value.trim(), "Title saved, pinned"));
   $("#f-state").addEventListener("change", e => edit("state", e.target.value, "Status saved, pinned"));
@@ -708,7 +762,7 @@ $("#theme").onclick = () => {
   const nx = cur==="dark" ? "light" : "dark"; document.documentElement.dataset.theme = nx; store.set("taska.theme", nx);
 };
 { const th = store.get("taska.theme"); if (th) document.documentElement.dataset.theme = th; }
-load().catch(err => { $("#left").innerHTML = `<div class="blank"><b>Could not load the ledger</b>${esc(err.message)}. Start it with taska_v3.py serve.</div>`; });
+load().catch(err => { $("#left").innerHTML = `<div class="blank"><b>Could not load the ledger</b>${esc(err.message)}. Start it with taska.py serve.</div>`; });
 </script>
 </body>
 </html>

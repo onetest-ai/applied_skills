@@ -302,11 +302,11 @@ def cmd_schedule(a):
     """Print (never install) a cron line or launchd plist for an unattended `/taska:run --due`."""
     pd = C.find_project(a.project)
     claude = shutil.which("claude") or "claude"
-    cmd = f"cd {shlex.quote(str(pd))} && mkdir -p logs && {shlex.quote(claude)} -p \"/taska:run --due\" " \
+    cmd = f"cd {shlex.quote(str(pd))} && mkdir -p logs && PATH={shlex.quote(os.environ.get('PATH', ''))} {shlex.quote(claude)} -p \"/taska:run --due\" " \
           f">> logs/taska-$(date +\\%F).log 2>&1"
     hh, mm = a.time.split(":")
     if not a.launchd:
-        out({"status": "ok", "kind": "cron", "line": f"{int(mm)} {int(hh)} * * 1-5 PATH={os.environ.get('PATH', '')} {cmd}"})
+        out({"status": "ok", "kind": "cron", "line": f"{int(mm)} {int(hh)} * * 1-5 {cmd}"})
     plist = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>

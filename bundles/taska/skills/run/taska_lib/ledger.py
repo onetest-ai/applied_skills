@@ -10,6 +10,7 @@
 import datetime as dt
 import hashlib
 import json
+import re
 from collections import defaultdict
 
 from . import store as S
@@ -145,10 +146,15 @@ def fold(store, upto=None, evs=None, ev=None):
                 hist(n, e, ok)
             elif op == "revise":
                 ok = setf(n, "title", e["title"], e) if e.get("title") else True
-                n["ac"] += [{"text": x, "met": False, "met_by": None, "source": "agent"} for x in e.get("ac_add") or []]
-                hist(n, e, ok)
+                added = [{"text": x, "met": False, "met_by": None, "source": "agent"} for x in e.get("ac_add") or []]
+                n["ac"] += added
+                hist(n, e, ok or bool(added))  # ac_add applies even when a pinned title is refused — audit it
             elif op == "ac_met":
-                vis, k = _visible_ac(n), e["ac"] - 1
+                # by the criterion the claim was about (its text), wherever it sits now; the number is only a
+                # fallback for events recorded before ac_text existed
+                vis = _visible_ac(n)
+                k = next((j for j, a in enumerate(vis) if a["text"] == e["ac_text"]), -1) if e.get("ac_text") \
+                    else e["ac"] - 1
                 if ok and 0 <= k < len(vis) and not vis[k].get("human"):
                     vis[k].update(met=True, met_by=e["mid"])
                 hist(n, e, ok)
@@ -477,6 +483,9 @@ def _apply(store, cfg, evid, proposals):
             if node not in N:
                 rej.append({"i": i, "why": f"note needs a known node, got {node!r}"})
                 continue
+            if not (p.get("note") or "").strip():
+                rej.append({"i": i, "why": "note needs its text in `note`"})
+                continue
             out.append(base(p, q, "note", node) | {"type": "note", "node": node, "text": p.get("note") or ""})
             continue
         if node not in N:
@@ -487,8 +496,10 @@ def _apply(store, cfg, evid, proposals):
         if later:
             rej.append({"i": i, "why": f"{later} did not exist yet on {item['date']}"})
             continue
-        e = base(p, q, op, node, p.get("effect"), p.get("depends_on"), p.get("into"), p.get("parent"), p.get("ac"),
-                 p.get("what")) | {"type": "agent", "op": op, "node": node}
+        key = [p.get("effect"), p.get("depends_on"), p.get("into"), p.get("parent"), p.get("ac"), p.get("what")]
+        if op == "revise":  # title/ac_add distinguish two revisions of one node citing the same quote
+            key += [p.get("title"), tuple(p.get("ac_add") or ())]
+        e = base(p, q, op, node, *key) | {"type": "agent", "op": op, "node": node}
         if e["mid"] in seen:
             continue
         if op == "status":
@@ -510,6 +521,11 @@ def _apply(store, cfg, evid, proposals):
             live = _visible_ac(N[node])
             if N[node]["kind"] != "story" or not isinstance(p.get("ac"), int) or not 0 < p["ac"] <= len(live):
                 rej.append({"i": i, "why": "ac_met needs a story node and the 1-based number of one of its criteria"})
+                continue
+            agent_saw = p.get("ac_text")
+            if agent_saw and norm(agent_saw) != norm(live[p["ac"] - 1]["text"]):
+                rej.append({"i": i, "why": f"criterion {p['ac']} of {node} is now “{live[p['ac'] - 1]['text']}”, not "
+                                          f"“{agent_saw}”: the criteria changed since you read context; re-read it"})
                 continue
             e |= {"ac": p["ac"], "ac_text": live[p["ac"] - 1]["text"]}  # what the agent saw, for the verifier
         elif op == "link":
@@ -550,6 +566,18 @@ def mark_processed(store, evid, note=""):
 
 
 # ---------- verify ----------
+def _window(text, quote, size=1200):
+    """The part of a document the verifier reads: `size` characters around the quote (a file's quote can sit past
+    the first `size`, where it was invisible and the claim could only ever be judged weak); the start when the quote
+    cannot be located. Quotes are matched normalised, so spacing, case and punctuation may differ in the raw text."""
+    words = re.findall(r"\w+", quote)
+    m = re.search(r"\W+".join(map(re.escape, words)), text, re.I) if words else None
+    if not m:
+        return text[:size]
+    start = max(0, min(m.start() - (size - (m.end() - m.start())) // 2, len(text) - size))
+    return text[start:start + size]
+
+
 def verify_prep(store, weak=False):
     ev = S.evidence(store)
     evs = S.events(store)
@@ -566,7 +594,7 @@ def verify_prep(store, weak=False):
         turns = item.get("turns") or []
         k = next((i for i, t in enumerate(turns) if e["quote_norm"][:40] in norm(t["text"])), None)
         ctx = [f"[{t['ts']}] {t['speaker']}: {t['text']}" for t in turns[max(0, k - 2):k + 3] if not t.get("bc")] \
-            if k is not None else [(item.get("text") or "")[:1200]]
+            if k is not None else [_window(item.get("text") or "", e["quote"])]
         n = N.get(e["node"], {})
         if e["op"] == "ac_met":
             claim = f"acceptance criterion {e['ac']} met: " + (

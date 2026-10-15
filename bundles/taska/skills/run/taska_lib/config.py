@@ -96,8 +96,11 @@ def load(project_dir="."):
     plan = dict(raw.get("plan") or {})
     if plan.get("file"):
         plan["file"] = str(_resolve(pd, plan["file"]))
+    wd = tuple(pr.get("working_days", (1, 2, 3, 4, 5)))
+    if not wd or any(x not in range(1, 8) for x in wd):
+        raise ConfigError("[project].working_days must be a non-empty list of ISO weekdays (1-7)")
     return Config(project_dir=pd, name=pr["name"], store=_resolve(pd, pr.get("store", ".taska")),
-                  timezone=pr.get("timezone", "UTC"), working_days=tuple(pr.get("working_days", (1, 2, 3, 4, 5))),
+                  timezone=pr.get("timezone", "UTC"), working_days=wd,
                   plan=plan, people=people, sources=sources, media=dict(raw.get("media") or {}),
                   run=dict(raw.get("run") or {}))
 
