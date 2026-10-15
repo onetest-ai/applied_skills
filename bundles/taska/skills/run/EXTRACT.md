@@ -41,6 +41,14 @@ For each evidence id you were given, in that order:
   story whose deliverable it is — not on every story the topic touches; `ac_met` when a criterion is exactly "X
   shared/documented". A file the client delivered can close a client-owed dependency (`done`). Most files match
   nothing: `done` with a note. A digest item ("12 files in client inputs/…") is evidence of a delivery, not of work.
+- **status report** (a `file` with a dated header and `Open`/`Done`/`In Progress`/`To Do` sections — a weekly deck,
+  not a transcript): walk each ticket bullet and propose the change on the node it names, **citing the bullet
+  verbatim** — `In Progress:` → `progress`; `Done:` → `progress` **as a proposal, never `done`** (the report is
+  outside-authored, so a close waits for a meeting to confirm it); `To Do:`/`Open:` work → a `create` only when it is
+  unmistakably a new task with an owner or clear scope. A ticket that matches no node and names no owner is a
+  `mention`, not a fabricated task. A metrics table (LCP/TTFB per transaction) is **not** figures to store — attach a
+  one-line `note` on the monitoring task quoting the notable delta. A report that only restates old/closed tickets
+  yields nothing: do not re-create history.
 - **pr** (pull/merge request) — merged = `done` on the one task it implements (or `ac_met` when a criterion is that
   change); opened/under review = `progress`; closed unmerged = usually a `mention` or `blocked`. Match by title, branch
   name, linked issue or the work it describes; most PRs in a busy repository match nothing: `done` with a note.
