@@ -19,12 +19,9 @@ from test_plugin_structure import KB_ROOT
 
 SKILL_DIR = KB_ROOT / "skills" / "doc-fact-check"
 SKILL = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
-WORKER_LINE = ("You are a doc-fact-check worker. The main session has already resolved the Brain and read its "
-               "basics into `<work dir>/brain_context.json`: do not run step 0, step 0b or the Brain contract's "
-               "resolution steps, and never call `health`, `list_metrics` or `list_sources`. "
-               "Every Verified finding that is not a number claim records the step-4 name check in its `trail` "
-               "(`name check: <name> → <what the Brain uses it for>`, or `name check: none`). "
-               "Follow the command rules in Inputs.")
+WORKER_LINE = ("You are a doc-fact-check worker. Read only `\"<skill dir>/extract.md\"` (stage E) or "
+               "`\"<skill dir>/verify.md\"` (stage V), your batch or chunk file, and `<work dir>/brain_context.json`. "
+               "Never call `health`, `list_metrics` or `list_sources`. Follow the command rules in your brief.")
 
 
 def section(start, end):
@@ -45,6 +42,7 @@ class OncePerRunCallsStayInTheMainSession(unittest.TestCase):
             para = step1b[step1b.index(stage):].split("\n")[0]
             with self.subTest(stage=stage):
                 self.assertIn("starts with the worker line", para)
+        self.assertNotIn("the absolute path of this SKILL.md", step1b)
 
     def test_current_fact_probe_runs_once_before_stage_v(self):
         step1b = section("### 1b.", "### 2.")
@@ -53,10 +51,11 @@ class OncePerRunCallsStayInTheMainSession(unittest.TestCase):
         self.assertIn("sets `has_current_facts` to false only when every probe returns nothing", step1b)
 
     def test_workers_skip_current_fact_without_a_store_but_keep_both_searches(self):
-        rule = [l for l in SKILL.splitlines() if l.startswith("- TIME / STATUS / OWN")][0]
+        verify = (SKILL_DIR / "verify.md").read_text(encoding="utf-8")   # v2: stage-V rules live in the brief
+        rule = [l for l in verify.splitlines() if l.startswith("- TIME / STATUS / OWN")][0]
         self.assertIn("unless `brain_context.json` has `has_current_facts: false`", rule)
         self.assertIn("run `search_knowledge` twice", rule)
-        step_c = [l for l in SKILL.splitlines() if l.strip().startswith("**c.**")][0]
+        step_c = [l for l in verify.splitlines() if l.strip().startswith("**c.**")][0]
         self.assertIn("unless `brain_context.json` has `has_current_facts: false`", step_c)
 
 
@@ -101,7 +100,7 @@ class ChunkerReportsQuoteProblems(unittest.TestCase):
 
     def claims(self, *quotes):
         self.w("claims_batch_1.json", [{"claim_id": f"B1-C0{i}", "p_id": "p2", "s_id": f"p2s{i}", "section": "Scope",
-                                        "quote": q, "type": "NUM"} for i, q in enumerate(quotes, 1)])
+                                        "quote": q, "claim": q, "type": "NUM", "questions": ["q"]} for i, q in enumerate(quotes, 1)])
 
     def test_verbatim_short_quotes_give_no_warning(self):
         self.claims("40 million in 2025", "The team owns billing.")
@@ -128,7 +127,8 @@ class ChunkerReportsQuoteProblems(unittest.TestCase):
 
     def test_skill_says_figure_transcriptions_are_exempt_and_never_hand_edit(self):
         flat = re.sub(r"\s+", " ", SKILL)
-        self.assertIn("figure transcriptions (`I*`) are exempt from the 25-word limit", flat)
+        extract = re.sub(r"\s+", " ", (SKILL_DIR / "extract.md").read_text(encoding="utf-8"))
+        self.assertIn("figure transcriptions (`I*`) are exempt from the 25-word limit", extract)
         self.assertIn("never shorten or edit a stage-E claim in the main session", flat)
 
 
@@ -150,8 +150,12 @@ class CommandDiscipline(unittest.TestCase):
         self.assertLess(flat.index(self.RULE), flat.index("### 0. Resolve"))
 
     def test_workers_get_the_rule_too(self):
-        # the worker line points workers at the same rule
-        self.assertIn("Follow the command rules in Inputs", SKILL)
+        # v2: the worker line points workers at their brief, and each brief states the command rules
+        self.assertIn("Follow the command rules in your brief", SKILL)
+        for brief in ("extract.md", "verify.md"):
+            with self.subTest(brief=brief):
+                self.assertIn("Follow the command rules: absolute paths, the Write tool for output, no inline Python",
+                              (SKILL_DIR / brief).read_text(encoding="utf-8"))
 
 
 class BaselineStaysInTheRunFolder(unittest.TestCase):

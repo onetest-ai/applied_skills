@@ -145,6 +145,24 @@ class TestFindingsReport(unittest.TestCase):
         self.assertNotIn("<details>", rows[1])
         self.assertNotIn("search_knowledge", html.split('<table>')[0])   # never in the summary panels
 
+    def test_conflicts_render_inside_the_trail_details(self):  # I4
+        conflicts = [{"span": "runs <14> services", "source": "plan.docx", "date": "2026-02-01"},
+                     {"span": "runs 15 services", "source": "notes.vtt", "date": "2026-03-01"}]
+        html = self.render([f("C01", "Controversial", "Major", "Word comment", "q", trail="t", conflicts=conflicts),
+                            f("C02", "Verified", "—", "count only", "q", trail="t", conflicts=[])])
+        rows = re.findall(r'<tr data-tags="[^"]*">(.*?)</tr>', html, re.S)
+        details = rows[0][rows[0].index("<details>"):rows[0].index("</details>")]
+        self.assertIn("Conflicts: runs &lt;14&gt; services — plan.docx, 2026-02-01; "
+                      "runs 15 services — notes.vtt, 2026-03-01", details)
+        self.assertNotIn("Conflicts", rows[1])
+
+    def test_conflicts_alone_still_get_a_details_block(self):  # I4
+        html = self.render([f("C01", "Outdated", "Major", "Word comment", "q",
+                              conflicts=[{"span": "old", "source": "a.md", "date": "2025-01-01"}])])
+        row = re.findall(r'<tr data-tags="[^"]*">(.*?)</tr>', html, re.S)[0]
+        self.assertIn("<details><summary>Show</summary>", row)
+        self.assertIn("old — a.md, 2025-01-01", row)
+
     def test_section_headings(self):
         html = self.render()
         self.assertEqual(re.findall(r"<h2>(.*?)</h2>", html), ["Verdicts", "Blocker and Major findings", "Claim ledger"])

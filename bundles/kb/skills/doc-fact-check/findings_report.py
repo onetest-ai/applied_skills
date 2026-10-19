@@ -22,11 +22,36 @@ MAJOR_SEVERITIES = ("Blocker", "Major")
 
 def coverage_line(run: dict) -> str:
     """The one sentence that states what a run checked (spec §13.6/§15.3); page and report both use it."""
+    hidden = run.get("hidden_slides") or []
+    tail = f" Not checked: hidden slide{'s' if len(hidden) > 1 else ''} {', '.join(map(str, hidden))}." if hidden else ""
+    off = run.get("offscreen") or {}
+    if off.get("blocks"):
+        sl = off.get("slides") or []
+        tail += (f" Not checked: {off['blocks']} text block{'s' if off['blocks'] != 1 else ''} not on the slide"
+                 + (f" (slide{'s' if len(sl) > 1 else ''} {', '.join(map(str, sl))})" if sl else "") + ".")
+    nav = run.get("chrome") or {}
+    if nav.get("texts"):
+        n, sl = len(nav["texts"]), nav.get("slides") or []
+        tail += (f" Not checked: {n} navigation label{'s' if n != 1 else ''} repeated across slides"
+                 + (f" (slide{'s' if len(sl) > 1 else ''} {', '.join(map(str, sl))})" if sl else "") + ".")
+    dup = run.get("dropped_duplicate_figure") or []
+    if dup:
+        tail += (f" Not verified: {len(dup)} figure claim{'s' if len(dup) != 1 else ''} that repeat{'' if len(dup) != 1 else 's'} "
+                 f"the slide's text ({', '.join(str(x.get('claim_id')) for x in dup)}).")
+    unv = [cid for u in run.get("unverified") or [] for cid in u.get("claim_ids", [])]
+    if unv:
+        chunks = ", ".join(str(u.get("chunk")) for u in run["unverified"])
+        tail += (f" Not verified: {len(unv)} claim{'s' if len(unv) != 1 else ''} (chunk{'s' if len(run['unverified']) > 1 else ''} "
+                 f"{chunks} {'were' if len(run['unverified']) > 1 else 'was'} refused twice).")
     if run.get("scope") == "risk":
         return (f"Fast scan — {run.get('claims_verified', 0)} of {run.get('claims_extracted', 0)} claims checked "
-                f"(high-risk only). Run a Deep check before sign-off.")
+                f"(high-risk only). Run a Deep check before sign-off." + tail)
+    if run.get("scope") == "all" and unv:
+        return (f"Deep check — {run.get('claims_verified', 0)} claims verified in {run.get('sections_total', 0)} sections."
+                + tail)
     if run.get("scope") == "all":
-        return f"Deep check — all {run.get('sections_total', 0)} sections checked; {run.get('claims_verified', 0)} claims verified."
+        return (f"Deep check — all {run.get('sections_total', 0)} sections checked; "
+                f"{run.get('claims_verified', 0)} claims verified." + tail)
     return "Coverage unknown — run.json scope is missing or unrecognised."
 
 
@@ -68,10 +93,42 @@ def _safe_link(url) -> str | None:
     return url if url.lower().startswith(("http://", "https://")) else None
 
 
+def conflicts_text(conflicts) -> str:
+    """A finding's `conflicts` as plain text: "span — source, date; …" (the one copy; baseline.py uses it too)."""
+    parts = []
+    for c in conflicts if isinstance(conflicts, list) else []:
+        if isinstance(c, dict):
+            parts.append(f"{c.get('span', '')} — {c.get('source', '')}, {c.get('date', '')}")
+        elif c:
+            parts.append(str(c))
+    return "; ".join(" ".join(p.split()) for p in parts)
+
+
 def _trail(f: dict) -> str:
-    """The audit trail (tool calls, queries, chunk ids), collapsed: for reviewers, not the reader's first look."""
+    """The audit trail (tool calls, queries, chunk ids) and the recorded conflicts, collapsed: for reviewers,
+    not the reader's first look."""
     t = str(f.get("trail") or "").strip()
-    return f"<details><summary>Show</summary>{_e(t)}</details>" if t else ""
+    c = conflicts_text(f.get("conflicts"))
+    body = _e(t) + (("<br>" if t else "") + "Conflicts: " + _e(c) if c else "")
+    return f"<details><summary>Show</summary>{body}</details>" if body else ""
+
+
+def _checked_as(f: dict) -> str:
+    """The claim as stage V checked it, shown when it differs from the draft's verbatim quote."""
+    claim, quote = str(f.get("claim") or "").strip(), str(f.get("quote") or "").strip()
+    return f'<span class="checked">Checked as: {_e(claim)}</span>' if claim and claim != quote else ""
+
+
+def _why_html(f, table=False):
+    """The plain-language Why and the Suggested sentence when stage V wrote them (round 7), else the fix."""
+    if str(f.get("why") or "").strip():
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from fact_check_invariants import source_label
+        name, date = source_label(f.get("source", ""))
+        lead = "" if table else " "
+        return (f'{lead}Why: {_e(name)} ({_e(date)}) says {_e(f["why"])}'
+                + (f' Suggested: “{_e(f.get("suggested"))}”' if f.get("suggested") else ""))
+    return (_e(f.get("fix")) if table else (" Fix: " + _e(f.get("fix")) if f.get("fix") else ""))
 
 
 def _sources(f: dict) -> str:
@@ -142,7 +199,7 @@ th{text-align:left;font-family:var(--mono);font-size:11px;letter-spacing:.06em;t
 td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
 tr:last-child td{border-bottom:0}
 .mono{font-family:var(--mono);font-weight:600;color:var(--term);white-space:nowrap}
-.q{font-style:italic;color:var(--ink-2);max-width:32ch}.src{display:block;color:var(--muted);font-size:12.5px}.cap{display:block;color:var(--muted);font-size:12px}
+.q{font-style:italic;color:var(--ink-2);max-width:32ch}.checked{display:block;font-style:normal;color:var(--muted);font-size:12.5px;margin-top:4px}.src{display:block;color:var(--muted);font-size:12.5px}.cap{display:block;color:var(--muted);font-size:12px}
 .sev-major{color:var(--s-incorrect);font-weight:600}.sev-blocker{color:var(--s-incorrect);font-weight:700;text-transform:uppercase;letter-spacing:.04em}
 .dest{font-family:var(--mono);font-size:12px;white-space:nowrap}
 .trail{font-size:12px;color:var(--muted);min-width:90px}.trail summary{cursor:pointer}.mtext .q{font-style:italic}
@@ -195,6 +252,8 @@ def render_html(findings, *, document="", brain_version="", run_date=None,
     title = title or "Fact-check findings"
     meta_items = [("Document", document), ("Brain", brain_name), ("Knowledge", brain_version),
                   ("Run", run_date), ("Output", output_name)]
+    if run and run.get("minutes_total") is not None:
+        meta_items.append(("Minutes", str(run["minutes_total"])))
     meta_html = "".join(f'<span>{_e(k)} <b>{_e(v)}</b></span>' for k, v in meta_items if v)
 
     major_label = ", ".join(s for s in (f"{blockers} Blocker" if blockers else "",
@@ -222,8 +281,8 @@ def render_html(findings, *, document="", brain_version="", run_date=None,
         majors_html = (f'<h2>Blocker and Major findings</h2><ul class="majors">' + "".join(
             f'<li><span class="mid">{_e(f.get("id"))}</span>'
             f'<span class="pill s-{_slug(f.get("verdict"))}">{_e(f.get("verdict"))}</span>'
-            f'<span class="mtext"><span class="q">{_e(f.get("quote"))}</span> — {_e(f.get("evidence"))}'
-            f'{" Fix: " + _e(f.get("fix")) if f.get("fix") else ""}</span></li>' for f in majors) + "</ul>")
+            f'<span class="mtext"><span class="q">{_e(f.get("quote"))}</span>{_checked_as(f)} — {_e(f.get("evidence"))}'
+            f'{_why_html(f)}</span></li>' for f in majors) + "</ul>")
     else:
         majors_html = '<h2>Blocker and Major findings</h2><p class="note">None.</p>'
 
@@ -242,10 +301,10 @@ def render_html(findings, *, document="", brain_version="", run_date=None,
     rows = "".join(
         f'<tr data-tags="{_tags(f)}">'
         f'<td class="mono">{_e(f.get("id"))}</td><td>{_e(f.get("where") or f.get("section"))}</td>'
-        f'<td class="q">{_e(f.get("quote"))}</td>'
+        f'<td class="q">{_e(f.get("quote"))}{_checked_as(f)}</td>'
         f'<td><span class="pill s-{_slug(f.get("verdict"))}">{_e(f.get("verdict"))}</span></td>'
         f'{_sev_cell(f)}<td>{_e(f.get("confidence"))}</td>'
-        f'<td>{_e(f.get("evidence"))}</td><td>{_e(f.get("fix"))}</td><td>{_sources(f)}</td>'
+        f'<td>{_e(f.get("evidence"))}</td><td>{_why_html(f, table=True)}</td><td>{_sources(f)}</td>'
         f'<td class="dest">{"Comment" if _has_comment(f) else "Log"}</td>'
         f'<td class="trail">{_trail(f)}</td></tr>' for f in findings)
 
@@ -309,6 +368,7 @@ def main(argv=None) -> int:
     ap.add_argument("--eyebrow", default="")
     ap.add_argument("--lede", default="")
     ap.add_argument("--output-name", default="")
+    ap.add_argument("--clock", metavar="WORK_DIR", help="record this step's start and end in <work dir>/timings.json")
     a = ap.parse_args(argv)
     if a.coverage_line:
         run = _load_run(a.coverage_line)
@@ -336,6 +396,10 @@ def main(argv=None) -> int:
     if isinstance(data, list) and data and not any(isinstance(f, dict) and "destination" in f for f in data):
         print("warning: no finding has a `destination` key; the comments tile shows n/a "
               "(write destination after step 8)", file=sys.stderr)
+    if a.clock:                                   # a script's own clock; findings_report stays import-free otherwise
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import run_clock
+        run_clock.stamp(a.clock, "report", "start")
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(render_html(data, document=a.document, brain_version=a.brain_version, brain_name=a.brain_name,
@@ -343,6 +407,8 @@ def main(argv=None) -> int:
                                run=run),
                    encoding="utf-8")
     print(out.resolve())
+    if a.clock:
+        run_clock.stamp(a.clock, "report", "end")
     return 0
 
 

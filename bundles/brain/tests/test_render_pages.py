@@ -68,3 +68,46 @@ class LibreOfficeRenderIsolationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+try:
+    import pymupdf  # noqa: F401
+    HAVE_PYMUPDF = True
+except ImportError:
+    HAVE_PYMUPDF = False
+
+
+@unittest.skipUnless(HAVE_PYMUPDF, "needs PyMuPDF")
+class RenderFunctionMatchesCliTests(unittest.TestCase):
+    """render() is the library entry point deck-fact-check vendors; the CLI must stay a thin wrapper over it."""
+
+    def _pdf(self, path: Path) -> None:
+        import pymupdf
+        doc = pymupdf.open()
+        for n in range(1, 4):
+            page = doc.new_page()
+            page.insert_text((72, 72), f"Page {n}: Uptime held at 99.{n}% in FY2025 across the Northwind region.")
+        doc.save(str(path))
+
+    def test_render_and_cli_write_identical_pages_json(self):
+        import json
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            self._pdf(td / "deck.pdf")
+            subprocess.run([sys.executable, str(HERE / "render_pages.py"), "--doc", "deck.pdf", "--out", "cli"],
+                           cwd=td, check=True, capture_output=True)
+            import os
+            cwd = os.getcwd()
+            os.chdir(td)
+            try:
+                got = R.render("deck.pdf", "lib")
+            finally:
+                os.chdir(cwd)
+            cli = json.loads((td / "cli" / "deck" / "pages.json").read_text())
+            lib = json.loads((td / "lib" / "deck" / "pages.json").read_text())
+            self.assertEqual(cli, lib)
+            self.assertEqual(got, lib)
+            self.assertEqual([p["page"] for p in lib["pages"]], [1, 2, 3])
+            self.assertEqual(lib["pages"][0]["image"], "deck/p01.png")

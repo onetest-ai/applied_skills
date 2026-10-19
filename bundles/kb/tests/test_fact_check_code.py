@@ -48,7 +48,8 @@ class TestReferenceCode(unittest.TestCase):
 
     def _finding(self, **kw):
         base = dict(id="C01", verdict="Incorrect", severity="Major", section="1",
-                    evidence="e", fix="f", source="s")
+                    evidence="e", fix="f", source="s",
+                    why="the source states another value", suggested="The statement with the source's value.")
         base.update(kw)
         return base
 
@@ -263,13 +264,20 @@ class AnnotateCli(unittest.TestCase):
         path.write_text(data if isinstance(data, str) else json.dumps(data), encoding="utf-8")
         return path
 
-    def _run(self, approved, findings, out=None, draft=None, pre=()):
+    def _run(self, approved, findings, out=None, draft=None, pre=(), comments=("--comments", "major")):
         import subprocess
         import sys
         return subprocess.run(
             [sys.executable, *pre, str(self.SCRIPT), str(draft or self.src), str(out or self.out),
-             "--approved", str(approved), "--findings", str(findings)],
+             "--approved", str(approved), *comments, "--findings", str(findings)],
             capture_output=True, text=True)
+
+    def test_approved_requires_comments(self):  # T9
+        a, f = self._good()
+        r = self._run(a, f, comments=())
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("--comments is required with --approved", r.stderr)
+        self.assertFalse(self.out.exists())
 
     def _good(self):
         approved = [dict(id="C01", verdict="Incorrect", severity="Major", quote="40 million", **self.BASE)]
@@ -284,6 +292,110 @@ class AnnotateCli(unittest.TestCase):
         self.assertEqual(json.loads(r.stdout), {"written": ["C01"], "skipped": []})
         dest = {x["id"]: x["destination"] for x in json.loads(f.read_text())}
         self.assertEqual(dest, {"C01": "Word comment", "C02": "count only"})
+
+    def _reviewer_edit(self, comments=("--comments", "major")):
+        """A Deep reviewer removes the Major C01 and adds the Minor C02 (fix round 1)."""
+        import subprocess
+        import sys
+        findings = self._write("findings.json", [
+            dict(id="C01", verdict="Incorrect", severity="Major", quote="40 million", **self.BASE),
+            dict(id="C02", verdict="Misleading", severity="Minor", quote="2025", **self.BASE),
+            dict(id="C03", verdict="Verified", severity="Minor", quote="Revenue", **self.BASE)])
+        approved = self._write("approved.json", [
+            dict(id="C02", verdict="Misleading", severity="Minor", quote="2025", **self.BASE)])
+        r = subprocess.run([sys.executable, str(self.SCRIPT), str(self.src), str(self.out), "--approved", str(approved),
+                            *comments, "--findings", str(findings)], capture_output=True, text=True)
+        return r, findings
+
+    def test_approved_records_declined_and_added_by_reviewer(self):
+        import json
+        r, f = self._reviewer_edit()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        dest = {x["id"]: x["destination"] for x in json.loads(f.read_text())}
+        self.assertEqual(dest, {"C01": "declined by reviewer", "C02": "Word comment (added by reviewer)",
+                                "C03": "count only"})
+
+    def test_reviewer_edited_run_passes_the_invariants_and_unmarked_edits_still_fail(self):
+        import json
+        from fact_check_invariants import check_run
+        r, f = self._reviewer_edit()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        findings = json.loads(f.read_text())
+        self.assertEqual(check_run(findings, self.out, run={"comments": "major"}), [])
+        unmarked = [{**x, "destination": {"C01": "log only", "C02": "Word comment"}.get(x["id"], x["destination"])}
+                    for x in findings]
+        v = check_run(unmarked, self.out, run={"comments": "major"})
+        self.assertTrue(any(m.startswith("C01: ") and "must have a comment" in m for m in v), v)
+        self.assertTrue(any(m.startswith("C02: ") and "must not carry a comment" in m for m in v), v)
+
+    def test_comments_flag_is_only_for_approved(self):
+        findings = self._write("findings.json", [
+            dict(id="C01", verdict="Incorrect", severity="Major", quote="40 million", **self.BASE)])
+        r = self._run_select(findings, "major", extra=("--comments", "all"))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("--comments is only used with --approved", r.stderr)
+        self.assertFalse(self.out.exists())
+
+    def _run_select(self, findings, select=None, draft=None, extra=()):
+        import subprocess
+        import sys
+        cmd = [sys.executable, str(self.SCRIPT), str(draft or self.src), str(self.out), "--findings", str(findings)]
+        if select:
+            cmd += ["--select", select]
+        return subprocess.run(cmd + list(extra), capture_output=True, text=True)
+
+    def test_select_major_writes_only_blocker_and_major(self):
+        import json
+        findings = self._write("findings.json", [
+            dict(id="C01", verdict="Incorrect", severity="Major", quote="40 million", **self.BASE),
+            dict(id="C02", verdict="Misleading", severity="Minor", quote="2025", **self.BASE),
+            dict(id="C03", verdict="Verified", severity="Minor", quote="Revenue", **self.BASE)])
+        r = self._run_select(findings, "major")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)["written"], ["C01"])
+        dest = {x["id"]: x["destination"] for x in json.loads(findings.read_text())}
+        self.assertEqual(dest, {"C01": "Word comment", "C02": "log only", "C03": "count only"})
+
+    def test_select_all_writes_every_defect(self):
+        import json
+        findings = self._write("findings.json", [
+            dict(id="C01", verdict="Incorrect", severity="Major", quote="40 million", **self.BASE),
+            dict(id="C02", verdict="Misleading", severity="Minor", quote="2025", **self.BASE),
+            dict(id="C03", verdict="Verified", severity="Minor", quote="Revenue", **self.BASE)])
+        r = self._run_select(findings, "all")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)["written"], ["C01", "C02"])
+
+    def test_select_major_includes_figure_finding(self):
+        import io
+        import json
+        from docx import Document
+        from docx.shared import Pt
+        from docx.oxml.ns import qn
+        d = Document()
+        d.add_paragraph("intro")
+        d.add_paragraph().add_run().add_picture(io.BytesIO(_tiny_png()), width=Pt(10))
+        draft = self.d / "fig.docx"
+        d.save(str(draft))
+        findings = self._write("findings.json", [
+            dict(id="I01", verdict="Misleading", severity="Major", anchor="drawing", figure=1, **self.BASE)])
+        r = self._run_select(findings, "major", draft=draft)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)["written"], ["I01"])
+        out = Document(str(self.out))
+        runs = [x for p in out.element.body.iter(qn("w:p")) for x in p.iter(qn("w:r"))
+                if x.findall(".//" + qn("w:drawing"))]
+        self.assertEqual(len(runs), 1)
+        self.assertTrue(list(out.element.body.iter(qn("w:commentRangeStart"))))
+        self.assertTrue(list(out.element.body.iter(qn("w:commentRangeEnd"))))
+
+    def test_approved_and_select_are_exclusive(self):
+        a, f = self._good()
+        both = self._run_select(f, "major", extra=("--approved", str(a)))
+        self.assertEqual(both.returncode, 2, both.stderr)
+        neither = self._run_select(f)
+        self.assertEqual(neither.returncode, 2, neither.stderr)
+        self.assertFalse(self.out.exists())
 
     def test_missing_python_docx_stops_with_the_step_0_message(self):
         a, f = self._good()
@@ -361,8 +473,10 @@ class AnnotateCli(unittest.TestCase):
 
     def test_skill_md_tells_the_agent_to_write_evidence_and_fix_for_the_comment(self):
         skill = (KB_ROOT / "skills" / "doc-fact-check" / "SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("Each row's `evidence` and `fix` are written for the comment, so that the whole comment, "
+        # v2: stage V writes comment-ready text and the merge enforces the limit; the main session no longer rewrites it
+        self.assertIn("Stage V writes `evidence` and `fix` comment-ready and the merge enforces the limit; the whole comment, "
                       "header and Source line included, is at most 60 words; `annotate.py` refuses a longer one and names it.", skill)
+        self.assertNotIn("Each row's `evidence` and `fix` are written for the comment", skill)
 
     def test_approved_finding_missing_a_comment_key_exits_2_naming_it(self):
         _, f = self._good()
@@ -412,7 +526,9 @@ class AnnotateCli(unittest.TestCase):
         self.assertNotIn("```python", skill)
         self.assertIn('python "<skill dir>/annotate.py" "<draft dir>/<name>.docx" "<draft dir>/<name> \u2014 fact-checked.docx" '
                       '--approved "<work dir>/approved.json" --findings "<run dir>/findings.json"', skill)
-        self.assertIn("a JSON array of the approved finding objects, with the keys listed above", skill)
+        self.assertIn('python "<skill dir>/annotate.py" "<draft dir>/<name>.docx" "<draft dir>/<name> \u2014 fact-checked.docx" '
+                      '--findings "<run dir>/findings.json" --select <major|all>', skill)
+        self.assertIn("a JSON array of the approved finding objects, copied unchanged from `<run dir>/findings.json`", skill)
 
 
 if __name__ == "__main__":

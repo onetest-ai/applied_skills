@@ -29,20 +29,20 @@ BATCHES = [
 
 def finding(fid, section, verdict="Incorrect", **kw):
     f = {"id": fid, "p_id": "p3", "section": section, "quote": "runs 12 services", "type": "NUM",
-         "verdict": verdict, "severity": "Major", "confidence": "High", "evidence": "e", "trail": "t", "fix": "f",
-         "source": "s", "sources": [{"name": "s", "link": "", "folder": ""}]}
+         "verdict": verdict, "severity": "Major", "confidence": "High", "evidence": "e", "trail": "t", "conflicts": [], "fix": "f",
+         "why": "the source states another value", "suggested": "The statement with the source's value.", "source": "s", "sources": [{"name": "s", "link": "", "folder": ""}]}
     f.update(kw)
     return f
 
 
 def claim(k, n, section):
     return {"claim_id": f"B{k}-C{n:02d}", "p_id": "p3", "s_id": f"b{k}s{n}", "section": section,
-            "quote": "runs 12 services", "type": "NUM"}
+            "quote": "runs 12 services", "claim": "the platform runs 12 services", "type": "NUM"}
 
 
 def fclaim(n):
     return {"claim_id": f"I{n:02d}", "p_id": "p9", "s_id": "p9", "section": "Figure", "quote": "edge A to B",
-            "type": "TOPO", "kind": "figure", "figure": 1}
+            "claim": "edge A to B", "type": "TOPO", "kind": "figure", "figure": 1}
 
 
 class MergeCase(unittest.TestCase):
@@ -506,6 +506,16 @@ class TestFinalFixWave(MergeCase):
         self.write("findings_chunk_1.json", [finding("B1-C01", S1), finding("B2-C01", S3)])
         self.has_error("chunks.json", "B2-C01", scope="risk")          # chunked but not risky
 
+    def test_risk_scope_unions_risk_over_anchor_and_s_ids(self):
+        # B1-C02's anchor b1s2 is untagged, but it also spans the num-tagged b1s9: it is in scope
+        self.batch_files(risky=lambda cid: cid == "B1-C01", extra=[(1, S2, "b1s9", ["num"])])
+        claims = json.loads((self.dir / "claims_batch_1.json").read_text())
+        claims[1]["s_ids"] = ["b1s2", "b1s9"]
+        self.write("claims_batch_1.json", claims)
+        self.write("chunks.json", [{"chunk": 1, "file": "chunk_1.json", "claim_ids": ["B1-C01", "B1-C02"]}])
+        self.write("findings_chunk_1.json", [finding("B1-C01", S1), finding("B1-C02", S2)])
+        self.assertEqual(self.errors(scope="risk"), [])
+
     def test_merge_reuses_the_batch_risk_helper(self):
         src = SCRIPT.read_text(encoding="utf-8")
         self.assertIn("_risk_by_s_id", src)
@@ -608,6 +618,7 @@ class TestSectionsToMergeRoundTrip(unittest.TestCase):
 
 
 class TestSchemaHasOneSource(unittest.TestCase):
+    # re-enabled in Task 9 (SKILL.md lists conflicts)
     def test_invariants_key_list_matches_skill_step_9(self):
         from fact_check_invariants import FINDING_KEYS
         text = re.sub(r"\s+", " ", SKILL.read_text(encoding="utf-8"))
@@ -666,3 +677,195 @@ class TestFigureAnchors(MergeCase):
         self.assertNotIn("kind", f)
         self.write("findings_chunk_2.json", [f])
         self.assertEqual(self.errors(), [])
+
+
+class TestV2MergeChecks(MergeCase):
+    def run_one(self, f):
+        self.write("claims_batch_1.json", [claim(1, 1, S1)])
+        self.write("claims_batch_2.json", [])
+        self.write("chunks.json", [{"chunk": 1, "file": "chunk_1.json", "claim_ids": ["B1-C01"]}])
+        self.write("batches.json", [BATCHES[0], {**BATCHES[1], "sections": []}])
+        self.write("findings_chunk_1.json", [f])
+        self.write("coverage_batch_1.json", [{"section_id": "s02", "reason": "no checkable statement"}])
+        self.batch_files()
+
+    def test_verified_with_conflict_refused(self):
+        self.run_one(finding("B1-C01", S1, verdict="Verified", trail="name check: none",
+                             conflicts=[{"span": "nightly", "source": "Ops", "date": "2026-01-02"}]))
+        _, _, _, errors = M.merge(self.dir, "all")
+        self.assertTrue(any("blocks Verified" in e and "B1-C01" in e for e in errors), errors)
+
+    def test_missing_conflicts_key_refused(self):
+        f = finding("B1-C01", S1)
+        f.pop("conflicts")
+        self.run_one(f)
+        _, _, _, errors = M.merge(self.dir, "all")
+        self.assertTrue(any("missing key(s) conflicts" in e for e in errors), errors)
+
+    def test_long_major_comment_refused_at_merge_with_claim_id(self):
+        long = " ".join(["word"] * 70)
+        self.run_one(finding("B1-C01", S1, severity="Major", evidence="short", fix=long))
+        _, _, _, errors = M.merge(self.dir, "all")
+        msg = next(e for e in errors if "comment would be" in e)
+        self.assertIn("B1-C01", msg)
+
+    def test_long_minor_comment_is_fine_under_major_policy(self):
+        long = " ".join(["word"] * 70)
+        self.run_one(finding("B1-C01", S1, severity="Minor", fix=long))
+        _, _, _, errors = M.merge(self.dir, "all")
+        self.assertFalse(any("comment would be" in e for e in errors), errors)
+
+    def test_long_minor_comment_refused_under_all_policy(self):
+        long = " ".join(["word"] * 70)
+        self.run_one(finding("B1-C01", S1, severity="Minor", fix=long))
+        _, _, _, errors = M.merge(self.dir, "all", comments="all")
+        self.assertTrue(any("comment would be" in e for e in errors), errors)
+
+    def test_major_defect_without_fix_reports_missing_key_and_does_not_crash(self):
+        f = finding("B1-C01", S1, severity="Major")
+        f.pop("fix")
+        self.run_one(f)
+        _, _, _, errors = M.merge(self.dir, "all")
+        self.assertTrue(any("missing key(s)" in e and "fix" in e for e in errors), errors)
+
+    def test_all_policy_defect_without_severity_reports_missing_key_and_does_not_crash(self):
+        f = finding("B1-C01", S1)
+        f.pop("severity")
+        self.run_one(f)
+        _, _, _, errors = M.merge(self.dir, "all", comments="all")
+        self.assertTrue(any("missing key(s)" in e and "severity" in e for e in errors), errors)
+
+    def test_unknown_comment_policy_raises(self):
+        with self.assertRaises(ValueError):
+            M.merge(self.dir, "all", comments="some")
+
+    def test_run_records_policy_and_timings(self):
+        self.run_one(finding("B1-C01", S1))
+        (self.dir / "timings.json").write_text(json.dumps(
+            {"timings": {"extract": {"start": "2026-10-06T10:00:00+00:00", "end": "2026-10-06T10:03:00+00:00"}},
+             "workers": {"extract": 2}}))
+        _, _, run, errors = M.merge(self.dir, "all", comments="all")
+        self.assertEqual(errors, [])
+        self.assertEqual(run["comments"], "all")
+        self.assertEqual(run["workers"], {"extract": 2})
+        self.assertIn("extract", run["timings"])
+
+    def test_malformed_timings_is_an_error(self):
+        self.run_one(finding("B1-C01", S1))
+        (self.dir / "timings.json").write_text("{nope")
+        _, _, _, errors = M.merge(self.dir, "all")
+        self.assertTrue(any("timings.json" in e for e in errors), errors)
+
+
+class Round3Merge(MergeCase):
+    """Spec §10: a reworded `claim` is replaced by the extract's (R2), and what the deck reader left out or dropped
+    (navigation, figure claims repeating the slide's text) is carried into run.json and the coverage line."""
+
+    def test_reworded_claim_is_taken_from_the_extract_record(self):
+        self.write("findings_chunk_1.json", [finding("B1-C01", S1, claim="The platform runs twelve services."),
+                                             finding("B1-C02", S2, verdict="Verified"),
+                                             finding("B2-C01", S3, verdict="No Evidence", severity="Minor")])
+        findings, _, _, errors = M.merge(self.dir)
+        self.assertEqual(errors, [])
+        self.assertEqual(findings[0]["claim"], "the platform runs 12 services")
+
+    def test_navigation_and_dropped_figures_reach_run_json_and_the_coverage_line(self):
+        from findings_report import coverage_line
+        self.write("stats.json", {"sections_total": 3, "statements_total": 9, "statements_risk": 4,
+                                  "estimate_minutes": {"fast": 1, "deep": 2},
+                                  "chrome": {"texts": ["DISCOVER & CHOOSE", "ISSUE RESOLUTION"], "slides": [1, 2, 4]}})
+        self.write("figures_dropped.json", [{"claim_id": "I02", "quote": "q", "duplicate_of": "s1-sh5-p1"}])
+        _, _, run, errors = M.merge(self.dir)
+        self.assertEqual(errors, [])
+        self.assertEqual(run["chrome"]["texts"], ["DISCOVER & CHOOSE", "ISSUE RESOLUTION"])
+        self.assertEqual(run["dropped_duplicate_figure"], [{"claim_id": "I02", "quote": "q", "duplicate_of": "s1-sh5-p1"}])
+        line = coverage_line(run)
+        self.assertIn("Not checked: 2 navigation labels repeated across slides (slides 1, 2, 4).", line)
+        self.assertIn("Not verified: 1 figure claim that repeats the slide's text (I02).", line)
+
+
+class DroppedFigures(MergeCase):
+    def test_a_dropped_figure_claim_needs_no_finding(self):
+        self.add_figures(2)
+        self.write("chunks.json", json.loads((self.dir / "chunks.json").read_text())[:1]
+                   + [{"chunk": 2, "file": "chunk_2.json", "claim_ids": ["I01"]}])
+        self.write("findings_chunk_2.json", [finding("I01", "Figure", type="TOPO", quote="edge A to B", p_id="p9",
+                                                     anchor="drawing", figure=1)])
+        self.write("figures_dropped.json", [{"claim_id": "I02", "quote": "edge A to B", "duplicate_of": "p3"}])
+        findings, _, run, errors = M.merge(self.dir)
+        self.assertEqual(errors, [])
+        self.assertEqual([f["id"] for f in findings if f["id"].startswith("I")], ["I01"])
+        self.assertEqual(run["dropped_duplicate_figure"][0]["claim_id"], "I02")
+
+
+class Round4MergeTolerance(MergeCase):
+    """4-slide run on r4: the merge refused a chunk twice over a curly vs straight apostrophe, and twice over deck
+    evidence of 62 and 70 words (deck comments do not carry evidence)."""
+
+    def test_typographic_variants_of_the_quote_are_the_same_quote(self):
+        claims = json.loads((self.dir / "claims_batch_1.json").read_text())
+        claims[0]["quote"] = "the platform doesn't run 12 services"
+        self.write("claims_batch_1.json", claims)
+        self.write("findings_chunk_1.json", [finding("B1-C01", S1, quote="the platform doesn’t run 12 services"),
+                                             finding("B1-C02", S2, verdict="Verified"),
+                                             finding("B2-C01", S3, verdict="No Evidence", severity="Minor")])
+        findings, _, _, errors = M.merge(self.dir)
+        self.assertEqual(errors, [])
+        self.assertEqual(findings[0]["quote"], "the platform doesn't run 12 services")
+
+    def test_a_different_quote_is_still_refused(self):
+        self.write("findings_chunk_1.json", [finding("B1-C01", S1, quote="runs 13 services"),
+                                             finding("B1-C02", S2, verdict="Verified"),
+                                             finding("B2-C01", S3, verdict="No Evidence", severity="Minor")])
+        self.has_error("B1-C01", "quote")
+
+    def test_deck_evidence_may_be_longer_word_evidence_may_not(self):
+        from fact_check_invariants import evidence_problem
+        seventy = " ".join(["word"] * 70)
+        self.assertIsNone(evidence_problem(seventy, deck=True))
+        self.assertIsNotNone(evidence_problem(seventy))
+        self.assertIsNotNone(evidence_problem(" ".join(["word"] * 91), deck=True))
+
+
+class SelfCheckAndSkip(MergeCase):
+    """4-slide run on r4: one chunk's malformed JSON, then a conflicts entry without a date, stopped the whole run.
+    A worker checks its own file before it returns (--check-chunk); a chunk refused twice is left out and reported
+    as not verified (--skip-chunk) instead of stopping the run."""
+
+    def two_chunks(self, bad=None):
+        self.write("chunks.json", [{"chunk": 1, "file": "chunk_1.json", "claim_ids": ["B1-C01", "B1-C02"]},
+                                   {"chunk": 2, "file": "chunk_2.json", "claim_ids": ["B2-C01"]}])
+        self.write("findings_chunk_1.json", [finding("B1-C01", S1), finding("B1-C02", S2, verdict="Verified")])
+        self.write("findings_chunk_2.json", bad if bad is not None else
+                   [finding("B2-C01", S3, verdict="No Evidence", severity="Minor")])
+
+    def run_cli(self, *args):
+        out = self.dir / "out" / "findings.json"
+        return subprocess.run([sys.executable, "-I", str(SCRIPT), str(self.dir), "--out", str(out), *map(str, args)],
+                              capture_output=True, text=True, cwd="/")
+
+    def test_check_chunk_ok_and_writes_nothing(self):
+        self.two_chunks()
+        r = self.run_cli("--check-chunk", 1)
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "chunk 1: OK"))
+        self.assertFalse((self.dir / "out").exists())
+
+    def test_check_chunk_lists_only_its_own_problems(self):
+        self.two_chunks(bad="{not json")
+        self.assertEqual(self.run_cli("--check-chunk", 1).returncode, 0)
+        r = self.run_cli("--check-chunk", 2)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("findings_chunk_2.json: malformed JSON", r.stdout)
+        self.assertNotIn("chunk_1", r.stdout)
+
+    def test_skip_chunk_finishes_and_reports_unverified(self):
+        from findings_report import coverage_line
+        self.two_chunks(bad="{not json")
+        self.assertNotEqual(self.run_cli().returncode, 0)
+        r = self.run_cli("--skip-chunk", 2)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        findings = json.loads((self.dir / "out" / "findings.json").read_text())
+        run = json.loads((self.dir / "out" / "run.json").read_text())
+        self.assertEqual(len(findings), 2)
+        self.assertEqual(run["unverified"], [{"chunk": 2, "claim_ids": ["B2-C01"]}])
+        self.assertIn("Not verified: 1 claim (chunk 2 was refused twice).", coverage_line(run))

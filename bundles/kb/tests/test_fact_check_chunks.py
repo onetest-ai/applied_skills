@@ -16,7 +16,8 @@ SCRIPT = KB_ROOT / "skills" / "doc-fact-check" / "chunk_claims.py"
 
 def claim(k, n, s_id, section="Scope"):
     return {"claim_id": f"B{k}-C{n:02d}", "p_id": s_id.split("s")[0], "s_id": s_id, "section": section,
-            "quote": f"claim {k}.{n}", "type": "NUM"}
+            "quote": f"claim {k}.{n}", "claim": f"claim {k}.{n}", "type": "NUM",
+            "questions": ["what does the source say about this"]}
 
 
 def waiver(i):
@@ -260,13 +261,10 @@ class FinalFixChunkTests(ChunkCase):
             self.assertNotIn("def section_coverage", src)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def fclaim(n, s_id="p5", quote="edge A to B", **kw):
     return {"claim_id": f"I{n:02d}", "p_id": s_id, "s_id": s_id, "section": "Figure", "quote": quote,
-            "type": "TOPO", "kind": "figure", "figure": 1, **kw}
+            "type": "TOPO", "kind": "figure", "figure": 1, "questions": ["what does the source say about this"],
+            "claim": quote, **kw}
 
 
 class FigureClaimCase(unittest.TestCase):
@@ -339,7 +337,7 @@ class FigureClaimCase(unittest.TestCase):
 
     def test_embedded_object_claim_may_use_any_paragraph_or_row_id(self):
         emb = {"claim_id": "I03", "p_id": "p2", "s_id": "p2s4", "section": "Figure", "quote": "sheet total 12",
-               "type": "NUM", "kind": "embedded"}
+               "type": "NUM", "kind": "embedded", "questions": ["what is the sheet total"], "claim": "the sheet total is 12"}
         self.w("claims_figures.json", [fclaim(1), emb])
         ids, errors = self.ids("risk")
         self.assertEqual((errors, ids[-2:]), ([], ["I01", "I03"]))
@@ -347,3 +345,91 @@ class FigureClaimCase(unittest.TestCase):
         self.assertTrue(any("I03" in e and "p77" in e for e in self.ids("all")[1]))
         self.w("claims_figures.json", [{**emb, "kind": "diagram"}])
         self.assertTrue(any("I03" in e and "kind" in e for e in self.ids("all")[1]))
+
+
+class V2QuestionsCase(ChunkCase):
+    def test_claim_without_questions_is_refused(self):
+        for bad in ([], ["a", "b", "c", "d"], [""], ["  "], "q", [1]):
+            self.w("claims_batch_1.json", [{**claim(1, 1, "p2s1"), "questions": bad}])
+            index, errors = C.chunk(self.d, "all", 8)
+            self.assertEqual(index, [], bad)
+            self.assertTrue(any("questions must be a list of 1-3 non-empty strings" in e for e in errors), (bad, errors))
+        self.w("claims_batch_1.json", [{k: v for k, v in claim(1, 1, "p2s1").items() if k != "questions"}])
+        self.assertTrue(any("B1-C01" in e and "questions must be" in e for e in C.chunk(self.d, "all", 8)[1]))
+
+    def test_questions_travel_into_the_chunk(self):
+        self.w("claims_batch_1.json", [{**claim(1, 1, "p2s1"), "questions": ["how many databases are there"]}])
+        index, errors = C.chunk(self.d, "all", 8)
+        self.assertEqual(errors, [])
+        got = json.loads((self.d / "chunk_1.json").read_text())
+        self.assertEqual(got["claims"][0]["questions"], ["how many databases are there"])
+
+    def test_fast_refuses_two_claims_on_one_sentence(self):
+        a, b = claim(1, 1, "p2s1"), claim(1, 2, "p2s1")
+        self.w("claims_batch_1.json", [a, b])
+        self.w("coverage_batch_1.json", [waiver(i) for i in (3, 5, 7, 9)])
+        index, errors = C.chunk(self.d, "risk", 8)
+        self.assertEqual(index, [])
+        msg = next(e for e in errors if "at most one claim per sentence" in e)
+        for needle in (a["claim_id"], b["claim_id"], "p2s1"):
+            self.assertIn(needle, msg)
+
+    def test_deep_allows_two_claims_on_one_sentence(self):
+        self.w("claims_batch_1.json", [claim(1, 1, "p2s1"), claim(1, 2, "p2s1")])
+        _, errors = C.chunk(self.d, "all", 8)
+        self.assertEqual(errors, [])
+
+    def test_risk_is_the_union_over_anchor_and_s_ids(self):
+        # p2s2 is untagged, p2s3 is num-tagged: a claim anchored on p2s2 that spans p2s3 is in scope
+        c = dict(claim(1, 1, "p2s2"), s_ids=["p2s2", "p2s3"])
+        self.w("claims_batch_1.json", [c])
+        self.w("coverage_batch_1.json", [waiver(i) for i in (1, 5, 7, 9)])
+        index, errors = C.chunk(self.d, "risk", 8)
+        self.assertEqual(errors, [])
+        self.assertEqual([i for x in index for i in x["claim_ids"]], ["B1-C01"])
+        body = json.loads((self.d / "chunk_1.json").read_text())
+        self.assertEqual(body["claims"][0]["risk"], ["num"])
+
+    def test_claim_risk_helper_unions_without_duplicates(self):
+        risk = {"a": ["num"], "b": ["date", "num"], "c": []}
+        self.assertEqual(C.claim_risk({"s_id": "c", "s_ids": ["c", "a", "b"]}, risk), ["num", "date"])
+        self.assertEqual(C.claim_risk({"s_id": "c"}, risk), [])
+
+    def test_fast_one_claim_rule_skips_untagged_anchors(self):
+        # two claims on untagged p2s2 are out of scope in Fast and are not refused
+        self.w("claims_batch_1.json", [claim(1, 1, "p2s2"), claim(1, 2, "p2s2")])
+        self.w("coverage_batch_1.json", [waiver(i) for i in (1, 3, 5, 7, 9)])
+        index, errors = C.chunk(self.d, "risk", 8)
+        self.assertEqual((index, errors), ([], []))
+
+    def test_fast_one_claim_rule_uses_the_union_risk(self):
+        a = dict(claim(1, 1, "p2s2"), s_ids=["p2s2", "p2s3"])
+        b = claim(1, 2, "p2s2")
+        self.w("claims_batch_1.json", [a, b])
+        self.w("coverage_batch_1.json", [waiver(i) for i in (1, 5, 7, 9)])
+        _, errors = C.chunk(self.d, "risk", 8)
+        self.assertFalse(any("at most one claim per sentence" in e for e in errors), errors)
+        b = dict(claim(1, 2, "p2s2"), s_ids=["p2s2", "p2s5"])           # now both are in scope on p2s2
+        self.w("claims_batch_1.json", [a, b])
+        self.w("coverage_batch_1.json", [waiver(i) for i in (1, 7, 9)])
+        _, errors = C.chunk(self.d, "risk", 8)
+        self.assertTrue(any("at most one claim per sentence" in e and "p2s2" in e for e in errors), errors)
+
+    def test_default_chunk_size_is_15(self):
+        import inspect
+        self.assertEqual(inspect.signature(C.chunk).parameters["size"].default, 15)
+        self.assertEqual(C.build_parser().parse_args(["d"]).chunk_size, 15)   # the CLI default, not --help text
+
+    def test_figure_claim_needs_questions(self):
+        FigureClaimCase.setUp(self)
+        for bad in ([], ["q"] * 4):
+            self.w("claims_figures.json", [{**fclaim(1), "questions": bad}])
+            errors = C.chunk(self.d, "all", 8)[1]
+            self.assertTrue(any("claims_figures.json: I01: questions must be a list of 1-3 non-empty strings" in e
+                                for e in errors), errors)
+        self.w("claims_figures.json", [{k: v for k, v in fclaim(1).items() if k != "questions"}])
+        self.assertTrue(any("claims_figures.json: I01: questions must be" in e for e in C.chunk(self.d, "all", 8)[1]))
+
+
+if __name__ == "__main__":
+    unittest.main()

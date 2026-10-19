@@ -31,6 +31,12 @@ class ScriptCommandsUseTheSkillDir(unittest.TestCase):
                 name = re.search(r"([a-z_]+)\.py", target).group(1)
                 self.assertIn(name, SCRIPTS)
 
+    def test_workers_never_read_skill_md(self):
+        step1b = SKILL[SKILL.index("### 1b."):SKILL.index("### 2.")]
+        self.assertNotIn("the absolute path of this SKILL.md", step1b)
+        for script in ("run_clock", "baseline"):
+            self.assertIn(f'"<skill dir>/{script}.py"', SKILL)
+
     def test_no_relative_beside_this_file_wording(self):
         self.assertNotIn("sits beside this file", SKILL)
 
@@ -47,7 +53,8 @@ class DependencyPreCheck(unittest.TestCase):
 
 class ScriptsAreSelfContained(unittest.TestCase):
     def test_scripts_import_only_stdlib_docx_or_siblings(self):
-        allowed = set(sys.stdlib_module_names) | {"docx", "__future__"} | set(SCRIPTS)
+        # pptx: the shared invariants (byte-identical with deck-fact-check) read a .pptx deliverable, lazily
+        allowed = set(sys.stdlib_module_names) | {"docx", "pptx", "__future__"} | set(SCRIPTS)
         for name in SCRIPTS:
             tree = ast.parse((SKILL_DIR / f"{name}.py").read_text(encoding="utf-8"))
             for node in ast.walk(tree):
@@ -56,6 +63,16 @@ class ScriptsAreSelfContained(unittest.TestCase):
                 for m in mods:
                     with self.subTest(script=name, module=m):
                         self.assertIn(m.split(".")[0], allowed)
+
+    def test_document_libraries_are_imported_lazily(self):
+        # a Word run never needs python-pptx, and --help runs without either library
+        for name in SCRIPTS:
+            tree = ast.parse((SKILL_DIR / f"{name}.py").read_text(encoding="utf-8"))
+            top = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
+            mods = {(a.name if isinstance(n, ast.Import) else n.module or "").split(".")[0]
+                    for n in top for a in (n.names if isinstance(n, ast.Import) else [n])}
+            with self.subTest(script=name):
+                self.assertFalse(mods & {"docx", "pptx"}, f"{name}.py imports a document library at module level")
 
     @unittest.skipUnless(HAVE_DOCX, "needs python-docx >= 1.2")
     def test_every_script_help_runs_from_any_working_directory(self):

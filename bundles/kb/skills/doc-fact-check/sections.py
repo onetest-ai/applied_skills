@@ -8,9 +8,10 @@ Writes into <dir>:
                  heading path joined with " > "), heading_path, level, heading_p_id,
                  paragraphs [{p_id, text, sentences [{s_id, text, risk}]}], tables [{t_id, rows [{r_id, cells, s_id, risk}]}],
                  figures [{figure, p_id, image, media?}], words.
-- stats.json    {sections_total, statements_total, statements_risk, estimate_minutes {fast, deep}, source_sha256}:
+- stats.json    {sections_total, statements_total, statements_risk, tag_counts {tag: n}, estimate_minutes {fast, deep}, source_sha256}:
                  statements are body sentences (s_id p<n>s<k>) plus table rows (s_id = r_id); risk is the
-                 list of tags (num, date, absolute, ownership) from RISK_PATTERNS.
+                 list of tags (num, date, absolute, ownership, topo, gap, quote, numword, scope) from RISK_PATTERNS;
+                 the header row of a multi-row table also carries `label`.
 - batches.json   the batch index: [{batch, file, words, sections [{section_id, section, part?}]}].
 - media/        every image a figure references (flat); each figure gains media = "media/<file>".
 - embedded/     one folder per word/embeddings/* object: an OOXML package (.xlsx/.docx/.pptx, a zip) is
@@ -33,55 +34,25 @@ counts them (`figure`), with the paragraph id (or the table-row id) that holds i
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import math
 import re
 import shutil
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling imports work under python -I too
+
+import section_io  # noqa: E402
+from section_io import (RISK_PATTERNS, _dump, _render, _units, _words, build_batches,  # noqa: E402,F401
+                        estimate_minutes, split_sentences, tag_risk)
+
 PREAMBLE = "(before first heading)"
 SEP = " > "
 _HEADING = re.compile(r"^Heading (\d+)$")
 
-# Risk tags (spec §13.4). The ONLY definition of these patterns; SKILL.md and the spec refer to them.
-_NUM_WORDS = r"one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozen|hundred|thousand|million|billion"
-RISK_PATTERNS = {
-    "num": re.compile(r"(?:[~≈<>]\s*)?\b\d[\d,.]*\s*(?:%|k|m|bn|million|billion|thousand)?(?!\w)|\b(?:" + _NUM_WORDS + r")\b", re.I),
-    "date": re.compile(r"\b(?:jan(?:uary)?|feb(?:ruary)?|march|apr(?:il)?|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b"
-                       r"|\bQ[1-4]\b|\bFY\d{2,4}\b|\b(?:19|20)\d{2}\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b"
-                       r"|\b(?:today|currently|now|as of)\b", re.I),
-    "absolute": re.compile(r"\b(?:never|always|all|every|none|no one|nothing|only|sole|solely|entire|entirely|fully|completely|consistent across)\b", re.I),
-    "ownership": re.compile(r"\b(?:owns?|owned|owner|operates?|operated by|responsible|accountable|attend(?:s|ed)?|decided|approved|leads?|maintains?|managed by)\b", re.I),
-}
-_NUMBERING = re.compile(r"§\s*\d[\d.]*|\b(?:section|figure|fig\.|table|phase|step|version|v)\s*\d[\d.]*", re.I)
-_SENTENCE_END = re.compile(r"(?<=[.!?;])\s+(?=[A-Z0-9\"“(])|\n+")
-
-
-def tag_risk(text: str) -> list[str]:
-    t = _NUMBERING.sub(" ", text)
-    return [tag for tag, rx in RISK_PATTERNS.items() if rx.search(t)]
-
-
-def split_sentences(text: str) -> list[str]:
-    return [s.strip() for s in _SENTENCE_END.split(text) if s and s.strip()]
-
-
-def estimate_minutes(statements_total: int, statements_risk: int) -> dict:
-    """Minutes for the two-stage pipeline (spec §15): one extract wave + verify waves of 10 chunks of 8."""
-    def run(claims: int) -> int:
-        return 5 + 10 * math.ceil(math.ceil(claims / 8) / 10)
-    return {"fast": run(statements_risk), "deep": run(statements_total)}
-
-
 def _q(tag: str) -> str:
     from docx.oxml.ns import qn
     return qn(tag)
-
-
-def _words(text: str) -> int:
-    return len(text.split())
 
 
 def _level(paragraph) -> int | None:
@@ -151,12 +122,26 @@ def _row_cells(table, tr) -> list[str]:
     return [_Cell(tc, table).text.strip() for tc in tr.findall(_q("w:tc"))]
 
 
+def _list_level(paragraph) -> int | None:
+    """The numbering level (w:numPr/w:ilvl) of a list paragraph, or None for a plain paragraph."""
+    ppr = paragraph._p.pPr
+    num = ppr.find(_q("w:numPr")) if ppr is not None else None
+    if num is None:
+        return None
+    ilvl = num.find(_q("w:ilvl"))
+    try:
+        return int(ilvl.get(_q("w:val"))) if ilvl is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
+
 def extract_sections(docx_path) -> list[dict]:
     from docx import Document
     doc = Document(str(docx_path))
     figs = _figure_numbers(doc)
     sections: list[dict] = []
     stack: list[tuple[int, str]] = []
+    items: dict[int, str] = {}            # list level -> the latest list item's text, for a nested item's `parent`
     cur: dict | None = None
     p_n = t_n = 0
 
@@ -189,81 +174,47 @@ def extract_sections(docx_path) -> list[dict]:
                 while stack and stack[-1][0] >= level:
                     stack.pop()
                 stack.append((level, text))
+                items.clear()
                 cur = open_section([h for _, h in stack], level, p_id)
                 figure(obj._p, p_id)
                 continue
             if text:
                 sents = [{"s_id": f"{p_id}s{n}", "text": s, "risk": tag_risk(s)}
                          for n, s in enumerate(split_sentences(text), 1)]
-                current()["blocks"].append(("p", {"p_id": p_id, "text": text, "sentences": sents}, _words(text)))
+                rec = {"p_id": p_id, "text": text, "sentences": sents}
+                ilvl = _list_level(obj)
+                if ilvl is None:
+                    items.clear()                 # a plain paragraph ends the list: no parent carries past it
+                else:
+                    if ilvl > 0 and items.get(ilvl - 1):
+                        rec["ctx"] = {"parent": items[ilvl - 1]}
+                    items[ilvl] = text
+                    for deeper in [k for k in items if k > ilvl]:
+                        del items[deeper]
+                current()["blocks"].append(("p", rec, _words(text)))
             figure(obj._p, p_id)
         else:
             t_n += 1
             t_id = f"t{t_n}"
+            items.clear()
+            header: list[str] = []
             for r_n, tr in enumerate(obj._tbl.tr_lst, 1):
                 r_id = f"{t_id}r{r_n}"
                 cells = _row_cells(obj, tr)
-                current()["blocks"].append(("r", {"t_id": t_id, "r_id": r_id, "cells": cells, "s_id": r_id,
-                                                  "risk": tag_risk(" | ".join(cells))},
-                                            sum(_words(c) for c in cells)))
+                if r_n == 1:
+                    header = cells
+                tags = tag_risk(" | ".join(cells))
+                if r_n == 1 and len(obj._tbl.tr_lst) > 1:      # a header row says what the figures measure
+                    tags = tags + ["label"]
+                row = {"t_id": t_id, "r_id": r_id, "cells": cells, "s_id": r_id, "risk": tags}
+                if r_n > 1 and any(header):                     # what this row's figures measure
+                    row["ctx"] = {"header": header, "row_label": cells[0] if cells else ""}
+                current()["blocks"].append(("r", row, sum(_words(c) for c in cells)))
                 for p_el in tr.iter(_q("w:p")):
                     figure(p_el, r_id)
     for s in sections:
         s["words"] += sum(w for _, _, w in s["blocks"])
     return sections
-
-
-def _render(sec: dict, blocks, words: int, part: tuple[int, int] | None = None) -> dict:
-    paragraphs, tables, figures = [], [], []
-    for kind, rec, _ in blocks:
-        if kind == "p":
-            paragraphs.append(rec)
-        elif kind == "f":
-            figures.append(rec)
-        else:
-            if not tables or tables[-1]["t_id"] != rec["t_id"]:
-                tables.append({"t_id": rec["t_id"], "rows": []})
-            tables[-1]["rows"].append({k: rec[k] for k in ("r_id", "cells", "s_id", "risk")})
-    out = {k: sec[k] for k in ("section_id", "section", "heading_path", "level", "heading_p_id")}
-    if part:
-        out["part"], out["parts"] = part
-    out.update(paragraphs=paragraphs, tables=tables, figures=figures, words=words)
-    return out
-
-
-def _units(sec: dict, max_words: int) -> list[dict]:
-    if sec["words"] <= max_words:
-        return [_render(sec, sec["blocks"], sec["words"])]
-    heading = sec["words"] - sum(w for _, _, w in sec["blocks"])
-    chunks: list[tuple[list, int]] = []
-    cur, cur_w, has_content = [], heading, False
-    for b in sec["blocks"]:
-        if has_content and b[2] and cur_w + b[2] > max_words:
-            chunks.append((cur, cur_w))
-            cur, cur_w, has_content = [], 0, False
-        cur.append(b)
-        cur_w += b[2]
-        has_content = has_content or bool(b[2])
-    chunks.append((cur, cur_w))
-    n = len(chunks)
-    return [_render(sec, blocks, w, (i, n)) for i, (blocks, w) in enumerate(chunks, 1)]
-
-
-def build_batches(sections: list[dict], max_words: int) -> list[list[dict]]:
-    batches: list[list[dict]] = []
-    cur_w = 0
-    for sec in sections:
-        for u in _units(sec, max_words):
-            if not batches or (batches[-1] and cur_w + u["words"] > max_words):
-                batches.append([])
-                cur_w = 0
-            batches[-1].append(u)
-            cur_w += u["words"]
-    return batches
-
-
-def _dump(path: Path, obj) -> None:
-    path.write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def extract_media(docx_path, out_dir: Path, sections: list[dict]) -> list[str]:
@@ -392,31 +343,15 @@ def write_outputs(docx_path, out_dir, max_words: int = 1500) -> tuple[list[dict]
     _clear_stale(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     sections = extract_sections(docx_path)
-    batches = build_batches(sections, max_words)
-    for stale in out_dir.glob("batch_*.json"):
-        stale.unlink()
     extract_media(docx_path, out_dir, sections)
     objects = extract_embedded(docx_path, out_dir, sections)
     for s in sections:                           # the package part name is internal; `part` is the extracted path
         for k, rec, _ in s["blocks"]:
             if k == "f":
                 rec.pop("drawing_part", None)
-    _dump(out_dir / "sections.json", [_render(s, s["blocks"], s["words"]) for s in sections])
-    statements = [s for sec in sections for kind, rec, _ in sec["blocks"]
-                  for s in (rec["sentences"] if kind == "p" else [rec] if kind == "r" else [])]
-    total, risky = len(statements), sum(1 for s in statements if s["risk"])
-    _dump(out_dir / "stats.json", {"sections_total": len(sections), "statements_total": total,
-                                   "statements_risk": risky, "estimate_minutes": estimate_minutes(total, risky),
-                                   "source_sha256": hashlib.sha256(Path(docx_path).read_bytes()).hexdigest()})
-    index = []
-    for k, units in enumerate(batches, 1):
-        name = f"batch_{k}.json"
-        _dump(out_dir / name, {"batch": k, "document": Path(docx_path).name,
-                               "max_words": max_words, "sections": units})
-        index.append({"batch": k, "file": name, "words": sum(u["words"] for u in units),
-                      "sections": [{"section_id": u["section_id"], "section": u["section"],
-                                    **({"part": u["part"]} if "part" in u else {})} for u in units]})
-    _dump(out_dir / "batches.json", index)
+    from docx import Document
+    index = section_io.write_outputs(docx_path, out_dir, sections, max_words,
+                                     doc_date=section_io.core_date(Document(str(docx_path)).core_properties))
     return sections, index, objects
 
 
