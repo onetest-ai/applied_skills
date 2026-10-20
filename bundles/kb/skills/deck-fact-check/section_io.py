@@ -27,11 +27,11 @@ RISK_PATTERNS = {
     "date": re.compile(r"\b(?:jan(?:uary)?|feb(?:ruary)?|march|apr(?:il)?|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b"
                        r"|\bQ[1-4]\b|\bFY\d{2,4}\b|\b(?:19|20)\d{2}\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b"
                        r"|\b(?:today|currently|now|as of)\b", re.I),
-    "absolute": re.compile(r"\b(?:never|always|all|every|none|no one|nothing|only|sole|solely|entire|entirely|fully|completely|consistent across)\b", re.I),
+    "absolute": re.compile(r"\b(?:never|always|all|every|none|no one|nothing|only|sole|solely|entire|entirely|fully|completely|consistent across|guarantee[sd]?)\b", re.I),
     "ownership": re.compile(r"\b(?:owns?|owned|owner|operates?|operated by|responsible|accountable|attend(?:s|ed)?|decided|approved|leads?|maintains?|managed by)\b", re.I),
     "topo": re.compile(r"→|->|↔|<->|\b(?:push(?:es|ed)?|pull(?:s|ed)?|calls?|sends?|sent|feeds?|syncs?|"
                        r"synchroni[sz](?:es|ed)?|integrat\w*|via|through|into|hosts?|hosted|run(?:s|ning)? on|"
-                       r"connects?|routes?|relay(?:s|ed)?|reads?|writes?)\b", re.I),
+                       r"connects?|routes?|relay(?:s|ed)?|reads?|writes?|hosting)\b", re.I),
     "gap": re.compile(r"\b(?:undecided|unclear|unconfirmed|not (?:yet )?(?:established|decided|confirmed|clear|known|"
                       r"covered|isolated|defined)|did not|does not|no (?:decision|owner)|open question|tbd|tbc|"
                       r"remains? (?:open|undecided))\b", re.I),

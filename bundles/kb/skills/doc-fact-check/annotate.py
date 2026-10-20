@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling imports work
 import annotate_cli  # noqa: E402
 from annotate_cli import (COMMENT_KEYS, _bad, _comment_error, _load_list, _write_json_atomic,  # noqa: E402,F401
                           mark_destinations)
-from fact_check_invariants import _last_heading, comment_text  # noqa: E402
+from fact_check_invariants import _last_heading, _range_texts, _range_parts, word_comment_figures, word_paragraph_ids, comment_text  # noqa: E402
 
 
 def split_run(run, off):
@@ -86,11 +86,20 @@ def annotate(src, dst, findings, author='Fact Checker · Brain'):
     doc = Document(src)
     if not hasattr(doc, 'comments'):
         raise SystemExit('python-docx >= 1.2 required for comments')
-    have = {c.text.strip() for c in doc.comments}          # comments carry no id: a finding's comment is matched by its text
+    ranges = _range_texts(Path(src))
+    locations = word_paragraph_ids(doc)
+    comment_locations = {start.get(qn('w:id')): pid for paragraph, pid in locations.items()
+                         for start in paragraph.iter(qn('w:commentRangeStart'))}
+    figure_comments = word_comment_figures(doc, _range_parts(Path(src)))
+    have = {(c.text.strip(), 'drawing', figure_comments[str(c.comment_id)])
+            if str(c.comment_id) in figure_comments
+            else (c.text.strip(), 'quote', ranges.get(str(c.comment_id), ""), comment_locations.get(str(c.comment_id))) for c in doc.comments}
     written = []
     skipped = []
     for f in findings:
-        if comment_text(f).strip() in have:
+        anchor = ('drawing', f.get('figure')) if f.get('anchor') == 'drawing' else ('quote', f.get('quote', ''))
+        key = (comment_text(f).strip(), *anchor)
+        if any(c == key or (f.get('anchor') != 'drawing' and c[:3] == key and (not f.get('p_id') or c[3] == f['p_id'])) for c in have):
             written.append(f['id'])   # already written by an earlier run (idempotent)
             continue
         text = comment_text(f)
@@ -106,7 +115,7 @@ def annotate(src, dst, findings, author='Fact Checker · Brain'):
         else:
             for box in (False, True):   # body first; text boxes only when the body lacks the quote
                 for p in paragraphs(doc, textbox=box):
-                    if f['quote'] in p.text:
+                    if f['quote'] in p.text and (not f.get('p_id') or locations.get(p._p) == f['p_id'] or box):
                         runs = isolate(p, f['quote'])
                         if runs:
                             doc.add_comment(runs, text=text, author=author, initials='FC')

@@ -30,7 +30,7 @@ CONFLICT = [{"span": "the renewal engine owns scheduled orders", "source": "note
 def _f(fid, p_id, verdict="Misleading", severity="Major", **kw):
     f = {"id": fid, "p_id": p_id, "section": "Slide 1", "quote": f"quote {fid}", "claim": f"claim {fid}", "type": "TOPO",
          "verdict": verdict, "severity": severity, "confidence": "High", "evidence": f"evidence {fid}", "trail": "t",
-         "conflicts": [], "fix": f"fix {fid}", "source": "notes/a.md", "sources": []}
+         "conflicts": [], "fix": f"fix {fid}", "why": "the source states another value", "suggested": "The corrected statement.", "source": "notes/a.md", "sources": []}
     f.update(kw)
     return f
 

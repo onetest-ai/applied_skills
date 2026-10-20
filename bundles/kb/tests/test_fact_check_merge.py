@@ -703,21 +703,21 @@ class TestV2MergeChecks(MergeCase):
         self.assertTrue(any("missing key(s) conflicts" in e for e in errors), errors)
 
     def test_long_major_comment_refused_at_merge_with_claim_id(self):
-        long = " ".join(["word"] * 70)
-        self.run_one(finding("B1-C01", S1, severity="Major", evidence="short", fix=long))
+        long = " ".join(["word"] * 100)
+        self.run_one(finding("B1-C01", S1, severity="Major", evidence="short", suggested=long))
         _, _, _, errors = M.merge(self.dir, "all")
         msg = next(e for e in errors if "comment would be" in e)
         self.assertIn("B1-C01", msg)
 
     def test_long_minor_comment_is_fine_under_major_policy(self):
-        long = " ".join(["word"] * 70)
-        self.run_one(finding("B1-C01", S1, severity="Minor", fix=long))
+        long = " ".join(["word"] * 100)
+        self.run_one(finding("B1-C01", S1, severity="Minor", suggested=long))
         _, _, _, errors = M.merge(self.dir, "all")
         self.assertFalse(any("comment would be" in e for e in errors), errors)
 
     def test_long_minor_comment_refused_under_all_policy(self):
-        long = " ".join(["word"] * 70)
-        self.run_one(finding("B1-C01", S1, severity="Minor", fix=long))
+        long = " ".join(["word"] * 100)
+        self.run_one(finding("B1-C01", S1, severity="Minor", suggested=long))
         _, _, _, errors = M.merge(self.dir, "all", comments="all")
         self.assertTrue(any("comment would be" in e for e in errors), errors)
 

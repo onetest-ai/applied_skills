@@ -416,3 +416,18 @@ def context_deck(d: Path) -> Path:
     k = _tb(s.shapes, Inches(0.5), Inches(6.9), Inches(6), Inches(0.3), CTX_KEY)
     k.text_frame.paragraphs[0].runs[0].font.size = Pt(9)
     return _save(prs, d / "context.pptx")
+
+
+DATELINE = "Quarterly planning workshop, 15 September 2026"
+DATELINE_STATEMENT = "A priority ticket is logged after one failed nightly job."
+
+
+def dateline_deck(d: Path) -> Path:
+    """A slide whose source is named on a dateline under the title ("<session>, <date>"): context, not a claim."""
+    from pptx.util import Inches
+    prs = _prs()
+    s = prs.slides.add_slide(prs.slide_layouts[6])
+    _tb(s.shapes, Inches(0.7), Inches(0.4), Inches(8.5), Inches(0.6), "Job monitoring")
+    _tb(s.shapes, Inches(0.7), Inches(1.0), Inches(8.5), Inches(0.4), DATELINE)
+    _tb(s.shapes, Inches(0.7), Inches(2.0), Inches(8.5), Inches(1.0), DATELINE_STATEMENT)
+    return _save(prs, d / "dateline.pptx")

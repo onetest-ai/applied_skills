@@ -43,6 +43,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling imports work under python -I too
 
 import section_io  # noqa: E402
+from fact_check_invariants import word_figure_numbers as _figure_numbers, word_blocks as _blocks  # noqa: E402
 from section_io import (RISK_PATTERNS, _dump, _render, _units, _words, build_batches,  # noqa: E402,F401
                         estimate_minutes, split_sentences, tag_risk)
 
@@ -62,20 +63,6 @@ def _level(paragraph) -> int | None:
     m = _HEADING.match(name)
     return int(m.group(1)) if m else None
 
-
-def _figure_numbers(doc) -> dict:
-    """Map each paragraph element holding a drawing to its 1-based figure number.
-
-    Same rule as `annotate` in SKILL.md: every w:p in the body outside text boxes, in document
-    order, counted once when one of its runs holds a w:drawing."""
-    out, k = {}, 0
-    for p in doc.element.body.iter(_q("w:p")):
-        if any(a.tag == _q("w:txbxContent") for a in p.iterancestors()):
-            continue
-        if any(r.findall(".//" + _q("w:drawing")) for r in p.findall(_q("w:r"))):
-            k += 1
-            out[p] = k
-    return out
 
 
 def _drawing_part(doc, p_el) -> str | None:
@@ -97,24 +84,6 @@ def _image_name(doc, p_el) -> str | None:
             return str(part.partname).lstrip("/")
     return None
 
-
-def _blocks(doc):
-    """Yield body blocks in document order: ('p', Paragraph) and ('t', Table), sdt content included."""
-    from docx.table import Table
-    from docx.text.paragraph import Paragraph
-
-    def walk(parent):
-        for child in parent.iterchildren():
-            if child.tag == _q("w:p"):
-                yield "p", Paragraph(child, doc)
-            elif child.tag == _q("w:tbl"):
-                yield "t", Table(child, doc)
-            elif child.tag == _q("w:sdt"):
-                content = child.find(_q("w:sdtContent"))
-                if content is not None:
-                    yield from walk(content)
-
-    yield from walk(doc.element.body)
 
 
 def _row_cells(table, tr) -> list[str]:

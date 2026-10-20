@@ -31,35 +31,35 @@ except ImportError:
 F_DECK = {"id": "C03", "verdict": "Misleading", "severity": "Major", "section": "Slide 2: Billing",
           "p_id": "s2-sh12-p1", "quote": "I would definitely say more than 50% of our calls are probably previous invoices",
           "evidence": "The speaker revises it to about fifty-fifty.", "fix": "Say about half of calls.",
-          "source": "Billing session.md"}
+          "why": "the speaker revises it to about fifty-fifty", "suggested": "About half of calls concern previous invoices.", "source": "Billing session.md"}
 F_WORD = {**F_DECK, "id": "C01", "p_id": "p12", "section": "2 Scope"}
 
 
 class CommentText(unittest.TestCase):
-    def test_deck_default_is_quote_and_fix(self):
-        self.assertEqual(I.comment_text(F_DECK),
-                         '[Misleading · Major · C03] §Slide 2\n'
-                         'Re: "I would definitely say more than 50% of our calls are probably…"\n'
-                         'Fix: Say about half of calls.')
+    def test_deck_default_has_statement_why_and_suggestion(self):
+        text = I.comment_text(F_DECK)
+        self.assertTrue(text.startswith('[Misleading]\n"I would definitely say more than 50% of our calls are probably…"'))
+        self.assertIn("Why: Billing session (undated) says the speaker revises it to about fifty-fifty.", text)
+        self.assertIn('Suggested: "About half of calls concern previous invoices."', text)
+        self.assertNotIn("C03", text)
 
     def test_fields_bring_brain_and_source_back(self):
-        t = I.comment_text(F_DECK, fields=("quote", "brain", "fix", "source"))
+        t = I.comment_text(F_DECK, fields=I.COMMENT_FIELDS)
         self.assertIn("\nBrain: The speaker revises it to about fifty-fifty.", t)
         self.assertTrue(t.endswith("\nSource: Billing session.md"))
 
-    def test_word_unchanged(self):
-        self.assertEqual(I.comment_text(F_WORD), "[Misleading · Major · C01] §2 Scope\n"
-                                                 "Brain: The speaker revises it to about fifty-fifty.\n"
-                                                 "Fix: Say about half of calls.\nSource: Billing session.md")
+    def test_word_uses_the_same_correction_without_the_statement_line(self):
+        self.assertEqual(I.comment_text(F_WORD), '[Misleading]\nWhy: Billing session (undated) says the speaker revises it to about fifty-fifty.\nSuggested: "About half of calls concern previous invoices."')
 
-    def test_figure_header_names_its_element(self):
+    def test_figure_comment_category_has_no_internal_location(self):
         f = {**F_DECK, "id": "I01", "p_id": "s3-sh79", "section": "Figure", "element": 'picture "Callout"'}
-        self.assertTrue(I.comment_text(f).startswith('[Misleading · Major · I01] §Slide 3 · picture "Callout"\n'))
+        self.assertEqual(I.comment_text(f).splitlines()[0], '[Misleading]')
 
-    def test_cap_counts_the_body_only(self):
-        f = {**F_DECK, "fix": " ".join(["word"] * 55)}
-        self.assertGreater(len(I.comment_text(f).split()), I.MAX_COMMENT_WORDS)
-        self.assertEqual(I.comment_words(I.comment_text(f), True), 56)
+    def test_cap_counts_why_and_suggested_without_the_statement(self):
+        f = {**F_DECK, "suggested": " ".join(["word"] * 80)}
+        text = I.comment_text(f)
+        self.assertGreater(I.comment_words(text, True), I.MAX_COMMENT_WORDS)
+        self.assertLess(I.comment_words(text, True), len(text.split()))
 
 
 @unittest.skipUnless(HAVE, "needs python-pptx, PyMuPDF and soffice")
@@ -74,7 +74,8 @@ class FigurePins(unittest.TestCase):
 
     def finding(self, kind):
         return {**F_DECK, "id": "I01", "p_id": f"s1-sh{self.el[kind]['shape_id']}", "section": "Figure",
-                "anchor": "drawing", "figure": 1, "quote": "Uptime callout reads 97.4%"}
+                "anchor": "drawing", "figure": 1, "quote": "Uptime callout reads 97.4%",
+                "suggested": "Uptime callout: corrected value"}       # a slide box: near the quote's length
 
     def test_pin_inside_the_element(self):
         box = self.el["picture"]["box"]
@@ -84,18 +85,16 @@ class FigurePins(unittest.TestCase):
         self.assertTrue(box["x"] < x * I.EMU_PER_POS < box["x"] + box["w"])
         self.assertTrue(box["y"] < y * I.EMU_PER_POS < box["y"] + box["h"])
 
-    def test_written_comment_names_the_element(self):
+    def test_written_figure_comment_quotes_its_statement(self):
         out = self.d / "out.pptx"
         written, _ = A.annotate(self.deck, out, [self.finding("picture")], sections=self.sections)
         self.assertEqual(written, ["I01"])
-        text = I.read_pptx_comments(out)[0]["text"]
-        self.assertIn('§Slide 1 · picture "Uptime callout"', text)
+        self.assertIn('"Uptime callout reads 97.4%"', I.read_pptx_comments(out)[0]["text"])
 
-    def test_generic_name_becomes_a_position(self):
+    def test_generic_element_keeps_the_plain_comment_category(self):
         out = self.d / "out.pptx"
         A.annotate(self.deck, out, [self.finding("chart")], sections=self.sections)
-        head = I.read_pptx_comments(out)[0]["text"].split("\n")[0]
-        self.assertRegex(head, r"§Slide 1 · chart, (top|middle|bottom) (left|centre|right)$")
+        self.assertEqual(I.read_pptx_comments(out)[0]["text"].splitlines()[0], '[Misleading]')
 
     def test_fields_flag(self):
         out = self.d / "out.pptx"
@@ -104,7 +103,7 @@ class FigurePins(unittest.TestCase):
                                          "trail": "t", "conflicts": [], "sources": []}]))
         r = subprocess.run([sys.executable, "-I", str(DECK / "pptx_annotate.py"), str(self.deck), str(out),
                             "--findings", str(findings), "--select", "major", "--sections", str(self.sections),
-                            "--fields", "quote,brain,fix,source"], capture_output=True, text=True, cwd="/")
+                            "--fields", "quote,why,suggested,brain,source"], capture_output=True, text=True, cwd="/")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("\nSource: Billing session.md", I.read_pptx_comments(out)[0]["text"])
 

@@ -135,3 +135,33 @@ class SmallPicturesAndBadges(unittest.TestCase):
         badges = [x for p in self.secs[2]["paragraphs"] for x in p["sentences"] if x["text"] in ("1", "2", "3")]
         self.assertEqual(len(badges), 3)
         self.assertTrue(all(x["risk"] == [] for x in badges), badges)
+
+
+class Datelines(unittest.TestCase):
+    """A "<session or document name>, <date>" line names where the slide's content comes from: slide context, never a
+    claim — checking it costs a worker and turns a filing-date quirk of the source into a finding."""
+
+    def test_dateline_pattern(self):
+        for t in (F.DATELINE, "Platform review session, 25 Sep 2026", "Delivery roadmap, September 17, 2026",
+                  "Ordering alignment, 2026-09-15"):
+            self.assertTrue(P.is_dateline(t), t)
+        for t in ("Go-live, 15 September 2026", "Revenue grew 12% in the review, 15 September 2026",
+                  "The review session took place on 15 September 2026 and approved the plan."):
+            self.assertFalse(P.is_dateline(t), t)
+
+    def test_a_line_naming_two_sources_is_still_a_dateline(self):
+        # the test deck's last slide: two sources on one line, each ending with a full stop, became a claim in every run
+        for t in ("Planning workshop, 15 September 2026. Platform review session, 25 September 2026.",
+                  "Planning workshop, 15 September 2026.", "Planning workshop, 15 Sep 2026; Roadmap briefing, 2026-09-17"):
+            self.assertTrue(P.is_dateline(t), t)
+        for t in ("Planning workshop, 15 September 2026. The cutoff moved to 6 p.m.",
+                  "Go-live, 15 September 2026. Platform review session, 25 September 2026."):
+            self.assertFalse(P.is_dateline(t), t)
+
+    @unittest.skipUnless(HAVE, "needs LibreOffice and PyMuPDF")
+    def test_dateline_is_context_not_a_claim(self):
+        _, secs, _ = _run(F.dateline_deck)
+        paras = {p["text"]: p for s in secs for p in s["paragraphs"]}
+        self.assertNotIn(F.DATELINE, paras)
+        self.assertIn(F.DATELINE, secs[0]["slide_context"].get("key", ""))
+        self.assertIn(F.DATELINE, paras[F.DATELINE_STATEMENT].get("ctx", {}).get("footnote", ""))

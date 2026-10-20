@@ -244,7 +244,8 @@ class TestReferenceCode(unittest.TestCase):
 @unittest.skipUnless(HAVE_DOCX, "needs python-docx >= 1.2")
 class AnnotateCli(unittest.TestCase):
     SCRIPT = KB_ROOT / "skills" / "doc-fact-check" / "annotate.py"
-    BASE = dict(section="1", evidence="e (2026-01-01, f.md)", fix="x", source="f.md")
+    BASE = dict(section="1", evidence="e (2026-01-01, f.md)", fix="x", source="f.md",
+                why="the source states another value", suggested="The corrected statement.")
 
     def setUp(self):
         import tempfile
@@ -356,6 +357,15 @@ class AnnotateCli(unittest.TestCase):
         dest = {x["id"]: x["destination"] for x in json.loads(findings.read_text())}
         self.assertEqual(dest, {"C01": "Word comment", "C02": "log only", "C03": "count only"})
 
+    def test_selected_supported_error_without_why_is_refused(self):
+        row = dict(id="C01", verdict="Incorrect", severity="Major", quote="40 million", **self.BASE)
+        row["why"] = ""
+        findings = self._write("missing-why.json", [row])
+        result = self._run_select(findings, "major")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("needs a `why`", result.stderr)
+        self.assertFalse(self.out.exists())
+
     def test_select_all_writes_every_defect(self):
         import json
         findings = self._write("findings.json", [
@@ -441,7 +451,7 @@ class AnnotateCli(unittest.TestCase):
 
     def _words_finding(self, total):
         """An approved finding whose written comment is exactly `total` words (11 are header, labels, fix and source)."""
-        base = {**self.BASE, "evidence": " ".join(["w"] * (total - 11))}
+        base = {**self.BASE, "suggested": " ".join(["w"] * (total - 10))}
         return dict(id="C12", verdict="Incorrect", severity="Major", quote="40 million", **base)
 
     def test_comment_header_names_only_the_last_heading(self):
@@ -449,23 +459,23 @@ class AnnotateCli(unittest.TestCase):
         from annotate import comment_text
         long = "Platform - Baseline (excerpt for tests) > 5.7 Other sources and external parties"
         text = comment_text(dict(id="C16", verdict="Misleading", severity="Minor", **{**self.BASE, "section": long}))
-        self.assertTrue(text.startswith("[Misleading · Minor · C16] §5.7 Other sources and external parties\n"), text)
+        self.assertTrue(text.startswith("[Misleading]\nWhy:"), text)
         self.assertNotIn("Baseline", text)
 
     def test_comment_over_the_word_limit_exits_2_naming_id_and_count_and_writes_nothing(self):
         _, f = self._good()
         before = f.read_text()
-        a = self._write("a_long.json", [self._words_finding(70)])
+        a = self._write("a_long.json", [self._words_finding(100)])
         r = self._run(a, f)
         self.assertEqual(r.returncode, 2, r.stderr)
-        self.assertIn(f"annotate.py: {a}: C12: comment would be 70 words (limit 60); shorten its evidence or fix", r.stderr)
+        self.assertIn(f"annotate.py: {a}: C12: comment would be 100 words (limit 90); shorten its evidence or fix", r.stderr)
         self.assertFalse(self.out.exists())
         self.assertEqual(f.read_text(), before)
 
     def test_comment_of_exactly_the_word_limit_is_written(self):
         import json
         _, f = self._good()
-        a = self._write("a_exact.json", [self._words_finding(60)])
+        a = self._write("a_exact.json", [self._words_finding(90)])
         r = self._run(a, f)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(r.stdout), {"written": ["C12"], "skipped": []})
@@ -474,8 +484,8 @@ class AnnotateCli(unittest.TestCase):
     def test_skill_md_tells_the_agent_to_write_evidence_and_fix_for_the_comment(self):
         skill = (KB_ROOT / "skills" / "doc-fact-check" / "SKILL.md").read_text(encoding="utf-8")
         # v2: stage V writes comment-ready text and the merge enforces the limit; the main session no longer rewrites it
-        self.assertIn("Stage V writes `evidence` and `fix` comment-ready and the merge enforces the limit; the whole comment, "
-                      "header and Source line included, is at most 60 words; `annotate.py` refuses a longer one and names it.", skill)
+        self.assertIn("`why` and `suggested`", skill)
+        self.assertIn("90 words", skill)
         self.assertNotIn("Each row's `evidence` and `fix` are written for the comment", skill)
 
     def test_approved_finding_missing_a_comment_key_exits_2_naming_it(self):

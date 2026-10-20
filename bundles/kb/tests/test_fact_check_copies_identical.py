@@ -13,7 +13,7 @@ VISUAL_PARSE = KB_ROOT.parent / "brain" / "skills" / "visual-parse"
 SHARED = ("section_io.py", "chunk_claims.py", "merge_findings.py", "fact_check_invariants.py", "findings_report.py",
           "baseline.py", "run_clock.py", "annotate_cli.py", "review_bundle.py", "source_links.py", "extract.md", "verify.md")
 FORMAT_SPECIFIC = {"doc-fact-check": {"sections.py", "annotate.py", "SKILL.md"},
-                   "deck-fact-check": {"pptx_sections.py", "pptx_annotate.py", "render_pages.py", "apply_slide_review.py",
+                   "deck-fact-check": {"pptx_sections.py", "pptx_visibility.py", "pptx_annotate.py", "render_pages.py", "apply_slide_review.py",
                                        "slide_review.md", "SKILL.md"}}
 
 

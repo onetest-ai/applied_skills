@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling imports work under python -I too
 
 import run_clock  # noqa: E402
-from fact_check_invariants import NOT_ANCHORED, comment_text  # noqa: E402
+from fact_check_invariants import NOT_ANCHORED, comment_text, why_problem  # noqa: E402
 
 PROG = "annotate.py"     # set by run() to the calling script's name, for its error messages
 
@@ -84,7 +84,7 @@ def _comment_error(f) -> str | None:
             return 'anchor "drawing" needs an integer figure >= 1'
     elif not f.get("quote"):
         return 'needs a quote or anchor: "drawing"'
-    return None
+    return why_problem(f)
 
 
 def _bad(path, reason):
@@ -118,8 +118,8 @@ def run(argv, *, prog: str, description: str, annotate, dependency_error, label:
                                        "statement renders")
     ap.add_argument("--clock", metavar="WORK_DIR", help="record this step's start and end in <work dir>/timings.json")
     ap.add_argument("--fields", help="deck-fact-check only: the lines each comment carries after its header, "
-                                     "comma-separated from quote, brain, fix, source (default quote,fix); a comment "
-                                     "the extra lines push over the word limit keeps quote and fix")
+                                     "comma-separated from quote, why, suggested, brain, source (default quote,why,suggested); "
+                                     "extra evidence lines are omitted if they exceed the word limit")
     a = ap.parse_args(argv)
     from fact_check_invariants import COMMENT_FIELDS
     fields = tuple(x.strip() for x in a.fields.split(",") if x.strip()) if a.fields else None
@@ -145,8 +145,8 @@ def run(argv, *, prog: str, description: str, annotate, dependency_error, label:
         return 2
     findings = _load_list(a.findings, "findings")
     if a.select:
-        from fact_check_invariants import wants_comment
-        approved = [f for f in findings if wants_comment(f, a.select)]
+        from fact_check_invariants import comment_required
+        approved = [f for f in findings if comment_required(f, a.select)]
         bad = [f"{f['id']}: {why}" for f in approved if (why := _comment_error(f))]
         if bad:
             print(f"{prog}: {a.findings}: " + "; ".join(bad), file=sys.stderr)

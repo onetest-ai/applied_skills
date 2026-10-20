@@ -55,7 +55,7 @@ class TitleIsNotTheEyebrow(unittest.TestCase):
 def _f(fid, p_id="s1-sh5-p1", verdict="Misleading", severity="Major", **kw):
     f = {"id": fid, "p_id": p_id, "section": "Slide 1", "quote": "q", "claim": "c", "type": "TOPO", "verdict": verdict,
          "severity": severity, "confidence": "High", "evidence": "e", "trail": "t", "conflicts": [], "fix": "f",
-         "source": "s", "sources": []}
+         "why": "the source states another value", "suggested": "The corrected statement.", "source": "s", "sources": []}
     f.update(kw)
     return f
 
@@ -64,7 +64,7 @@ class SlideReviewGuards(unittest.TestCase):
     def setUp(self):
         self.d = Path(tempfile.mkdtemp())
         conflict = [{"span": "x", "source": "s.md", "date": "2026-09-15"}]
-        self.findings = [_f("C01"), _f("C02"), _f("C03", verdict="Controversial", conflicts=conflict),
+        self.findings = [_f("C01"), _f("C02"), _f("C03", verdict="Misleading", conflicts=conflict),
                          _f("C09", p_id="s9-sh2-p1"), _f("C10", severity="Minor")]
         (self.d / "findings.json").write_text(json.dumps(self.findings))
         (self.d / "run.json").write_text(json.dumps({"comments": "major"}))
@@ -83,7 +83,7 @@ class SlideReviewGuards(unittest.TestCase):
         # round 6 (user decision 2026-10-17): applied as minor instead of refusing the whole review
         self.assertEqual(self.apply([{"id": "C03", "action": "verified_in_context", "reason": "x"}]), [])
         c03 = next(f for f in json.loads((self.d / "findings.json").read_text()) if f["id"] == "C03")
-        self.assertEqual((c03["verdict"], c03["severity"]), ("Controversial", "Minor"))
+        self.assertEqual((c03["verdict"], c03["severity"]), ("Misleading", "Minor"))
 
     def test_duplicates_cannot_erase_a_fact(self):
         self.refused([{"id": "C01", "action": "duplicate_of", "of": "C02", "reason": "x"},

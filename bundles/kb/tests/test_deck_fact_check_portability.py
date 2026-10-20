@@ -14,7 +14,7 @@ SKILL_DIR = KB_ROOT / "skills" / "deck-fact-check"
 SKILL = read_text(SKILL_DIR / "SKILL.md")
 SCRIPTS = sorted(p.stem for p in SKILL_DIR.glob("*.py"))
 COMMAND = re.compile(r'python3? +("[^"\n]+?\.py"|\S+\.py)')
-LIBRARIES = {"docx", "pptx", "pymupdf"}
+LIBRARIES = {"lxml", "docx", "pptx", "pymupdf"}
 
 try:
     import pptx  # noqa: F401

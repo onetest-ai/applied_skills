@@ -144,7 +144,7 @@ class TestFactCheckSkill(unittest.TestCase):
         commented only with "exhaustive"; No Evidence stays log-only, Verified adds nothing."""
         text = self._text()
         self.assertNotIn("same, Minor | log only", text)
-        self.assertIn("| Incorrect / Misleading / Outdated / Controversial, **Minor** | findings page only "
+        self.assertIn("| Incorrect / Misleading / Outdated, **Minor** | findings page only "
                       "(Word comment with \"exhaustive\") |", text)
         self.assertIn("| No Evidence | log only", text)
 
@@ -155,7 +155,9 @@ class TestFactCheckSkill(unittest.TestCase):
         self.assertIn("an omission the document's own text contradicts", self._verify())
 
     def test_comment_word_limit_counts_the_whole_comment(self):
-        self.assertIn("60 words in total, header and Source line included", self._text())
+        self.assertIn("90 words", self._text())
+        self.assertIn("`why`", self._text())
+        self.assertIn("`suggested`", self._text())
 
     def test_evidence_without_an_event_date_is_dated_by_inference_and_marked(self):
         self.assertIn("date inferred", self._verify())

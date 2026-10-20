@@ -105,7 +105,7 @@ class ElementLabels(unittest.TestCase):
     def test_figure_header_without_element_label_says_figure(self):
         f = {"id": "I01", "verdict": "Incorrect", "severity": "Major", "section": "Figure", "p_id": "s3-sh7",
              "quote": "bar North = 97.4%", "fix": "x", "evidence": "e", "source": "s"}
-        self.assertTrue(I.comment_text(f).startswith("[Incorrect · Major · I01] §Slide 3 (figure)\n"))
+        self.assertTrue(I.comment_text(f).startswith('[Incorrect]\n"bar North = 97.4%"'))
 
 
 if __name__ == "__main__":
@@ -119,11 +119,11 @@ class FieldsFallBackWhenTooLong(unittest.TestCase):
         d = Path(tempfile.mkdtemp())
         deck = F.full_deck(d)
         f = {"id": "C01", "verdict": "Incorrect", "severity": "Major", "section": "Slide 1", "p_id": "s1-sh3-p2",
-             "quote": "Uptime held at 99.9% all year.", "evidence": " ".join(["word"] * 58), "fix": "Use 99.1%.",
-             "source": "ops.md"}
+             "quote": "Uptime held at 99.9% all year.", "evidence": " ".join(["word"] * 100), "fix": "Use 99.1%.",
+             "why": "uptime differs from the reported value", "suggested": "Uptime was 99.1%.", "source": "ops.md"}
         out = d / "out.pptx"
         written, _ = A.annotate(deck, out, [f], fields=I.COMMENT_FIELDS)
         self.assertEqual(written, ["C01"])
         text = I.read_pptx_comments(out)[0]["text"]
         self.assertNotIn("\nBrain:", text)
-        self.assertIn("\nFix: Use 99.1%.", text)
+        self.assertIn('Suggested: "Uptime was 99.1%."', text)

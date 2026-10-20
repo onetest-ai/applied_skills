@@ -138,7 +138,7 @@ class Briefs(unittest.TestCase):
         self.assertIn("When R2 found nothing about the claim's subject, make at most one R3 read, then write No Evidence", v)
         self.assertIn("Write each lettered step as one line", v)
 
-    # T6 (listed sources) was removed in round 6: no stage-V worker of r5a or r5b used it (test_deck_round6)
+    # T6 (listed sources) was removed in round 6: no stage-V worker of r5a or r5b used it (test_fact_check_review_inputs)
 
     def test_t7_is_deck_only(self):
         e = (DECK / "extract.md").read_text(encoding="utf-8")

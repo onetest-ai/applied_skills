@@ -100,11 +100,11 @@ class TestRunInvariants(unittest.TestCase):
         bad.append(finding("C05", "Incorrect", "Major", "Word comment", "And more."))
         self.assertTrue(any("C05" in v for v in self._check(bad)))
 
-    def test_comment_longer_than_sixty_words_is_a_violation(self):
+    def test_comment_over_ninety_words_is_a_violation(self):
         fs = [dict(f) for f in GOOD]
-        fs[0]["fix"] = "word " * 70
+        fs[0]["suggested"] = "word " * 100
         self._annotate(fs)
-        self.assertTrue(any("C01" in v and "60 words" in v for v in self._check(fs)))
+        self.assertTrue(any("C01" in v and "90 words" in v for v in self._check(fs)))
 
     def test_original_document_must_be_untouched(self):
         self._annotate(GOOD)
@@ -552,12 +552,13 @@ class TestFinalReviewInvariants(unittest.TestCase):
 class TestV2CommentPolicy(unittest.TestCase):
     def test_wants_comment(self):
         from fact_check_invariants import wants_comment
-        self.assertTrue(wants_comment({"verdict": "Incorrect", "severity": "Major"}))
-        self.assertTrue(wants_comment({"verdict": "Misleading", "severity": "Blocker"}))
-        self.assertFalse(wants_comment({"verdict": "Misleading", "severity": "Minor"}))
-        self.assertTrue(wants_comment({"verdict": "Misleading", "severity": "Minor"}, "all"))
-        self.assertFalse(wants_comment({"verdict": "No Evidence", "severity": "Minor"}, "all"))
-        self.assertFalse(wants_comment({"verdict": "Verified", "severity": "Major"}))
+        ready = {"why": "the source states another value", "suggested": "The corrected statement."}
+        for verdict in ("Incorrect", "Misleading", "Outdated"):
+            self.assertTrue(wants_comment({**ready, "verdict": verdict, "severity": "Major"}))
+            self.assertFalse(wants_comment({**ready, "verdict": verdict, "severity": "Minor"}))
+            self.assertTrue(wants_comment({**ready, "verdict": verdict, "severity": "Minor"}, "all"))
+        for verdict in ("No Evidence", "Verified", "Controversial"):
+            self.assertFalse(wants_comment({**ready, "verdict": verdict, "severity": "Major"}, "all"))
 
     def test_comment_text_is_shared(self):
         import annotate, fact_check_invariants

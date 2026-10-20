@@ -44,6 +44,7 @@ from fact_check_invariants import (MIN_PICTURE_AREA, is_footer_placeholder, is_h
                                    slide_kinds, slide_title, walk)
 import chunk_claims  # noqa: E402
 import section_io  # noqa: E402
+from pptx_visibility import RenderedText, normalized  # noqa: E402
 from section_io import _words, split_sentences, tag_risk  # noqa: E402
 
 FOOTNOTE_ZONE = 0.85            # a text shape whose top is below 85% of the slide height is a footnote line
@@ -62,11 +63,13 @@ CHROME_TOL = 228600             # 0.25 in: "the same place"
 _TIME = r"\d{1,2}:\d{2}(?::\d{2})?"
 _MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
 _SOURCE_WORDS = re.compile(r"\b(?:session|meeting|workshop|interview|call|discussion|readout|review|survey|"
-                           r"transcript|report|study|deck|memo|sync|stand-?up|w/)\b", re.I)   # what an attribution names
+                           r"transcript|report|study|deck|memo|sync|stand-?up|alignment|roadmap|kick-?off|briefing|w/)\b",
+                           re.I)   # what an attribution or a dateline names
 _ATTRIBUTION = re.compile(r"^[^;\d%]{3,90};\s*(?:" + _TIME + r"(?:\s*[–—-]\s*" + _TIME + r")?"
                           r"|" + _MONTH + r"\s+\d{1,2}(?:,?\s+\d{4})?|\d{1,2}\s+" + _MONTH + r"(?:\s+\d{4})?"
                           r"|\d{4}-\d{2}-\d{2})\s*$", re.I)
-ON_PAGE_MIN_LETTERS = 6         # shorter text cannot be judged against the render, and is kept
+_FULL_DATE = (r"(?:\d{1,2}\s+" + _MONTH + r",?\s+\d{4}|" + _MONTH + r"\s+\d{1,2},?\s+\d{4}|\d{4}-\d{2}-\d{2})")
+_DATELINE = re.compile(r"^(?P<name>[^,;\d%]{3,80}),\s*" + _FULL_DATE + r"\s*$", re.I)
 _TOKEN = re.compile(r"\w[\w.,%]*\w|\w")
 _DATE = re.compile(r"\b(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{4}"
                    r"|\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{2,4})\b", re.I)
@@ -93,23 +96,21 @@ def _small_text(shape) -> bool:
 
 def _squash(text: str) -> str:
     """Letters and digits only, case-folded: a letter-spaced label ("C U R R E N T") still matches its text."""
-    return re.sub(r"\W+", "", str(text).casefold())
+    return normalized(str(text))
 
 
 def on_page(text: str, page_sq: str | None) -> bool | None:
-    """Is this text on the rendered slide? None when it cannot be judged (no page text, or too short to tell).
-    The text is cut into 10-letter chunks; it is on the page when at least half of them are."""
+    """Require the complete text, including short values; None means no rendered evidence was supplied."""
     t = _squash(text)
-    if not page_sq or len(t) < ON_PAGE_MIN_LETTERS:
+    if page_sq is None:
         return None
-    chunks = [t[i:i + 10] for i in range(0, max(len(t) - 9, 1), 5)]
-    return sum(c in page_sq for c in chunks) / len(chunks) >= 0.5
+    return bool(t) and t in page_sq
 
 
 def row_on_page(cells: list[str], page_sq: str | None) -> bool | None:
-    """A table row is on the page when at least half of its judgeable cells are (cells render one by one)."""
-    judged = [v for v in (on_page(c, page_sq) for c in cells) if v is not None]
-    return None if not judged else sum(judged) / len(judged) >= 0.5
+    """A row cannot carry an invisible cell into verification."""
+    judged = [on_page(c, page_sq) for c in cells if c.strip()]
+    return None if not judged or any(v is None for v in judged) else all(judged)
 
 
 def shape_hidden(shape) -> bool:
@@ -155,7 +156,7 @@ def inherited_text(slide, number: int, visible_index: int) -> str:
     return " ".join(texts)
 
 
-def _doc_date(prs, page_sq: str | None = None) -> dict | None:
+def _doc_date(prs, page_sq: str | None = None, visibility=None) -> dict | None:
     """A date written on the deck's title slide (slide 1 laid out as a title slide and shown; a quarter is a period,
     not a date), else the package's modified date (inferred). Only on-screen text counts."""
     width, height = prs.slide_width or 9144000, prs.slide_height or 6858000
@@ -163,7 +164,8 @@ def _doc_date(prs, page_sq: str | None = None) -> dict | None:
         for shape, pos in walk(prs.slides[0].shapes):
             if not shape.has_text_frame or _off_reason(shape, pos, width, height):
                 continue
-            if (m := _DATE.search(shape.text_frame.text)) and on_page(m.group(0), page_sq) is not False:
+            if (m := _DATE.search(shape.text_frame.text)) and (
+                    visibility(1, m.group(0), pos) if visibility else on_page(m.group(0), page_sq) is not False):
                 return {"value": m.group(0), "inferred": False}
     return section_io.core_date(prs.core_properties)
 
@@ -195,11 +197,12 @@ def _eyebrow(text: str) -> bool:
     return bool(letters) and (sum(c.isupper() for c in letters) / len(letters) >= 0.8 or bool(re.search(r"\s[·|>—–]\s", text)))
 
 
-def slide_context(shapes: list, title_shape, height: int, footnote: list[str]) -> dict:
+def slide_context(shapes: list, title_shape, height: int, footnote: list[str], retained: dict[int, list[str]] | None = None) -> dict:
     """What a claim on this slide is about (spec §11 Y1): the title (the title placeholder, else the topmost text
     shape of 3+ words in the top 30% of the slide), the lede (the next text shape under it within LEDE_GAP, 6+ words)
     and the key (the slide's footnote lines)."""
-    texts = [(sh, pos, " ".join(sh.text_frame.text.split())) for sh, pos in shapes if sh.has_text_frame]
+    texts = [(sh, pos, " ".join((retained.get(sh.shape_id, []) if retained is not None else [sh.text_frame.text])))
+             for sh, pos in shapes if sh.has_text_frame]
     texts = [x for x in texts if x[2]]
     title = next((x for x in texts if title_shape is not None and x[0].shape_id == title_shape.shape_id), None)
     if title is None:
@@ -219,19 +222,33 @@ def slide_context(shapes: list, title_shape, height: int, footnote: list[str]) -
     return out
 
 
+def is_dateline(text: str) -> bool:
+    """"<session or document name>, <full date>" — where the slide's content comes from, not a statement about it.
+    The name must name a source (session, workshop, review, roadmap…), so "Go-live, 15 September 2026" stays a claim."""
+    parts = [x for x in re.split(r"(?<=\d)\.\s*|;\s*", " ".join(str(text).split())) if x.strip()]
+    return bool(parts) and all(_one_dateline(x) for x in parts)    # a line may name several sources, each a dateline
+
+
+def _one_dateline(t: str) -> bool:
+    t = t.strip().rstrip(".")
+    m = _DATELINE.match(t)
+    return bool(m) and len(t.split()) <= 14 and bool(_SOURCE_WORDS.search(m.group("name")))
+
+
 def is_attribution(text: str) -> bool:
     """"<source>; <timestamp, range or date>": where the statement above it was said or written (spec §10 X9)."""
     t = " ".join(str(text).split())
     return bool(_ATTRIBUTION.match(t)) and bool(_SOURCE_WORDS.search(t.split(";")[0]))
 
 
-def chrome_shapes(slides: list[tuple[int, list]]) -> tuple[set, dict]:
+def chrome_shapes(slides: list[tuple[int, list]], visibility=None) -> tuple[set, dict]:
     """Navigation: a text shape whose text sits at the same place (±CHROME_TOL) on CHROME_SLIDES or more visible
     slides (tab bars, section eyebrows, scenario pickers). Returns ({(slide, shape_id)}, {text: [slides]})."""
     seen: dict[str, list[tuple[int, int, int, int]]] = {}
     for n, shapes in slides:
         for sh, pos in shapes:
-            if sh.has_text_frame and (key := " ".join(sh.text_frame.text.split())):
+            if sh.has_text_frame and (key := " ".join(p.text for p in sh.text_frame.paragraphs
+                                                     if not visibility or visibility(n, p.text, pos)).strip()):
                 seen.setdefault(key, []).append((n, sh.shape_id, pos["x"], pos["y"]))
     out, texts = set(), {}
     for key, occ in seen.items():
@@ -293,7 +310,7 @@ def _locate(locate, n: int, text: str, pos: dict, after_y: int) -> dict | None:
     return None
 
 
-def read_deck(pptx_path, page_text: dict[int, str] | None = None, locate=None) -> dict:
+def read_deck(pptx_path, page_text: dict[int, str] | None = None, locate=None, visibility=None) -> dict:
     """The shape walk, on-screen text only. Returns {sections, hidden, visible, kinds, walk_text, doc_date, offscreen}.
     A shape wholly outside the slide or hidden is skipped; with page_text (slide -> its rendered text) a paragraph or
     row that is not on the rendered slide (pushed past the edge, covered) is skipped too. Skipped text is never a
@@ -307,13 +324,16 @@ def read_deck(pptx_path, page_text: dict[int, str] | None = None, locate=None) -
     on_slide = [(n, [(sh, pos) for sh, pos in walk(slide.shapes)
                      if not is_footer_placeholder(sh) and not _off_reason(sh, pos, width, height)])
                 for n, slide in enumerate(prs.slides, 1) if not is_hidden(slide)]
-    chrome, chrome_texts = chrome_shapes(on_slide)
+    chrome, chrome_texts = chrome_shapes(on_slide, visibility)
     for n, slide in enumerate(prs.slides, 1):
         if is_hidden(slide):
             hidden.append(n)
             continue
         visible.append(n)
         page_sq = _squash(page_text[n]) if page_text and n in page_text else None
+
+        def shown(text, pos, preceding=""):
+            return visibility(n, text, {**pos, "preceding": preceding}) if visibility else on_page(text, page_sq) is not False
         title_shape = None
         try:
             title_shape = slide.shapes.title
@@ -333,7 +353,7 @@ def read_deck(pptx_path, page_text: dict[int, str] | None = None, locate=None) -
                 kept.append((sh, pos))
         shapes = kept
         title_on = (title_shape is not None and any(sh.shape_id == title_shape.shape_id for sh, _ in shapes)
-                    and on_page(slide_title(slide), page_sq) is not False)
+                    and shown(slide_title(slide), next(pos for sh, pos in shapes if sh.shape_id == title_shape.shape_id)))
         title = slide_title(slide) if title_on else ""
         nav = [sh.text_frame.text for sh, _ in shapes if (n, sh.shape_id) in chrome]
         shapes = [(sh, pos) for sh, pos in shapes if (n, sh.shape_id) not in chrome]   # navigation: never read
@@ -342,10 +362,14 @@ def read_deck(pptx_path, page_text: dict[int, str] | None = None, locate=None) -
                     and 0 < _words(shape.text_frame.text) <= FOOTNOTE_MAX_WORDS
                     and (title_shape is None or shape.shape_id != title_shape.shape_id)
                     and (_small_text(shape) or _SOURCE_LINE.match(shape.text_frame.text))
-                    and on_page(shape.text_frame.text, page_sq) is not False):
+                    and shown(shape.text_frame.text, pos)):
+                footnote.append(" ".join(shape.text_frame.text.split()))
+            elif (shape.has_text_frame and is_dateline(shape.text_frame.text)    # "<session>, <date>": context too
+                    and shown(shape.text_frame.text, pos)):
                 footnote.append(" ".join(shape.text_frame.text.split()))
         dropped: dict[int, int] = {}
         heading_p_id = None
+        retained: dict[int, list[str]] = {}
         for shape, pos in shapes:
             base = f"s{n}-sh{shape.shape_id}"
             last_y = -LOCATE_TOL
@@ -355,10 +379,14 @@ def read_deck(pptx_path, page_text: dict[int, str] | None = None, locate=None) -
                     text = " ".join(para.text.split())
                     if not text:
                         continue
-                    if on_page(text, page_sq) is False:          # past the slide's edge or covered: not on screen
+                    preceding = " ".join(p.text for p in shape.text_frame.paragraphs[:k - 1])
+                    if not shown(text, pos, preceding):
                         dropped[shape.shape_id] = dropped.get(shape.shape_id, 0) + 1
                         continue
                     texts.append(text)
+                    retained.setdefault(shape.shape_id, []).append(text)
+                    if is_dateline(text):           # the slide's source line: in its context (footnote), not a claim
+                        continue
                     if (is_attribution(text) and blocks and blocks[-1][0] == "p"
                             and blocks[-1][1]["p_id"].startswith(base + "-")
                             and "attribution" not in blocks[-1][1].get("ctx", {})):
@@ -387,9 +415,22 @@ def read_deck(pptx_path, page_text: dict[int, str] | None = None, locate=None) -
             elif getattr(shape, "has_table", False) and shape.has_table:
                 rows = list(shape.table.rows)
                 header = [" ".join(c.text.split()) for c in rows[0].cells] if rows else []
+                row_y = pos["y"]
+                scale_y = pos["h"] / sum(r.height for r in rows) if rows else 1
+                scale_x = pos["w"] / sum(c.width for c in shape.table.columns)
+                header_visible = True
                 for k, row in enumerate(rows, 1):
                     cells = [" ".join(c.text.split()) for c in row.cells]
-                    if row_on_page(cells, page_sq) is False:
+                    cell_x = pos["x"]
+                    cell_checks = []
+                    for c, column in zip(row.cells, shape.table.columns):
+                        box = {"x": cell_x, "y": row_y, "w": column.width * scale_x, "h": row.height * scale_y}
+                        cell_checks.append(not c.text.strip() or shown(c.text, box))
+                        cell_x += box["w"]
+                    row_y += row.height * scale_y
+                    if k == 1:
+                        header_visible = all(cell_checks)
+                    if not header_visible or not all(cell_checks):
                         dropped[shape.shape_id] = dropped.get(shape.shape_id, 0) + 1
                         continue
                     texts.extend(cells)
@@ -410,7 +451,7 @@ def read_deck(pptx_path, page_text: dict[int, str] | None = None, locate=None) -
                         rec["ctx"] = ctx
                     blocks.append(("r", rec, sum(_words(c) for c in cells)))
         offscreen += [{"slide": n, "shape": sid, "reason": "not shown on the slide", "blocks": c} for sid, c in dropped.items()]
-        context = slide_context(shapes, title_shape, height, footnote)
+        context = slide_context(shapes, title_shape, height, footnote, retained)
         sections.append({"section_id": f"s{n:02d}", "section": f"Slide {n}: {title}" if title else f"Slide {n}",
                          "slide_context": context,
                          "heading_path": [f"Slide {n}", title] if title else [f"Slide {n}"], "level": 1,
@@ -421,7 +462,7 @@ def read_deck(pptx_path, page_text: dict[int, str] | None = None, locate=None) -
         walk_text[n] = " ".join(texts + furniture + nav) + " " + inherited_text(slide, n, len(visible))
     first = _squash(page_text[1]) if page_text and 1 in page_text else None
     return {"sections": sections, "hidden": hidden, "visible": visible, "kinds": kinds, "walk_text": walk_text,
-            "doc_date": _doc_date(prs, first), "offscreen": offscreen, "elements": elements,
+            "doc_date": _doc_date(prs, first, visibility), "offscreen": offscreen, "elements": elements,
             "chrome": {"texts": sorted(chrome_texts), "slides": sorted({m for v in chrome_texts.values() for m in v})}}
 
 
@@ -518,13 +559,16 @@ def write_outputs(pptx_path, out_dir, max_words: int = 1500) -> dict:
         width = Presentation(str(src)).slide_width or 9144000
         doc = pymupdf.open(pdf)
         page_of = dict(zip(visible, range(len(visible))))
+        painted = {n: RenderedText(doc[i]) for n, i in page_of.items()}
+        page_text = {n: text.text for n, text in painted.items()}
+        for n, page in zip(visible, rendered["pages"]):
+            (staging / page["image"]).with_suffix(".txt").write_text(page_text[n], encoding="utf-8")
 
         def locate(n, words):
-            page = doc[page_of[n]]
-            k = width / page.rect.width
-            return [(r.x0 * k, r.y0 * k) for r in page.search_for(words)]
+            return painted[n].locations(words, scale=width / painted[n].width)
         try:
-            deck = read_deck(src, page_text, locate)     # on-screen text only (spec F7), each statement located
+            deck = read_deck(src, page_text, locate, lambda n, text, pos: painted[n].contains(
+                text, pos, width, preceding=pos.get("preceding", "")))
         except Exception as e:
             raise Refusal(f"{src.name}: cannot read the deck ({e})") from e
         finally:

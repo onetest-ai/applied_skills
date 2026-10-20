@@ -43,7 +43,7 @@ from chunk_claims import FIGURES_CLAIMS_FILE, FIGURES_DROPPED_FILE, _risk_by_s_i
 from fact_check_invariants import (COVERAGE_REASON, RISK_COVERAGE_REASON, UNVERIFIED_REASON, FIGURE_KEYS, FINDING_KEYS, LATE_KEYS,
                                    CLAIM_ONLY_KEYS, MAX_EVIDENCE_WORDS, SEVERITIES, VERDICTS, COPIED_FROM_CLAIM, _last_heading,
                                    COMMENT_POLICIES, MAX_COMMENT_WORDS, comment_text, comment_words, is_deck_finding, conflicts_problem, wants_comment,
-                                   COMMENTED, COMMENT_SEVERITIES, NOT_A_FIX, why_problem,
+                                   comment_required, why_problem,
                                    evidence_problem, name_check_problem, same_text, section_coverage, section_key)
 
 REQUIRED = tuple(k for k in FINDING_KEYS if k not in LATE_KEYS)
@@ -67,7 +67,7 @@ def _load_list(path: Path, errors: list[str], *, required: bool) -> list | None:
     return data
 
 
-def _check_finding(f, where: str, errors: list[str]) -> str | None:
+def _check_finding(f, where: str, errors: list[str], comments: str = "major") -> str | None:
     """Validate one finding against the step-9 schema; return its id (or None if unusable)."""
     if not isinstance(f, dict):
         errors.append(f"{where}: a finding must be an object, got {type(f).__name__}")
@@ -99,8 +99,7 @@ def _check_finding(f, where: str, errors: list[str]) -> str | None:
         errors.append(f"{label}: {why} (re-dispatch stage V for this chunk exactly as step 1b does, never a fix prompt; the main session never edits findings)")
     if why := name_check_problem(f):
         errors.append(f"{label}: {why} (re-dispatch stage V for this chunk exactly as step 1b does, never a fix prompt; the main session never edits findings)")
-    if (f.get("verdict") in COMMENTED and f.get("severity") in COMMENT_SEVERITIES
-            and not NOT_A_FIX.match(str(f.get("fix") or "")) and (why := why_problem(f))):
+    if comment_required(f, comments) and (why := why_problem(f)):
         errors.append(f"{label}: {why} (re-dispatch stage V for this chunk exactly as step 1b does, never a fix prompt; the main session never edits findings)")
     if why := conflicts_problem(f):
         errors.append(f"{label}: {why} (re-dispatch stage V for this chunk exactly as step 1b does, never a fix prompt; the main session never edits findings)")
@@ -264,7 +263,7 @@ def merge(d: Path, scope: str = "all", wave_size: int = 10, comments: str = "maj
             if isinstance(f, dict) and f.get("id") in claims:
                 for k in COPIED_FROM_CLAIM:
                     f.setdefault(k, claims[f["id"]].get(k))
-            fid = _check_finding(f, fname, errors)
+            fid = _check_finding(f, fname, errors, comments)
             if fid is None:
                 continue
             if fid not in ids:

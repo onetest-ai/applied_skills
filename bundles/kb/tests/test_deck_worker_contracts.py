@@ -31,8 +31,10 @@ class SkillMd(unittest.TestCase):
 
     def test_comment_is_quote_and_fix_with_fields_on_request(self):
         s = read("SKILL.md")
-        self.assertIn('Re: "<the statement, first 12 words…>"\nFix: <one sentence, or "needs owner input">\n```', s)
-        self.assertIn("add `--fields quote,brain,fix,source`", s)
+        self.assertIn('[Incorrect]', s)
+        self.assertIn('Why: <source', s)
+        self.assertIn('Suggested: "<suggested>"', s)
+        self.assertIn("add `--fields quote,why,suggested,brain,source`", s)
 
     def test_redispatch_is_the_same_text(self):
         s = read("SKILL.md")

@@ -211,8 +211,14 @@ class RiskTagTests(unittest.TestCase):
                   "the sole developer of the app", "only one integration exists"):
             self.assertIn("absolute", self.tags(t), t)
 
+    def test_a_guarantee_is_an_absolute_commitment(self):
+        # a guarantee claims it holds in every case, like "always"; untagged, a Fast run never checks it
+        for t in ("Customer confirmation guarantees that the order is visible to the driver.",
+                  "delivery is guaranteed within one day", "we guarantee a reply"):
+            self.assertIn("absolute", self.tags(t), t)
+
     def test_absolute_negative(self):
-        for t in ("the team reviews the backlog", "integration is planned"):
+        for t in ("the team reviews the backlog", "integration is planned", "a guarantor signs the lease"):
             self.assertNotIn("absolute", self.tags(t), t)
 
     def test_ownership_positive(self):

@@ -33,40 +33,36 @@ LONG = "Uptime held at 99.9% all year across every region including the northern
 
 
 class CommentText(unittest.TestCase):
-    def test_deck_comment_names_the_slide_and_quotes_the_statement(self):
-        f = {**BASE, "id": "C07", "p_id": "s12-sh8-p3", "section": "Slide 12: D2B scenarios and traffic mix", "quote": LONG}
+    def test_deck_comment_quotes_the_statement_and_explains_the_correction(self):
+        f = {**BASE, "id": "C07", "p_id": "s12-sh8-p3", "section": "Slide 12: Traffic mix", "quote": LONG}
         text = I.comment_text(f)
-        lines = text.split("\n")
-        self.assertEqual(lines[0], "[Incorrect · Major · C07] §Slide 12")
-        self.assertEqual(lines[1], 'Re: "Uptime held at 99.9% all year across every region including the northern…"')
-        self.assertEqual(lines[2:], ["Fix: Use 99.1%."])            # a deck comment: the statement and the fix
-        full = I.comment_text(f, I.COMMENT_FIELDS).split("\n")
-        self.assertEqual(full[2:], ["Brain: The source states 99.1%.", "Fix: Use 99.1%.", "Source: ops.md"])
+        self.assertTrue(text.startswith('[Incorrect]\n"Uptime held at 99.9% all year across every region including the northern…"\n'))
+        self.assertIn("Why: Ops (undated) says the source states 99.1%.", text)
+        self.assertIn('Suggested: "Uptime was 99.1%."', text)
+        self.assertNotIn("C07", text)
+        full = I.comment_text(f, I.COMMENT_FIELDS)
+        self.assertIn("Brain: The source states 99.1%.", full)
+        self.assertIn("Source: ops.md", full)
 
     def test_short_quote_is_not_cut(self):
         f = {**BASE, "id": "C01", "p_id": "s2-sh3-r2", "section": "Slide 2: North", "quote": "Uptime | 99.9%"}
-        self.assertIn('\nRe: "Uptime | 99.9%"\n', I.comment_text(f))
+        self.assertIn('\n"Uptime | 99.9%"\n', I.comment_text(f))
 
-    def test_deck_figure_comment(self):
+    def test_deck_figure_comment_quotes_the_visual_statement(self):
         f = {**BASE, "id": "I01", "p_id": "s3", "section": "Figure", "quote": "bar Southfield = 97.4%"}
-        self.assertTrue(I.comment_text(f).startswith('[Incorrect · Major · I01] §Slide 3 (figure)\nRe: "bar Southfield = 97.4%"\n'))
+        self.assertTrue(I.comment_text(f).startswith('[Incorrect]\n"bar Southfield = 97.4%"\n'))
 
-    def test_word_comment_is_byte_identical_to_before(self):
+    def test_word_comment_explains_the_correction_without_repeating_its_anchor(self):
         f = {**BASE, "id": "C10", "p_id": "p14", "section": "4 Integration > 4.8 Billing", "quote": LONG}
-        self.assertEqual(I.comment_text(f), "[Incorrect · Major · C10] §4.8 Billing\nBrain: The source states 99.1%.\n"
-                                            "Fix: Use 99.1%.\nSource: ops.md")
-        f2 = {**BASE, "id": "I02", "p_id": "p7", "section": "Figure", "quote": "edge A to B"}
-        self.assertEqual(I.comment_text(f2), "[Incorrect · Major · I02] §Figure\nBrain: The source states 99.1%.\n"
-                                             "Fix: Use 99.1%.\nSource: ops.md")
+        self.assertEqual(I.comment_text(f), '[Incorrect]\nWhy: Ops (undated) says the source states 99.1%.\nSuggested: "Uptime was 99.1%."')
+        self.assertNotIn(LONG, I.comment_text(f))
 
-    def test_the_word_cap_counts_a_deck_comments_body_only(self):
-        # spec §10 R5: the header and the Re: quote line are not in the 60-word count of a deck comment; Word counts all
+    def test_word_cap_excludes_category_and_deck_statement(self):
         deck = {**BASE, "id": "C07", "p_id": "s12-sh8-p3", "section": "Slide 12", "quote": LONG}
-        self.assertEqual(I.comment_words(I.comment_text(deck), True), len("Fix: Use 99.1%.".split()))
-        bloated = {**deck, "fix": " ".join(["word"] * 59)}
-        self.assertEqual(I.comment_words(I.comment_text(bloated), True), 60)
-        word = {**bloated, "p_id": "p3"}
-        self.assertEqual(I.comment_words(I.comment_text(word), False), len(I.comment_text(word).split()))
+        body = 'Why: Ops (undated) says the source states 99.1%. Suggested: "Uptime was 99.1%."'
+        self.assertEqual(I.comment_words(I.comment_text(deck), True), len(body.split()))
+        word = {**deck, "p_id": "p3"}
+        self.assertEqual(I.comment_words(I.comment_text(word), False), len(body.split()))
 
 
 @unittest.skipUnless(HAVE, "needs python-pptx, PyMuPDF and LibreOffice")
@@ -97,16 +93,16 @@ class StatementPin(unittest.TestCase):
         fs = self._findings([(p["p_id"], p["text"]) for p in self.paras[:2]])
         out = self.d / "two.pptx"
         written, _ = A.annotate(self.deck, out, fs, sections=self.d / "work" / "sections.json")
-        pins = {I.HEADER.match(c["text"])["id"]: c for c in I.read_pptx_comments(out)}
+        pins = {I.comment_owner(c["text"], fs): c for c in I.read_pptx_comments(out)}
         self.assertEqual(len(written), 2)
         self.assertNotEqual(pins["C01"]["y"], pins["C02"]["y"])
         for f in fs:
             c = pins[f["id"]]
             at = next(p["at"] for p in self.paras if p["p_id"] == f["p_id"])
             self.assertEqual((c["x"], c["y"]), (A.to_pos(at["x"]), A.to_pos(at["y"])))
-            self.assertIn(f'Re: "{" ".join(f["quote"].split()[:12])}', c["text"])
+            self.assertIn(f'"{" ".join(f["quote"].split()[:12])}', c["text"])
         view = I.doc_view(out)
-        by = {I.HEADER.match(c.text)["id"]: c for c in view.comments()}
+        by = {I.comment_owner(c.text, fs): c for c in view.comments()}
         self.assertEqual([view.anchor_problem(by[f["id"]], f) for f in fs], [None, None])
 
     def test_without_sections_the_pin_falls_back_to_the_shape_corner(self):

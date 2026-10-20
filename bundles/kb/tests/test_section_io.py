@@ -24,6 +24,30 @@ def _section(n: int, blocks: list) -> dict:
 
 
 class OneDefinition(unittest.TestCase):
+    def test_person_named_as_hosting_provider_is_in_fast_scope_in_both_readers(self):
+        from docx import Document
+        from pptx import Presentation
+        from pptx.util import Inches
+        import sections
+        import pptx_sections
+        text = "Rowan is the external hosting company for Northwind."
+        d = Path(tempfile.mkdtemp())
+        doc = Document()
+        doc.add_paragraph(text)
+        word = d / "identity.docx"
+        doc.save(word)
+        prs = Presentation()
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        slide.shapes.add_textbox(Inches(1), Inches(1), Inches(8), Inches(1)).text_frame.text = text
+        deck = d / "identity.pptx"
+        prs.save(deck)
+        self.assertIn("topo", section_io.tag_risk("Rowan provides hosting."))
+        for source in (sections.extract_sections(word), pptx_sections.read_deck(deck)["sections"]):
+            sentences = [sent for sec in source for kind, record, _ in sec["blocks"] if kind == "p"
+                         for sent in record["sentences"] if sent["text"] == text]
+            self.assertEqual(len(sentences), 1)
+            self.assertIn("topo", sentences[0]["risk"])
+
     def test_sections_py_defines_none_of_the_moved_names(self):
         tree = ast.parse((DOC / "sections.py").read_text(encoding="utf-8"))
         defined = {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef))}

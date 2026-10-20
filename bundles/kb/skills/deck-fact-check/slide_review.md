@@ -16,7 +16,7 @@ Rules:
 - You can only lower. Never add a finding, never raise a severity, never change evidence or a fix.
 - Use only the slide, its context and the findings' own `evidence`, `claim` and `conflicts`. Do not bring in outside knowledge.
 - When unsure, `keep`. A real error with no comment is as bad as a comment on a correct statement.
-- An outright factual error (a wrong number, owner, system or date) is always `keep`.
+- An outright factual error (a wrong number, owner, system, date or established person/company identity) is always `keep`.
 - Each entry has a `reason`: one sentence a reviewer can check, naming what on the slide or in the evidence decides it.
 
 ## Output

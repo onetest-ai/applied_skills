@@ -69,7 +69,7 @@ class SlideContextAndLabels(unittest.TestCase):
 def _finding(fid, verdict="Misleading", severity="Major", p_id="s1-sh5-p1", **kw):
     f = {"id": fid, "p_id": p_id, "section": "Slide 1", "quote": "q", "claim": "c", "type": "TOPO", "verdict": verdict,
          "severity": severity, "confidence": "High", "evidence": "e", "trail": "t", "conflicts": [], "fix": "f",
-         "source": "s", "sources": []}
+         "why": "the source states another value", "suggested": "The corrected statement.", "source": "s", "sources": []}
     f.update(kw)
     return f
 
@@ -77,7 +77,7 @@ def _finding(fid, verdict="Misleading", severity="Major", p_id="s1-sh5-p1", **kw
 class SlideReview(unittest.TestCase):
     def setUp(self):
         self.d = Path(tempfile.mkdtemp())
-        self.findings = [_finding("C02"), _finding("C09"), _finding("C11"), _finding("C13", "Controversial"),
+        self.findings = [_finding("C02"), _finding("C09"), _finding("C11"), _finding("C13", "Misleading"),
                          _finding("C14", "No Evidence", "Minor")]
         (self.d / "findings.json").write_text(json.dumps(self.findings))
         (self.d / "run.json").write_text(json.dumps({"scope": "risk"}))
@@ -90,7 +90,7 @@ class SlideReview(unittest.TestCase):
         errors = self.apply([{"id": "C02", "action": "minor", "reason": "simplified flow"},
                              {"id": "C09", "action": "verified_in_context", "reason": "agent-made change: OrderHub masters it"},
                              {"id": "C11", "action": "duplicate_of", "of": "C13", "reason": "same fact as a kept one"},
-                             {"id": "C13", "action": "keep", "reason": "sources disagree"}])
+                             {"id": "C13", "action": "keep", "reason": "the correction changes the meaning"}])
         self.assertEqual(errors, [])
         by = {f["id"]: f for f in json.loads((self.d / "findings.json").read_text())}
         self.assertEqual((by["C02"]["verdict"], by["C02"]["severity"]), ("Misleading", "Minor"))

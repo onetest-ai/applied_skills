@@ -84,7 +84,7 @@ class EndToEnd(unittest.TestCase):
                     "claim": c["claim"], "type": c["type"], "verdict": verdict, "severity": severity,
                     "confidence": "High", "evidence": "The ops report states 99.1% for FY2025.",
                     "trail": "name check: none", "conflicts": [], "fix": "Use 99.1%.", "source": "ops-report.md",
-                    "sources": []}
+                    "why": "uptime was 99.1% in FY2025", "suggested": "Uptime was 99.1% in FY2025.", "sources": []}
             return {**base, **kw}
         cs = chunk["claims"]
         (work / "findings_chunk_1.json").write_text(json.dumps([

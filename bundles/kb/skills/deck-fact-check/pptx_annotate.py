@@ -10,7 +10,7 @@ place its statement renders on the slide (from the reader's sections.json, `--se
 corner of the shape that holds the claim (its p_id s<slide>-sh<shape id>-…). A figure claim (anchor "drawing") pins
 inside the element it reads (p_id s<slide>-sh<element id>), 1/8 in from its top-left corner, and its header names
 the element (from sections.json); a figure claim naming no element pins to its slide's top-left corner. The text is
-the shared comment_text (header [Verdict · Severity · id]): the quoted statement and the fix, `--fields` adds the
+the shared comment_text: category, quoted statement, Why and Suggested, `--fields` adds the
 Brain and Source lines. Comments already in the deck (a reviewer's) are kept; an id
 whose comment is already there is not written twice. The CLI, the destinations ("Deck comment") and the checks
 are annotate_cli.py's, shared with doc-fact-check.
@@ -24,7 +24,6 @@ import shutil
 import sys
 import zipfile
 from pathlib import Path
-from xml.sax.saxutils import escape, quoteattr
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling imports work under python -I too
 
@@ -118,43 +117,43 @@ def pin(f: dict, boxes: dict, at: dict | None = None) -> tuple[int, int, int, in
 
 
 def _add_override(types_xml: str, part: str, ctype: str) -> str:
-    if f'PartName="/{part}"' in types_xml:
-        return types_xml
-    return types_xml.replace("</Types>", f'<Override PartName="/{part}" ContentType="{ctype}"/></Types>')
+    from lxml import etree
+    root = etree.fromstring(types_xml.encode())
+    namespace = etree.QName(root).namespace
+    if not any(child.get("PartName") == f"/{part}" for child in root):
+        etree.SubElement(root, f"{{{namespace}}}Override", PartName=f"/{part}", ContentType=ctype)
+    return etree.tostring(root, encoding="unicode")
 
 
 def _add_rel(rels_xml: str | None, rtype: str, target: str) -> str:
-    if rels_xml is None:
-        rels_xml = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-                    f'<Relationships xmlns="{PKG_REL_NS}"></Relationships>')
-    used = {int(x) for x in re.findall(r'Id="rId(\d+)"', rels_xml)}
-    rid = f"rId{max(used, default=0) + 1}"
-    return rels_xml.replace("</Relationships>", f'<Relationship Id="{rid}" Type="{rtype}" Target="{target}"/></Relationships>')
+    from lxml import etree
+    root = (etree.fromstring(rels_xml.encode()) if rels_xml is not None else
+            etree.Element(f"{{{PKG_REL_NS}}}Relationships", nsmap={None: PKG_REL_NS}))
+    used = [int(m[1]) for child in root if (m := re.fullmatch(r"rId(\d+)", child.get("Id", "")))]
+    etree.SubElement(root, f"{{{PKG_REL_NS}}}Relationship", Id=f"rId{max(used, default=0) + 1}", Type=rtype, Target=target)
+    return etree.tostring(root, encoding="unicode")
 
 
 def _authors(xml: str | None) -> tuple[str, str, int]:
-    """(authors xml with our author present, our author id, our last idx)."""
-    if xml is None:
-        xml = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-               f'<p:cmAuthorLst xmlns:p="{P_NS}"></p:cmAuthorLst>')
-    for m in re.finditer(r"<p:cmAuthor\b[^>]*>", xml):
-        if re.search(r'\bname=' + re.escape(quoteattr(AUTHOR)), m.group(0)):
-            aid = re.search(r'\bid="(\d+)"', m.group(0)).group(1)
-            last = int(re.search(r'\blastIdx="(\d+)"', m.group(0)).group(1))
-            return xml, aid, last
-    ids = [int(x) for x in re.findall(r'<p:cmAuthor\b[^>]*\bid="(\d+)"', xml)]
-    aid = str(max(ids, default=-1) + 1)
-    tag = (f'<p:cmAuthor id="{aid}" name={quoteattr(AUTHOR)} initials="{INITIALS}" lastIdx="0" '
-           f'clrIdx="{aid}"/>')
-    return xml.replace("</p:cmAuthorLst>", tag + "</p:cmAuthorLst>"), aid, 0
+    from lxml import etree
+    root = (etree.fromstring(xml.encode()) if xml is not None else
+            etree.Element(f"{{{P_NS}}}cmAuthorLst", nsmap={"p": P_NS}))
+    authors = root.findall(f"{{{P_NS}}}cmAuthor")
+    for author in authors:
+        if author.get("name") == AUTHOR:
+            return etree.tostring(root, encoding="unicode"), author.get("id"), int(author.get("lastIdx", "0"))
+    aid = str(max((int(author.get("id")) for author in authors), default=-1) + 1)
+    etree.SubElement(root, f"{{{P_NS}}}cmAuthor", id=aid, name=AUTHOR, initials=INITIALS, lastIdx="0", clrIdx=aid)
+    return etree.tostring(root, encoding="unicode"), aid, 0
 
 
 def annotate(src, dst, findings, sections=None, fields=None) -> tuple[list[str], list[str]]:
     """Write one comment per finding into a copy of src at dst. Returns (written, skipped) id lists. `sections` is
     the reader's sections.json: with it, each comment is pinned where its statement renders and a figure comment
     names its element. `fields` are the comment lines after the header (default: the quote and the fix)."""
+    from lxml import etree
     src, dst = Path(src), Path(dst)
-    have = {c["text"].strip() for c in read_pptx_comments(src)}   # comments carry no id: matched by their text
+    have = {(c["slide"], c["x"], c["y"], c["text"].strip()) for c in read_pptx_comments(src)}
     boxes = pptx_boxes(src)
     at = statement_positions(sections)
     parts = pptx_slide_parts(src)
@@ -163,9 +162,6 @@ def annotate(src, dst, findings, sections=None, fields=None) -> tuple[list[str],
     labels = element_labels(sections, (prs.slide_width or 9144000, prs.slide_height or 6858000))
     written, skipped, new, fan = [], [], {}, {}   # new: slide number -> [(x, y, text)]
     for f in findings:
-        if comment_text(f, fields).strip() in have or comment_text(f).strip() in have:
-            written.append(f["id"])
-            continue
         p = pin(f, boxes, at)
         if p is None or not 1 <= p[0] <= len(parts):
             skipped.append(f["id"])             # its shape is not in the deck: logged, no comment
@@ -180,7 +176,14 @@ def annotate(src, dst, findings, sections=None, fields=None) -> tuple[list[str],
             text = comment_text(f)
             print(f"{f['id']}: Brain/Source lines left out of the comment (over {MAX_COMMENT_WORDS} words); "
                   "they are in the findings page", file=sys.stderr)
-        new.setdefault(slide, []).append((x + min(FAN * k, max(w - 1, 0)), y, text))
+        existing = next((c for c in sorted(have) if c[0] == slide and x <= c[1] <= x + max(w - 1, 0)
+                         and c[2] == y and c[3] == text.strip()), None)
+        if existing is not None:
+            have.remove(existing)
+            written.append(f["id"])
+            continue
+        x += min(FAN * k, max(w - 1, 0))
+        new.setdefault(slide, []).append((x, y, text))
         written.append(f["id"])
     tmp = dst.with_name(dst.name + ".tmp")
     if not new:
@@ -213,17 +216,18 @@ def annotate(src, dst, findings, sections=None, fields=None) -> tuple[list[str],
             rels_name = f"{slide.rsplit('/', 1)[0]}/_rels/{slide.rsplit('/', 1)[1]}.rels"
             files[rels_name] = _add_rel(text(rels_name), COMMENTS_REL, f"../comments/comment{k}.xml").encode("utf-8")
             types = _add_override(types, part, CT_COMMENTS)
-            body = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-                    f'<p:cmLst xmlns:p="{P_NS}"></p:cmLst>')
+            body = etree.Element(f"{{{P_NS}}}cmLst", nsmap={"p": P_NS})
         else:
-            body = text(part)
-        cms = ""
+            body = etree.fromstring(text(part).encode())
         for x, y, t in new[n]:
             idx += 1
-            cms += (f'<p:cm authorId="{aid}" dt="{stamp}" idx="{idx}"><p:pos x="{x}" y="{y}"/>'
-                    f'<p:text>{escape(t)}</p:text></p:cm>')
-        files[part] = body.replace("</p:cmLst>", cms + "</p:cmLst>").encode("utf-8")
-    authors = re.sub(r'(<p:cmAuthor\b[^>]*\bid="' + aid + r'"[^>]*\blastIdx=")\d+(")', rf"\g<1>{idx}\g<2>", authors)
+            comment = etree.SubElement(body, f"{{{P_NS}}}cm", authorId=aid, dt=stamp, idx=str(idx))
+            etree.SubElement(comment, f"{{{P_NS}}}pos", x=str(x), y=str(y))
+            etree.SubElement(comment, f"{{{P_NS}}}text").text = t
+        files[part] = etree.tostring(body, encoding="utf-8", xml_declaration=True)
+    author_root = etree.fromstring(authors.encode())
+    next(author for author in author_root.findall(f"{{{P_NS}}}cmAuthor") if author.get("id") == aid).set("lastIdx", str(idx))
+    authors = etree.tostring(author_root, encoding="unicode")
     files[authors_part] = authors.encode("utf-8")
     files["[Content_Types].xml"] = types.encode("utf-8")
     order = ["[Content_Types].xml"] + [n for n in files if n != "[Content_Types].xml"]

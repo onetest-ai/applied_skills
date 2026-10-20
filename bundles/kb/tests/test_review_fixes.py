@@ -112,7 +112,7 @@ class ReviewedDeck(unittest.TestCase):
                          original_sha256=hashlib.sha256(reviewed.read_bytes()).hexdigest())
         self.assertEqual(vs, [])
         # but a comment that is neither the reviewer's nor approved still fails
-        self.assertTrue(any("never approved" in v or "header is not" in v
+        self.assertTrue(any("never approved" in v or "first line is not" in v
                             for v in I.check_run(marked, out, original_path=src, coverage=COVERAGE,
                                                  run={"comments": "major"})))
 
@@ -219,19 +219,19 @@ class CommentsOnSlides(unittest.TestCase):
     def test_figure_header_names_the_slide(self):
         f = {"id": "I01", "p_id": "s3", "section": "Figure", "verdict": "Incorrect", "severity": "Major",
              "evidence": "e", "fix": "x", "source": "s"}
-        self.assertTrue(I.comment_text(f).startswith("[Incorrect · Major · I01] §Slide 3 (figure)\n"))
-        self.assertTrue(I.comment_text({**f, "p_id": "p7"}).startswith("[Incorrect · Major · I01] §Figure\n"))
+        self.assertTrue(I.comment_text(f).startswith("[Incorrect]"))
+        self.assertTrue(I.comment_text({**f, "p_id": "p7"}).startswith("[Incorrect]"))
 
     def test_three_pins_on_one_shape_fan_out_and_stay_in_the_box(self):
         from test_deck_annotate import S1, finding
         d = Path(tempfile.mkdtemp())
         src = F.full_deck(d)
-        fs = [finding(f"C0{k}", f"s1-sh3-p{k}", S1, "q", "Incorrect", "Major") for k in (1, 2, 3)]
+        fs = [finding(f"C0{k}", f"s1-sh3-p{k}", S1, f"statement {k}", "Incorrect", "Major") for k in (1, 2, 3)]
         A.annotate(src, d / "o.pptx", fs)
         pins = sorted((c["x"], c["y"]) for c in I.read_pptx_comments(d / "o.pptx"))
         self.assertEqual(len({p for p in pins}), 3)
         view = I.doc_view(d / "o.pptx")
-        by = {I.HEADER.match(c.text)["id"]: c for c in view.comments()}
+        by = {I.comment_owner(c.text, fs, c, view): c for c in view.comments()}
         for f in fs:
             self.assertIsNone(view.anchor_problem(by[f["id"]], f))
 

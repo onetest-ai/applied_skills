@@ -40,7 +40,7 @@ def finding(fid, p_id, section, quote, verdict, severity, **kw):
     f = {"id": fid, "p_id": p_id, "section": section, "quote": quote, "claim": quote, "type": "NUM",
          "verdict": verdict, "severity": severity, "confidence": "High",
          "evidence": "The ops report states 99.1% for FY2025.", "trail": "t", "conflicts": [],
-         "fix": "Use 99.1%.", "why": "the ops report states 99.1% for FY2025", "suggested": "Uptime was 99.1% in FY2025.",
+         "fix": "Use 99.1%.", "why": "the ops report states 99.1%", "suggested": "Uptime was 99.1% in FY2025.",
          "source": "ops-report.md", "sources": []}
     f.update(kw)
     return f
@@ -80,13 +80,13 @@ class Annotate(unittest.TestCase):
             with self.subTest(policy=policy):
                 written, skipped, _ = self.run_annotate(policy)
                 self.assertEqual((set(written), skipped), (want, []))
-                got = {I.HEADER.match(c["text"])["id"] for c in I.read_pptx_comments(self.out)}
+                got = {I.comment_owner(c["text"], FINDINGS) for c in I.read_pptx_comments(self.out)}
                 self.assertEqual(got, want)
 
     def test_a3_pins_sit_on_the_claims_slide_inside_its_shape(self):
         self.run_annotate()
         boxes = I.pptx_boxes(self.src)
-        by_id = {I.HEADER.match(c["text"])["id"]: c for c in I.read_pptx_comments(self.out)}
+        by_id = {I.comment_owner(c["text"], FINDINGS): c for c in I.read_pptx_comments(self.out)}
         self.assertEqual((by_id["C01"]["slide"], by_id["C03"]["slide"], by_id["I01"]["slide"]), (1, 2, 3))
         for fid, key in (("C01", (1, 3)), ("C03", (2, 3))):
             box, c = boxes[key], by_id[fid]
@@ -97,12 +97,12 @@ class Annotate(unittest.TestCase):
 
     def test_a4_text_is_the_shared_comment_and_escapes_round_trip(self):
         A.annotate(self.src, self.out, self.select(), fields=I.COMMENT_FIELDS)   # Brain line on: it holds the escapes
-        by_id = {I.HEADER.match(c["text"])["id"]: c["text"] for c in I.read_pptx_comments(self.out)}
+        by_id = {I.comment_owner(c["text"], FINDINGS): c["text"] for c in I.read_pptx_comments(self.out)}
         c03 = next(f for f in FINDINGS if f["id"] == "C03")
         self.assertEqual(by_id["C03"], I.comment_text(c03, I.COMMENT_FIELDS))
         self.assertIn('"R&D <core> uptime"', by_id["C03"])
         self.assertIn("São Paulo", by_id["C03"])
-        self.assertTrue(by_id["C01"].startswith('[Incorrect · Major · C01] §Slide 1\nRe: "Uptime held at 99.9% all year."\n'))
+        self.assertTrue(by_id["C01"].startswith('[Incorrect]\n"Uptime held at 99.9% all year."\n'))
 
     def test_a5_rerun_on_its_own_output_adds_nothing(self):
         self.run_annotate()
@@ -138,6 +138,29 @@ class Annotate(unittest.TestCase):
         written, skipped = A.annotate(self.src, self.out, [finding("C09", "s1-sh99-p1", S1, "q", "Incorrect", "Major")])
         self.assertEqual((written, skipped), ([], ["C09"]))
 
+    def test_empty_and_prefixed_relationship_parts_are_supported(self):
+        from lxml import etree
+        for xml in (f'<Relationships xmlns="{I.PKG_REL_NS}"/>',
+                    f'<r:Relationships xmlns:r="{I.PKG_REL_NS}"/>'):
+            root = etree.fromstring(A._add_rel(xml, I.COMMENTS_REL, "../comments/comment1.xml").encode())
+            rel = root.find(f"{{{I.PKG_REL_NS}}}Relationship")
+            self.assertIsNotNone(rel)
+            self.assertEqual(rel.get("Target"), "../comments/comment1.xml")
+
+    def test_prefixed_existing_comments_and_authors_are_extended(self):
+        partial = self.d / "partial.pptx"
+        A.annotate(self.src, partial, self.select()[:1])
+        rewritten = self.d / "prefixed.pptx"
+        with zipfile.ZipFile(partial) as zin, zipfile.ZipFile(rewritten, "w") as zout:
+            for info in zin.infolist():
+                data = zin.read(info.filename)
+                if info.filename.startswith("ppt/comments/") or info.filename == "ppt/commentAuthors.xml":
+                    data = data.replace(b"xmlns:p=", b"xmlns:x=").replace(b"<p:", b"<x:").replace(b"</p:", b"</x:")
+                zout.writestr(info, data)
+        A.annotate(rewritten, self.out, self.select())
+        self.assertEqual(len(I.read_pptx_comments(self.out)), 3)
+        self.assertEqual(len({c["text"] for c in I.read_pptx_comments(self.out)}), 3)
+
     def test_package_parts_are_wired(self):
         self.run_annotate()
         with zipfile.ZipFile(self.out) as z:
@@ -161,7 +184,7 @@ class Annotate(unittest.TestCase):
         flat = next(out.glob("*.fodp")).read_text(encoding="utf-8")
         self.assertEqual(flat.count("<officeooo:annotation "), 3)
         for fid in ("C01", "C03", "I01"):
-            self.assertIn(f"· {fid}]", flat)
+            self.assertIn(next(f["quote"] for f in FINDINGS if f["id"] == fid), flat)
 
     def test_cli_select_writes_and_marks_deck_comments(self):
         fj = self.d / "findings.json"
@@ -226,19 +249,19 @@ class DeckInvariants(unittest.TestCase):
 
     def test_m1_dropped_required_comment(self):
         part = self.comments_part(1)
-        bad = self.mutate(lambda n: n == part, lambda x: re.sub(r"<p:cm [^>]*>(?:(?!</p:cm>).)*· C01\].*?</p:cm>", "", x, flags=re.S))
+        bad = self.mutate(lambda n: n == part, lambda x: re.sub(r"<p:cm [^>]*>(?:(?!</p:cm>).)*Uptime held at 99.9% all year..*?</p:cm>", "", x, flags=re.S))
         self.assert_flags(self.check(out=bad), "C01: approved comment is missing from the document")
 
     def test_m2_unapproved_comment(self):
         part = self.comments_part(1)
-        extra = '<p:cm authorId="0" dt="2026-01-01T00:00:00.000" idx="9"><p:pos x="10" y="10"/><p:text>[Incorrect · Major · C99] §x</p:text></p:cm>'
+        extra = '<p:cm authorId="0" dt="2026-01-01T00:00:00.000" idx="9"><p:pos x="10" y="10"/><p:text>[Incorrect]\nUnapproved statement</p:text></p:cm>'
         bad = self.mutate(lambda n: n == part, lambda x: x.replace("</p:cmLst>", extra + "</p:cmLst>"))
-        self.assert_flags(self.check(out=bad), "C99: comment in the document was never approved")
+        self.assert_flags(self.check(out=bad), "comment in the document was never approved")
 
     def test_m3_pin_on_another_slide(self):
         p1, p2 = self.comments_part(1), self.comments_part(2)
         with zipfile.ZipFile(self.out) as z:
-            c01 = re.search(r"<p:cm [^>]*>(?:(?!</p:cm>).)*· C01\].*?</p:cm>", z.read(p1).decode(), re.S).group(0)
+            c01 = re.search(r"<p:cm [^>]*>(?:(?!</p:cm>).)*Uptime held at 99.9% all year..*?</p:cm>", z.read(p1).decode(), re.S).group(0)
         step1 = self.mutate(lambda n: n == p1, lambda x: x.replace(c01, ""))
         shutil.copyfile(step1, self.d / "step1.pptx")
         self.out = self.d / "step1.pptx"
@@ -252,13 +275,13 @@ class DeckInvariants(unittest.TestCase):
 
     def test_m5_word_cap(self):
         part = self.comments_part(1)
-        bad = self.mutate(lambda n: n == part, lambda x: x.replace("Fix: Use 99.1%.", "Fix: " + "word " * 70))
-        self.assert_flags(self.check(out=bad), "C01: comment is over 60 words")
+        bad = self.mutate(lambda n: n == part, lambda x: x.replace('Suggested: "Uptime was 99.1% in FY2025."', "Suggested: " + "word " * 100))
+        self.assert_flags(self.check(out=bad), "comment is over 90 words")
 
     def test_m6_header_verdict_changed(self):
         part = self.comments_part(1)
-        bad = self.mutate(lambda n: n == part, lambda x: x.replace("[Incorrect · Major · C01]", "[Misleading · Major · C01]"))
-        self.assert_flags(self.check(out=bad), "C01: comment header does not match the finding")
+        bad = self.mutate(lambda n: n == part, lambda x: x.replace("[Incorrect]", "[Misleading]"))
+        self.assert_flags(self.check(out=bad), "C01: comment category does not match the finding")
 
     def test_m7_comment_on_a_verified_claim(self):
         fs = [dict(f) for f in self.findings]
@@ -275,6 +298,11 @@ class DeckInvariants(unittest.TestCase):
 
     def test_m9_uncovered_slide(self):
         self.assert_flags(self.check(coverage=[]), "heading not covered: Slide 3")
+
+    def test_slide_coverage_does_not_require_a_title_removed_by_the_visible_reader(self):
+        findings = [{**f, "section": f["section"].split(":", 1)[0]} for f in self.findings]
+        problems = self.check(findings=findings)
+        self.assertFalse(any("heading not covered" in p for p in problems), problems)
 
     def test_unknown_suffix_has_no_view(self):
         with self.assertRaises(ValueError):
