@@ -1,20 +1,27 @@
 """Write the approved doc-fact-check findings as anchored Word comments (step 8), then set each finding's destination.
 
-    python annotate.py <draft.docx> <out.docx> --approved approved.json --findings findings.json
+    python annotate.py <draft.docx> <out.docx> --approved approved.json --comments major|all --findings findings.json
+    python annotate.py <draft.docx> <out.docx> --select major|all --findings findings.json
+
+--approved takes an explicit list (Deep, when the user edited the set); --select takes the comments from
+findings.json itself: major = Blocker + Major defects, all = every defect.
+With --approved, --comments (required: the run's comment policy) records the reviewer's decisions: a finding
+the policy would comment but the reviewer removed gets destination "declined by reviewer"; a finding the reviewer
+added that the policy would not comment gets "Word comment (added by reviewer)" once its comment is written.
 """
 from __future__ import annotations
 
-import argparse
 import copy
-import json
-import os
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling imports work under python -I too
 
-from fact_check_invariants import _last_heading  # noqa: E402
+import annotate_cli  # noqa: E402
+from annotate_cli import (COMMENT_KEYS, _bad, _comment_error, _load_list, _write_json_atomic,  # noqa: E402,F401
+                          mark_destinations)
+from fact_check_invariants import _last_heading, _range_texts, _range_parts, word_comment_figures, word_paragraph_ids, comment_text  # noqa: E402
 
 
 def split_run(run, off):
@@ -72,21 +79,6 @@ def paragraphs(doc, textbox=False):
             yield Paragraph(p, doc)
 
 
-def mark_destinations(findings, written_ids):
-    """Call after annotate; pure, returns a new list."""
-    out = []
-    for f in findings:
-        dest = 'Word comment' if f['id'] in written_ids else ('count only' if f.get('verdict') == 'Verified' else 'log only')
-        out.append({**f, 'destination': dest})
-    return out
-
-
-def comment_text(f):
-    """The exact text of a finding's Word comment; annotate() writes it and main() length-checks it."""
-    return (f"[{f['verdict']} · {f['severity']} · {f['id']}] §{_last_heading(str(f['section']))}\n"
-            f"Brain: {f['evidence']}\nFix: {f['fix']}\nSource: {f['source']}")
-
-
 def annotate(src, dst, findings, author='Fact Checker · Brain'):
     """Returns (written, skipped) id lists."""
     from docx import Document
@@ -94,13 +86,21 @@ def annotate(src, dst, findings, author='Fact Checker · Brain'):
     doc = Document(src)
     if not hasattr(doc, 'comments'):
         raise SystemExit('python-docx >= 1.2 required for comments')
-    hdr = re.compile(r'^\[[^·\]]+ · [^·\]]+ · ([^\]\s]+)\]')   # only a comment's own header line names its id
-    have = {m[1] for c in doc.comments if (m := hdr.match((c.text.strip().splitlines() or [''])[0]))}
+    ranges = _range_texts(Path(src))
+    locations = word_paragraph_ids(doc)
+    comment_locations = {start.get(qn('w:id')): pid for paragraph, pid in locations.items()
+                         for start in paragraph.iter(qn('w:commentRangeStart'))}
+    figure_comments = word_comment_figures(doc, _range_parts(Path(src)))
+    have = {(c.text.strip(), 'drawing', figure_comments[str(c.comment_id)])
+            if str(c.comment_id) in figure_comments
+            else (c.text.strip(), 'quote', ranges.get(str(c.comment_id), ""), comment_locations.get(str(c.comment_id))) for c in doc.comments}
     written = []
     skipped = []
     for f in findings:
-        if f['id'] in have:
-            written.append(f['id'])   # exact id: C1 is not C10, a mention in another comment's body is not a header
+        anchor = ('drawing', f.get('figure')) if f.get('anchor') == 'drawing' else ('quote', f.get('quote', ''))
+        key = (comment_text(f).strip(), *anchor)
+        if any(c == key or (f.get('anchor') != 'drawing' and c[:3] == key and (not f.get('p_id') or c[3] == f['p_id'])) for c in have):
+            written.append(f['id'])   # already written by an earlier run (idempotent)
             continue
         text = comment_text(f)
         before = len(written)
@@ -115,7 +115,7 @@ def annotate(src, dst, findings, author='Fact Checker · Brain'):
         else:
             for box in (False, True):   # body first; text boxes only when the body lacks the quote
                 for p in paragraphs(doc, textbox=box):
-                    if f['quote'] in p.text:
+                    if f['quote'] in p.text and (not f.get('p_id') or locations.get(p._p) == f['p_id'] or box):
                         runs = isolate(p, f['quote'])
                         if runs:
                             doc.add_comment(runs, text=text, author=author, initials='FC')
@@ -131,88 +131,18 @@ def annotate(src, dst, findings, author='Fact Checker · Brain'):
     return written, skipped
 
 
-def _load_list(path, what, need_anchor=False):
-    """Load a JSON list of finding objects; exit 2 with 'annotate.py: <file>: <reason>' when it is not usable."""
-    try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        sys.exit(_bad(path, f"not valid JSON ({exc})"))
-    if not isinstance(data, list):
-        sys.exit(_bad(path, f"{what} must be a JSON list of finding objects"))
-    for i, f in enumerate(data):
-        if not isinstance(f, dict) or not f.get("id") or not isinstance(f["id"], str):
-            sys.exit(_bad(path, f"item {i} is not an object with a non-empty id"))
-        reason = _comment_error(f) if need_anchor else None
-        if reason:
-            sys.exit(_bad(path, f"{f['id']}: {reason}"))
-    return data
-
-
-COMMENT_KEYS = ("verdict", "severity", "section", "evidence", "fix", "source")
-
-
-def _comment_error(f) -> str | None:
-    """Why an approved finding cannot become a comment, or None: the comment's keys and its anchor."""
-    for key in COMMENT_KEYS:
-        v = f.get(key)
-        if key == "section":                     # a heading path or a section number: any non-empty value
-            if v is None or not str(v).strip() or v in ([], {}):
-                return "`section` must be non-empty"
-        elif not (isinstance(v, str) and v.strip()):
-            return f"`{key}` must be a non-empty string"
-    if f.get("anchor") == "drawing":
-        fig = f.get("figure")
-        if not (type(fig) is int and fig >= 1):
-            return 'anchor "drawing" needs an integer figure >= 1'
-    elif not f.get("quote"):
-        return 'needs a quote or anchor: "drawing"'
-    return None
-
-
-def _bad(path, reason):
-    print(f"annotate.py: {path}: {reason}", file=sys.stderr)
-    return 2
-
-
-def _write_json_atomic(path, data):
-    path = Path(path)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
-
-
-def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("draft")
-    ap.add_argument("out")
-    ap.add_argument("--approved", required=True, help="JSON list of the findings the user approved")
-    ap.add_argument("--findings", required=True, help="findings.json; rewritten with destination set")
-    a = ap.parse_args(argv)
-    for p in (a.draft, a.approved, a.findings):
-        if not Path(p).is_file():
-            print(f"annotate.py: no such file: {p}", file=sys.stderr)
-            return 2
-    if Path(a.out).resolve() == Path(a.draft).resolve():
-        print("annotate.py: refusing to overwrite the original draft", file=sys.stderr)
-        return 2
-    approved = _load_list(a.approved, "approved", need_anchor=True)
-    findings = _load_list(a.findings, "findings")
-    from sections import NEEDS_DOCX
-    from fact_check_invariants import MAX_COMMENT_WORDS
-    long = [f"{f['id']}: comment would be {n} words (limit {MAX_COMMENT_WORDS}); shorten its evidence or fix"
-            for f in approved if (n := len(comment_text(f).split())) > MAX_COMMENT_WORDS]
-    if long:
-        print(f"annotate.py: {a.approved}: " + "; ".join(long), file=sys.stderr)
-        return 2
+def _dependency_error():
     try:
         import docx  # noqa: F401
     except ImportError:
-        print(NEEDS_DOCX, file=sys.stderr)
-        return 2
-    written, skipped = annotate(a.draft, a.out, approved)
-    _write_json_atomic(a.findings, mark_destinations(findings, written))
-    print(json.dumps({"written": written, "skipped": skipped}))
-    return 0
+        from sections import NEEDS_DOCX
+        return NEEDS_DOCX
+    return None
+
+
+def main(argv=None) -> int:
+    return annotate_cli.run(argv, prog="annotate.py", description=__doc__.split("\n")[0], annotate=annotate,
+                            dependency_error=_dependency_error, label="Word comment")
 
 
 if __name__ == "__main__":

@@ -83,23 +83,13 @@ def to_pdf(path):
         shutil.rmtree(tmp, ignore_errors=True)
         raise
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--doc", required=True)
-    ap.add_argument("--out", required=True, help="assets root; images go to <out>/<doc-slug>/")
-    ap.add_argument("--rel-to", help="source root; if --doc is inside it, slug from the relative "
-                                     "path so absolute/host path segments don't leak into asset dirs")
-    ap.add_argument("--dpi", type=int, default=150)
-    # Flag a page as VISUAL (needs a vision model) when the text layer likely misses the
-    # meaning. `cover` (image area) is NOT used — full-bleed background images make it
-    # meaningless. The signal is thin text OR many vector drawings (flows/timelines/diagrams).
-    ap.add_argument("--min-text", type=int, default=220, help="flag if fewer extracted chars (title/pure-visual)")
-    ap.add_argument("--hi-draw", type=int, default=60, help="flag if at least this many vector drawings (dense diagram/timeline), any text")
-    ap.add_argument("--mid-draw", type=int, default=28, help="with --mid-text: flag a lighter diagram")
-    ap.add_argument("--mid-text", type=int, default=1000, help="drawings>=mid-draw AND text<mid-text -> flag")
-    ap.add_argument("--all", action="store_true", help="flag EVERY page (treat as a slide deck)")
-    a = ap.parse_args()
+def render(doc_path, out, *, rel_to=None, dpi=150, min_text=220, hi_draw=60, mid_draw=28, mid_text=1000,
+           all_pages=False):
+    """Render every page of doc_path into <out>/<slug>/ (pNN.png, pNN.txt, pNN.tables.md, pages.json) and
+    return the pages.json object. The CLI below is a thin wrapper; deck-fact-check vendors this file and calls it."""
     import pymupdf
+    a = argparse.Namespace(doc=str(doc_path), out=str(out), rel_to=rel_to, dpi=dpi, min_text=min_text,
+                           hi_draw=hi_draw, mid_draw=mid_draw, mid_text=mid_text, all=all_pages)
 
     pdf, tmp = to_pdf(a.doc)
     slug = doc_slug(a.doc, a.rel_to)
@@ -159,11 +149,33 @@ def main():
         pages.append({"page": i + 1, "image": os.path.relpath(png, a.out), "img_sha": img_sha,
                       "text_len": tl, "n_drawings": n_draw, "n_tables": n_tables,
                       "img_cover": round(cover, 3), "flagged": bool(flagged), "why": why})
-    json.dump({"doc": os.path.basename(a.doc), "slug": slug, "dpi": a.dpi, "pages": pages},
-              open(os.path.join(outdir, "pages.json"), "w"), indent=2)
+    result = {"doc": os.path.basename(a.doc), "slug": slug, "dpi": a.dpi, "pages": pages}
+    json.dump(result, open(os.path.join(outdir, "pages.json"), "w"), indent=2)
     doc.close()
     if tmp:
         shutil.rmtree(tmp, ignore_errors=True)
+    return result
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--doc", required=True)
+    ap.add_argument("--out", required=True, help="assets root; images go to <out>/<doc-slug>/")
+    ap.add_argument("--rel-to", help="source root; if --doc is inside it, slug from the relative "
+                                     "path so absolute/host path segments don't leak into asset dirs")
+    ap.add_argument("--dpi", type=int, default=150)
+    # Flag a page as VISUAL (needs a vision model) when the text layer likely misses the
+    # meaning. `cover` (image area) is NOT used — full-bleed background images make it
+    # meaningless. The signal is thin text OR many vector drawings (flows/timelines/diagrams).
+    ap.add_argument("--min-text", type=int, default=220, help="flag if fewer extracted chars (title/pure-visual)")
+    ap.add_argument("--hi-draw", type=int, default=60, help="flag if at least this many vector drawings (dense diagram/timeline), any text")
+    ap.add_argument("--mid-draw", type=int, default=28, help="with --mid-text: flag a lighter diagram")
+    ap.add_argument("--mid-text", type=int, default=1000, help="drawings>=mid-draw AND text<mid-text -> flag")
+    ap.add_argument("--all", action="store_true", help="flag EVERY page (treat as a slide deck)")
+    a = ap.parse_args()
+    result = render(a.doc, a.out, rel_to=a.rel_to, dpi=a.dpi, min_text=a.min_text, hi_draw=a.hi_draw,
+                    mid_draw=a.mid_draw, mid_text=a.mid_text, all_pages=a.all)
+    pages = result["pages"]
+    outdir = os.path.join(a.out, result["slug"])
     nflag = sum(p["flagged"] for p in pages)
     print(f"{a.doc}: {len(pages)} pages -> {outdir}  ({nflag} flagged visual for VLM transcription)")
 

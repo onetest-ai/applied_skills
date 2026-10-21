@@ -75,9 +75,11 @@ class TestSections(unittest.TestCase):
         self.assertEqual([p["p_id"] for p in scope["paragraphs"]], ["p3", "p5"])   # p4 is the empty one
         systems = self.sections[2]
         self.assertEqual(systems["tables"], [{"t_id": "t1", "rows": [
-            {"r_id": "t1r1", "cells": ["System", "Owner"], "s_id": "t1r1", "risk": ["ownership"]},
-            {"r_id": "t1r2", "cells": ["Alpha", "Team one"], "s_id": "t1r2", "risk": ["num"]},
-            {"r_id": "t1r3", "cells": ["Beta", "Team two"], "s_id": "t1r3", "risk": ["num"]}]}])
+            {"r_id": "t1r1", "cells": ["System", "Owner"], "s_id": "t1r1", "risk": ["ownership", "label"]},
+            {"r_id": "t1r2", "cells": ["Alpha", "Team one"], "s_id": "t1r2", "risk": ["num"],
+             "ctx": {"header": ["System", "Owner"], "row_label": "Alpha"}},
+            {"r_id": "t1r3", "cells": ["Beta", "Team two"], "s_id": "t1r3", "risk": ["num"],
+             "ctx": {"header": ["System", "Owner"], "row_label": "Beta"}}]}])
         self.assertEqual([p["text"] for p in systems["paragraphs"]],
                          ["Figure 1 shows the flow.", "Beta is retired in 2027."])
         self.assertEqual(len(self.sections[3]["paragraphs"]), LONG_PARAS)
@@ -209,8 +211,14 @@ class RiskTagTests(unittest.TestCase):
                   "the sole developer of the app", "only one integration exists"):
             self.assertIn("absolute", self.tags(t), t)
 
+    def test_a_guarantee_is_an_absolute_commitment(self):
+        # a guarantee claims it holds in every case, like "always"; untagged, a Fast run never checks it
+        for t in ("Customer confirmation guarantees that the order is visible to the driver.",
+                  "delivery is guaranteed within one day", "we guarantee a reply"):
+            self.assertIn("absolute", self.tags(t), t)
+
     def test_absolute_negative(self):
-        for t in ("the team reviews the backlog", "integration is planned"):
+        for t in ("the team reviews the backlog", "integration is planned", "a guarantor signs the lease"):
             self.assertNotIn("absolute", self.tags(t), t)
 
     def test_ownership_positive(self):
@@ -231,8 +239,8 @@ class RiskTagTests(unittest.TestCase):
 
     def test_estimate_minutes(self):
         self.assertEqual(S.estimate_minutes(0, 0), {"fast": 5, "deep": 5})
-        self.assertEqual(S.estimate_minutes(80, 16), {"fast": 15, "deep": 15})
-        self.assertEqual(S.estimate_minutes(800, 160), {"fast": 25, "deep": 105})
+        self.assertEqual(S.estimate_minutes(80, 16), {"fast": 11, "deep": 11})
+        self.assertEqual(S.estimate_minutes(800, 160), {"fast": 17, "deep": 41})
 
 
 @unittest.skipUnless(HAVE_DOCX, "needs python-docx >= 1.2")
@@ -496,6 +504,96 @@ class MediaAndSummaryTests(unittest.TestCase):
         skill = (KB_ROOT / "skills" / "doc-fact-check" / "SKILL.md").read_text(encoding="utf-8")
         self.assertNotIn("unzip `word/media/*`", skill)
         self.assertIn("`<work dir>/media/`", skill)
+
+class TestV2FastScopeTags(unittest.TestCase):
+    def tags(self, text):
+        import sections
+        return set(sections.tag_risk(text))
+
+    def test_topology(self):
+        for s in ("The portal pushes orders into the billing system.", "Orders flow Portal \u2192 Billing.",
+                  "The service is hosted on the shared cluster.", "Data is synced via the gateway."):
+            self.assertIn("topo", self.tags(s), s)
+        self.assertNotIn("topo", self.tags("The team reviewed the plan."))
+
+    def test_topology_integrating_and_running_on(self):  # M1
+        for s in ("The team is integrating the portal with billing.", "The integrations are listed below.",
+                  "The job is running on the shared cluster.", "Integrating partners join next quarter."):
+            self.assertIn("topo", self.tags(s), s)
+
+    def test_gap(self):
+        for s in ("The session did not establish who owns the export.", "Ownership remains undecided.",
+                  "The package boundary is not isolated.", "Retention is TBC."):
+            self.assertIn("gap", self.tags(s), s)
+
+    def test_quote(self):
+        self.assertIn("quote", self.tags('She said "nothing leaves the building without approval" twice.'))
+        self.assertIn("quote", self.tags("He called it \u201cthe slowest path we have\u201d."))
+        self.assertNotIn("quote", self.tags('A "UI" label.'))           # shorter than 8 characters
+
+    def test_number_words(self):
+        for s in ("Roughly half of daily volume is commercial.", "Most of the orders arrive by phone.",
+                  "The majority of agents use the old screen."):
+            self.assertIn("numword", self.tags(s), s)
+
+    def test_scope_and_end_state(self):
+        for s in ("The programme excludes full decommission.", "The hybrid is the committed end state.",
+                  "The ledger is the system of record for credits."):
+            self.assertIn("scope", self.tags(s), s)
+
+    def test_section_numbers_still_ignored(self):
+        self.assertNotIn("num", self.tags("See section 4.2 for details."))
+
+
+def _label_rows(rows_cells):
+    from docx import Document
+    import sections, tempfile
+    from pathlib import Path
+    d = Document()
+    d.add_heading("Scope", 1)
+    t = d.add_table(rows=len(rows_cells), cols=2)
+    for i, (a, b) in enumerate(rows_cells):
+        t.cell(i, 0).text, t.cell(i, 1).text = a, b
+    tmp = Path(tempfile.mkdtemp())
+    d.save(tmp / "d.docx")
+    secs, _, _ = sections.write_outputs(tmp / "d.docx", tmp / "out")
+    return [r for s in secs for k, r, _ in s["blocks"] if k == "r"]
+
+
+@unittest.skipUnless(HAVE_DOCX, "needs python-docx >= 1.2")
+class TestV2HeaderRowLabel(unittest.TestCase):
+    def test_header_row_of_a_multi_row_table_is_labelled(self):
+        rows = _label_rows([("Intent", "Attempt rate by intent"), ("Billing", "12%")])
+        self.assertIn("label", rows[0]["risk"])
+        self.assertNotIn("label", rows[1]["risk"])
+
+    def test_single_row_table_has_no_label(self):
+        rows = _label_rows([("Owner", "Platform team")])
+        self.assertNotIn("label", rows[0]["risk"])
+
+
+@unittest.skipUnless(HAVE_DOCX, "needs python-docx >= 1.2")
+class TestV2Stats(unittest.TestCase):
+    def test_estimate(self):
+        import sections
+        self.assertEqual(sections.estimate_minutes(0, 0), {"fast": 5, "deep": 5})
+        self.assertEqual(sections.estimate_minutes(300, 150, chunk=15, wave=10),
+                         {"fast": 5 + 6 * 1, "deep": 5 + 6 * 2})
+
+    def test_tag_counts_in_stats(self):
+        from docx import Document
+        import sections, tempfile
+        d = Document()
+        d.add_heading("Scope", 1)
+        d.add_paragraph("The portal pushes orders into billing. Retention is TBC.")
+        tmp = Path(tempfile.mkdtemp())
+        d.save(tmp / "d.docx")
+        sections.write_outputs(tmp / "d.docx", tmp / "out")
+        tc = json.loads((tmp / "out" / "stats.json").read_text())["tag_counts"]
+        self.assertEqual(set(tc), {"num", "date", "absolute", "ownership", "topo", "gap", "quote",
+                                   "numword", "scope", "label"})
+        self.assertEqual((tc["topo"], tc["gap"], tc["label"]), (1, 1, 0))
+
 
 if __name__ == "__main__":
     unittest.main()

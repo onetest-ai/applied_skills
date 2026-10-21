@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -16,7 +17,8 @@ SCRIPT = KB_ROOT / "skills" / "doc-fact-check" / "chunk_claims.py"
 
 def claim(k, n, s_id, section="Scope"):
     return {"claim_id": f"B{k}-C{n:02d}", "p_id": s_id.split("s")[0], "s_id": s_id, "section": section,
-            "quote": f"claim {k}.{n}", "type": "NUM"}
+            "quote": f"claim {k}.{n}", "claim": f"claim {k}.{n}", "type": "NUM",
+            "questions": ["what does the source say about this"]}
 
 
 def waiver(i):
@@ -260,13 +262,10 @@ class FinalFixChunkTests(ChunkCase):
             self.assertNotIn("def section_coverage", src)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def fclaim(n, s_id="p5", quote="edge A to B", **kw):
     return {"claim_id": f"I{n:02d}", "p_id": s_id, "s_id": s_id, "section": "Figure", "quote": quote,
-            "type": "TOPO", "kind": "figure", "figure": 1, **kw}
+            "type": "TOPO", "kind": "figure", "figure": 1, "questions": ["what does the source say about this"],
+            "claim": quote, **kw}
 
 
 class FigureClaimCase(unittest.TestCase):
@@ -339,7 +338,7 @@ class FigureClaimCase(unittest.TestCase):
 
     def test_embedded_object_claim_may_use_any_paragraph_or_row_id(self):
         emb = {"claim_id": "I03", "p_id": "p2", "s_id": "p2s4", "section": "Figure", "quote": "sheet total 12",
-               "type": "NUM", "kind": "embedded"}
+               "type": "NUM", "kind": "embedded", "questions": ["what is the sheet total"], "claim": "the sheet total is 12"}
         self.w("claims_figures.json", [fclaim(1), emb])
         ids, errors = self.ids("risk")
         self.assertEqual((errors, ids[-2:]), ([], ["I01", "I03"]))
@@ -347,3 +346,282 @@ class FigureClaimCase(unittest.TestCase):
         self.assertTrue(any("I03" in e and "p77" in e for e in self.ids("all")[1]))
         self.w("claims_figures.json", [{**emb, "kind": "diagram"}])
         self.assertTrue(any("I03" in e and "kind" in e for e in self.ids("all")[1]))
+
+
+class V2QuestionsCase(ChunkCase):
+    def test_claim_without_questions_is_refused(self):
+        for bad in ([], ["a", "b", "c", "d"], [""], ["  "], "q", [1]):
+            self.w("claims_batch_1.json", [{**claim(1, 1, "p2s1"), "questions": bad}])
+            index, errors = C.chunk(self.d, "all", 8)
+            self.assertEqual(index, [], bad)
+            self.assertTrue(any("questions must be a list of 1-3 non-empty strings" in e for e in errors), (bad, errors))
+        self.w("claims_batch_1.json", [{k: v for k, v in claim(1, 1, "p2s1").items() if k != "questions"}])
+        self.assertTrue(any("B1-C01" in e and "questions must be" in e for e in C.chunk(self.d, "all", 8)[1]))
+
+    def test_questions_travel_into_the_chunk(self):
+        self.w("claims_batch_1.json", [{**claim(1, 1, "p2s1"), "questions": ["how many databases are there"]}])
+        index, errors = C.chunk(self.d, "all", 8)
+        self.assertEqual(errors, [])
+        got = json.loads((self.d / "chunk_1.json").read_text())
+        self.assertEqual(got["claims"][0]["questions"], ["how many databases are there"])
+
+    def test_fast_refuses_two_claims_on_one_sentence(self):
+        a, b = claim(1, 1, "p2s1"), claim(1, 2, "p2s1")
+        self.w("claims_batch_1.json", [a, b])
+        self.w("coverage_batch_1.json", [waiver(i) for i in (3, 5, 7, 9)])
+        index, errors = C.chunk(self.d, "risk", 8)
+        self.assertEqual(index, [])
+        msg = next(e for e in errors if "at most one claim per sentence" in e)
+        for needle in (a["claim_id"], b["claim_id"], "p2s1"):
+            self.assertIn(needle, msg)
+
+    def test_deep_allows_two_claims_on_one_sentence(self):
+        self.w("claims_batch_1.json", [claim(1, 1, "p2s1"), claim(1, 2, "p2s1")])
+        _, errors = C.chunk(self.d, "all", 8)
+        self.assertEqual(errors, [])
+
+    def test_risk_is_the_union_over_anchor_and_s_ids(self):
+        # p2s2 is untagged, p2s3 is num-tagged: a claim anchored on p2s2 that spans p2s3 is in scope
+        c = dict(claim(1, 1, "p2s2"), s_ids=["p2s2", "p2s3"])
+        self.w("claims_batch_1.json", [c])
+        self.w("coverage_batch_1.json", [waiver(i) for i in (1, 5, 7, 9)])
+        index, errors = C.chunk(self.d, "risk", 8)
+        self.assertEqual(errors, [])
+        self.assertEqual([i for x in index for i in x["claim_ids"]], ["B1-C01"])
+        body = json.loads((self.d / "chunk_1.json").read_text())
+        self.assertEqual(body["claims"][0]["risk"], ["num"])
+
+    def test_claim_risk_helper_unions_without_duplicates(self):
+        risk = {"a": ["num"], "b": ["date", "num"], "c": []}
+        self.assertEqual(C.claim_risk({"s_id": "c", "s_ids": ["c", "a", "b"]}, risk), ["num", "date"])
+        self.assertEqual(C.claim_risk({"s_id": "c"}, risk), [])
+
+    def test_fast_one_claim_rule_skips_untagged_anchors(self):
+        # two claims on untagged p2s2 are out of scope in Fast and are not refused
+        self.w("claims_batch_1.json", [claim(1, 1, "p2s2"), claim(1, 2, "p2s2")])
+        self.w("coverage_batch_1.json", [waiver(i) for i in (1, 3, 5, 7, 9)])
+        index, errors = C.chunk(self.d, "risk", 8)
+        self.assertEqual((index, errors), ([], []))
+
+    def test_fast_one_claim_rule_uses_the_union_risk(self):
+        a = dict(claim(1, 1, "p2s2"), s_ids=["p2s2", "p2s3"])
+        b = claim(1, 2, "p2s2")
+        self.w("claims_batch_1.json", [a, b])
+        self.w("coverage_batch_1.json", [waiver(i) for i in (1, 5, 7, 9)])
+        _, errors = C.chunk(self.d, "risk", 8)
+        self.assertFalse(any("at most one claim per sentence" in e for e in errors), errors)
+        b = dict(claim(1, 2, "p2s2"), s_ids=["p2s2", "p2s5"])           # now both are in scope on p2s2
+        self.w("claims_batch_1.json", [a, b])
+        self.w("coverage_batch_1.json", [waiver(i) for i in (1, 7, 9)])
+        _, errors = C.chunk(self.d, "risk", 8)
+        self.assertTrue(any("at most one claim per sentence" in e and "p2s2" in e for e in errors), errors)
+
+    def test_default_chunk_size_is_15(self):
+        import inspect
+        self.assertEqual(inspect.signature(C.chunk).parameters["size"].default, 15)
+        self.assertEqual(C.build_parser().parse_args(["d"]).chunk_size, 15)   # the CLI default, not --help text
+
+    def test_figure_claim_needs_questions(self):
+        FigureClaimCase.setUp(self)
+        for bad in ([], ["q"] * 4):
+            self.w("claims_figures.json", [{**fclaim(1), "questions": bad}])
+            errors = C.chunk(self.d, "all", 8)[1]
+            self.assertTrue(any("claims_figures.json: I01: questions must be a list of 1-3 non-empty strings" in e
+                                for e in errors), errors)
+        self.w("claims_figures.json", [{k: v for k, v in fclaim(1).items() if k != "questions"}])
+        self.assertTrue(any("claims_figures.json: I01: questions must be" in e for e in C.chunk(self.d, "all", 8)[1]))
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class SnapQuote(unittest.TestCase):
+    SRC = "The nightly import runs at 02:00 and retries once; after two failures a priority ticket is raised."
+
+    def test_a_verbatim_quote_is_returned_as_written(self):
+        q = "after two failures a priority ticket is raised"
+        self.assertEqual(C.snap_quote(q, self.SRC), q + ".")   # the source's own full stop is attached to the last word
+
+    def test_an_attribution_wrapper_is_dropped(self):
+        q = 'The ops lead says: "the nightly import runs at 02:00 and retries once"'
+        self.assertEqual(C.snap_quote(q, self.SRC), "The nightly import runs at 02:00 and retries once;")
+
+    def test_two_joined_spans_give_the_longest_one(self):
+        q = "the nightly import runs at 02:00 ... a priority ticket is raised"
+        self.assertEqual(C.snap_quote(q, self.SRC), "The nightly import runs at 02:00")
+
+    def test_curly_quotes_and_dashes_do_not_matter(self):
+        self.assertEqual(C.snap_quote("it’s fine", "it's fine and well", min_words=2), "it's fine")
+
+    def test_fewer_than_four_words_in_a_row_gives_none(self):
+        self.assertIsNone(C.snap_quote("import runs at nightly", self.SRC))
+
+    def test_the_result_is_text_exactly_as_the_source_wrote_it(self):
+        self.assertIn(C.snap_quote("runs at 02:00 and retries once", self.SRC), self.SRC)
+
+
+class ChunkSnapsQuotes(unittest.TestCase):
+    SRC = "The nightly import runs at 02:00 and retries once; after two failures a priority ticket is raised."
+    SRC2 = "Operators then check the dashboard for stuck updates."
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+        sents = [{"s_id": "p2s1", "text": self.SRC, "risk": ["num"]}, {"s_id": "p2s2", "text": self.SRC2, "risk": []}]
+        batch = {"batch": 1, "sections": [{"section_id": "s01", "section": "Scope",
+                                           "paragraphs": [{"p_id": "p2", "text": "x", "sentences": sents}],
+                                           "tables": [], "figures": []}]}
+        self.w("batches.json", [{"batch": 1, "file": "batch_1.json", "sections": [{"section_id": "s01", "section": "Scope"}]}])
+        self.w("batch_1.json", batch)
+        self.w("coverage_batch_1.json", [waiver(2)])
+
+    def w(self, name, obj):
+        (self.d / name).write_text(json.dumps(obj))
+
+    def chunk_with(self, quote, **extra):
+        c = {**claim(1, 1, "p2s1"), "quote": quote, "claim": "The nightly import retries once and a priority ticket follows two failures", **extra}
+        self.w("claims_batch_1.json", [c])
+        index, errors = C.chunk(self.d, "all", 4, repair=True)
+        self.assertEqual(errors, [])
+        return json.loads((self.d / "chunk_1.json").read_text())["claims"][0]
+
+    def test_a_non_verbatim_quote_is_snapped_and_the_original_kept(self):
+        c = self.chunk_with('He says: "the nightly import runs at 02:00 and retries once"')
+        self.assertEqual(c["quote"], "The nightly import runs at 02:00 and retries once;")
+        self.assertTrue(c["quote_original"].startswith("He says:"))
+
+    def test_a_verbatim_quote_is_left_alone_and_gets_no_original(self):
+        c = self.chunk_with("The nightly import runs at 02:00")
+        self.assertEqual(c["quote"], "The nightly import runs at 02:00")
+        self.assertNotIn("quote_original", c)
+
+    def test_a_quote_with_no_four_word_run_is_unchanged_and_still_warned(self):
+        q = "import runs at nightly"
+        c = self.chunk_with(q)
+        self.assertEqual(c["quote"], q)
+        self.assertNotIn("quote_original", c)
+        warnings: list[str] = []
+        C.chunk(self.d, "all", 4, warnings=warnings, dry_run=True, repair=True)
+        self.assertTrue(any("not verbatim" in w for w in warnings))
+
+    def test_a_claim_spanning_two_sentences_is_searched_across_both(self):
+        c = self.chunk_with("priority ticket is raised. Operators then check the dashboard for stuck updates: see below",
+                            s_ids=["p2s1", "p2s2"])
+        self.assertEqual(c["quote"], "priority ticket is raised. Operators then check the dashboard for stuck updates.")
+
+    def test_a_figure_claim_is_never_snapped(self):
+        text = {"p2s1": self.SRC}
+        fig = {"claim_id": "I01", "s_id": "p2s1", "type": "FIGURE", "quote": 'x says: "the nightly import runs at 02:00 and retries once"'}
+        self.assertEqual(C.snap_claim(fig, text), fig)
+
+    def test_a_snapped_quote_is_no_longer_warned_about(self):
+        self.chunk_with('He says: "the nightly import runs at 02:00 and retries once"')
+        warnings: list[str] = []
+        C.chunk(self.d, "all", 4, warnings=warnings, dry_run=True, repair=True)
+        self.assertEqual(warnings, [])
+
+    def test_repair_is_off_by_default_so_the_deck_path_is_unchanged(self):
+        q = 'He says: "the nightly import runs at 02:00 and retries once"'
+        self.w("claims_batch_1.json", [{**claim(1, 1, "p2s1"), "quote": q, "claim": "The nightly import retries once"}])
+        C.chunk(self.d, "all", 4)
+        c = json.loads((self.d / "chunk_1.json").read_text())["claims"][0]
+        self.assertEqual(c["quote"], q)
+        self.assertNotIn("quote_original", c)
+
+    def test_the_command_line_flag_turns_it_on(self):
+        q = 'He says: "the nightly import runs at 02:00 and retries once"'
+        self.w("claims_batch_1.json", [{**claim(1, 1, "p2s1"), "quote": q, "claim": "The nightly import retries once"}])
+        r = subprocess.run([sys.executable, "-I", str(SCRIPT), str(self.d), "--scope", "all", "--repair-anchors"],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads((self.d / "chunk_1.json").read_text())["claims"][0]["quote"],
+                         "The nightly import runs at 02:00 and retries once;")
+
+
+class RowSnapsQuotes(unittest.TestCase):
+    """A table-row quote may join cells; a comment anchors inside one cell, so the longest verbatim run of any single cell is kept."""
+    CELLS = ["Import schedule", "The nightly import runs at 02:00 and retries once"]
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+        sents = [{"s_id": "p2s1", "text": "Intro.", "risk": []}]
+        rows = [{"r_id": "t1r1", "cells": ["Item", "Value"], "s_id": "t1r1", "risk": []},
+                {"r_id": "t1r2", "cells": self.CELLS, "s_id": "t1r2", "risk": ["num"]}]
+        batch = {"batch": 1, "sections": [{"section_id": "s01", "section": "Scope",
+                                           "paragraphs": [{"p_id": "p2", "text": "x", "sentences": sents}],
+                                           "tables": [{"t_id": "t1", "rows": rows}], "figures": []}]}
+        (self.d / "batches.json").write_text(json.dumps([{"batch": 1, "file": "batch_1.json", "sections": [{"section_id": "s01", "section": "Scope"}]}]))
+        (self.d / "batch_1.json").write_text(json.dumps(batch))
+        (self.d / "coverage_batch_1.json").write_text(json.dumps([{"s_id": "p2s1", "reason": "no checkable statement"},
+                                                                  {"s_id": "t1r1", "reason": "no checkable statement"}]))
+
+    def chunk_with(self, quote):
+        c = {**claim(1, 1, "t1r2"), "quote": quote, "claim": "The nightly import retries once"}
+        (self.d / "claims_batch_1.json").write_text(json.dumps([c]))
+        _, errors = C.chunk(self.d, "all", 4, repair=True)
+        self.assertEqual(errors, [])
+        return json.loads((self.d / "chunk_1.json").read_text())["claims"][0]
+
+    def test_a_quote_joining_two_cells_keeps_the_longest_single_cell_run(self):
+        c = self.chunk_with("Import schedule: the nightly import runs at 02:00 and retries once")
+        self.assertEqual(c["quote"], "The nightly import runs at 02:00 and retries once")
+        self.assertTrue(c["quote_original"].startswith("Import schedule:"))
+
+    def test_a_quote_verbatim_in_one_cell_is_left_alone(self):
+        c = self.chunk_with("The nightly import runs at 02:00")
+        self.assertNotIn("quote_original", c)
+
+    def test_cells_too_short_for_a_run_leave_the_quote_unchanged(self):
+        q = "Import schedule: nightly"
+        self.assertEqual(self.chunk_with(q)["quote"], q)
+
+
+class RepairFlagIsWiredToTheWordSkillOnly(unittest.TestCase):
+    """The Word skill's documented chunk command passes --repair-anchors; the deck's does not (its comments anchor to shapes)."""
+
+    def command(self, skill):
+        text = (KB_ROOT / "skills" / skill / "SKILL.md").read_text(encoding="utf-8")
+        return next(m.group(0) for m in re.finditer(r'python "<skill dir>/chunk_claims\.py"[^`]*', text) if "--scope <scope>" in m.group(0))
+
+    def test_the_word_skill_passes_the_flag(self):
+        self.assertIn("--repair-anchors", self.command("doc-fact-check"))
+
+    def test_the_deck_skill_does_not(self):
+        self.assertNotIn("--repair-anchors", self.command("deck-fact-check"))
+
+
+class RowPidRepair(unittest.TestCase):
+    """A row claim's p_id must be its row id (the id Word's paragraph locator gives the cell); stage E sometimes writes a nearby body paragraph id."""
+
+    setUp = RowSnapsQuotes.setUp
+    CELLS = RowSnapsQuotes.CELLS
+
+    def chunk_row(self, p_id, repair=True, s_id="t1r2"):
+        c = {**claim(1, 1, s_id), "p_id": p_id, "quote": "The nightly import runs at 02:00", "claim": "The nightly import runs at 02:00"}
+        (self.d / "claims_batch_1.json").write_text(json.dumps([c]))
+        _, errors = C.chunk(self.d, "all", 4, repair=repair)
+        self.assertEqual(errors, [])
+        return json.loads((self.d / "chunk_1.json").read_text())["claims"][0]
+
+    def test_a_row_claim_with_a_body_paragraph_id_gets_its_row_id(self):
+        c = self.chunk_row("p2")
+        self.assertEqual((c["p_id"], c["p_id_original"]), ("t1r2", "p2"))
+
+    def test_a_row_claim_already_on_its_row_id_is_untouched(self):
+        c = self.chunk_row("t1r2")
+        self.assertEqual(c["p_id"], "t1r2")
+        self.assertNotIn("p_id_original", c)
+
+    def test_a_paragraph_claim_keeps_its_p_id(self):
+        d = Path(tempfile.mkdtemp())
+        sents = [{"s_id": "p2s1", "text": "The nightly import runs at 02:00", "risk": ["num"]}]
+        batch = {"batch": 1, "sections": [{"section_id": "s01", "section": "Scope",
+                                           "paragraphs": [{"p_id": "p2", "text": "x", "sentences": sents}], "tables": [], "figures": []}]}
+        (d / "batches.json").write_text(json.dumps([{"batch": 1, "file": "batch_1.json", "sections": [{"section_id": "s01", "section": "Scope"}]}]))
+        (d / "batch_1.json").write_text(json.dumps(batch))
+        (d / "claims_batch_1.json").write_text(json.dumps([{**claim(1, 1, "p2s1"), "p_id": "p2", "quote": "The nightly import runs at 02:00", "claim": "The nightly import runs at 02:00"}]))
+        C.chunk(d, "all", 4, repair=True)
+        self.assertEqual(json.loads((d / "chunk_1.json").read_text())["claims"][0]["p_id"], "p2")
+
+    def test_the_row_id_is_not_imposed_without_the_flag(self):
+        self.assertEqual(self.chunk_row("p2", repair=False)["p_id"], "p2")

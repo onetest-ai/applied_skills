@@ -1,9 +1,13 @@
 """Invariants every /kb:doc-fact-check run must satisfy, whatever the Brain or the corpus.
 
-Library: `check_run(findings, docx_path, original_sha256=..., original_path=...)` -> list of
+Library: `check_run(findings, deliverable_path, original_sha256=..., original_path=...)` -> list of
 violation strings (empty = clean). CLI, for a run saved by a project:
 
-    python fact_check_invariants.py <findings.json> <annotated.docx> --original <draft.docx>
+    python fact_check_invariants.py <findings.json> <annotated.docx|.pptx> --original <draft.docx|.pptx>
+
+The deliverable is read only through a document view (`doc_view`): headings, comments, images and the
+anchor rule are the only format-specific parts, so this file ships byte-identical in doc-fact-check/ and
+deck-fact-check/ (a drift test pins the copies).
 
 A `coverage.json` beside findings.json (list of {heading, reason}) is read too, and `run.json` (written by
 merge_findings.py) gives the mode and the draft's `source_sha256` recorded by sections.py before the run.
@@ -21,6 +25,8 @@ import json
 import re
 import sys
 import zipfile
+from collections import namedtuple
+from itertools import combinations
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling imports work under python -I too
@@ -28,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling imports work
 VERDICTS = {"Verified", "Incorrect", "Misleading", "Outdated", "Controversial", "No Evidence"}
 DEFECTS = VERDICTS - {"Verified", "No Evidence"}
 SEVERITIES = {"Blocker", "Major", "Minor"}
-MAX_COMMENT_WORDS = 60
+MAX_COMMENT_WORDS = 90                                   # round 7: the body holds a plain-language Why and a Suggested sentence
 # `evidence` is what a reader sees (page, comments): a quoted source span with its document and date.
 # How the claim was checked (tool calls, queries, chunk ids) belongs in `trail`.
 MAX_EVIDENCE_WORDS = 60
@@ -37,28 +43,55 @@ _TRAIL_IN_EVIDENCE = re.compile(
     r"find_related_content|list_metrics|list_sources|read_document|latest_only)\b|\b\d{12,}\b")
 # The step-9 findings.json keys, in SKILL.md order (a test pins this to the SKILL.md text).
 # `destination` is set in step 8, so it may be absent before then (e.g. at merge_findings.py).
-FINDING_KEYS = ("id", "p_id", "section", "quote", "type", "verdict", "severity", "confidence",
-                "evidence", "trail", "fix", "source", "sources", "destination")
+FINDING_KEYS = ("id", "p_id", "section", "quote", "claim", "type", "verdict", "severity", "confidence",
+                "evidence", "trail", "conflicts", "fix", "why", "suggested", "source", "sources", "destination")
+COMMENT_SEVERITIES = frozenset({"Blocker", "Major"})
+COMMENT_POLICIES = ("major", "all")
+# The destination of a finding whose comment the annotator could not place (quote or shape not found): logged.
+NOT_ANCHORED = "not anchored"
 LATE_KEYS = frozenset({"destination"})
 # Figure findings (`I*` ids only) also carry what step 8's `annotate` needs to anchor on the drawing.
 FIGURE_KEYS = ("anchor", "figure")
-HEADER = re.compile(r"^\[(?P<verdict>[^·\]]+?) · (?P<severity>[^·\]]+?) · (?P<id>[^\]\s]+)\]")
+# A fact-check comment's first line is its category only (round 7, user 2026-10-19): no severity, no id. A comment is
+# tied back to its finding by its whole text (comment_owner), which is generated from the finding.
+HEADER = re.compile(r"^\[(?P<verdict>Incorrect|Misleading|Outdated|Controversial|Verified|No Evidence)\](?:\n|$)")
+COMMENTED = frozenset({"Incorrect", "Misleading", "Outdated"})   # a disagreement (Controversial) stays on the findings page
+MAX_WHY_WORDS = 45
+_JARGON = re.compile(r"\b(Brain|chunk|chunks|verdict|finding|claim|stage V|trail)\b")
+_EDIT = re.compile(r"^\W*(change|replace|remove|add|use|delete|insert|correct|update|qualify)\b", re.I)
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
-def evidence_problem(text) -> str | None:
-    """Why a finding's `evidence` is not reader-facing, or None: no tool calls, no chunk ids, at most the word limit."""
+DECK_EVIDENCE_WORDS = 90        # a deck comment carries no evidence by default (spec §10.7): the findings page only
+
+
+def evidence_problem(text, deck: bool = False) -> str | None:
+    """Why a finding's `evidence` is not reader-facing, or None: no tool calls, no chunk ids, at most the word limit
+    (MAX_EVIDENCE_WORDS, the Brain line of a Word comment; DECK_EVIDENCE_WORDS for a deck finding)."""
     t = str(text or "")
     if _TRAIL_IN_EVIDENCE.search(t):
         return "evidence names a tool, query option or chunk id: move how it was checked to `trail`"
-    if len(t.split()) > MAX_EVIDENCE_WORDS:
-        return f"evidence is {len(t.split())} words (limit {MAX_EVIDENCE_WORDS}): quote the source span, move the rest to `trail`"
+    limit = DECK_EVIDENCE_WORDS if deck else MAX_EVIDENCE_WORDS
+    if len(t.split()) > limit:
+        return f"evidence is {len(t.split())} words (limit {limit}): quote the source span, move the rest to `trail`"
     return None
 
 
+_TYPO = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201a": "'", "\u2032": "'", "\u201c": '"', "\u201d": '"',
+                       "\u201e": '"', "\u2013": "-", "\u2014": "-", "\u2011": "-", "\u00a0": " ", "\u2026": "..."})
+
+
+def same_text(a, b) -> bool:
+    """Equal once typographic variants are folded: curly and straight quotes, dashes, non-breaking spaces, ellipsis,
+    runs of whitespace. A worker that re-types a quote changes these, never the words."""
+    fold = lambda x: " ".join(str(x or "").translate(_TYPO).split())
+    return fold(a) == fold(b)
+
+
 # Claim-record fields a stage-V worker sometimes copies into its finding; the merge drops them rather than refusing.
-CLAIM_ONLY_KEYS = ("s_id", "s_ids", "kind", "risk", "summary")
+CLAIM_ONLY_KEYS = ("s_id", "s_ids", "kind", "risk", "summary", "questions", "unresolved", "context")
 # Fields a finding copies from its claim unchanged; the merge fills a missing one from the claim (a differing one is refused).
-COPIED_FROM_CLAIM = ("p_id", "section", "quote", "type")
+COPIED_FROM_CLAIM = ("p_id", "section", "quote", "claim", "type")
 NAME_CHECK = re.compile(r"name check:", re.I)
 
 
@@ -69,11 +102,37 @@ def name_check_problem(f: dict) -> str | None:
     return None
 
 
+def conflicts_problem(f: dict) -> str | None:
+    """`conflicts` lists every statement found that differs from the claim for the same item; it decides
+    what the verdict may be (code, not prose: spec §4.4)."""
+    c = f.get("conflicts")
+    if not isinstance(c, list) or any(not isinstance(x, dict) for x in c):
+        return "conflicts must be a list of {span, source, date} (an empty list when no differing statement was found)"
+    for n, x in enumerate(c, 1):
+        empty = [k for k in ("span", "source", "date") if not str(x.get(k) or "").strip()]
+        if empty:
+            return (f"conflicts entry {n} has no {', '.join(empty)}: every entry is {{span, source, date}}; an undated "
+                    "source takes the date in its file name or title, marked 'date inferred'")
+    return _conflict_verdict_problem(f, c)
+
+
+def _conflict_verdict_problem(f: dict, c: list) -> str | None:
+    v = f.get("verdict")
+    if v == "Verified" and c:
+        return ("Verified with recorded conflicts: a differing statement for the same item blocks Verified "
+                "(Controversial or Outdated, or Incorrect/Misleading when nothing supports the draft)")
+    if v in ("Controversial", "Outdated") and not c:
+        return f"{v} without a recorded conflict: list the differing statement in conflicts"
+    if v in ("Controversial", "Outdated") and not str(f.get("evidence") or "").strip():
+        return f"{v} with empty evidence: quote the supporting side in evidence, the differing one in conflicts"
+    return None
+
+
 def _has_comment(f: dict) -> bool:
     return "comment" in str(f.get("destination", "")).lower()
 
 
-def _range_texts(docx_path: Path) -> dict[str, str]:
+def _range_parts(docx_path: Path) -> dict[str, str]:
     xml = zipfile.ZipFile(docx_path).read("word/document.xml").decode("utf-8")
     out = {}
     # w:id may sit beside other attributes (e.g. w:displacedByCustomXml), in either order.
@@ -85,13 +144,19 @@ def _range_texts(docx_path: Path) -> dict[str, str]:
         if not e:
             continue
         body = xml[m.end():e.start()]
-        out[cid] = html.unescape("".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", body)))
+        out[cid] = body
     return out
+
+
+def _range_texts(docx_path: Path) -> dict[str, str]:
+    return {cid: html.unescape("".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", body)))
+            for cid, body in _range_parts(docx_path).items()}
 
 
 COVERAGE_REASON = "no checkable statement"
 # Fast mode verifies only high-risk claims; a section with none is covered in a fast run only.
 RISK_COVERAGE_REASON = "no high-risk statement"
+UNVERIFIED_REASON = "not verified (its chunk was refused twice)"   # a deck run's --skip-chunk: named, not hidden
 SECTION_SEP = re.compile(r"\s*(?:>|›|»)\s*")
 
 
@@ -99,14 +164,161 @@ def _norm(t: str) -> str:
     return re.sub(r"\s+", " ", str(t)).strip().casefold()
 
 
+_SLIDE_SECTION = re.compile(r"^\s*(Slide \d+)\s*:\s*", re.I)     # a deck section "Slide N: title" is the path Slide N > title
+
+
 def section_key(s) -> str:
-    """A heading path normalised for comparison: `A > B` with each segment case- and space-folded."""
-    return " > ".join(_norm(seg) for seg in SECTION_SEP.split(str(s or "")) if seg.strip())
+    """A heading path normalised for comparison: `A > B` with each segment case- and space-folded. A deck section
+    name "Slide N: title" and its heading path "Slide N > title" are the same section."""
+    s = _SLIDE_SECTION.sub(r"\1 > ", str(s or ""))
+    return " > ".join(_norm(seg) for seg in SECTION_SEP.split(s) if seg.strip())
 
 
 def _last_heading(name: str) -> str:
     segs = [x for x in SECTION_SEP.split(name) if x.strip()]
     return segs[-1].strip() if segs else name
+
+
+DECK_PID = re.compile(r"^s(\d+)(-sh\d+)?")     # a deck claim's id: s<slide>[-sh<shape>-p<k> | -r<k>]
+QUOTE_WORDS = 12                                 # the statement a deck comment quotes, cut at this many words
+
+
+COMMENT_FIELDS = ("quote", "why", "suggested", "brain", "source")   # the lines a comment may carry after its header
+DECK_FIELDS = ("quote", "why", "suggested")   # round 7: the statement, a plain-language Why, a Suggested sentence
+WORD_FIELDS = ("why", "suggested")            # a Word comment is anchored on the words, so it does not quote them
+
+
+def source_label(path: str) -> tuple[str, str]:
+    """A Brain source path in reader's words: (plain name, date) — the date from the name itself, else "undated".
+    The model never writes these: they are read from the finding's own `source`, so a comment cannot invent them."""
+    name = re.sub(r"^.*/", "", str(path or ""))
+    name = re.sub(r"(\.(md|txt|pdf|pptx|docx|xlsx|xlsm|html|mp4|m4a|vtt|csv))+$", "", name, flags=re.I)
+    name = name.split("__")[-1]                       # "<folder>__<sub>__<title>": the title is the last part
+    date, mm = "undated", None
+    m = re.search(r"(20\d\d)[-_]?([01]\d)[-_]?([0-3]\d)(?:_\d{6}(?:UTC)?)?", name)
+    if m:
+        mm = m
+    else:
+        m2 = re.search(r"^(\d\d)([01]\d)([0-3]\d)\s*-\s*", name)
+        if m2:
+            mm = m2
+    if mm:
+        y, mo, d = (mm.group(1) if len(mm.group(1)) == 4 else "20" + mm.group(1)), int(mm.group(2)), int(mm.group(3))
+        if 1 <= mo <= 12 and 1 <= d <= 31:
+            date = f"{d} {_MONTHS[mo - 1]} {y}"
+        name = (name[:mm.start()] + " " + name[mm.end():])
+    name = re.sub(r"-?\s*Meeting Recording", "", name)
+    name = re.sub(r"^\s*-\s*|\s*-\s*$", "", name.strip())
+    name = re.sub(r"\s+-\s+", " – ", name)
+    name = re.sub(r"[-_]+", " ", name) if " – " not in name and " " not in name.strip() else re.sub(r"_+", " ", name)
+    name = re.sub(r"\s+", " ", name).strip(" –-") or "the source"
+    if name == name.lower():            # a file-name slug: read it as a name ("ordering crm alignment" → "Ordering CRM alignment")
+        name = " ".join(w.upper() if 2 <= len(w) <= 4 and w.isalpha() and not re.search(r"[aeiouy]", w) else w
+                        for w in name.split())
+        name = name[:1].upper() + name[1:]
+    return name, date
+
+
+def _sentence(s: str) -> str:
+    s = str(s or "").strip()
+    return s if not s or s[-1] in ".!?" else s + "."
+
+
+def comment_text(f, fields=None):
+    """The exact text of a finding's comment (Word or deck); annotate writes it, merge and annotate length-check it.
+    Round 7 shape (user 2026-10-19): the category only; a deck comment then quotes the statement (it marks a point;
+    a Word comment is anchored on the words); then "Why: <source> (<date>) says <why>" — the source's plain name and
+    date read from the finding's `source` by source_label, the rest written by stage V — and "Suggested: "<sentence>"".
+    `fields` (any of COMMENT_FIELDS) adds the Brain and Source lines back on request."""
+    deck = DECK_PID.match(str(f.get("p_id") or "")) is not None
+    fields = tuple(fields or (DECK_FIELDS if deck else WORD_FIELDS))
+    name, date = source_label(f.get("source", ""))
+    words = str(f.get("quote") or "").split()
+    lines = {"why": f"Why: {name} ({date}) says {_sentence(f.get('why'))}" if str(f.get("why") or "").strip() else "",
+             "suggested": f'Suggested: "{str(f.get("suggested") or "").strip()}"' if str(f.get("suggested") or "").strip() else "",
+             "brain": f"Brain: {f.get('evidence', '')}", "source": f"Source: {f.get('source', '')}"}
+    if deck and words and "quote" in fields:
+        lines["quote"] = '"' + " ".join(words[:QUOTE_WORDS]) + ("…" if len(words) > QUOTE_WORDS else "") + '"'
+    body = [lines[k] for k in COMMENT_FIELDS if k in fields and lines.get(k)]
+    head = f"[{f['verdict']}]"
+    if deck:
+        quote = [b for b in body if b == lines.get("quote")]
+        rest = [b for b in body if b != lines.get("quote")]
+        return "\n".join([head, *quote]) + ("\n\n" + "\n\n".join(rest) if rest else "")
+    return "\n".join([head, *body])
+
+
+def comment_owner(text: str, findings, comment=None, view=None) -> str | None:
+    """The id of the finding whose comment this is: comments carry no id, so the text itself is matched."""
+    t = str(text).strip()
+    variants = [(f, {comment_text(f, fields).strip() for n in range(1, len(COMMENT_FIELDS) + 1)
+                     for fields in combinations(COMMENT_FIELDS, n)}) for f in findings]
+    matches = [f for f, texts in variants if t in texts]
+    if not matches:
+        matches = [f for f, texts in variants if any(expected.partition("\n")[2] == t.partition("\n")[2]
+                                                    for expected in texts)]
+    for f in matches:
+        if comment is None or view is None or view.anchor_problem(comment, f) is None:
+            return f.get("id")
+    return None
+
+
+def why_problem(f) -> str | None:
+    """The round-7 checks on a commented finding's plain-language Why and Suggested sentence (None when fine)."""
+    why, sug = str(f.get("why") or "").strip(), str(f.get("suggested") or "").strip()
+    if not why:
+        return "a commented finding needs a `why`"
+    if len(why.split()) > MAX_WHY_WORDS:
+        return f"`why` is over {MAX_WHY_WORDS} words"
+    if m := _JARGON.search(why):
+        return f"`why` uses internal words ({m.group(1)}): say what the source says, in plain words"
+    known = re.sub(r"[,\s]", "", f"{f.get('evidence', '')} {f.get('quote', '')}")
+    for n in re.findall(r"\d[\d,.]*\d|\d", why):
+        if re.sub(r",", "", n) not in known:
+            return f"`why` cites {n}, which is not in the evidence or the statement"
+    if not sug or _EDIT.match(sug):
+        return "`suggested` must be the full sentence that replaces the statement, not an edit instruction"
+    if is_deck_finding(f) and len(sug) > (limit := suggested_limit(str(f.get("quote") or ""))):
+        return (f"`suggested` is {len(sug)} characters; on a slide it replaces text in a fixed box, so keep it near the "
+                f"statement's length (at most {limit}); put the explanation in `why`")
+    return None
+
+
+def suggested_limit(quote: str) -> int:
+    """A deck Suggested sentence fits the statement's box: at most 120% of its length, or 15 characters more for a short label."""
+    return max(round(1.2 * len(quote)), len(quote) + 15)
+
+
+def comment_words(text: str, deck: bool) -> int:
+    """The words MAX_COMMENT_WORDS limits: the comment's body, not its category line or the deck's quoted statement."""
+    lines = str(text).split("\n")[1:]
+    if deck and lines and lines[0].startswith('"'):
+        lines = lines[1:]
+    return sum(len(line.split()) for line in lines)
+
+
+def figures_accounted(findings, run) -> bool:
+    """Figure claims exist (I* findings), or every one was dropped as repeating the slide's text (run.json)."""
+    unverified = [c for u in (run or {}).get("unverified") or [] for c in u.get("claim_ids", [])]
+    return (any(str(f.get("id", "")).startswith("I") for f in findings)
+            or bool((run or {}).get("dropped_duplicate_figure")) or any(str(c).startswith("I") for c in unverified))
+
+
+def is_deck_finding(f: dict) -> bool:
+    return DECK_PID.match(str(f.get("p_id") or "")) is not None
+
+
+def comment_required(f: dict, policy: str = "major") -> bool:
+    return f.get("verdict") in COMMENTED and (policy == "all" or f.get("severity") in COMMENT_SEVERITIES)
+
+
+def wants_comment(f: dict, policy: str = "major") -> bool:
+    """Does this finding get a comment? Round 7 (user 2026-10-19): only a defect the evidence decides — Incorrect,
+    Misleading or Outdated — with a plain-language `why` and a suggested replacement sentence.
+    A disagreement (Controversial) and a finding without hard evidence stay on the findings page.
+    `major` = Blocker and Major (default), `all` = every severity."""
+    return (comment_required(f, policy)
+            and bool(str(f.get("why") or "").strip()) and bool(str(f.get("suggested") or "").strip()))
 
 
 def section_coverage(k, sections, claims, cov, cname) -> tuple[list[dict], list[str]]:
@@ -179,10 +391,11 @@ def _headings(docx_path) -> list[str]:
 
 
 def _covered_headings(findings, coverage, mode=None) -> set[str]:
-    reasons = {COVERAGE_REASON} | ({RISK_COVERAGE_REASON} if mode == "fast" else set())
+    reasons = {COVERAGE_REASON, UNVERIFIED_REASON} | ({RISK_COVERAGE_REASON} if mode == "fast" else set())
     cov = set()
     for f in findings:
-        for seg in SECTION_SEP.split(str(f.get("section") or "")):
+        name = str(f.get("section") or "")
+        for seg in SECTION_SEP.split(name) + SECTION_SEP.split(_SLIDE_SECTION.sub(r"\1 > ", name)):
             if seg.strip():
                 cov.add(_norm(seg))
     for c in coverage or []:
@@ -199,6 +412,321 @@ def _references_images(docx_path) -> bool:
     return any(n.startswith("word/media/") for n in z.namelist())
 
 
+# --- Deck (.pptx) geometry and comments: shared by pptx_sections.py (reader), pptx_annotate.py and PptxView.
+A_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
+R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+PKG_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+COMMENTS_REL = R_NS + "/comments"
+AUTHORS_REL = R_NS + "/commentAuthors"
+EMU_PER_POS = 1587.5     # legacy comment p:pos is in 576ths of an inch; 914400 EMU per inch / 576
+
+
+def slide_title(slide) -> str:
+    """The text of a slide's title placeholder, or "" (the same rule the invariants' deck view uses)."""
+    try:
+        shape = slide.shapes.title
+    except Exception:
+        return ""
+    return " ".join(shape.text_frame.text.split()) if shape is not None and shape.has_text_frame else ""
+
+
+def is_hidden(slide) -> bool:
+    return slide._element.get("show") == "0"
+
+
+def _child_transform(group, outer):
+    """Compose the transform that maps a group's child coordinates to slide EMU: (sx, sy, tx, ty)."""
+    xfrm = group._element.grpSpPr.find(A_NS + "xfrm")
+    ns = A_NS
+    if xfrm is None or xfrm.find(ns + "off") is None or xfrm.find(ns + "ext") is None:
+        return outer                              # the transform is optional: a group without one is the identity
+    off, ext = xfrm.find(ns + "off"), xfrm.find(ns + "ext")
+    ch_off, ch_ext = xfrm.find(ns + "chOff"), xfrm.find(ns + "chExt")
+    ox, oy, cx, cy = (int(off.get("x")), int(off.get("y")), int(ext.get("cx")), int(ext.get("cy")))
+    hx, hy = (int(ch_off.get("x")), int(ch_off.get("y"))) if ch_off is not None else (ox, oy)
+    hw, hh = (int(ch_ext.get("cx")), int(ch_ext.get("cy"))) if ch_ext is not None else (cx, cy)
+    sx, sy = (cx / hw if hw else 1.0), (cy / hh if hh else 1.0)
+    # child -> group space: x' = ox + (x - hx) * sx; then the outer transform
+    osx, osy, otx, oty = outer
+    return (osx * sx, osy * sy, osx * (ox - hx * sx) + otx, osy * (oy - hy * sy) + oty)
+
+
+def _box(shape, t) -> dict:
+    sx, sy, tx, ty = t
+    x, y = shape.left or 0, shape.top or 0
+    w, h = shape.width or 0, shape.height or 0
+    return {"x": round(x * sx + tx), "y": round(y * sy + ty), "w": round(w * sx), "h": round(h * sy)}
+
+
+def walk(shapes, t=(1.0, 1.0, 0.0, 0.0)):
+    """Yield (shape, pos) for every non-group shape, groups recursed, positions in slide EMU."""
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+    for shape in shapes:
+        if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            yield from walk(shape.shapes, _child_transform(shape, t))
+        else:
+            yield shape, _box(shape, t)
+
+
+MIN_PICTURE_AREA = 0.01         # pictures under 1% of the slide (logos, icons) are not read by the vision step;
+                                # a text callout picture is often 2-4%, so it is (spec §10)
+FOOTER_PLACEHOLDERS = ("DATE", "FOOTER", "SLIDE_NUMBER")
+
+
+def is_picture(shape) -> bool:
+    """A raster image, wherever it sits: a p:pic (a picture, or a picture in a placeholder, whose shape_type is
+    PLACEHOLDER) or a shape filled with an image (spPr/a:blipFill)."""
+    el = shape._element
+    if el.tag == f"{{{P_NS}}}pic":
+        return True
+    sppr = el.find(f"{{{P_NS}}}spPr")
+    return sppr is not None and sppr.find(A_NS + "blipFill") is not None
+
+
+def is_footer_placeholder(shape) -> bool:
+    """The date, footer and slide-number placeholders: master furniture, never claims or context."""
+    if not getattr(shape, "is_placeholder", False):
+        return False
+    try:
+        return shape.placeholder_format.type.name in FOOTER_PLACEHOLDERS
+    except Exception:
+        return False
+
+
+def slide_kinds(slide, slide_area: int) -> dict:
+    """What the shape walk cannot read on a slide: a sizeable picture, a chart, a SmartArt diagram. The reader sends
+    such a slide to the vision step; the deck view expects I* findings when any visible slide has one."""
+    pic = chart = diagram = False
+    for shape, pos in walk(slide.shapes):
+        if is_picture(shape) and pos["w"] * pos["h"] >= MIN_PICTURE_AREA * slide_area:
+            pic = True
+        if getattr(shape, "has_chart", False) and shape.has_chart:
+            chart = True
+        if shape._element.find(".//{http://schemas.openxmlformats.org/drawingml/2006/diagram}relIds") is not None:
+            diagram = True
+    return {"picture": pic, "chart": chart, "diagram": diagram}
+
+
+def pptx_boxes(pptx_path) -> dict[tuple[int, int], dict]:
+    """(slide number, shape id) -> the shape's box in slide EMU, groups resolved, every slide (hidden included)."""
+    from pptx import Presentation
+    out = {}
+    for n, slide in enumerate(Presentation(str(pptx_path)).slides, 1):
+        for shape, pos in walk(slide.shapes):
+            out[(n, shape.shape_id)] = pos
+    return out
+
+
+def _rels(z: zipfile.ZipFile, part: str) -> dict[str, tuple[str, str]]:
+    """Relationship id -> (type, absolute part name) for a package part."""
+    d, name = part.rsplit("/", 1)
+    path = f"{d}/_rels/{name}.rels"
+    if path not in z.namelist():
+        return {}
+    import posixpath
+    import xml.etree.ElementTree as ET
+    out = {}
+    for r in ET.fromstring(z.read(path)).iter(f"{{{PKG_REL_NS}}}Relationship"):
+        out[r.get("Id")] = (r.get("Type"), posixpath.normpath(posixpath.join(d, r.get("Target"))))
+    return out
+
+
+def pptx_slide_parts(pptx_path) -> list[str]:
+    """Slide part names in presentation order (slide n is item n-1)."""
+    import xml.etree.ElementTree as ET
+    with zipfile.ZipFile(pptx_path) as z:
+        rels = _rels(z, "ppt/presentation.xml")
+        root = ET.fromstring(z.read("ppt/presentation.xml"))
+        return [rels[s.get(f"{{{R_NS}}}id")][1] for s in root.iter(f"{{{P_NS}}}sldId")]
+
+
+def read_pptx_comments(pptx_path) -> list[dict]:
+    """Every legacy comment: [{slide, x, y, text, author_id, idx}] in slide order (x, y in 576ths of an inch)."""
+    import xml.etree.ElementTree as ET
+    out = []
+    parts = pptx_slide_parts(pptx_path)
+    with zipfile.ZipFile(pptx_path) as z:
+        for n, part in enumerate(parts, 1):
+            for typ, target in _rels(z, part).values():
+                if typ != COMMENTS_REL or target not in z.namelist():
+                    continue
+                for cm in ET.fromstring(z.read(target)).iter(f"{{{P_NS}}}cm"):
+                    pos, text = cm.find(f"{{{P_NS}}}pos"), cm.find(f"{{{P_NS}}}text")
+                    out.append({"slide": n, "x": int(pos.get("x")) if pos is not None else 0,
+                                "y": int(pos.get("y")) if pos is not None else 0,
+                                "text": (text.text or "") if text is not None else "",
+                                "author_id": cm.get("authorId"), "idx": cm.get("idx")})
+    return out
+
+
+Comment = namedtuple("Comment", "cid text anchor")
+
+
+def word_blocks(doc):
+    """Yield body blocks in document order: ('p', Paragraph) and ('t', Table), sdt content included."""
+    from docx.oxml.ns import qn
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    def walk(parent):
+        for child in parent.iterchildren():
+            if child.tag == qn("w:p"):
+                yield "p", Paragraph(child, doc)
+            elif child.tag == qn("w:tbl"):
+                yield "t", Table(child, doc)
+            elif child.tag == qn("w:sdt"):
+                content = child.find(qn("w:sdtContent"))
+                if content is not None:
+                    yield from walk(content)
+
+    yield from walk(doc.element.body)
+
+
+def word_paragraph_ids(doc) -> dict:
+    from docx.oxml.ns import qn
+    out, paragraph, table = {}, 0, 0
+    for kind, obj in word_blocks(doc):
+        if kind == "p":
+            paragraph += 1
+            out[obj._p] = f"p{paragraph}"
+        else:
+            table += 1
+            for row, element in enumerate(obj._tbl.tr_lst, 1):
+                for p in element.iter(qn("w:p")):
+                    out[p] = f"t{table}r{row}"
+    return out
+
+
+def word_figure_numbers(doc) -> dict:
+    """Map each paragraph element holding a drawing to its 1-based figure number.
+
+    Same rule as `annotate` in SKILL.md: every w:p in the body outside text boxes, in document
+    order, counted once when one of its runs holds a w:drawing."""
+    from docx.oxml.ns import qn
+    out, k = {}, 0
+    for p in doc.element.body.iter(qn("w:p")):
+        if any(a.tag == qn("w:txbxContent") for a in p.iterancestors()):
+            continue
+        if any(r.findall(".//" + qn("w:drawing")) for r in p.findall(qn("w:r"))):
+            k += 1
+            out[p] = k
+    return out
+
+
+
+def word_comment_figures(doc, ranges: dict[str, str]) -> dict[str, int]:
+    from docx.oxml.ns import qn
+    drawings = {cid for cid, body in ranges.items() if re.search(r"<w:drawing(?:\s|>)", body)}
+    return {start.get(qn("w:id")): figure for paragraph, figure in word_figure_numbers(doc).items()
+            for start in paragraph.iter(qn("w:commentRangeStart")) if start.get(qn("w:id")) in drawings}
+
+
+class DocxView:
+    """A .docx deliverable: Word heading styles, python-docx comments anchored on a text range."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+
+    def headings(self) -> list[str]:
+        return _headings(self.path)
+
+    def has_images(self) -> bool:
+        return _references_images(self.path)
+
+    def comments(self) -> list[Comment]:
+        from docx import Document
+        ranges = _range_texts(self.path)
+        doc = Document(self.path)
+        from docx.oxml.ns import qn
+        self._paragraph_comments = {start.get(qn("w:id")): pid for paragraph, pid in word_paragraph_ids(doc).items()
+                                    for start in paragraph.iter(qn("w:commentRangeStart"))}
+        self._figure_comments = word_comment_figures(doc, _range_parts(self.path))
+        return [Comment(str(c.comment_id), c.text.strip(), ranges.get(str(c.comment_id), ""))
+                for c in doc.comments]
+
+    def anchor_problem(self, c: Comment, f: dict) -> str | None:
+        if f.get("anchor") == "drawing":
+            if not hasattr(self, "_figure_comments"):
+                self.comments()
+            if self._figure_comments.get(c.cid) != f.get("figure"):
+                return "comment is not anchored to its figure"
+            return None
+        if f.get("p_id") and re.fullmatch(r"p\d+|t\d+r\d+", str(f["p_id"])):
+            if not hasattr(self, "_paragraph_comments"):
+                self.comments()
+            if self._paragraph_comments.get(c.cid) != f["p_id"]:
+                return "comment is not anchored to its paragraph or table row"
+        anchored, quote = (c.anchor or "").strip(), (f.get("quote") or "").strip()
+        if anchored and quote and anchored != quote:
+            return f"anchor {anchored!r} is not exactly the quoted span {quote!r}"
+        return None
+
+
+class PptxView:
+    """A .pptx deliverable: "Slide N: <title>" headings, legacy comments pinned to a point (spec §4.2)."""
+
+    _PID = re.compile(r"^s(\d+)(?:-sh(\d+))?")
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self._boxes = None
+
+    def headings(self) -> list[str]:
+        """The section name of every visible slide, exactly as pptx_sections.py writes it."""
+        from pptx import Presentation
+        out = []
+        for n, slide in enumerate(Presentation(str(self.path)).slides, 1):
+            if not is_hidden(slide):
+                title = slide_title(slide)
+                out.append(f"Slide {n}: {title}" if title else f"Slide {n}")
+        return out
+
+    def has_images(self) -> bool:
+        """True when a visible slide holds what the reader sends to the vision step (slide_kinds: a sizeable picture,
+        a chart, a diagram), so I* findings must exist."""
+        from pptx import Presentation
+        prs = Presentation(str(self.path))
+        area = (prs.slide_width or 9144000) * (prs.slide_height or 6858000)
+        return any(any(slide_kinds(slide, area).values()) for slide in prs.slides if not is_hidden(slide))
+
+    def comments(self) -> list[Comment]:
+        return [Comment(f"slide {c['slide']} #{c['idx']}", c["text"].strip(), (c["slide"], c["x"], c["y"]))
+                for c in read_pptx_comments(self.path)]
+
+    def anchor_problem(self, c: Comment, f: dict) -> str | None:
+        m = self._PID.match(str(f.get("p_id") or ""))
+        if not m:
+            return f"p_id {f.get('p_id')!r} names no slide"
+        slide, x, y = c.anchor
+        if slide != int(m.group(1)):
+            return f"comment is on slide {slide}, its claim is on slide {m.group(1)}"
+        if m.group(2) is None:                   # a whole-slide (figure) claim: any point on its slide
+            return None
+        if self._boxes is None:
+            self._boxes = pptx_boxes(self.path)
+        box = self._boxes.get((slide, int(m.group(2))))
+        if box is None:
+            return f"shape {m.group(2)} of slide {slide} not found for {f.get('p_id')}"
+        ex, ey = x * EMU_PER_POS, y * EMU_PER_POS
+        tol = EMU_PER_POS                        # one position unit of rounding
+        if not (box["x"] - tol <= ex <= box["x"] + box["w"] + tol and box["y"] - tol <= ey <= box["y"] + box["h"] + tol):
+            return f"comment pin is outside the box of the shape that holds {f.get('p_id')}"
+        return None
+
+
+VIEWS = {".docx": DocxView, ".pptx": PptxView}
+
+
+def doc_view(path):
+    """The document view for a deliverable, chosen by its suffix."""
+    cls = VIEWS.get(Path(path).suffix.lower())
+    if cls is None:
+        raise ValueError(f"no document view for {Path(path).suffix or 'a file without a suffix'}: "
+                         f"expected one of {', '.join(sorted(VIEWS))}")
+    return cls(path)
+
+
 BANNER_STALE = "findings page coverage banner is missing or stale"
 
 
@@ -213,12 +741,13 @@ def banner_violations(page_html: str, run: dict) -> list[str]:
 
 def check_run(findings, docx_path, *, original_sha256=None, original_path=None, coverage=None,
               mode=None, run=None, page=None) -> list[str]:
-    from docx import Document
-
     docx_path = Path(docx_path)
+    view = doc_view(docx_path)
     v: list[str] = []
     if run and page is not None:
         v.extend(banner_violations(page, run))
+    if run and "comments" in run and run["comments"] not in COMMENT_POLICIES:
+        v.append(f"run.json: comments {run['comments']!r} is not one of {', '.join(COMMENT_POLICIES)}")
 
     seen: set[str] = set()
     for n, f in enumerate(findings, 1):
@@ -236,10 +765,21 @@ def check_run(findings, docx_path, *, original_sha256=None, original_path=None, 
             v.append(f"{fid}: unknown verdict {f.get('verdict')!r}")
         if f.get("verdict") != "Verified" and f.get("severity") not in SEVERITIES:
             v.append(f"{fid}: unknown severity {f.get('severity')!r}")
+        if "conflicts" in f:                          # a v2 finding (v1 runs had no `conflicts`): the merge's checks hold
+            for why in (evidence_problem(f.get("evidence"), is_deck_finding(f)), conflicts_problem(f)):
+                if why:
+                    v.append(f"{fid}: {why}")
 
         verdict, commented = f.get("verdict"), _has_comment(f)
-        if verdict in DEFECTS and not commented:
-            v.append(f"{fid}: {verdict} defect must have a Word comment")
+        policy = (run or {}).get("comments", "all")   # a v1 run (no key) keeps v1's rule: every defect commented
+        dest = str(f.get("destination", ""))
+        # a Deep reviewer's edits to the comment set (annotate.py --approved) are recorded, not violations
+        if wants_comment(f, policy) and not commented and dest != "declined by reviewer" \
+                and not dest.startswith(NOT_ANCHORED):
+            v.append(f"{fid}: {verdict} {f.get('severity')} defect must have a comment")
+        if (verdict in DEFECTS and commented and not wants_comment(f, policy)
+                and "added by reviewer" not in dest):
+            v.append(f"{fid}: {f.get('severity')} defect must not carry a comment (comments: {policy})")
         if verdict == "No Evidence":
             if f.get("severity") != "Minor":
                 v.append(f"{fid}: No Evidence must be Minor")
@@ -251,27 +791,36 @@ def check_run(findings, docx_path, *, original_sha256=None, original_path=None, 
     if original_path is not None:
         if docx_path.resolve() == Path(original_path).resolve():
             v.append("output would overwrite the original document")
-        if _references_images(original_path) and not any(
-                str(f.get("id", "")).startswith("I") for f in findings):
+        original = doc_view(original_path)
+        if original.has_images() and not figures_accounted(findings, run):
             v.append("figures present but no I* findings")
         covered = _covered_headings(findings, coverage, mode)
-        for h in _headings(original_path):
+        for h in original.headings():
+            if isinstance(original, PptxView):
+                h = h.split(":", 1)[0]
+                covered = {name.split(":", 1)[0] for name in covered}
             if _norm(h) not in covered:
                 v.append(f"heading not covered: {h}")
         if original_sha256 and hashlib.sha256(Path(original_path).read_bytes()).hexdigest() != original_sha256:
             v.append("original document was modified")
 
-    doc = Document(docx_path)
     by_id = {}
-    ranges = _range_texts(docx_path)
-    for c in doc.comments:
-        m = HEADER.match(c.text.strip())
-        if not m:
-            v.append(f"comment {c.comment_id}: header is not [Verdict · Severity · id]")
+    # comments the original already held (a reviewer's, not a fact-check header) are kept and not this run's to judge
+    before = ({x.text for x in doc_view(original_path).comments() if not HEADER.match(x.text)}
+              if original_path is not None and Path(original_path).resolve() != docx_path.resolve() else set())
+    for c in view.comments():
+        if c.text in before:
             continue
-        by_id[m["id"]] = (c, m)
-        if len(c.text.split()) > MAX_COMMENT_WORDS:
-            v.append(f"{m['id']}: comment is over {MAX_COMMENT_WORDS} words")
+        m = HEADER.match(c.text)
+        if not m:
+            v.append(f"comment {c.cid}: first line is not [Category]")
+            continue
+        fid = comment_owner(c.text, findings, c, view) or comment_owner(c.text, findings) or f"comment {c.cid}"
+        if fid in by_id:
+            v.append(f"{fid}: duplicate comment in the document")
+        by_id[fid] = (c, m)
+        if comment_words(c.text, isinstance(view, PptxView)) > MAX_COMMENT_WORDS:
+            v.append(f"{fid}: comment is over {MAX_COMMENT_WORDS} words")
 
     wanted = {f["id"]: f for f in findings if _has_comment(f) and f.get("id")}
     for fid, f in wanted.items():
@@ -279,12 +828,10 @@ def check_run(findings, docx_path, *, original_sha256=None, original_path=None, 
             v.append(f"{fid}: approved comment is missing from the document")
             continue
         c, m = by_id[fid]
-        if m["verdict"].strip() != f.get("verdict") or m["severity"].strip() != f.get("severity"):
-            v.append(f"{fid}: comment header does not match the finding")
-        anchored = ranges.get(str(c.comment_id), "")
-        quote = (f.get("quote") or "").strip()
-        if anchored and quote and anchored.strip() != quote:
-            v.append(f"{fid}: anchor {anchored.strip()!r} is not exactly the quoted span {quote!r}")
+        if m["verdict"].strip() != f.get("verdict"):
+            v.append(f"{fid}: comment category does not match the finding")
+        if why := view.anchor_problem(c, f):
+            v.append(f"{fid}: {why}")
     for fid in by_id:
         if fid not in wanted:
             v.append(f"{fid}: comment in the document was never approved")
@@ -294,7 +841,7 @@ def check_run(findings, docx_path, *, original_sha256=None, original_path=None, 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("findings")
-    ap.add_argument("docx")
+    ap.add_argument("docx", help="the fact-checked copy (.docx or .pptx)")
     ap.add_argument("--original")
     ap.add_argument("--page", help="the findings page (default: '<name> — findings.html' beside the annotated docx)")
     a = ap.parse_args(argv)
@@ -309,6 +856,8 @@ def main(argv=None) -> int:
     page_missing = bool(run) and page_html is None
     vs = shape + check_run(data, a.docx, original_sha256=run.get("source_sha256"), original_path=a.original,
                            coverage=coverage, mode=run.get("mode"), run=run, page=page_html)
+    if run and not (beside("baseline.md").exists() and beside("baseline.sources.json").exists()):
+        vs.append("baseline.md and baseline.sources.json missing beside findings.json (run baseline.py)")
     if page_missing:
         vs.append("findings page not found for banner check")
     print("\n".join(vs) or "clean")

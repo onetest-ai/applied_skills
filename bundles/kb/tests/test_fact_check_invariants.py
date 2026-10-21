@@ -15,7 +15,8 @@ if HAVE_DOCX:
 
 def finding(id, verdict, severity, destination, quote="", **kw):
     return dict(id=id, verdict=verdict, severity=severity, destination=destination, quote=quote,
-                section="1", evidence="Brain: x (2026-01-01, f.md)", fix="Fix it", source="f.md", **kw)
+                section="1", evidence="Brain: x (2026-01-01, f.md)", fix="Fix it", source="f.md",
+                why="the source states another value", suggested="The statement with the source's value.", **kw)
 
 
 NO_PAGE = "findings page not found for banner check"
@@ -40,6 +41,8 @@ class TestRunInvariants(unittest.TestCase):
         d.save(self.orig)
         self.sha = hashlib.sha256(self.orig.read_bytes()).hexdigest()
         self.out = self.tmp / "out.docx"
+        (self.tmp / "baseline.md").write_text("baseline")           # a complete run dir carries the baseline files
+        (self.tmp / "baseline.sources.json").write_text("[]")
 
     def _annotate(self, findings):
         self.h = load_helpers()
@@ -97,11 +100,11 @@ class TestRunInvariants(unittest.TestCase):
         bad.append(finding("C05", "Incorrect", "Major", "Word comment", "And more."))
         self.assertTrue(any("C05" in v for v in self._check(bad)))
 
-    def test_comment_longer_than_sixty_words_is_a_violation(self):
+    def test_comment_over_ninety_words_is_a_violation(self):
         fs = [dict(f) for f in GOOD]
-        fs[0]["fix"] = "word " * 70
+        fs[0]["suggested"] = "word " * 100
         self._annotate(fs)
-        self.assertTrue(any("C01" in v and "60 words" in v for v in self._check(fs)))
+        self.assertTrue(any("C01" in v and "90 words" in v for v in self._check(fs)))
 
     def test_original_document_must_be_untouched(self):
         self._annotate(GOOD)
@@ -415,6 +418,46 @@ class TestRunInvariants(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("findings.json must be a JSON list", r.stdout)
 
+    def test_cli_requires_the_baseline_files_when_run_json_exists(self):
+        import json, subprocess, sys
+        from test_plugin_structure import KB_ROOT
+        cli = KB_ROOT / "skills" / "doc-fact-check" / "fact_check_invariants.py"
+        self._annotate(GOOD)
+        out = self.tmp / "Draft — fact-checked.docx"
+        self.out.rename(out)
+        (self.tmp / "findings.json").write_text(json.dumps(GOOD))
+        (self.tmp / "coverage.json").write_text("[]")
+        (self.tmp / "run.json").write_text(json.dumps(self.RUN))
+        (self.tmp / "Draft — findings.html").write_text(self._page(self.RUN), encoding="utf-8")
+        args = [sys.executable, str(cli), str(self.tmp / "findings.json"), str(out)]
+        for name in ("baseline.md", "baseline.sources.json"):
+            (self.tmp / name).unlink()
+        r = subprocess.run(args, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("baseline.md and baseline.sources.json missing", r.stdout)
+        (self.tmp / "baseline.md").write_text("baseline")
+        (self.tmp / "baseline.sources.json").write_text("[]")
+        r = subprocess.run(args, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_minor_comment_is_a_violation_under_major_policy(self):
+        fs = [finding("C01", "Misleading", "Minor", "Word comment", "green fields")]
+        self._annotate(fs)
+        vs = self._check(fs, run={"mode": "fast", "comments": "major"})
+        self.assertTrue(any("Minor defect must not carry a comment (comments: major)" in v for v in vs), vs)
+
+    def test_major_defect_without_comment_is_a_violation(self):
+        fs = [finding("C01", "Incorrect", "Major", "log only", "40 million in")]
+        self._annotate(fs)
+        vs = self._check(fs, run={"comments": "major"})
+        self.assertTrue(any("Incorrect Major defect must have a comment" in v for v in vs), vs)
+
+    def test_v1_run_without_comments_key_keeps_v1_rule(self):
+        fs = [finding("C01", "Misleading", "Minor", "log only", "green fields")]
+        self._annotate(fs)
+        vs = self._check(fs, run={})
+        self.assertTrue(any("must have a comment" in v for v in vs), vs)
+
     def test_invariants_cli_ships_in_the_skill_dir_and_runs(self):
         import subprocess
         import sys
@@ -427,6 +470,101 @@ class TestRunInvariants(unittest.TestCase):
         self.assertIn("fact_check_invariants.py", r.stdout)
 
 
+class TestV2Conflicts(unittest.TestCase):
+    def f(self, verdict, conflicts):
+        return {"verdict": verdict, "conflicts": conflicts}
+
+    def test_verified_with_conflict_is_refused(self):
+        from fact_check_invariants import conflicts_problem
+        c = [{"span": "runs nightly", "source": "Ops review", "date": "2026-09-01"}]
+        self.assertIn("blocks Verified", conflicts_problem(self.f("Verified", c)))
+
+    def test_controversial_needs_a_conflict(self):
+        from fact_check_invariants import conflicts_problem
+        self.assertIn("without a recorded conflict", conflicts_problem(self.f("Controversial", [])))
+        self.assertIn("without a recorded conflict", conflicts_problem(self.f("Outdated", [])))
+
+    def test_shape(self):
+        from fact_check_invariants import conflicts_problem
+        self.assertIn("{span, source, date}", conflicts_problem(self.f("Incorrect", [{"span": "x"}])))
+        self.assertIn("{span, source, date}", conflicts_problem({"verdict": "Incorrect"}))
+        self.assertIsNone(conflicts_problem(self.f("Incorrect", [])))
+        self.assertIsNone(conflicts_problem(self.f("Verified", [])))
+
+
+class TestFinalReviewInvariants(unittest.TestCase):
+    """Final review: M3 (Controversial/Outdated need evidence), M6 (check_run re-runs the evidence and
+    conflicts checks on v2 findings), T3 (run.json `comments` must be a known policy)."""
+
+    C = [{"span": "runs nightly", "source": "Ops review", "date": "2026-09-01"}]
+
+    def test_controversial_and_outdated_need_the_supporting_evidence(self):  # M3
+        from fact_check_invariants import conflicts_problem
+        for v in ("Controversial", "Outdated"):
+            for ev in ("", "   ", None):
+                self.assertIn("evidence", conflicts_problem({"verdict": v, "conflicts": self.C, "evidence": ev}) or "",
+                              (v, ev))
+            self.assertIsNone(conflicts_problem({"verdict": v, "conflicts": self.C, "evidence": "The plan says weekly."}))
+
+    @unittest.skipUnless(HAVE_DOCX, "needs python-docx >= 1.2")
+    def test_check_run_applies_evidence_and_conflicts_checks_to_v2_findings(self):  # M6
+        TestRunInvariants.setUp(self)
+        good = [dict(f, conflicts=[]) for f in GOOD]
+        TestRunInvariants._annotate(self, good)
+        self.assertEqual(TestRunInvariants._check(self, good), [])
+        bad = [dict(f) for f in good]
+        bad[0]["evidence"] = "search_knowledge returned chunk 123456789012345"
+        bad[3]["conflicts"] = self.C
+        v = TestRunInvariants._check(self, bad)
+        self.assertTrue(any(x.startswith("C01:") and "evidence names a tool" in x for x in v), v)
+        self.assertTrue(any(x.startswith("C04:") and "blocks Verified" in x for x in v), v)
+
+    @unittest.skipUnless(HAVE_DOCX, "needs python-docx >= 1.2")
+    def test_check_run_skips_v1_findings_without_conflicts(self):  # M6
+        TestRunInvariants.setUp(self)
+        v1 = [dict(f) for f in GOOD]
+        v1[0]["evidence"] = "get_metric: x=28% (2024-Q4)"          # v1 evidence may name a tool
+        TestRunInvariants._annotate(self, v1)
+        self.assertEqual(TestRunInvariants._check(self, v1), [])
+
+    @unittest.skipUnless(HAVE_DOCX, "needs python-docx >= 1.2")
+    def test_6b_demoted_finding_with_its_failed_conflict_dropped_is_clean(self):  # follow-up: 6b edit 5
+        TestRunInvariants.setUp(self)
+        good = [dict(f, conflicts=[]) for f in GOOD]
+        demoted = dict(good[3], verdict="Verified", severity="Minor", destination="count only",
+                       trail="R2: two-sided check; 6b: conflict dropped — span not verbatim in the re-opened chunk")
+        run = good[:3] + [demoted]
+        TestRunInvariants._annotate(self, run)
+        self.assertEqual(TestRunInvariants._check(self, run), [])
+        left_in = good[:3] + [dict(demoted, conflicts=self.C)]
+        v = TestRunInvariants._check(self, left_in)
+        self.assertTrue(any(x.startswith("C04:") and "blocks Verified" in x for x in v), v)
+
+    @unittest.skipUnless(HAVE_DOCX, "needs python-docx >= 1.2")
+    def test_unknown_comment_policy_in_run_json_is_a_violation(self):  # T3
+        TestRunInvariants.setUp(self)
+        TestRunInvariants._annotate(self, GOOD)
+        v = TestRunInvariants._check(self, GOOD, run={"comments": "every"})
+        self.assertTrue(any("comments" in x and "'every'" in x for x in v), v)
+        self.assertFalse(any("'every'" in x for x in TestRunInvariants._check(self, GOOD, run={"comments": "all"})))
+
+
+class TestV2CommentPolicy(unittest.TestCase):
+    def test_wants_comment(self):
+        from fact_check_invariants import wants_comment
+        ready = {"why": "the source states another value", "suggested": "The corrected statement."}
+        for verdict in ("Incorrect", "Misleading", "Outdated"):
+            self.assertTrue(wants_comment({**ready, "verdict": verdict, "severity": "Major"}))
+            self.assertFalse(wants_comment({**ready, "verdict": verdict, "severity": "Minor"}))
+            self.assertTrue(wants_comment({**ready, "verdict": verdict, "severity": "Minor"}, "all"))
+        for verdict in ("No Evidence", "Verified", "Controversial"):
+            self.assertFalse(wants_comment({**ready, "verdict": verdict, "severity": "Major"}, "all"))
+
+    def test_comment_text_is_shared(self):
+        import annotate, fact_check_invariants
+        self.assertIs(annotate.comment_text, fact_check_invariants.comment_text)
+
+
 SKILL_MD = Path(__file__).resolve().parents[1] / "skills" / "doc-fact-check" / "SKILL.md"
 
 
@@ -437,11 +575,13 @@ class TestTwoSidedCheckText(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.text = SKILL_MD.read_text(encoding="utf-8")
-        a = cls.text.index("### 4.")
-        b = cls.text.index("### 5.")
-        c = cls.text.index("### 6.")
-        cls.step4 = cls.text[a:b]
-        cls.step5 = cls.text[b:c]
+        # v2: steps 4 and 5 live in the stage-V brief
+        verify = SKILL_MD.with_name("verify.md").read_text(encoding="utf-8")
+        a = verify.index("### 4.")
+        b = verify.index("### 5.")
+        c = verify.index("## Rules")
+        cls.step4 = verify[a:b]
+        cls.step5 = verify[b:c]
 
     def _bullet(self):
         lines = [l for l in self.step4.splitlines() if "Two-sided check" in l]

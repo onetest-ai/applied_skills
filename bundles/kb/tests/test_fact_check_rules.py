@@ -7,6 +7,8 @@ from pathlib import Path
 
 KB_ROOT = Path(__file__).resolve().parent.parent
 SKILL = Path(__file__).resolve().parent.parent / "skills" / "doc-fact-check" / "SKILL.md"
+EXTRACT = SKILL.with_name("extract.md")
+VERIFY = SKILL.with_name("verify.md")
 
 
 def section(text: str, start: str, end: str) -> str:
@@ -22,9 +24,10 @@ class TestFactCheckRules(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.text = SKILL.read_text(encoding="utf-8")
-        cls.step4 = flat(section(cls.text, "### 4.", "### 5."))
-        cls.step5 = flat(section(cls.text, "### 5.", "### 6."))
-        cls.rules = flat(section(cls.text, "## Rules", "## The Brain contract"))
+        verify = VERIFY.read_text(encoding="utf-8")
+        cls.step4 = flat(section(verify, "### 4.", "### 5."))
+        cls.step5 = flat(section(verify, "### 5.", "## Rules"))
+        cls.rules = flat(section(verify, "## Rules", "## Output"))
         cls.s6b = flat(section(cls.text, "### 6b.", "### 6c."))
 
     def has(self, hay, *phrases):
@@ -59,7 +62,7 @@ class TestFactCheckRules(unittest.TestCase):
                  "counting items in the draft is not a computed figure",
                  "A unit gap with no tool-returned conversion is Misleading when the Brain holds the figure at another unit, otherwise No Evidence",
                  "the `fix` is \"needs owner input\"",
-                 "findings page and `baseline.md`")
+                 "the finding's evidence and trail (log only, no comment)")
         self.has(self.rules, "Never compute, sum, average, round or convert a figure you write into `evidence` or `fix`",
                  "the Brain holds the components, not the total")
         self.assertNotIn("EVIDENCE", self.step4 + self.rules)
@@ -129,7 +132,7 @@ class TestFactCheckRules(unittest.TestCase):
 
     def test_total_row_and_differing_value(self):
         for hay in (self.step4, self.rules):
-            self.has(hay, "If a governed total row exists, compare it; if only components exist, the total is No Evidence (components listed verbatim)")
+            self.has(hay, "If a governed total row exists, compare it; if only components exist and no chunk states the total, the total is No Evidence (components listed verbatim); a chunk that states the total itself is compared like any other chunk")
         self.has(self.step4, "this never turns a differing value into No Evidence")
         self.has(self.rules, "A differing value in a covering row or chunk is Incorrect or Misleading, never No Evidence")
 
@@ -142,7 +145,7 @@ class TestFactCheckRules(unittest.TestCase):
         # A vendor name copied from an auto-transcript was a meeting participant's surname; the Brain shows the person.
         self.has(self.step4, "check what the name is, not only how it is spelled.** A claim typed TOPO, OWN or STATUS",
                  "(a meeting participant or speaker, when the draft names a vendor, company or system), the claim is never Verified",
-                 "The verdict is Controversial, citing both spans")
+                 "the verdict is Incorrect: cite the identity evidence and comment on the error")
 
     def test_entity_name_conflict_is_not_explained_away(self):
         # A worker found the participant of the same name, called it "a distinct entity" and marked the claim Verified.
@@ -178,7 +181,7 @@ class TestFactCheckRules(unittest.TestCase):
     def test_6b_dispatch_payload_and_reexamination(self):
         s = self.s6b
         self.has(s, "pass the draft's verbatim quote as the claim, plus the chunk ids or metric reference from its `trail`, never the Brain-side value as the claim",
-                 "if it still contradicts the draft, the finding stands and both readings are recorded; if it supports the draft and the finding cites no differing span for the same subject, the claim becomes Verified; if the finding cites a differing span (another value or name the Brain gives for the same subject, or the same name used for a different kind of thing), it becomes Controversial with both spans; if it cannot be re-opened, it is No Evidence",
+                 "if it still contradicts the draft, the finding stands and both readings are recorded; if it supports the draft and the finding cites no differing span for the same subject, the claim becomes Verified; if the finding cites a differing span (another value or name the Brain gives for the same subject, or the same name used for a different kind of thing), it becomes Controversial with both spans, except that an established person/company identity error remains Incorrect and receives a comment even when the correct provider is unknown; if it cannot be re-opened, it is No Evidence",
                  "An Incorrect finding with `grain-mismatch` is re-checked for Misleading (right value at another grain)")
         self.assertNotIn("any other finding", s)
 
@@ -193,9 +196,9 @@ class TestFactCheckRootCauseRules(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.text = SKILL.read_text(encoding="utf-8")
-        cls.step2 = flat(section(cls.text, "### 2.", "### 3."))
+        cls.step2 = flat(section(EXTRACT.read_text(encoding="utf-8"), "### 2.", "## Fast"))
         cls.step3 = flat(section(cls.text, "### 3.", "### 4."))
-        cls.step4 = flat(section(cls.text, "### 4.", "### 5."))
+        cls.step4 = flat(section(VERIFY.read_text(encoding="utf-8"), "### 4.", "### 5."))
         cls.step9 = flat(section(cls.text, "### 9.", "### 10."))
 
     # RC-1
@@ -245,11 +248,14 @@ class TestCoverageAndVerifiedRules(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         t = SKILL.read_text(encoding="utf-8")
-        cls.step2 = flat(section(t, "### 2.", "### 3."))
-        cls.step4 = flat(section(t, "### 4.", "### 5."))
-        cls.step5 = flat(section(t, "### 5.", "### 6."))
+        e = EXTRACT.read_text(encoding="utf-8")
+        v = VERIFY.read_text(encoding="utf-8")
+        cls.step2 = flat(section(e, "### 2.", "## Fast"))
+        cls.step4 = flat(section(v, "### 4.", "### 5."))
+        cls.step5 = flat(section(v, "### 5.", "## Rules"))
         cls.step9 = flat(section(t, "### 9.", "### 10."))
         cls.all = flat(t)
+        cls.briefs = flat(e + v)
 
     # RC-1
     def test_section_is_the_heading_path_and_never_empty(self):
@@ -259,8 +265,8 @@ class TestCoverageAndVerifiedRules(unittest.TestCase):
 
     def test_coverage_self_check_walks_headings(self):
         self.assertIn("List every heading of the document", self.step2)
-        self.assertIn("as the `section` of at least one finding", self.step2)
-        self.assertIn("`coverage.json`", self.step2)
+        self.assertIn("as the `section` of at least one of your claims", self.step2)
+        self.assertIn("`coverage_batch_<k>.json`", self.step2)
         self.assertIn('"no checkable statement"', self.step2)
         self.assertIn("Re-walk any heading that has neither", self.step2)
         self.assertNotIn("Count the non-heading paragraphs", self.step2)
@@ -301,15 +307,15 @@ class TestCoverageAndVerifiedRules(unittest.TestCase):
     # RC-5
     def test_no_client_names_in_worked_example(self):
         self.assertIn("`The speaker did not establish whether system A pushes the result into system B or B reads it.` "
-                      "→ OWN (who controls that path?)", self.all)
+                      "→ OWN (who controls that path?)", self.briefs)
 
     def test_no_self_reported_checks_field(self):
         # the field was fabricated in real runs; the skill must not ask the model to self-report searches
-        self.assertNotIn("record `checks`", self.all)
-        self.assertNotIn("without both checks is invalid", self.all)
+        self.assertNotIn("record `checks`", self.all + self.briefs)
+        self.assertNotIn("without both checks is invalid", self.all + self.briefs)
 
     def test_num_with_time_dimension_runs_sequence_steps(self):
-        self.assertIn("run steps **b** and **d** of the two-sided check sequence below", self.all)
+        self.assertIn("run steps **b** and **d** of the two-sided check sequence below", self.briefs)
 
 
 class TestSectionParallelRules(unittest.TestCase):
@@ -320,7 +326,7 @@ class TestSectionParallelRules(unittest.TestCase):
         cls.text = SKILL.read_text(encoding="utf-8")
         cls.step1 = flat(section(cls.text, "### 1.", "### 1b."))
         cls.dispatch = flat(section(cls.text, "### 1b.", "### 2."))
-        cls.step2 = flat(section(cls.text, "### 2.", "### 3."))
+        cls.step2 = flat(section(EXTRACT.read_text(encoding="utf-8"), "### 2.", "## Fast"))
         cls.step3 = flat(section(cls.text, "### 3.", "### 4."))
         cls.merge = flat(section(cls.text, "### 6a.", "### 6b."))
 
@@ -349,15 +355,17 @@ class TestSectionParallelRules(unittest.TestCase):
     def test_dispatch_in_waves_of_wave_size(self):
         d = self.dispatch
         self.assertIn("waves of `wave_size` (default 10)", d)
-        for item in ("`<work dir>/batch_<k>.json`", "absolute path of this SKILL.md", "`<work dir>/claims_batch_<k>.json`",
+        for item in ("`<work dir>/batch_<k>.json`", '`"<skill dir>/extract.md"`', '`"<skill dir>/verify.md"`',
+                     "`<work dir>/claims_batch_<k>.json`",
                      "`<work dir>/coverage_batch_<k>.json`", "`<work dir>/findings_chunk_<j>.json`"):
             self.assertIn(item, d)
 
-    def test_subagents_read_step_2_then_steps_4_to_6(self):
+    def test_workers_follow_their_briefs(self):
+        # v2: stage E follows extract.md and stage V verify.md; the briefs hold the output contracts
         d = self.dispatch
-        self.assertIn("reads **step 2** here", d)
-        self.assertIn("reads **steps 4–6** here", d)
-        self.assertIn('"reason": "no checkable statement"', d)
+        self.assertIn("as `extract.md` says", d)
+        self.assertIn("as `verify.md` says", d)
+        self.assertIn('"reason": "no checkable statement"', flat(EXTRACT.read_text(encoding="utf-8")))
 
     def test_sequential_fallback_without_the_agent_tool(self):
         self.assertIn("only when the Agent tool is not in your tool list", self.dispatch)
@@ -379,7 +387,8 @@ class TestSectionParallelRules(unittest.TestCase):
     def test_figure_claims_are_always_in_scope_and_verified_in_stage_v(self):
         self.assertIn("claims_figures.json", self.dispatch)
         self.assertIn("always in scope", self.dispatch)
-        self.assertIn("anchor: 'drawing'", self.dispatch)
+        # v2: the figure-claim output contract is in the stage-V brief
+        self.assertIn("anchor: 'drawing'", VERIFY.read_text(encoding="utf-8"))
 
     def test_step3_schema_has_kind_and_figure_and_embedded_anchoring(self):
         for s in ('kind', '"embedded"', "`figure` is that figure's int number", 'anchor: "paragraph"'):
@@ -411,7 +420,7 @@ class TwoModeTwoStageTests(unittest.TestCase):
             self.assertIn(t, self.all)
 
     def test_step1b_two_stages_and_parameters(self):
-        for t in ("Stage E", "Stage V", "chunk_claims.py\" \"<work dir>\" --scope", "at most 8 claims",
+        for t in ("Stage E", "Stage V", "chunk_claims.py\" \"<work dir>\" --scope", "at most 15 claims",
                   "per claim, never batched across claims", "waves of `wave_size` (default 10)",
                   "| `scope` | `all` | `risk` |"):
             self.assertIn(t, self.all)
@@ -437,15 +446,18 @@ class TwoModeTwoStageTests(unittest.TestCase):
 class FixRound1Tests(unittest.TestCase):
     def setUp(self):
         self.all = flat((KB_ROOT / "skills" / "doc-fact-check" / "SKILL.md").read_text(encoding="utf-8"))
+        # v2: worker rules moved into the briefs; a pinned sentence may live in SKILL.md or a brief
+        self.briefs = flat(EXTRACT.read_text(encoding="utf-8")) + " " + flat(VERIFY.read_text(encoding="utf-8"))
 
     def test_fix_round_1_sentences(self):
         for t in (
             "**The reply's** first line is the output of `python \"<skill dir>/findings_report.py\" --coverage-line \"<run dir>/run.json\"`, verbatim.",
             "the 'reused baseline of <date>, N claims' line comes second. Then the one-or-two-sentence answer.",
             "send up to `wave_size` dispatches in one message, wait for the whole wave to finish, then send the next wave.",
-            "except `destination`, which step 8 sets",
-            "copy `p_id`, `quote`, `section` and `type` from the chunk's claim unchanged",
-            "Run the two-sided sequence per claim (step 4); never batch one search across several claims.",
+            "Do not write `destination`; the main session sets it.",
+            "these five copied unchanged from the chunk's claim",
+            "Run the two-sided sequence per claim (step 4, with the Rounds exemption for a claim settled in R1); "
+            "never merge several claims into one search.",
             "still writes `claims_batch_<k>.json` as `[]`",
             "does not run steps 3–10 and does not dispatch subagents",
             "in stage E the claim id field is `claim_id` (`B<k>-C<n>`), renumbered to `C01…` by the merge",
@@ -457,7 +469,7 @@ class FixRound1Tests(unittest.TestCase):
             "`estimate_minutes.fast` and `estimate_minutes.deep`",
             "stop at this step, before step 1, with \"mode required: fast or deep\" and write nothing else",
         ):
-            self.assertIn(t, self.all)
+            self.assertIn(t, self.all + " " + self.briefs)
         self.assertEqual(self.all.count("wait for the whole wave to finish"), 2)
         self.assertNotIn("Batch Brain calls per section", self.all)
         self.assertNotIn("Merge the batches", self.all)
@@ -489,20 +501,22 @@ class FinalFixWaveRules(unittest.TestCase):
         self.assertNotIn("neither a finding nor a coverage entry", self.all)
         self.assertNotIn("appends it after the batches", self.all)
         self.assertIn("figure ids `I*` are kept and listed last", self.all)
-        self.assertIn("`{section_id, reason}`", self.all)
+        self.assertIn("`{section_id, reason}`", flat(EXTRACT.read_text(encoding="utf-8")))
 
     def test_stage_v_does_not_tell_the_agent_to_copy_kind(self):
-        stage = self.all[self.all.index("### 1b."):self.all.index("### 2.")]
+        # v2: the stage-V output contract is in verify.md; SKILL.md's dispatch no longer restates it
+        stage = flat(VERIFY.read_text(encoding="utf-8"))
         self.assertIn("do not copy `kind`", stage)
         self.assertNotIn("copy `kind`", stage.replace("do not copy `kind`", ""))
+        self.assertNotIn("copy `kind`", self.all[self.all.index("### 1b."):self.all.index("### 2.")])
 
     def test_stage_v_copies_anchor_and_figure_for_figure_claims(self):
-        stage = self.all[self.all.index("### 1b."):self.all.index("### 2.")]
+        stage = flat(VERIFY.read_text(encoding="utf-8"))
         self.assertIn("`figure` (the claim's own int", stage)
         self.assertIn("anchor: 'drawing'", stage)
 
     def test_baseline_header_records_the_mode_and_reuse_requires_it_to_match(self):
-        self.assertIn("recording the document's `source_sha256` (from `stats.json`), the mode (from `run.json`), the `knowledge_version`", self.all)
+        self.assertIn("the document's `source_sha256` and the mode, both from `run.json`, the `knowledge_version` and the claim count", self.all)
         self.assertIn("its mode equals the requested mode", self.all)
 
 
@@ -569,16 +583,17 @@ class FinalReviewPins(unittest.TestCase):
 
     def test_no_evidence_names_its_own_queries(self):
         self.assertIn("A No Evidence finding's `trail` names this claim's own queries and tools and what each returned",
-                      self.all)
+                      flat(VERIFY.read_text(encoding="utf-8")))
 
     def test_evidence_is_for_the_reader_and_trail_is_the_audit(self):
-        self.assertIn("It never names a tool, a query, `latest_only` or a chunk id.", self.all)
-        self.assertIn("The merge refuses an `evidence` that breaks this rule; exactly,", self.all)
+        v = flat(VERIFY.read_text(encoding="utf-8"))   # v2: the stage-V rules live in the brief
+        self.assertIn("It never names a tool, a query, `latest_only` or a chunk id.", v)
+        self.assertIn("The merge refuses an `evidence` that breaks this rule; exactly,", v)
         # The exact check is spelled out so a worker never reads merge_findings.py to learn it (seen in Cowork).
         self.assertIn("any number of 12 or more digits, or that runs over 60 words. That is the whole check: "
-                      "never read the skill's scripts to learn it.", self.all)
+                      "never read the skill's scripts to learn it.", v)
         from fact_check_invariants import MAX_EVIDENCE_WORDS, _TRAIL_IN_EVIDENCE
-        self.assertIn(f"runs over {MAX_EVIDENCE_WORDS} words", self.all)
+        self.assertIn(f"runs over {MAX_EVIDENCE_WORDS} words", v)
         self.assertIn(r"\d{12,}", _TRAIL_IN_EVIDENCE.pattern)
 
     def test_baseline_full_match_reuses_the_merged_files(self):
@@ -594,7 +609,9 @@ class TestStatementCoverageRules(unittest.TestCase):
     def setUpClass(cls):
         text = SKILL.read_text(encoding="utf-8")
         cls.stage_e = flat(section(text, "1. **Stage E", "2. **Chunk."))
-        cls.step2 = flat(section(text, "### 2.", "### 3."))
+        extract = EXTRACT.read_text(encoding="utf-8")
+        cls.step2 = flat(section(extract, "### 2.", "## Fast"))
+        cls.e_out = flat(extract[extract.index("## Output"):])   # v2: the stage-E output contract
         cls.chunk = flat(section(text, "2. **Chunk.", "3. **Stage V"))
 
     def test_step2_multi_sentence_claim_lists_every_sentence_in_s_ids(self):
@@ -602,18 +619,135 @@ class TestStatementCoverageRules(unittest.TestCase):
         self.assertIn("anchor", self.step2)
 
     def test_stage_e_writes_per_sentence_waivers(self):
-        self.assertIn('{s_id, reason: "no checkable statement"}', self.stage_e)
-        self.assertIn("only for a tagged sentence with nothing checkable", self.stage_e)
+        self.assertIn('{s_id, reason: "no checkable statement"}', self.e_out)
+        self.assertIn("only for a tagged sentence with nothing checkable", self.e_out)
 
     def test_section_entry_only_for_a_section_without_claims(self):
-        self.assertIn("is only for a section with no claims at all", self.stage_e)
+        self.assertIn("is only for a section with no claims at all", self.e_out)
 
     def test_stage_e_is_told_the_scope(self):
-        self.assertIn("and the mode's `scope` (`all` or `risk`)", self.stage_e)
-        self.assertIn("A Fast (`risk`) stage E claims or waives every risk-tagged sentence and row", self.stage_e)
+        self.assertIn('the mode\'s scope in the exact words "scope: all" (Deep) or "scope: risk" (Fast)', self.stage_e)
+        self.assertIn("A Fast (`risk`) stage E claims or waives every risk-tagged sentence and row", self.e_out)
 
     def test_stage_e_claim_shape_documents_optional_s_ids(self):
-        self.assertIn("optional `s_ids`", self.stage_e)
+        self.assertIn("optional `s_ids`", self.e_out)
 
     def test_chunk_step_checks_statement_coverage_before_stage_v(self):
         self.assertIn("before any chunk is written", self.chunk)
+
+
+class TestV2Orchestration(unittest.TestCase):
+    """v2: briefs carry the worker rules; SKILL.md orchestrates (mode table, clocks, baseline, comment policy)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = SKILL.read_text(encoding="utf-8")
+        cls.step0b = section(cls.text, "### 0b.", "### 1. Extract")
+        cls.step1b = flat(section(cls.text, "### 1b.", "### 2."))
+        cls.s6b = flat(section(cls.text, "### 6b.", "### 6c."))
+        cls.step7 = flat(section(cls.text, "### 7.", "### 8."))
+        cls.step10 = flat(section(cls.text, "### 10.", "## Rules"))
+
+    def test_mode_table(self):
+        for row in ("| | Fast | Deep |",
+                    "| Approval before writing | no: writes the fact-checked copy directly | yes (step 7) |",
+                    '| Word comments | Blocker + Major | Blocker + Major ("exhaustive" on request: all defects) |'):
+            self.assertIn(row, self.step0b)
+
+    def test_workers_read_the_briefs_not_skill_md(self):
+        self.assertIn('"<skill dir>/extract.md"', self.step1b)
+        self.assertIn('"<skill dir>/verify.md"', self.step1b)
+        self.assertNotIn("the absolute path of this SKILL.md", self.step1b)
+
+    def test_dispatches_state_scope_and_comment_policy(self):
+        e = self.step1b[self.step1b.index("1. **Stage E"):self.step1b.index("2. **Chunk.")]
+        v = self.step1b[self.step1b.index("3. **Stage V"):self.step1b.index("4. **Fallback")]
+        self.assertIn("scope: all", e)
+        self.assertIn("scope: risk", e)
+        self.assertIn("scope: all", v)
+        self.assertIn('"comments: major"', v)
+        self.assertIn('"comments: all"', v)
+
+    def test_chunk_size_and_comment_flags(self):
+        self.assertIn('python "<skill dir>/chunk_claims.py" "<work dir>" --scope <scope> --chunk-size 15', self.text)
+        self.assertIn("--comments <major|all>", self.text)
+        self.assertIn("--select <major|all>", self.text)
+
+    def test_run_clock_runs_at_every_stage(self):
+        self.assertGreaterEqual(self.text.count("run_clock.py"), 8)
+        for stage in ("extract", "figures", "chunk", "verify", "merge", "verify6b", "annotate", "report"):
+            self.assertIn(f'run_clock.py" "<work dir>" {stage} start', self.text)
+            self.assertIn(f'run_clock.py" "<work dir>" {stage} end', self.text)
+        self.assertIn("--workers <number of dispatches>", self.text)
+
+    def test_6b_lowers_a_detail_and_records_it(self):
+        self.assertIn("6b: severity <old> → <new> (<reason>)", self.s6b)
+
+    def test_fast_does_not_ask(self):
+        self.assertIn("Fast does not ask", self.step7)
+        self.assertIn("Approve to write N comments (B Blocker, M Major)?", self.step7)
+
+    def test_baseline_py_runs_before_the_invariants(self):
+        self.assertIn('python "<skill dir>/baseline.py" "<run dir>/findings.json" --document "<name>.docx" '
+                      '--brain-version <knowledge_version>', self.step10)
+        self.assertLess(self.step10.index("baseline.py"), self.step10.index("fact_check_invariants.py"))
+
+
+class TestV2FixRound1(unittest.TestCase):
+    """Task 9 fix round 1: main-session inventory duties, reviewer edits, Fast wording, clocks, render order."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = SKILL.read_text(encoding="utf-8")
+        cls.step6 = flat(section(cls.text, "### 6. Resolve", "### 6a."))
+        cls.step7 = flat(section(cls.text, "### 7.", "### 8."))
+        cls.step8 = flat(section(cls.text, "### 8.", "### 9."))
+        cls.step9 = flat(section(cls.text, "### 9.", "### 10."))
+
+    def test_baseline_precedence_and_freshness_live_in_6b_not_step_6(self):
+        s6b = flat(section(self.text, "### 6b.", "### 6c."))
+        self.assertIn("6b makes exactly five kinds of edit to the merged `<run dir>/findings.json`, and no other:", s6b)
+        items = re.findall(r"\b([12345])\. \*\*([^*]+)\.\*\*", s6b)
+        self.assertEqual([t for _, t in items],
+                         ["Severity downgrade",
+                          "Baseline finding (source precedence: Brain > baseline documents in the inventory > the draft)",
+                          "Freshness downgrade", "Source links", "Conflict dropped"])
+        self.assertIn("remove that entry from `conflicts` and append `6b: conflict dropped — <reason>` to the trail; "
+                      "then the verdict follows the remaining evidence", s6b)
+        # round 6: a script sets `sources` (the main session re-typed findings.json for it in r5a and r5b)
+        self.assertIn('source_links.py" "<run dir>/findings.json" --links "<work dir>/source_links.json"', s6b)
+        self.assertIn("`source` keeps the Brain's file name. Never re-write `findings.json` yourself to do this.", s6b)
+        self.assertNotIn("record nothing else", s6b)
+        for t in ("append ONE finding on the baseline to findings.json", "the next free `C<nn>` (two digits, after the last `C` id)",
+                  "every key of the step-9 schema except `destination`", "`trail` starting `6b: baseline finding — `",
+                  "`conflicts` the baseline's statement as `[{span, source, date}]`",
+                  "change that finding's verdict to Misleading, set its `fix` to \"cite the period\"",
+                  "`6b: freshness — <newer source> vs Brain period <period>`"):
+            self.assertIn(t, s6b)
+        self.assertIn("This step only resolves links.", self.step6)
+        self.assertIn("never edit `findings_chunk_*` files", self.step6)
+        for t in ("add one finding", "append ONE finding", "downgrade its verdict", "verdict to Misleading"):
+            self.assertNotIn(t, self.step6)
+        verify = flat(VERIFY.read_text(encoding="utf-8"))
+        self.assertIn("the main session's job in its step 6b; you do nothing about it", verify)
+
+    def test_reviewer_edits_pass_the_policy_and_are_recorded(self):
+        self.assertIn('--approved "<work dir>/approved.json" --findings "<run dir>/findings.json" --comments <major|all>',
+                      self.step8)
+        for t in ('"declined by reviewer"', '"Word comment (added by reviewer)"'):
+            self.assertIn(t, self.step7)
+            self.assertIn(t, self.step8)
+            self.assertIn(t, self.step9)
+
+    def test_fast_selects_major_and_keeps_the_table_on_the_page(self):
+        self.assertIn("Fast does not ask: go to step 8 with `--select major`. The table goes on the findings page "
+                      "(step 9), not into the reply; the reply follows step 10's format.", self.step7)
+        self.assertIn("Fast always passes `--select major`.", self.step8)
+
+    def test_clock_sentence_states_what_the_minutes_include(self):
+        self.assertIn("The recorded minutes include any wait for the mode question in step 0b (none when the request "
+                      "gives the mode), and the total on the findings page excludes rendering the page itself", flat(self.text))
+
+    def test_step9_renders_after_destinations_without_contradicting_6a(self):
+        self.assertIn("render the page only after step 8 has set every destination", self.step9)
+        self.assertNotIn("never before", self.step9)
