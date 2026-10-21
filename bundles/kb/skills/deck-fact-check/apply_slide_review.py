@@ -61,6 +61,26 @@ def prepare(findings_path, run_path, work_dir) -> list[int]:
     return slides
 
 
+def slide_images(work_dir, slides) -> dict[str, str]:
+    """slide number -> its page image, relative to the work dir. Hidden slides are not in the PDF, so slide N is page N minus the
+    hidden slides before it (with slide 2 hidden, p02 is slide 3); a name built from the slide number shows the wrong slide."""
+    w = Path(work_dir)
+    try:
+        hidden = json.loads((w / "stats.json").read_text(encoding="utf-8")).get("hidden_slides") or []
+    except (OSError, ValueError):
+        hidden = []
+    pages: dict[int, str] = {}
+    for pj in sorted((w / "render").glob("*/pages.json")):
+        try:
+            data = json.loads(pj.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        pages = {p["page"]: f"render/{p['image']}" for p in data.get("pages", []) if isinstance(p.get("page"), int) and p.get("image")}
+        if pages:
+            break
+    return {str(n): pages[n - sum(1 for h in hidden if h < n)] for n in slides if n - sum(1 for h in hidden if h < n) in pages}
+
+
 def apply(findings_path, run_path, review_paths) -> list[str]:
     """Apply every review file; returns the errors (nothing is written when there are any)."""
     findings_path, run_path = Path(findings_path), Path(run_path)
@@ -150,7 +170,8 @@ def main(argv=None) -> int:
     ap.add_argument("--prepare", metavar="WORK_DIR", help="write slide_findings_<n>.json for the reviews and stop")
     a = ap.parse_args(argv)
     if a.prepare:
-        print(json.dumps({"slides": prepare(a.findings, a.run, a.prepare)}))
+        slides = prepare(a.findings, a.run, a.prepare)
+        print(json.dumps({"slides": slides, "images": slide_images(a.prepare, slides)}))
         return 0
     errors = apply(a.findings, a.run, a.reviews)
     if errors:

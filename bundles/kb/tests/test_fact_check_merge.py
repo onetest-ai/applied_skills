@@ -869,3 +869,73 @@ class SelfCheckAndSkip(MergeCase):
         self.assertEqual(len(findings), 2)
         self.assertEqual(run["unverified"], [{"chunk": 2, "claim_ids": ["B2-C01"]}])
         self.assertIn("Not verified: 1 claim (chunk 2 was refused twice).", coverage_line(run))
+
+
+class SnappedQuoteMerges(MergeCase):
+    """chunk_claims.py may snap a claim's quote to its verbatim run; stage V copies the quote of the chunk it was given."""
+    ORIG = "He says: runs 12 services"
+
+    def setUp(self):
+        super().setUp()
+        self.write("claims_batch_1.json", [{**claim(1, 1, S1), "quote": self.ORIG}, claim(1, 2, S2)])
+        self.write("chunk_1.json", {"chunk": 1, "scope": "all", "claims": [
+            {**claim(1, 1, S1), "quote_original": self.ORIG}, claim(1, 2, S2), claim(2, 1, S3)]})   # B1-C01's quote is "runs 12 services"
+
+    def quote_of(self, fid):       # merge renumbers findings C01… in document order; B1-C01 is the first
+        findings, _, _, errors = M.merge(self.dir)
+        self.assertEqual(errors, [])
+        return findings[0]["quote"]
+
+    def test_a_finding_with_the_chunks_snapped_quote_merges(self):
+        self.assertEqual(self.quote_of("B1-C01"), "runs 12 services")
+
+    def test_a_finding_that_kept_the_original_quote_is_repaired_to_the_snapped_one(self):
+        rows = json.loads((self.dir / "findings_chunk_1.json").read_text())
+        rows[0]["quote"] = self.ORIG
+        self.write("findings_chunk_1.json", rows)
+        self.assertEqual(self.quote_of("B1-C01"), "runs 12 services")
+
+    def test_a_finding_that_omits_the_quote_gets_the_snapped_one(self):
+        rows = json.loads((self.dir / "findings_chunk_1.json").read_text())
+        del rows[0]["quote"]
+        self.write("findings_chunk_1.json", rows)
+        self.assertEqual(self.quote_of("B1-C01"), "runs 12 services")
+
+    def test_a_quote_that_is_neither_is_still_refused(self):
+        rows = json.loads((self.dir / "findings_chunk_1.json").read_text())
+        rows[0]["quote"] = "runs 99 services"
+        self.write("findings_chunk_1.json", rows)
+        self.has_error("B1-C01", "quote")
+
+
+class RepairedPidMerges(MergeCase):
+    """chunk_claims.py --repair-anchors may give a row claim its row id as p_id; stage V copies the p_id of the chunk it was given."""
+
+    def setUp(self):
+        super().setUp()
+        self.write("claims_batch_1.json", [{**claim(1, 1, S1), "p_id": "p302"}, claim(1, 2, S2)])
+        self.write("chunk_1.json", {"chunk": 1, "scope": "all", "claims": [
+            {**claim(1, 1, S1), "p_id": "t13r2", "p_id_original": "p302"}, claim(1, 2, S2), claim(2, 1, S3)]})
+
+    def merged_first(self, **changes):
+        rows = json.loads((self.dir / "findings_chunk_1.json").read_text())
+        rows[0].update(changes)
+        if "p_id" not in changes:
+            rows[0]["p_id"] = "t13r2"
+        self.write("findings_chunk_1.json", rows)
+        findings, _, _, errors = M.merge(self.dir)
+        return findings, errors
+
+    def test_a_finding_with_the_chunks_row_id_merges(self):
+        findings, errors = self.merged_first()
+        self.assertEqual(errors, [])
+        self.assertEqual(findings[0]["p_id"], "t13r2")
+
+    def test_a_finding_that_kept_the_original_p_id_is_repaired_to_the_row_id(self):
+        findings, errors = self.merged_first(p_id="p302")
+        self.assertEqual(errors, [])
+        self.assertEqual(findings[0]["p_id"], "t13r2")
+
+    def test_a_p_id_that_is_neither_is_still_refused(self):
+        self.write("findings_chunk_1.json", [finding("B1-C01", S1, p_id="p999"), finding("B1-C02", S2), finding("B2-C01", S3)])
+        self.has_error("B1-C01", "p_id")

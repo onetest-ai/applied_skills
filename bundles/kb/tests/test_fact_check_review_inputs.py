@@ -72,7 +72,7 @@ class Prepare(_Run):
         r = subprocess.run([sys.executable, "-I", str(DECK / "apply_slide_review.py"), str(self.d / "findings.json"),
                             "--run", str(self.d / "run.json"), "--prepare", str(self.d)], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(json.loads(r.stdout), {"slides": [1]})
+        self.assertEqual(json.loads(r.stdout), {"slides": [1], "images": {}})   # no render in this folder, so no image to name
 
 
 class ConflictedInContext(_Run):

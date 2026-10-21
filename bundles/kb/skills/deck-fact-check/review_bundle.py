@@ -18,13 +18,15 @@ This file ships byte-identical in doc-fact-check/ and deck-fact-check/ (a drift 
 from __future__ import annotations
 
 import argparse
+import datetime as dt
+import json
 import sys
 import zipfile
 from pathlib import Path
 
 WORK_PATTERNS = ("sections.json", "stats.json", "batches.json", "batch_*.json", "claims_batch_*.json",
                  "coverage_batch_*.json", "claims_figures.json", "chunks.json", "chunk_*.json",
-                 "findings_chunk_*.json", "brain_context.json", "timings.json", "media/*")
+                 "findings_chunk_*.json", "slide_review_*.json", "brain_context.json", "timings.json", "media/*")
 RUN_FILES = ("findings.json", "run.json", "coverage.json", "baseline.md", "baseline.sources.json")
 README = """What this zip holds (fact-check review data)
 
@@ -36,6 +38,7 @@ work/stats.json      counts, risk tags, what was left out (hidden slides, text n
 work/batch_*.json    the text handed to each extract worker
 work/claims_*.json   the claims extracted (quote, claim, questions), per batch and for figures
 work/chunk_*.json    the claims handed to each verify worker; findings_chunk_*.json: what each returned
+work/file_times.json when each worker's file was written (UTC); the zip itself stamps every entry 1980, so a trace of the run needs this
 work/media/          the images the vision step read
 """
 STAMP = (1980, 1, 1, 0, 0, 0)
@@ -53,12 +56,19 @@ def members(work: Path, run: Path) -> list[tuple[str, Path]]:
     return sorted(out.items())
 
 
+def file_times(files: list[tuple[str, Path]]) -> dict[str, str]:
+    """When each work file was last written (UTC, to the second); the images are not workers."""
+    return {a: dt.datetime.fromtimestamp(p.stat().st_mtime, dt.timezone.utc).isoformat(timespec="seconds")
+            for a, p in files if a.startswith("work/") and not a.startswith("work/media/")}
+
+
 def write_bundle(work, run, out) -> int:
     work, run, out = Path(work), Path(run), Path(out)
     files = members(work, run)
+    extra = [("work/file_times.json", json.dumps(file_times(files), indent=2, sort_keys=True).encode("utf-8"))]
     tmp = out.with_name(out.name + ".tmp")
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
-        for arc, data in [("README.txt", README.encode("utf-8"))] + [(a, p.read_bytes()) for a, p in files]:
+        for arc, data in [("README.txt", README.encode("utf-8"))] + [(a, p.read_bytes()) for a, p in files] + extra:
             info = zipfile.ZipInfo(arc, date_time=STAMP)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o644 << 16

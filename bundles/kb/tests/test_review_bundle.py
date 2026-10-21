@@ -63,6 +63,21 @@ class ReviewBundle(unittest.TestCase):
         bundle(self.work, self.run, b)
         self.assertEqual(a.read_bytes(), b.read_bytes())
 
+    def test_records_when_each_worker_file_was_written(self):
+        """The zip stamps every entry 1980 (so it is reproducible), which erases when each worker finished; work/file_times.json keeps it
+        (UTC, to the second), so a run's trace of stage and worker times can be drawn from the bundle alone."""
+        import os
+        (self.work / "slide_review_3.json").write_text("[]")
+        for name, when in (("claims_batch_1.json", 1_790_000_000), ("findings_chunk_1.json", 1_790_000_600), ("slide_review_3.json", 1_790_000_900)):
+            os.utime(self.work / name, (when, when))
+        out = self.d / "t.zip"
+        self.assertEqual(bundle(self.work, self.run, out).returncode, 0)
+        times = json.loads(zipfile.ZipFile(out).read("work/file_times.json"))
+        self.assertEqual(times["work/claims_batch_1.json"], "2026-09-21T14:13:20+00:00")
+        self.assertEqual(times["work/findings_chunk_1.json"], "2026-09-21T14:23:20+00:00")
+        self.assertIn("work/slide_review_3.json", times)
+        self.assertFalse(any(n.startswith("work/media/") for n in times), "images are not workers")
+
     def test_refuses_anything_but_a_zip_and_a_missing_work_dir(self):
         r = bundle(self.work, self.run, self.d / "deck.pptx")
         self.assertEqual(r.returncode, 2)
@@ -84,7 +99,7 @@ class InstallFallback(unittest.TestCase):
     """Spec F4: a locked-down Python refuses a plain pip install; step 0 says exactly what to do."""
 
     def test_step_0_names_the_externally_managed_fallback(self):
-        for skill, pkgs in (("doc-fact-check", '"python-docx>=1.2"'), ("deck-fact-check", "python-pptx pymupdf")):
+        for skill, pkgs in (("doc-fact-check", '"python-docx>=1.2"'), ("deck-fact-check", 'python-pptx "pymupdf<2"')):
             text = (SKILLS / skill / "SKILL.md").read_text(encoding="utf-8")
             step0 = text[text.index("### 0. Resolve"):text.index("### 0b.")]
             with self.subTest(skill=skill):

@@ -230,16 +230,89 @@ def _fold(t: str) -> str:
     return " ".join(str(t).translate(_QUOTE_FOLD).split()).casefold()
 
 
+SNAP_MIN_WORDS = 4
+
+
+def _word(w: str) -> str:
+    return re.sub(r"^\W+|\W+$", "", _fold(w))
+
+
+def sentence_text(batch: dict) -> dict[str, str]:
+    """s_id -> sentence text of one batch (shared by quote_warnings and the quote snap)."""
+    return {sen["s_id"]: str(sen.get("text", ""))
+            for sec in batch.get("sections", []) or []
+            for par in sec.get("paragraphs", []) or []
+            for sen in par.get("sentences", []) or []
+            if isinstance(sen, dict) and isinstance(sen.get("s_id"), str)}
+
+
+def snap_quote(quote: str, source: str, min_words: int = SNAP_MIN_WORDS) -> str | None:
+    """The longest run of the quote's words that appears verbatim in `source`, as written there; None if shorter than min_words."""
+    src = list(re.finditer(r"\S+", source))
+    qw, sw = [_word(w) for w in quote.split()], [_word(m.group()) for m in src]
+    best_len, best_end = 0, 0
+    prev = [0] * (len(sw) + 1)                      # longest common contiguous word run; sentences are short
+    for i in range(len(qw)):
+        cur = [0] * (len(sw) + 1)
+        for j in range(len(sw)):
+            if qw[i] and qw[i] == sw[j]:
+                cur[j + 1] = prev[j] + 1
+                if cur[j + 1] > best_len:
+                    best_len, best_end = cur[j + 1], j + 1
+        prev = cur
+    if best_len < min_words:
+        return None
+    return source[src[best_end - best_len].start(): src[best_end - 1].end()]
+
+
+def row_cells(batch: dict) -> dict[str, list[str]]:
+    """s_id -> the cells of a table row (a comment anchors inside one cell, so a row quote is snapped cell by cell)."""
+    return {r["s_id"]: [str(x) for x in r.get("cells") or []]
+            for sec in batch.get("sections", []) or []
+            for tab in sec.get("tables", []) or []
+            for r in tab.get("rows", []) or []
+            if isinstance(r, dict) and isinstance(r.get("s_id"), str)}
+
+
+def snap_claim(c: dict, texts: dict[str, str], cells: dict[str, list[str]] | None = None) -> dict:
+    """A text claim whose quote is not verbatim in its sentence(s) (or, for a table row, in one cell) gets the longest verbatim run of
+    that quote, the original kept as `quote_original`. Unchanged when the quote is already verbatim, no run reaches SNAP_MIN_WORDS,
+    or the claim is a figure."""
+    if c.get("type") == "FIGURE" or str(c.get("claim_id", "")).startswith("I"):
+        return c
+    sid = c.get("s_id")
+    extra = c.get("s_ids") if isinstance(c.get("s_ids"), list) else []
+    ids = [x for x in [sid, *extra] if isinstance(x, str)]      # malformed ids are reported as errors by chunk()
+    if isinstance(sid, str) and sid in (cells or {}):
+        pieces = cells[sid]
+    else:
+        pieces = [" ".join(texts.get(i, "") for i in dict.fromkeys(ids))]
+    quote = str(c.get("quote", ""))
+    if not any(pieces) or any(_fold(quote) in _fold(x) for x in pieces):
+        return c
+    span = max((snap_quote(quote, x) or "" for x in pieces), key=len)
+    return {**c, "quote": span, "quote_original": quote} if span else c
+
+
+def repair_row_p_id(c: dict, cells: dict[str, list[str]]) -> dict:
+    """A table-row claim's p_id is its row id (what Word's paragraph locator calls the cell); stage E sometimes writes a nearby
+    body paragraph id, and a comment is only written where the paragraph's id equals the finding's p_id. The original is kept as `p_id_original`."""
+    sid = c.get("s_id")
+    if isinstance(sid, str) and sid in (cells or {}) and c.get("p_id") != sid:
+        return {**c, "p_id": sid, "p_id_original": c.get("p_id")}
+    return c
+
+
+def repair_claim(c: dict, texts: dict[str, str], cells: dict[str, list[str]]) -> dict:
+    """What `--repair-anchors` does to one text claim: its quote is cut to a verbatim run, a row claim gets its row id as p_id."""
+    return repair_row_p_id(snap_claim(c, texts, cells), cells)
+
+
 def quote_warnings(k: int, batch: dict, claims: list) -> list[str]:
     """Warn (never fail) on text quotes over MAX_QUOTE_WORDS words, or not verbatim in the sentences they
     span. Table rows are checked for length only (a row quote may join cells). Figure claims are not text
     claims and are not checked here."""
-    text: dict[str, str] = {}
-    for sec in batch.get("sections", []) or []:
-        for par in sec.get("paragraphs", []) or []:
-            for sen in par.get("sentences", []) or []:
-                if isinstance(sen, dict) and isinstance(sen.get("s_id"), str):
-                    text[sen["s_id"]] = str(sen.get("text", ""))
+    text = sentence_text(batch)
     out: list[str] = []
     for c in claims:
         if not isinstance(c, dict):
@@ -445,8 +518,10 @@ def duplicate_figures(d: Path, claims: list[dict], whole: dict[str, dict]) -> tu
 
 
 def chunk(d: Path, scope: str = "all", size: int = 15, warnings: list[str] | None = None,
-          dry_run: bool = False, spread: bool = False) -> tuple[list[dict], list[str]]:
-    """Validate every batch's claims and write the chunks. dry_run: validate only, delete and write nothing."""
+          dry_run: bool = False, spread: bool = False, repair: bool = False) -> tuple[list[dict], list[str]]:
+    """Validate every batch's claims and write the chunks. dry_run: validate only, delete and write nothing.
+    repair: make each claim anchorable in Word (a quote cut to its longest verbatim run; a table row's p_id set to its row id).
+    Word only: a deck comment anchors to a shape, and its Suggested length limit is computed from the quote."""
     if scope not in ("all", "risk"):
         raise ValueError(f"scope must be 'all' or 'risk', got {scope!r}")
     # A failed run must leave no chunk files behind, so clear them before validating.
@@ -488,6 +563,7 @@ def chunk(d: Path, scope: str = "all", size: int = 15, warnings: list[str] | Non
             continue
         risk = _risk_by_s_id(batch)
         known = known_text_by_s_id(batch, whole)
+        texts, cells = sentence_text(batch), row_cells(batch)
         cname = f"coverage_batch_{k}.json"
         cov = _load(d / cname, errors) if (d / cname).exists() else []
         if not isinstance(cov, list):
@@ -498,6 +574,8 @@ def chunk(d: Path, scope: str = "all", size: int = 15, warnings: list[str] | Non
             _, cov_errors = section_coverage(k, b["sections"], [c for c in found if isinstance(c, dict)], cov, cname)
             errors.extend(cov_errors)
         errors.extend(risk_coverage_errors(k, batch, found, cov, cname, scope))
+        if repair:
+            found = [repair_claim(c, texts, cells) if isinstance(c, dict) else c for c in found]
         if warnings is not None:
             warnings.extend(quote_warnings(k, batch, found))
         for c in found:
@@ -571,6 +649,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--clock", metavar="WORK_DIR", help="record this step's start and end in <work dir>/timings.json")
     ap.add_argument("--stride", action="store_true", help="deal claims round-robin (figure claims first) instead of "
                     "consecutive chunks, so heavy claims spread across workers (deck-fact-check)")
+    ap.add_argument("--repair-anchors", action="store_true", help="make each claim anchorable by a Word comment: cut a quote that "
+                    "is not verbatim to its longest verbatim run of at least 4 words, and give a table-row claim its row id as p_id "
+                    "(doc-fact-check only)")
     ap.add_argument("--check-batch", type=int, metavar="K", help="a stage-E worker's self-check: list only batch K's "
                     "problems and write nothing (exit 0 and 'batch K: OK' when there are none)")
     return ap
@@ -597,7 +678,7 @@ def main(argv=None) -> int:
         return 2
     if a.clock:
         run_clock.stamp(a.clock, "chunk", "start")
-    index, errors = chunk(Path(a.dir), a.scope, a.chunk_size, warnings=warnings, spread=a.stride)
+    index, errors = chunk(Path(a.dir), a.scope, a.chunk_size, warnings=warnings, spread=a.stride, repair=a.repair_anchors)
     if warnings:
         print(f"chunk_claims.py: {len(warnings)} quote warning(s) (not errors):", file=sys.stderr)
         for w in warnings:

@@ -252,6 +252,8 @@ def merge(d: Path, scope: str = "all", wave_size: int = 10, comments: str = "maj
         if cfile is not None and cfile.get("scope") != scope:
             errors.append(f"chunk_{j}.json: chunked with scope {cfile.get('scope')!r} but merging with --scope {scope} "
                           f"(re-run chunk_claims.py with the same scope)")
+        given = {c.get("claim_id"): c for c in (cfile or {}).get("claims", []) if isinstance(c, dict)} \
+            if isinstance((cfile or {}).get("claims"), list) else {}   # the claims as stage V got them: chunk_claims.py --repair-anchors may have changed quote and p_id
         fname = f"findings_chunk_{j}.json"
         rows = _load_list(d / fname, errors, required=True) or []
         if _looks_unverified(rows):
@@ -262,7 +264,7 @@ def merge(d: Path, scope: str = "all", wave_size: int = 10, comments: str = "maj
                 f["id"] = f.pop("claim_id")
             if isinstance(f, dict) and f.get("id") in claims:
                 for k in COPIED_FROM_CLAIM:
-                    f.setdefault(k, claims[f["id"]].get(k))
+                    f.setdefault(k, given[f["id"]].get(k) if k in ("quote", "p_id") and f["id"] in given else claims[f["id"]].get(k))
             fid = _check_finding(f, fname, errors, comments)
             if fid is None:
                 continue
@@ -273,12 +275,16 @@ def merge(d: Path, scope: str = "all", wave_size: int = 10, comments: str = "maj
             if fid in claims:
                 if f.get("claim") != claims[fid].get("claim"):
                     f["claim"] = claims[fid].get("claim")   # what was checked is the extract's claim (spec §10 R2)
-                if f.get("quote") != claims[fid].get("quote") and same_text(f.get("quote"), claims[fid].get("quote")):
-                    f["quote"] = claims[fid].get("quote")   # a re-typed apostrophe or dash is the same quote
+                sent = given.get(fid, claims[fid])         # the claim as stage V received it (its quote and p_id may be repaired)
+                want, want_pid = sent.get("quote"), sent.get("p_id")
+                if f.get("quote") != want and (f.get("quote") == claims[fid].get("quote") or same_text(f.get("quote"), want)):
+                    f["quote"] = want   # a re-typed apostrophe or dash is the same quote; the stage-E original of a snapped quote is repaired
+                if f.get("p_id") != want_pid and f.get("p_id") == claims[fid].get("p_id"):
+                    f["p_id"] = want_pid   # the stage-E original of a repaired p_id is repaired to it
                 if section_key(f.get("section")) == section_key(claims[fid].get("section")):
                     f["section"] = claims[fid].get("section")
                 for key in ("section", "quote", "p_id"):
-                    a, b = f.get(key), claims[fid].get(key)
+                    a, b = f.get(key), (want if key == "quote" else want_pid if key == "p_id" else claims[fid].get(key))
                     if (section_key(a) != section_key(b)) if key == "section" else (a != b):
                         mismatch = True
                         errors.append(f"{fname}: {fid}: {key} {a!r} differs from its claim's {key} {b!r} "
