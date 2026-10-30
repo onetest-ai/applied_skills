@@ -60,3 +60,12 @@ def test_context_lists_room_recordings(tmp_path):
 
 def test_extract_says_what_to_do_with_similar():
     assert "`similar`" in EXTRACT and "suggest_merge" in FLAT and "never keep both silently" in FLAT
+
+
+def test_new_nodes_pass_the_tracking_rule_before_the_admission_bar():
+    # Oct 30: 17 of 20 invented nodes were deck tweaks and booked calls; they have an owner or are a "session", so the
+    # admission bar let them in although the rule says they are not work. The rule decides first, the bar second.
+    p2 = EXTRACT[EXTRACT.index("## Pass 2"):EXTRACT.index("## Schema")]
+    first = p2[:p2.index("**Admission bar:**")]
+    assert "not work by the tracking rule" in first and "never created" in first
+    assert "a `session` task is a deliverable session" in p2.lower()

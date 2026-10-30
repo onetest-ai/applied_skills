@@ -166,6 +166,19 @@ def save_evidence(store, x):
     os.replace(tmp, p)
 
 
+def rerender(store):
+    """Rewrite each evidence .md that differs from render_md of its .json (the .md is derived; the .json, the index, is
+    never touched). Returns how many were rewritten."""
+    n = 0
+    for x in evidence(store).values():
+        p = P(store, "evidence", x["id"] + ".md")
+        md = render_md(x)
+        if not p.exists() or p.read_text() != md:
+            p.write_text(md)
+            n += 1
+    return n
+
+
 def take_teams_time(store, eid, teams):
     """The folder copy `eid` of the meeting `teams` holds takes the Teams time: same id, so its events (which the fold
     dates by their evidence item) and every mid stay valid. Done only when the day differs."""
@@ -176,6 +189,24 @@ def take_teams_time(store, eid, teams):
     x.update(at=teams["at"], date=teams["at"][:10], date_source="teams", redated_from=x["date"], redated_by=teams["id"])
     save_evidence(store, x)
     return True
+
+
+MAX_LINE = 1500   # Claude Code's Read shows ~2000 characters of a line: a longer one hides the rest from the agent
+
+
+def _lines(text, prefix=""):
+    """`text` in lines of at most MAX_LINE characters, each starting with `prefix`: split after a sentence end when one
+    is close enough, otherwise between words. Every word is kept, in order."""
+    room = MAX_LINE - len(prefix)
+    out, rest = [], " ".join(text.split())
+    while len(rest) > room:
+        cut = max(rest.rfind(". ", 0, room), rest.rfind("? ", 0, room), rest.rfind("! ", 0, room))
+        cut = cut + 1 if cut > room // 2 else rest.rfind(" ", 0, room)
+        if cut <= 0:
+            cut = room
+        out.append(prefix + rest[:cut].strip())
+        rest = rest[cut:].strip()
+    return out + [prefix + rest]
 
 
 def render_md(x):
@@ -190,9 +221,9 @@ def render_md(x):
     body = []
     for t in x.get("turns") or []:
         if not t.get("bc"):
-            body.append(f"[{t['ts']}] {t['speaker']}: {t['text']}")
+            body.append("\n".join(_lines(t["text"], f"[{t['ts']}] {t['speaker']}: ")))
     if x.get("text"):
-        body.append(x["text"])
+        body.append("\n".join(_lines(x["text"])))
     return "\n".join(head) + "\n\n" + "\n\n".join(body) + "\n"
 
 

@@ -142,9 +142,14 @@ never treat it as not work because of who owns it.
 
 ## Pass 2 — new nodes
 Only for work no existing node covers (check the whole tree: wording, nicknames, ASR mangling differ).
+- **The tracking rule decides first.** Anything that is not work by the tracking rule (the bullets above: a deck or
+  slide tweak, booking or moving a session, a same-day errand, workshop ideas, …) is never created or proposed, however
+  clearly someone owns it; at most a `note` on the node it concerns. Only then does the admission bar apply.
 - New story: needs `ac` (2–4), observable.
 - New task: under a story (create the story first in the same file via `ref`). **Admission bar:** an owner, a
   date, or type session/dependency. Logistics, colour, same-day self-chores ("I'll forward the invite") → `note`.
+  A `session` task is a deliverable session with the client or stakeholders (an interview, a workshop, a readout),
+  never a call booked to prepare, review or rehearse our own material.
 - **Proposed work → `propose`, never dropped.** Someone puts forward concrete work ("it's a good project for the
   AI guys", "we should digitise the boards", "can someone build…") and nobody rejects it, but no owner or date is
   committed. That is not a `create` (it fails the admission bar) and not silence: write `op: "propose"` with the

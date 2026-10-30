@@ -516,6 +516,12 @@ def cmd_ai(a):
     sys.exit(0 if r["ok"] else 1)
 
 
+def cmd_render_evidence(a):
+    """Rewrite every evidence .md from its .json in the current format (lines short enough to be read whole)."""
+    cfg, st = cfg_store(a)
+    out({"status": "ok", "rewritten": S.rerender(st)})
+
+
 def cmd_schedule(a):
     """Print (never install) a cron line or launchd plist for an unattended `/taska:run --due`, run through `taska ai`
     so it finds a working sign-in (a stored token, then CodeMie)."""
@@ -546,6 +552,7 @@ def main():
     p = sp.add_parser("sync"); p.add_argument("--source"); p.add_argument("--dry", action="store_true",
                                                                           help="run against a scratch copy of the store")
     p = sp.add_parser("teams-report"); p.add_argument("--date")
+    sp.add_parser("render-evidence", help="rewrite every evidence .md from its .json (the .json is never changed)")
     sp.add_parser("infer", help="propose the closures a done/held task implies (each waits for Confirm)")
     p = sp.add_parser("repair-evidence", help="re-date meetings dated only by file arrival; mark re-synced copies")
     p.add_argument("--apply", action="store_true", help="write the repair (default: report only)")
