@@ -57,5 +57,8 @@ command prints JSON.
 5. `$TASKA setup` (creates the epics once), then `$TASKA pending`. Ask how far back to backfill (default: the last
    two weeks); for a long history start small: process the oldest ~5 items with `/taska:run`, show the user the
    tree in `/taska:workbench`, and adjust people or plan before the rest.
-6. Offer unattended runs: `$TASKA schedule --time 18:30` (cron) or `--launchd` prints the entry; show it and let
-   the user install it themselves.
+6. Offer unattended runs. They need a sign-in that works with nobody at the keyboard: run `$TASKA ai --probe`.
+   If it is not `ok`, tell the user the fix it names: a subscription token (they run `claude setup-token` and save
+   the token in `~/.config/taska/claude` with `chmod 600`; it lasts about a year), or `codemie profile login`
+   (lasts about a day, so runs after a weekend need a fresh login). Then `$TASKA schedule --time 18:30` (cron) or
+   `--launchd` prints the entry, which runs through `taska ai`; show it and let the user install it themselves.

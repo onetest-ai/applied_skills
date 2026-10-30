@@ -20,6 +20,9 @@ change is checked by a second agent, and what went quiet becomes a ranked list o
   e.g. `~/.codemie/claude-plugin/skills/msgraph/scripts/msgraph.js`; `[sources.<key>].cli` or `$MSGRAPH_CLI`
   override).
 - Evals only: the `claude` CLI on PATH for the planted end-to-end run (`evals/planted/run.sh`).
+- Unattended runs (`schedule`) reach Claude through `taska ai`: a token in `~/.config/taska/claude` (from
+  `claude setup-token`, chmod 600), else CodeMie while signed in; Bedrock only with `TASKA_ALLOW_BEDROCK=1`.
+  `taska ai --probe` says which works.
 
 ## Model, in one paragraph
 Everything is an append-only event in `<project>/.taska/events.jsonl`; the tree is a fold. Sources become

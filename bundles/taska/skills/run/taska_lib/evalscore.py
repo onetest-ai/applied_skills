@@ -319,7 +319,7 @@ def score(store, gold):
 
     # ── B10: owner accuracy for B7 hits with non-null gold owner ────────────
     b10_items = [(idx, g) for idx, g in b7_items if matches[idx] is not None and g.get("owner") is not None]
-    b10_ok, b10_fails = 0, []
+    b10_ok, b10_fails, owner_ok = 0, [], {}
     for idx, g in b10_items:
         node = N[matches[idx]]
         nown = _node_owner(node)
@@ -337,6 +337,7 @@ def score(store, gold):
                     member_names = {cfg.canonical(m) for m in team.members}
                     if can_nown == team.name or can_nown in member_names:
                         ok = True
+        owner_ok[idx] = ok
         if ok:
             b10_ok += 1
         else:
@@ -432,6 +433,7 @@ def score(store, gold):
         # one line per gold item, never truncated: per-item comparisons read this, not the capped `fails`
         "items": [{"cid": g.get("cid"), "evidence": g.get("evidence"),
                    "match": f"node:{matches[idx]}" if matches[idx] else ("card" if carded_flags[idx] else None)}
+                  | ({"owner_ok": owner_ok[idx]} if idx in owner_ok else {})
                   for idx, g in enumerate(gold)],
     }
     if missing:

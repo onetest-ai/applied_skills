@@ -97,6 +97,11 @@ def fold(store, upto=None, evs=None, ev=None):
     undone = {e["target"] for e in evs if e["type"] == "human" and e["op"] == "undo"}
     decided = {e["target"]: e["op"] for e in evs if e["type"] == "human" and e["op"] in ("accept", "reject")
                and e["mid"] not in undone}
+    seq, accepted_at = {}, {}
+    for i, e in enumerate(evs):
+        seq.setdefault(e.get("mid"), i)
+        if e["type"] == "human" and e["op"] == "accept" and e["mid"] not in undone:
+            accepted_at[e["target"]] = i
     N, notes = {}, defaultdict(list)
 
     def hist(n, e, applied, **extra):
@@ -275,8 +280,23 @@ def fold(store, upto=None, evs=None, ev=None):
         n["depends_on"] = list(dict.fromkeys(resolve(d) for d in n["depends_on"] if resolve(d) != n["id"]))
         n["ac"] = [x for x in n["ac"] if not x.get("dropped")]
         n["due"] = n["due_history"][-1]["due"] if n["due_history"] else None
+        _one_status_decision(n, seq, accepted_at)
     _derive(N)
     return N, notes, order[:lim + 1], ev
+
+
+def _one_status_decision(n, seq, accepted_at):
+    """Status cards waiting on one item are one decision: each names the others as alternatives, and a Confirm
+    supersedes every card that was waiting when it was given (undo restores them; a card arriving later is news)."""
+    cards = [s for s in n["suggestions"] if s["op"] == "status"]
+    for s in cards:
+        if s["status"] == "pending" and any(o["status"] == "accept" and seq.get(s["mid"], 0) < accepted_at.get(o["mid"], -1)
+                                            for o in cards):
+            s["status"] = "superseded"
+    waiting = [s for s in cards if s["status"] == "pending"]
+    if len(waiting) > 1:
+        for s in waiting:
+            s["alternatives"] = [o["mid"] for o in waiting if o is not s]
 
 
 def _apply_status(n, e, setf):

@@ -198,6 +198,7 @@ h3 .count{color:var(--ink-3);font-weight:400}
 .revbanner{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:8px 16px 0;padding:10px 14px;border-radius:var(--r-md);background:var(--warn-soft);border:1px solid var(--warn);color:var(--ink)}
 .revbanner b{color:var(--warn)}.revbanner .btn{margin-left:auto}
 .rev-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:16px 0 6px;font-weight:600}.rev-h .btn{margin-left:auto}
+.rev-alt{border-left:3px solid var(--line);padding-left:8px;display:flex;flex-direction:column;gap:4px}
 .rev-i{border:1px solid var(--line);border-radius:var(--r-md);padding:10px;margin-bottom:8px;display:flex;flex-direction:column;gap:4px}
 .rev-i .t{cursor:pointer;color:var(--accent)}.rev-howto{background:var(--accent-soft);border-radius:var(--r-md);padding:10px 12px;margin-bottom:8px}
 .tcard{border-style:solid;display:flex;flex-direction:column;gap:4px}.tcard.blocker{border-left:3px solid var(--risk)}.tcard.major{border-left:3px solid var(--warn)}
@@ -442,6 +443,16 @@ function deliverableRows(nodes, history, calls, ci){
             ac_met: ac.filter(x => x.met).length, ac_total: ac.length, landed};
   });
 }
+function decisionsOf(pending){
+  // cards waiting on one item that name each other (s.alternatives, from the fold) are one decision
+  const out = [], at = {};
+  for (const p of pending){
+    if (!(p[1].alternatives||[]).length){ out.push([p]); continue; }
+    if (at[p[0].id] === undefined){ at[p[0].id] = out.length; out.push([]); }
+    out[at[p[0].id]].push(p);
+  }
+  return out;
+}
 /*PURE:END*/
 
 const KINDNAME = {internal:"Internal", client:"Client", event:"Calendar", file:"File", pr:"Pull request", issue:"Issue"};
@@ -661,7 +672,7 @@ function pendingAll(){
   return out;
 }
 function renderReviewBanner(){
-  const n = pendingAll().length, b = $("#revbanner");
+  const n = decisionsOf(pendingAll()).length, b = $("#revbanner");
   $("#revcount").textContent = n ? n : "";
   if (!n || tab==="review"){ b.hidden = true; return; }
   b.hidden = false;
@@ -677,29 +688,38 @@ function srcText(s){
   if (s.cause) return "inferred from " + s.cause + (s.gate&&s.gate.rule ? " (rule)" : s.gate&&s.gate.score ? ` (model ${(+s.gate.score).toFixed(2)})` : "");
   return (s.source==="teams" ? "Teams" : "meeting") + (s.speaker ? " · " + s.speaker : "") + (s.gate&&s.gate.score ? ` (model ${(+s.gate.score).toFixed(2)})` : "");
 }
+function cardBody(x, s, ro, confirm){
+  return `<div><b>Change:</b> <span class="mono">${esc(changeText(x, s))}</span></div>
+        ${s.why?`<div><b>Why:</b> ${esc(s.why)}</div>`:""}
+        ${s.quote?`<div class="muted">“${esc(s.quote.slice(0,200))}” · ${esc(srcText(s))} · <span class="mono">${fmt(s.date)}</span></div>`:""}
+        ${!ro && s.op==="propose" && (s.owner_options||[]).length ? `<div class="tbtns"><b>Owner:</b> <select class="btn" id="ow-${s.mid}"><option value="">${esc(s.owner)} (team)</option>${s.owner_options.map(o=>`<option value="${esc(o)}">${esc(o)}</option>`).join("")}</select></div>` : ""}
+        ${ro?"":`<div class="tbtns"><button class="btn primary" data-accept="${s.mid}">${confirm}</button> <button class="btn" data-rejwhy="${s.mid}">Reject</button>${s.link?` <a class="btn" href="${esc(s.link)}" target="_blank" rel="noopener">Open in Teams</a>`:""}</div>
+        ${rejOpen.has(s.mid)?`<div class="tbtns"><select class="btn" id="rw-${s.mid}">${s.op==="propose"?`<option value="not_agreed">Not agreed in the meeting</option><option value="already_tracked">Already tracked</option><option value="not_our_work">Not our work</option>`:""}<option value="not_done_yet">Not done yet</option><option value="wrong_task">Wrong task</option><option value="cannot_decide">Sender can't decide this</option><option value="already_handled">Already handled</option></select> <button class="btn" data-reject="${s.mid}">Reject</button></div>`:""}`}`;
+}
 function renderReview(){
   const all = pendingAll(), ro = !LIVE, ns = NL();
   if (!all.length){ $("#side").innerHTML = `<div class="blank"><b>Nothing to review</b>Proposals from meetings, Teams and inferred closures appear here and wait for your decision.</div>`; return; }
   const groups = {};
-  for (const [x, s] of all){
+  for (const d of decisionsOf(all)){
+    const s = d[0][1];
     const k = s.cause ? "cause:" + s.cause : s.op==="propose" ? "propose" : s.op.startsWith("suggest_") ? "struct" : (s.source==="teams" ? "teams" : "meeting");
-    (groups[k] ||= []).push([x, s]);
+    (groups[k] ||= []).push(d);
   }
   const title = k => k.startsWith("cause:") ? (() => { const c = ns[k.slice(6)]; return `Because <span class="t" data-go="${c?c.id:""}">${esc(k.slice(6))}</span> ${esc(c?c.title.slice(0,60):"")} is ${esc(c?c.state.replace("_"," "):"")}`; })()
     : k==="teams" ? "From Teams messages" : k==="struct" ? "Move or merge suggestions" : k==="propose" ? "New work proposed in meetings (nobody committed yet)" : "From meetings";
   const H = [`<div class="rev-howto"><b>What to do</b><br>For each item, read <b>Why</b> and the quote. Click <b>Confirm</b> if it's right, <b>Reject</b> if not (pick a reason).
     <b>Confirm all</b> accepts a whole group. Nothing changes in the tree until you click.${ro?`<br><b>This is a read-only export — open the workbench from the dashboard to decide.</b>`:""}</div>`];
   for (const [k, items] of Object.entries(groups)){
-    H.push(`<div class="rev-h"><span>${title(k)}</span><span class="count mono">${items.length}</span>${!ro && items.length>1 ? `<button class="btn primary" data-acceptall="${items.map(([x,s])=>s.mid).join(",")}">Confirm all ${items.length}</button>` : ""}</div>`);
-    for (const [x, s] of items){
-      H.push(`<div class="rev-i"><div><span class="t" data-go="${x.id}"><b>${esc(x.id)}</b> ${esc(x.title.slice(0,80))}</span> <span class="muted">· now ${esc(x.state.replace("_"," "))}</span></div>
-        <div><b>Change:</b> <span class="mono">${esc(changeText(x, s))}</span></div>
-        ${s.why?`<div><b>Why:</b> ${esc(s.why)}</div>`:""}
-        ${s.quote?`<div class="muted">“${esc(s.quote.slice(0,200))}” · ${esc(srcText(s))} · <span class="mono">${fmt(s.date)}</span></div>`:""}
-        ${!ro && s.op==="propose" && (s.owner_options||[]).length ? `<div class="tbtns"><b>Owner:</b> <select class="btn" id="ow-${s.mid}"><option value="">${esc(s.owner)} (team)</option>${s.owner_options.map(o=>`<option value="${esc(o)}">${esc(o)}</option>`).join("")}</select></div>` : ""}
-        ${ro?"":`<div class="tbtns"><button class="btn primary" data-accept="${s.mid}">Confirm</button> <button class="btn" data-rejwhy="${s.mid}">Reject</button>${s.link?` <a class="btn" href="${esc(s.link)}" target="_blank" rel="noopener">Open in Teams</a>`:""}</div>
-        ${rejOpen.has(s.mid)?`<div class="tbtns"><select class="btn" id="rw-${s.mid}">${s.op==="propose"?`<option value="not_agreed">Not agreed in the meeting</option><option value="already_tracked">Already tracked</option><option value="not_our_work">Not our work</option>`:""}<option value="not_done_yet">Not done yet</option><option value="wrong_task">Wrong task</option><option value="cannot_decide">Sender can't decide this</option><option value="already_handled">Already handled</option></select> <button class="btn" data-reject="${s.mid}">Reject</button></div>`:""}`}
-      </div>`);
+    const single = items.filter(d => d.length === 1).map(d => d[0][1].mid);   // never one side of a disagreement
+    H.push(`<div class="rev-h"><span>${title(k)}</span><span class="count mono">${items.length}</span>${!ro && single.length>1 ? `<button class="btn primary" data-acceptall="${single.join(",")}">Confirm all ${single.length}</button>` : ""}</div>`);
+    for (const d of items){
+      const [x] = d[0];
+      const head = `<div><span class="t" data-go="${x.id}"><b>${esc(x.id)}</b> ${esc(x.title.slice(0,80))}</span> <span class="muted">· now ${esc(x.state.replace("_"," "))}</span></div>`;
+      if (d.length === 1){ H.push(`<div class="rev-i">${head}${cardBody(x, d[0][1], ro, "Confirm")}</div>`); continue; }
+      const same = new Set(d.map(([, s]) => changeText(x, s))).size === 1;
+      H.push(`<div class="rev-i">${head}<div><b>${d.length} messages ${same ? "say the same" : "disagree"}:</b> confirm the one that is right.</div>
+        ${d.map(([, s]) => `<div class="rev-alt">${cardBody(x, s, ro, "Confirm this")}</div>`).join("")}
+        ${ro?"":`<div class="tbtns"><button class="btn" data-rejall="${d.map(([, s]) => s.mid).join(",")}">Reject all</button></div>`}</div>`);
     }
   }
   $("#side").innerHTML = H.join("");
@@ -872,15 +892,16 @@ async function send(body, msg){
   toast((msg || "Saved") + (past ? " · applied to the current tree" : "")); await load(true);
   if (past){ ci = D.calls.length-1; render(); }
 }
-async function acceptAll(mids){
+async function decideAll(mids, op){
   if (!LIVE){ toast("This is a read-only copy: nothing was saved. Make the change in the live workbench (taska serve)."); return; }
   let ok = 0, err = "";
   for (const m of mids){
-    const r = await fetch("/api/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({op:"accept", target:m})});
+    const r = await fetch("/api/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({op, target:m})});
     if (r.ok) ok++; else { const j = await r.json().catch(()=>({})); err = j.error || "Could not save"; }
   }
   recapFor = null;
-  toast(err ? `Confirmed ${ok} of ${mids.length}: ${err}` : `Confirmed ${ok}`); await load(true);
+  const did = op === "accept" ? "Confirmed" : "Rejected";
+  toast(err ? `${did} ${ok} of ${mids.length}: ${err}` : `${did} ${ok}`); await load(true);
 }
 function toast(m){ const t = $("#toast"); t.textContent = m; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 1800); }
 
@@ -906,7 +927,7 @@ function bindDetail(n){
 
 /* ---------- events ---------- */
 document.addEventListener("click", e => {
-  const t = e.target.closest("[data-close],.slot[data-i],[data-tog],[data-epic],[data-id],[data-go],[data-i],[data-unlink],[data-accept],[data-acceptall],[data-reject],[data-rejwhy],[data-undo],#golatest,#gorev");
+  const t = e.target.closest("[data-close],.slot[data-i],[data-tog],[data-epic],[data-id],[data-go],[data-i],[data-unlink],[data-accept],[data-acceptall],[data-rejall],[data-reject],[data-rejwhy],[data-undo],#golatest,#gorev");
   if (!t) return;
   if (t.dataset.close){ e.stopPropagation(); return send({op:"edit", node:t.dataset.close, set:{state:"done"}}, "Closed. Undo from its history."); }
   if (t.id==="golatest"){ ci = D.calls.length-1; return render(); }
@@ -916,7 +937,8 @@ document.addEventListener("click", e => {
   if (t.dataset.unlink){ e.stopPropagation(); return send({op:"unlink", node:sel, depends_on:t.dataset.unlink}, "Dependency removed"); }
   if (t.dataset.accept){ const o = document.getElementById("ow-"+t.dataset.accept);
     return send(o && o.value ? {op:"accept", target:t.dataset.accept, owner:o.value} : {op:"accept", target:t.dataset.accept}, "Accepted"); }
-  if (t.dataset.acceptall){ return acceptAll(t.dataset.acceptall.split(",").filter(Boolean)); }
+  if (t.dataset.acceptall){ return decideAll(t.dataset.acceptall.split(",").filter(Boolean), "accept"); }
+  if (t.dataset.rejall){ return decideAll(t.dataset.rejall.split(",").filter(Boolean), "reject"); }
   if (t.dataset.rejwhy){ rejOpen.has(t.dataset.rejwhy) ? rejOpen.delete(t.dataset.rejwhy) : rejOpen.add(t.dataset.rejwhy); return render(); }
   if (t.dataset.reject){ const w = document.getElementById("rw-"+t.dataset.reject); rejOpen.delete(t.dataset.reject);
     return send(w ? {op:"reject", target:t.dataset.reject, reason:w.value} : {op:"reject", target:t.dataset.reject}, "Rejected"); }

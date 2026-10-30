@@ -124,6 +124,10 @@ These are the things that take several files to see, and that tests pass while v
 
 **The workbench says which code it runs.** `/api/version` and `/api/data.code` report the code version at start against the code on disk. The page shows a banner when they differ, because a server started before a deploy silently hides newer ops. A deploy step must restart a stale server. `done` refuses a long meeting with an empty third of its text (`"status": "coverage"`) until it is re-read or `--ack`ed.
 
+**Status cards on one item are one decision.** The fold (`ledger._one_status_decision`) gives every pending status card on a node the others' mids as `alternatives`, and a Confirm turns each card that was waiting at that moment into `superseded` (undo restores it; a card arriving after the Confirm still waits: it is news). A second source for the same change is recorded and joins the decision, never dropped. The workbench groups by `alternatives` (`decisionsOf`), counts decisions rather than cards, and keeps a disagreement out of **Confirm all**. A new source of status cards needs nothing else; a page that lists cards must group the same way.
+
+**Unattended runs reach Claude only through `taska ai`** (`taska_lib/ai.py`): a token in `~/.config/taska/claude` (chmod 600), then CodeMie while signed in, then Bedrock only with `TASKA_ALLOW_BEDROCK=1`. `schedule` writes that form; `ai --probe` is how a run learns before starting that no route answers, and its reasons carry the fix. The token is never printed.
+
 ## Conventions
 
 - **Every `SKILL.md` description opens with the literal `Use when `.** The description is all a model sees when deciding to invoke a skill, so the trigger leads and the capability follows. Enforced by tests in both bundles.

@@ -14,7 +14,7 @@ for _p in (_RUN_DIR, _PLANTED_DIR):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-from generate import generate, per_form, vtt_name
+from generate import call_model, generate, keep, per_form, vtt_name
 from taska_lib import store as S, config as C
 
 
@@ -227,3 +227,33 @@ def test_a_declined_item_recorded_as_a_decision_passes(tmp_path):
 def test_a_declined_item_turned_into_a_task_fails(tmp_path):
     cfg, gold = _declined_store(tmp_path, "task")
     assert per_form(cfg.store, gold)["forms"]["declined"]["ok"] == 0
+
+
+def test_keep_saves_a_run_that_replays_anywhere(tmp_path):
+    """A kept run holds what scoring needs (config, gold, the ledger and its evidence, the meeting) and no path of
+    the machine it ran on, so it can be committed and replayed by a test."""
+    run = tmp_path / "run"
+    (run / "calls").mkdir(parents=True)
+    (run / "calls" / "m.vtt").write_text("WEBVTT\n")
+    (run / ".taska" / "evidence").mkdir(parents=True)
+    (run / ".taska" / "events.jsonl").write_text("{}\n")
+    (run / ".taska" / "evidence" / "e.json").write_text("{}")
+    (run / "gold.json").write_text("[]")
+    (run / "taska.toml").write_text(f'[project]\nname = "Harbor Logistics"\n[sources.meetings]\npath = "{run / "calls"}"\n')
+    dest = keep(run, tmp_path / "kept", 3)
+    assert dest == tmp_path / "kept" / "seed-3"
+    assert {p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file()} == {
+        "calls/m.vtt", ".taska/events.jsonl", ".taska/evidence/e.json", "gold.json", "taska.toml"}
+    assert str(tmp_path) not in (dest / "taska.toml").read_text() and 'path = "calls"' in (dest / "taska.toml").read_text()
+
+
+def test_a_configured_model_command_is_called_once_with_the_arguments(tmp_path, monkeypatch):
+    """TASKA_AI names the program that reaches the model (a launcher choosing its own sign-in); without it the
+    runner keeps calling claude itself."""
+    log = tmp_path / "calls"
+    ai = tmp_path / "ai"
+    ai.write_text(f'#!/bin/sh\necho "$@" >> {log}\n')
+    ai.chmod(0o755)
+    monkeypatch.setenv("TASKA_AI", str(ai))
+    assert call_model(["-p", "hello", "--permission-mode", "acceptEdits"]) == 0
+    assert log.read_text().splitlines() == ["-p hello --permission-mode acceptEdits"]

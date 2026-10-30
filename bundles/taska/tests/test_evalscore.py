@@ -663,3 +663,18 @@ def test_a_rejected_card_is_not_coverage(tmp_path):
     L.human_event(cfg.store, {"op": "reject", "target": "p1", "reason": "not_agreed"})
     r = score(cfg.store, [_gold()])
     assert r["items"][0]["match"] is None and r["carded"] == 0
+
+
+def test_each_item_says_whether_its_owner_is_right(tmp_path):
+    """The per-item list carries owner_ok for every found item whose gold names an owner, so each key item can be
+    its own test: True, False, or absent when there is nothing to compare."""
+    cfg = _cfg(tmp_path)
+    _meeting(cfg)
+    _epics(cfg)
+    _task(cfg, "T001", quote=QUOTE_A, owner="Nora Quill")
+    _processed(cfg)
+    gold = [_gold(covered_by="T001", owner="Nora Quill"), _gold(covered_by="T001", owner="Ravi Tamsin"),
+            _gold(covered_by="T001")]
+    items = score(cfg.store, gold)["items"]
+    assert [i.get("owner_ok") for i in items] == [True, False, None]
+    assert "owner_ok" not in items[2]

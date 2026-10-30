@@ -65,7 +65,7 @@ def test_a_static_export_says_it_cannot_save_edits(tmp_path):
     assert 'id="readonly"' in page and "This is a read-only copy" in page
     send = page[page.index("async function send"):page.index("async function send") + 400]
     assert "if (!LIVE) return;" not in send and "read-only copy" in send
-    bulk = page[page.index("async function acceptAll"):page.index("async function acceptAll") + 300]
+    bulk = page[page.index("async function decideAll"):page.index("async function decideAll") + 300]
     assert "read-only copy" in bulk
 
 

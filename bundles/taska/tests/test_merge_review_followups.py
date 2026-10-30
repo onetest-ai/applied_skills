@@ -139,7 +139,7 @@ def test_a_proposal_needs_a_real_title():
 # ---- the Recap shows the tree after your edit, not before it ----
 def test_the_recap_is_refetched_after_an_edit():
     page = (RUN_DIR / "workbench.html").read_text()
-    for fn in ("async function send(", "async function acceptAll("):
+    for fn in ("async function send(", "async function decideAll("):
         body = page[page.index(fn):].split("\n}\n", 1)[0]
         assert "recapFor = null" in body, fn
 

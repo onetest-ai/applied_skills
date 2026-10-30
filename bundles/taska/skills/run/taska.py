@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from taska_lib import config as C, ledger as L, media, pack as PK, plan as PL, staleness as ST, store as S, workbench as W  # noqa: E402
+from taska_lib import ai as AI, config as C, ledger as L, media, pack as PK, plan as PL, staleness as ST, store as S, workbench as W  # noqa: E402
 from taska_lib.sources import ADAPTERS, msgraph  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -506,11 +506,22 @@ def cmd_score(a):
     out({"status": "ok", **result})
 
 
+def cmd_ai(a):
+    """Reach Claude for an unattended run (taska_lib/ai.py): --probe says which route answers, or how to fix each."""
+    r = AI.run(a.args[1:] if a.args[:1] == ["--"] else a.args, probe=a.probe)
+    if a.probe:
+        out({k: v for k, v in r.items() if v or k == "ok"}, 0 if r["ok"] else 1)
+    if not r["ok"]:
+        print(json.dumps({"status": "error", "why": r["why"]}, indent=1), file=sys.stderr)
+    sys.exit(0 if r["ok"] else 1)
+
+
 def cmd_schedule(a):
-    """Print (never install) a cron line or launchd plist for an unattended `/taska:run --due`."""
+    """Print (never install) a cron line or launchd plist for an unattended `/taska:run --due`, run through `taska ai`
+    so it finds a working sign-in (a stored token, then CodeMie)."""
     pd = C.find_project(a.project)
-    claude = shutil.which("claude") or "claude"
-    cmd = f"cd {shlex.quote(str(pd))} && mkdir -p logs && PATH={shlex.quote(os.environ.get('PATH', ''))} {shlex.quote(claude)} -p \"/taska:run --due\" " \
+    me = f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(__file__).resolve()))} --project {shlex.quote(str(pd))}"
+    cmd = f"cd {shlex.quote(str(pd))} && mkdir -p logs && PATH={shlex.quote(os.environ.get('PATH', ''))} {me} ai -- -p \"/taska:run --due\" " \
           f">> logs/taska-$(date +\\%F).log 2>&1"
     hh, mm = a.time.split(":")
     if not a.launchd:
@@ -571,6 +582,9 @@ def main():
     p.add_argument("--file", required=True, help="JSON file from echo-actions.py")
     p.add_argument("--gold", help="gold JSONL file (one annotation per line) for gold_items counts")
     p = sp.add_parser("schedule"); p.add_argument("--time", default="18:30"); p.add_argument("--launchd", action="store_true")
+    p = sp.add_parser("ai", help="reach Claude for an unattended run: a stored token, then CodeMie, then Bedrock if allowed")
+    p.add_argument("--probe", action="store_true", help="one tiny call: which route answers, or how to fix each")
+    p.add_argument("args", nargs=argparse.REMAINDER, help="claude's arguments, after --")
     p = sp.add_parser("handover", help="pack taska.toml + the store into a zip with a note for the next owner (read-only)")
     p.add_argument("--out", required=True, help="folder to write <project>-<date>.zip and its note into")
     a = ap.parse_args()

@@ -21,6 +21,9 @@ python3 generate.py [--out DIR] SEED...
 """
 import datetime as dt
 import json
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -270,10 +273,42 @@ def per_form(store: Path, gold: list) -> dict:
 
 # ── CLI entry point (called by run.sh) ───────────────────────────────────────
 
-def _run_seeds(seeds: list, out_dir: Path, skill_dir: Path, repo_dir: Path):
+def call_model(args: list) -> int:
+    """Run the model with claude's arguments: once through $TASKA_AI when set (a launcher that picks its own
+    sign-in), else claude on the subscription, then on claude's default backend. The exit code; -1 when it could
+    not run."""
+    ai = os.environ.get("TASKA_AI")
+    subscription = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_MODEL"} | {"CLAUDE_CODE_USE_BEDROCK": "false"}
+    tries = [([ai, *args], None)] if ai else [(["claude", *args], subscription), (["claude", *args], None)]
+    rc = -1
+    for cmd, env in tries:
+        try:
+            rc = subprocess.run(cmd, env=env, timeout=600).returncode
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            sys.stderr.write(f"  model call failed: {exc!r}\n")
+            rc = -1
+        if rc == 0:
+            return 0
+    return rc
+
+
+def keep(project: Path, dest: Path, seed: int) -> Path:
+    """Copy a finished run (config, gold, ledger, evidence, the meeting) to dest/seed-N, the meetings path made
+    relative so the copy holds no path of this machine and replays anywhere."""
+    out = Path(dest) / f"seed-{seed}"
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True)
+    for name in ("calls", ".taska"):
+        shutil.copytree(project / name, out / name, ignore=shutil.ignore_patterns("*.tmp", "out", "proposals"))
+    shutil.copy(project / "gold.json", out / "gold.json")
+    toml = (project / "taska.toml").read_text().replace(f'"{project / "calls"}"', '"calls"')
+    (out / "taska.toml").write_text(toml)
+    return out
+
+
+def _run_seeds(seeds: list, out_dir: Path, skill_dir: Path, repo_dir: Path, keep_dir: Path = None):
     """Run the full planted pipeline for each seed and write the output JSON."""
-    import os
-    import subprocess
     import tempfile
 
     out_dir = Path(out_dir)
@@ -287,7 +322,7 @@ def _run_seeds(seeds: list, out_dir: Path, skill_dir: Path, repo_dir: Path):
 
     # Check for claude
     import shutil
-    claude_ok = bool(shutil.which("claude"))
+    claude_ok = bool(os.environ.get("TASKA_AI") or shutil.which("claude"))
     if not claude_ok:
         result = {
             "error": "claude not on PATH; headless extraction skipped",
@@ -379,47 +414,18 @@ path = "{calls}"
                 "Never edit events.jsonl, evidence files or taska.toml by hand. "
                 "Do not create artifacts or use any web or cloud tool."
             )
-            claude_args = [
-                "claude", "-p", prompt,
-                "--permission-mode", "acceptEdits",
-                "--allowedTools",
-                f"Bash(python3 {skill_dir}/taska.py:*)",
-                "Read", "Write", "Edit", "Glob", "Grep", "Agent",
-            ]
-
-            import os as _os
-            # Backend 1: subscription (claude.ai account)
-            sub_env = dict(_os.environ)
-            sub_env["CLAUDE_CODE_USE_BEDROCK"] = "false"
-            sub_env.pop("ANTHROPIC_MODEL", None)
-            claude_rc = -1
-            try:
-                r = subprocess.run(claude_args, env=sub_env, timeout=600)
-                claude_rc = r.returncode
-            except subprocess.TimeoutExpired:
-                sys.stderr.write(f"  seed {seed}: claude subscription timed out\n")
-            except Exception as exc:
-                sys.stderr.write(f"  seed {seed}: claude subscription error: {exc}\n")
-
-            if claude_rc != 0:
-                sys.stderr.write(
-                    f"  seed {seed}: subscription call failed (exit {claude_rc}); retrying on Bedrock\n"
-                )
-                try:
-                    subprocess.run(claude_args, timeout=600)
-                except subprocess.TimeoutExpired:
-                    sys.stderr.write(f"  seed {seed}: claude Bedrock timed out\n")
-                except Exception as exc:
-                    sys.stderr.write(f"  seed {seed}: claude Bedrock error: {exc}\n")
+            call_model(["-p", prompt, "--permission-mode", "acceptEdits", "--allowedTools",
+                        f"Bash(python3 {skill_dir}/taska.py:*)", "Read", "Write", "Edit", "Glob", "Grep", "Agent"])
 
             # 8. Score per-form
             seed_result = per_form(P / ".taska", gold_patched)
             seeds_data[str(seed)] = seed_result
+            if keep_dir and not seed_result.get("incomplete"):
+                keep(P, keep_dir, seed)
             sys.stderr.write(f"  seed {seed}: {seed_result}\n")
 
         finally:
-            import shutil as _sh
-            _sh.rmtree(P, ignore_errors=True)
+            shutil.rmtree(P, ignore_errors=True)
 
     # Aggregate totals
     total: dict = {}
@@ -445,9 +451,10 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Planted suite runner")
     ap.add_argument("seeds", nargs="+", type=int, metavar="SEED")
     ap.add_argument("--out", default=str(_HERE / "out"), metavar="DIR")
+    ap.add_argument("--keep", metavar="DIR", help="save each complete run to DIR/seed-N (replayed by test_planted_recorded.py)")
     args = ap.parse_args()
 
     repo_dir = _HERE.parents[3]
     skill_dir = repo_dir / "bundles" / "taska" / "skills" / "run"
-    result = _run_seeds(args.seeds, Path(args.out), skill_dir, repo_dir)
+    result = _run_seeds(args.seeds, Path(args.out), skill_dir, repo_dir, Path(args.keep) if args.keep else None)
     print(json.dumps(result, indent=1))
