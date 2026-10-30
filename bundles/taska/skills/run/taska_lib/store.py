@@ -156,6 +156,16 @@ def write_evidence(store, item):
     return True
 
 
+def save_evidence(store, x):
+    """Rewrite an evidence item: the .md first (it may raise on a malformed item), then the .json, the index,
+    swapped in whole so a crash never leaves it half-written."""
+    P(store, "evidence", x["id"] + ".md").write_text(render_md(x))
+    p = P(store, "evidence", x["id"] + ".json")
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(x, ensure_ascii=False, indent=0))
+    os.replace(tmp, p)
+
+
 def take_teams_time(store, eid, teams):
     """The folder copy `eid` of the meeting `teams` holds takes the Teams time: same id, so its events (which the fold
     dates by their evidence item) and every mid stay valid. Done only when the day differs."""
@@ -164,8 +174,7 @@ def take_teams_time(store, eid, teams):
     if is_teams(x) or x["date"] == teams["at"][:10]:
         return False
     x.update(at=teams["at"], date=teams["at"][:10], date_source="teams", redated_from=x["date"], redated_by=teams["id"])
-    p.write_text(json.dumps(x, ensure_ascii=False, indent=0))
-    P(store, "evidence", eid + ".md").write_text(render_md(x))
+    save_evidence(store, x)
     return True
 
 

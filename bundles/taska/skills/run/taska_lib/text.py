@@ -42,15 +42,15 @@ def dotted_date(s):
 def date_in_name(name, ref):
     """The meeting date a file name carries, else None. `ref` (a date: the file's mtime day) resolves a year-less
     "25 Aug" to the most recent such day no more than 30 days after it."""
+    d = dotted_date(name)   # first: in "10.19.2026_1101 sync" the compact pattern would read the time as a date
+    if d:
+        return d
     m = re.search(r"(20\d\d)[-_]?(\d\d)[-_]?(\d\d)", name)
     if m:
         try:
             return dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
         except ValueError:
             pass
-    d = dotted_date(name)
-    if d:
-        return d
     md = month_day(name)
     if md:
         try:

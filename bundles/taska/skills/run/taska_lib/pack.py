@@ -15,8 +15,8 @@ def _pmo_bullet(text):
     return _CITE_RE.sub('', text or '').strip()
 
 
-def _fmt(d):
-    return fmt_date(d) if d else ""
+def _fmt(d, today=None):
+    return fmt_date(d, today) if d else ""
 
 
 def _applied_in(n, start, pred):
@@ -131,12 +131,12 @@ def build(store, cfg, days=7):
     dec = [n for n in live if n["kind"] == "decision" and (n["created"] or "") >= start]
     if dec:
         L_.append("## Decisions")
-        L_ += [f"- {n['title']} {ST.cite(n['history'][0])}" for n in dec]
+        L_ += [f"- {n['title']} {ST.cite(n['history'][0], today)}" for n in dec]
         L_.append("")
     risks = [n for n in live if n["kind"] == "risk" and (n["created"] or "") >= start]
     if risks:
         L_.append(f"## Risks heard ({len(risks)})")
-        L_ += [f"- {n['title']} {ST.cite(n['history'][0])}" for n in risks[:6]]
+        L_ += [f"- {n['title']} {ST.cite(n['history'][0], today)}" for n in risks[:6]]
         L_.append("")
     close = [r for r in rows if r["tier"] == "close" and not r["shadow"]]
     if close:
@@ -239,7 +239,7 @@ def build_client(store, cfg, days=7):
             t = _pmo_bullet(n["title"])
             if t not in act_seen:
                 activities.append({"sr": str(ai), "status": "Complete", "activity": t,
-                                    "planned": _fmt(n.get("due")), "actual": fmt_date(h["date"])})
+                                    "planned": _fmt(n.get("due"), today), "actual": fmt_date(h["date"], today)})
                 act_seen.add(t); ai += 1
 
     # Actions table (slide 3 lower): internal actions/decisions
@@ -247,7 +247,7 @@ def build_client(store, cfg, days=7):
     for i, n in enumerate([n for n in live if n["kind"] == "decision"
                             and (n["created"] or "") >= start], 1):
         actions.append({"sr": str(i), "status": "Open", "activity": _pmo_bullet(n["title"]),
-                        "planned": _fmt(n.get("due")), "actual": ""})
+                        "planned": _fmt(n.get("due"), today), "actual": ""})
 
     # slide 4 — completed / priorities
     seen_c: set = set()
@@ -269,8 +269,8 @@ def build_client(store, cfg, days=7):
     for i, n in enumerate(owed[:12], 1):
         w = n.get("waiting_for")
         owner = n.get("client_owner") or (w or {}).get("who") or "client"
-        target = _fmt((w or {}).get("due") or n.get("due"))
-        requested = _fmt((w or {}).get("since") or n.get("created"))
+        target = _fmt((w or {}).get("due") or n.get("due"), today)
+        requested = _fmt((w or {}).get("since") or n.get("created"), today)
         if n["state"] in L.CLOSED:
             st_val = "Closed"
         elif n["state"] == "in_progress":
@@ -291,9 +291,9 @@ def build_client(store, cfg, days=7):
             "requests": _pmo_bullet(d["title"] or ""),
             "status": _state_label(d["state"]),
             "rag": d["rag"],
-            "planned_first_draft": _fmt(d.get("first_draft_due")),
-            "planned_final": _fmt(d["due"]),
-            "actual_delivery": _fmt((d["landed"] or {}).get("date")) if d.get("landed") else "",
+            "planned_first_draft": _fmt(d.get("first_draft_due"), today),
+            "planned_final": _fmt(d["due"], today),
+            "actual_delivery": _fmt((d["landed"] or {}).get("date"), today) if d.get("landed") else "",
             "approver": d["internal_owner"] or "",
         }
         for i, d in enumerate(dl_all, 1)

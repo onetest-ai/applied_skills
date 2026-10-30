@@ -550,7 +550,7 @@ def _apply(store, cfg, evid, proposals):
                 why = f"more than {MAX_AC} acceptance criteria"
             elif k == "task" and p.get("type") not in TASK_TYPES:
                 why = f"task type must be one of {sorted(TASK_TYPES)}"
-            elif not p.get("title"):
+            elif not str(p.get("title") or "").strip():
                 why = "a proposal needs a title"
             elif (N[par]["created"] or "") > item["date"]:
                 why = f"{par} did not exist yet on {item['date']}"
@@ -736,7 +736,7 @@ def verify_apply(store, verdicts):
 
 def _accept_proposal(store, evs, N, prop, body, e):
     """Confirm on proposed work: one accept event plus the human create it stands for, appended together."""
-    pr, par = prop["proposal"], prop["node"]
+    pr, par = prop["proposal"], _chase(N, prop["node"])   # a merged parent: its survivor, as the card shows
     if par not in N or N[par]["state"] in ("merged", "deleted"):
         raise ValueError(f"{par} no longer exists: reject this proposal instead")
     who = body.get("owner")

@@ -867,6 +867,7 @@ async function send(body, msg){
   const r = await fetch("/api/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   const j = await r.json();
   if (!r.ok){ toast(j.error || "Could not save"); return; }
+  recapFor = null;   // the Recap shows the tree after this edit
   const past = !latest();
   toast((msg || "Saved") + (past ? " · applied to the current tree" : "")); await load(true);
   if (past){ ci = D.calls.length-1; render(); }
@@ -878,6 +879,7 @@ async function acceptAll(mids){
     const r = await fetch("/api/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({op:"accept", target:m})});
     if (r.ok) ok++; else { const j = await r.json().catch(()=>({})); err = j.error || "Could not save"; }
   }
+  recapFor = null;
   toast(err ? `Confirmed ${ok} of ${mids.length}: ${err}` : `Confirmed ${ok}`); await load(true);
 }
 function toast(m){ const t = $("#toast"); t.textContent = m; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 1800); }

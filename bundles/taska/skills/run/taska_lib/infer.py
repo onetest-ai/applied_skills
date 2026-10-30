@@ -84,7 +84,7 @@ def run(store, cfg, ask=J.ask, url=J.DEFAULT_URL):
                 continue
             best_s, best_i = max(scored)
             if best_i == c["id"] and best_s >= CRITERION_AT:
-                props.append({"op": "ac_met", "node": story["id"], "ac": k, "quote": h["quote"], "pending": "human",
+                props.append({"op": "ac_met", "node": story["id"], "ac": k, "ac_text": crit, "quote": h["quote"], "pending": "human",
                               "cause": c["id"], "gate": {"model": "local", "score": round(best_s, 3), "threshold": CRITERION_AT},
                               "suggested": f"criterion “{crit}” → met",
                               "why": f"{c['id']} “{c['title']}” {verb} on {day}, which is what this criterion asks for."})

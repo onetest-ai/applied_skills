@@ -81,8 +81,7 @@ def repair_evidence(store, apply=False, calendar=None, tz="UTC"):
                          redated_from=ev[i]["date"])
             if i in dup:
                 x["duplicate_of"] = dup[i]
-            S.P(store, "evidence", i + ".json").write_text(json.dumps(x, ensure_ascii=False, indent=0))
-            S.P(store, "evidence", i + ".md").write_text(S.render_md(x))
+            S.save_evidence(store, x)
     r = {"redate": redate, "duplicates": duplicates, "applied": apply}
     if calendar is not None:
         r["guessed_unmatched"] = unmatched   # still dated by file arrival: no calendar event explains them
