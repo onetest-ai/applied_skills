@@ -217,7 +217,7 @@ def render_md(x):
         head.append(f"link: {x['url']}")
     for k, v in (x.get("meta") or {}).items():
         if v not in (None, "", []):
-            head.append(f"{k}: {v if not isinstance(v, list) else ', '.join(map(str, v))}")
+            head += _lines(str(v) if not isinstance(v, list) else ", ".join(map(str, v)), f"{k}: ")
     body = []
     for t in x.get("turns") or []:
         if not t.get("bc"):

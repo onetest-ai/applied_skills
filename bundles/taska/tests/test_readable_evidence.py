@@ -52,3 +52,9 @@ def test_rerender_rewrites_every_md_from_its_json_and_never_touches_the_json(tmp
     before = js.read_bytes()
     assert S.rerender(tmp_path) == 1 and S.rerender(tmp_path) == 0
     assert md.read_text() == S.render_md(x) and js.read_bytes() == before
+
+
+def test_no_line_of_the_file_is_too_long_headers_included():
+    md = S.render_md(_item(text="short", meta={"context": SENT * 40, "participants": ["Nora Quill"] * 300}))
+    assert max(len(l) for l in md.splitlines()) <= S.MAX_LINE
+    assert all(l.startswith("context: ") for l in md.splitlines() if "yard plan" in l)
