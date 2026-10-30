@@ -17,7 +17,7 @@ from pathlib import Path
 
 from .text import WD
 
-KINDS = ("meeting", "event", "file", "pr", "issue")
+KINDS = ("meeting", "event", "file", "pr", "issue", "message")
 
 
 def P(store, *a):
@@ -73,8 +73,10 @@ def evidence(store):
 
 
 def order(ev):
-    """Evidence ids in time order; a client call sorts after an internal one on the same timestamp."""
-    return sorted(ev, key=lambda i: (ev[i]["at"], ev[i].get("meeting_kind") == "client", i))
+    """Evidence ids in time order; a client call sorts after an internal one on the same timestamp. A copy of a
+    meeting already in the store (`duplicate_of`, see repair.py) is left out: nothing it produced counts twice."""
+    return sorted((i for i in ev if not ev[i].get("duplicate_of")),
+                  key=lambda i: (ev[i]["at"], ev[i].get("meeting_kind") == "client", i))
 
 
 def make_id(at, source, key):
@@ -88,12 +90,45 @@ def fingerprint(item):
     return f"{item['at'][:10]}:{' '.join(words[:40])}" if len(words) >= 20 else None
 
 
+SAME_TEXT = 0.9      # share of the shorter transcript's 5-word phrases also in the other: one meeting, two files
+SAME_TEXT_DAYS = 31  # how far apart two files of one meeting can be dated (a guessed date is the day it arrived)
+
+
+def shingles(item, k=5):
+    from .text import norm
+    w = norm(" ".join(t["text"] for t in item.get("turns") or [])).split()
+    return {" ".join(w[i:i + k]) for i in range(len(w) - k + 1)} if len(w) >= 40 else set()
+
+
+def is_teams(x):
+    """A transcript taken from Teams (msgraph_transcripts): dated by when the meeting happened."""
+    return (x.get("meta") or {}).get("transcript") == "teams"
+
+
+def same_text(a, b, sa=None, sb=None):
+    """Two meeting items hold one transcript dated two ways: the same text within SAME_TEXT_DAYS, where at least one
+    date was only guessed from the file's arrival ("file_mtime"), or where one is the Teams copy and the other a file
+    named after the day it was saved (C-09). Two files that each carry their own date are two meetings, however alike."""
+    if "file_mtime" not in (a.get("date_source"), b.get("date_source")) and is_teams(a) == is_teams(b):
+        return False
+    sa, sb = sa if sa is not None else shingles(a), sb if sb is not None else shingles(b)
+    if not sa or not sb:
+        return False
+    if abs((dt.date.fromisoformat(a["at"][:10]) - dt.date.fromisoformat(b["at"][:10])).days) > SAME_TEXT_DAYS:
+        return False
+    return len(sa & sb) / min(len(sa), len(sb)) >= SAME_TEXT
+
+
 def duplicate_of(store, item):
-    fp = fingerprint(item)
-    if not fp:
+    """The id of the meeting item this one repeats, else None: same day and opening words (two sources of one
+    call), or the same transcript under another date (a re-synced file dated by the day it arrived)."""
+    if item["kind"] != "meeting":
         return None
+    fp, sh = fingerprint(item), shingles(item)
     for x in evidence(store).values():
-        if x["id"] != item["id"] and x["kind"] == "meeting" and fingerprint(x) == fp:
+        if x["id"] == item["id"] or x["kind"] != "meeting" or x.get("duplicate_of"):
+            continue
+        if (fp and fingerprint(x) == fp) or same_text(item, x, sh):
             return x["id"]
     return None
 
@@ -103,8 +138,12 @@ def write_evidence(store, item):
     source's copy of the same meeting."""
     assert item["kind"] in KINDS, item["kind"]
     item.setdefault("date", item["at"][:10])
-    if item["kind"] == "meeting" and duplicate_of(store, item):
-        return False
+    if item["kind"] == "meeting":
+        o = duplicate_of(store, item)
+        if o:
+            if is_teams(item):
+                take_teams_time(store, o, item)
+            return False
     p = P(store, "evidence", item["id"] + ".json")
     body = json.dumps(item, ensure_ascii=False, indent=0)
     if p.exists() and p.read_text() == body:
@@ -114,6 +153,19 @@ def write_evidence(store, item):
     tmp = p.with_suffix(".json.tmp")  # the .json is the index: a half-written one would break every later command
     tmp.write_text(body)
     os.replace(tmp, p)
+    return True
+
+
+def take_teams_time(store, eid, teams):
+    """The folder copy `eid` of the meeting `teams` holds takes the Teams time: same id, so its events (which the fold
+    dates by their evidence item) and every mid stay valid. Done only when the day differs."""
+    p = P(store, "evidence", eid + ".json")
+    x = json.loads(p.read_text())
+    if is_teams(x) or x["date"] == teams["at"][:10]:
+        return False
+    x.update(at=teams["at"], date=teams["at"][:10], date_source="teams", redated_from=x["date"], redated_by=teams["id"])
+    p.write_text(json.dumps(x, ensure_ascii=False, indent=0))
+    P(store, "evidence", eid + ".md").write_text(render_md(x))
     return True
 
 
@@ -141,6 +193,16 @@ def full_text(x, drop_bc=False):
         parts.append(x["text"])
     parts.append(x.get("title") or "")
     return " ".join(parts)
+
+
+def quote_offset(item, quote):
+    """Index of norm(quote) in norm(full_text(item)), or -1 if quote is absent or empty."""
+    from .text import norm
+    if not quote:
+        return -1
+    full = norm(full_text(item))
+    q = norm(quote)
+    return full.find(q)
 
 
 def cursors(store):

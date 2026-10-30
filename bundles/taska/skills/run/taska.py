@@ -71,6 +71,11 @@ def cmd_doctor(a):
                 r["available"] = bool(r["signed_in_as"])
             except msgraph.GraphError as e:
                 r.update(available=False, reason=str(e))
+        elif ad in ("teams_chat", "teams_channel"):
+            from taska_lib.sources import teams_common
+            r["available"], why = teams_common.ready(s)
+            if why:
+                r["reason"] = why
         elif ad == "code_host":
             from taska_lib.sources import code_host
             tool = code_host.CLI.get(s.get("provider", "github"))
@@ -81,11 +86,70 @@ def cmd_doctor(a):
             r["available"], r["reason"] = False, f"adapter {ad} is not implemented yet"
         rep["sources"][k] = r
     bad = [k for k, r in rep["sources"].items() if not r.get("available")]
+    rep["portability"] = portability((cfg.project_dir / "taska.toml").read_text())
+    rep["handover_check"] = handover_check(cfg, st)
     out(dict(rep, status="ok" if not bad else "degraded", unavailable=bad), 0)
+
+
+def portability(toml_text, home=None):
+    """Paths written inside one person's home folder: they break when the project moves to another machine
+    (handover). Write them as "~/..." instead; taska expands "~" on load."""
+    home = home or os.path.expanduser("~")
+    return [f"{line.strip()}: write it as {line.strip().replace(home + '/', '~/')}"
+            for line in toml_text.splitlines() if home + "/" in line and not line.lstrip().startswith("#")]
+
+
+def handover_check(cfg, st):
+    """Per source: does a cursor say what was read? Items with no cursor would be read again on this machine (they
+    are still recognised as the same items, but the run does the work twice). Shown before anything is applied."""
+    cur, ev = S.cursors(st), S.evidence(st)
+    out_ = {}
+    for k in cfg.sources:
+        n = sum(1 for x in ev.values() if x.get("source") == k)
+        out_[k] = {"items": n, "cursor": k in cur, "would_reread": bool(n) and k not in cur}
+    return out_
+
+
+def cmd_handover(a):
+    """Pack the project for its next owner: taska.toml and the store (ledger, evidence, cursors) in one zip, with a
+    note. Read-only: nothing in the project is moved or removed (a project is handed over, never rebuilt)."""
+    import zipfile
+    cfg, st = cfg_store(a)
+    outdir = Path(os.path.expanduser(a.out)); outdir.mkdir(parents=True, exist_ok=True)
+    slug = "".join(c if c.isalnum() else "-" for c in cfg.name.lower()).strip("-")
+    day = dt.date.today().isoformat()
+    zp, note = outdir / f"{slug}-{day}.zip", outdir / f"{slug}-{day}-handover.md"
+    files = [cfg.project_dir / "taska.toml"] + [p for p in Path(st).rglob("*") if p.is_file()]
+    with zipfile.ZipFile(zp, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in files:
+            z.write(f, f.relative_to(cfg.project_dir))
+    N = L.fold(st)[0]
+    ev = S.evidence(st)
+    counts = {"evidence": len(ev), "meetings": sum(1 for x in ev.values() if x.get("kind") == "meeting"),
+              "events": sum(1 for _ in open(Path(st) / "events.jsonl")) if (Path(st) / "events.jsonl").exists() else 0,
+              "nodes": len(N), "pending_cards": sum(1 for n in N.values() for s in n.get("suggestions", []) if s["status"] == "pending")}
+    warn = portability((cfg.project_dir / "taska.toml").read_text())
+    lines = [f"# Handover: {cfg.name} ({day})", "",
+             f"- {counts['evidence']} evidence items ({counts['meetings']} meetings), {counts['events']} events in the ledger, "
+             f"{counts['nodes']} tree items, {counts['pending_cards']} cards waiting for a Confirm.",
+             "- Sources: " + ", ".join(f"{k} ({s['adapter']})" for k, s in cfg.sources.items()) + ".", "",
+             "## On the new machine", "1. Unpack this zip into the project folder (the old owner stops their scheduled runs first: one runner at a time).",
+             "2. Run `taska doctor`: every source should be available, and no source should say would_reread.",
+             "3. Run `/taska:run`, then `/taska:workbench`."]
+    if warn:
+        lines += ["", "## Paths to check (tied to the old owner's home folder)"] + [f"- {w}" for w in warn]
+    note.write_text("\n".join(lines) + "\n")
+    out({"status": "ok", "zip": str(zp), "note": str(note), "counts": counts, "files": len(files), "portability": warn}, 0)
 
 
 def cmd_sync(a):
     cfg, st = cfg_store(a)
+    dry = None
+    if a.dry:  # run every source against a scratch copy: findings and proposals land there, the live store is untouched
+        import tempfile
+        dry = os.path.join(tempfile.mkdtemp(prefix="taska-dry-"), "store")
+        shutil.copytree(st, dry) if os.path.isdir(st) else S.ensure(dry)
+        st = dry
     cur = S.cursors(st)
     reports = []
     for k, s in cfg.sources.items():
@@ -101,7 +165,83 @@ def cmd_sync(a):
         reports.append(rep)
     pend = _pending(st)
     late = [x for x in pend if x["before_processed"]]
-    out({"status": "ok", "sources": reports, "pending": len(pend), "late_arrivals": [x["id"] for x in late]})
+    out({"status": "ok", "sources": reports, "pending": len(pend), "late_arrivals": [x["id"] for x in late],
+         **({"dry_store": dry} if dry else {})})
+
+
+def cmd_infer(a):
+    from taska_lib import infer as IN, judge as J
+    cfg, st = cfg_store(a)
+    url = next((s.get("judge_url") for s in cfg.sources.values() if s.get("judge_url")), None) or J.DEFAULT_URL
+    out(IN.run(st, cfg, url=url))
+
+
+def cmd_repair_evidence(a):
+    from taska_lib import repair as R
+    cfg, st = cfg_store(a)
+    cal = None
+    if a.calendar:
+        cal = json.load(open(a.calendar))
+        cal = cal if isinstance(cal, list) else cal.get("events", [])
+    r = R.repair_evidence(st, apply=a.apply, calendar=cal, tz=cfg.timezone)
+    out({"status": "ok", **r})
+
+
+def cmd_audit_ingest(a):
+    """Audit the taska store for missing, misdated or truncated meetings.
+
+    --expected FILE : JSON array of {"at", "title", "source"} from an oracle (e.g. echo-oracle.py)
+    --calendar FILE : JSON array of {"start", "subject"[, "end"]} from a calendar export
+    Either file may be omitted; the corresponding list is treated as empty.
+    """
+    from taska_lib import ingest_audit as IA
+    cfg, st = cfg_store(a)
+    if a.expected:
+        with open(a.expected) as f:
+            expected = json.load(f)
+    else:
+        expected = []
+    if a.calendar:
+        with open(a.calendar) as f:
+            calendar = json.load(f)
+    else:
+        calendar = []
+    ev = S.evidence(st)
+    result = IA.audit_ingest(ev, expected, calendar, cfg.timezone)
+    out({"status": "ok", **result})
+
+
+def cmd_lint(a):
+    from taska_lib import lint as LT
+    _, st = cfg_store(a)
+    N, *_ = L.fold(st)
+    result = LT.lint(N)
+    payload = {"status": "ok", **result}
+    if a.report:
+        out(payload, 0)
+    has_findings = any(result[k] for k in result)
+    out(payload, 1 if has_findings else 0)
+
+
+def cmd_similar(a):
+    from taska_lib import similar as SM
+    _, st = cfg_store(a)
+    N, *_ = L.fold(st)
+    results = SM.similar(N, a.title, a.kind, k=a.k)
+    out({"status": "ok", "results": results})
+
+
+def cmd_snapshot(a):
+    from taska_lib import snapshot as SN
+    _, st = cfg_store(a)
+    r = SN.snapshot(st, a.before, Path(a.out))
+    out({"status": "ok", **r})
+
+
+def cmd_teams_report(a):
+    from taska_lib import teams_report as TR
+    _, st = cfg_store(a)
+    out({"status": "ok", "page": TR.write(st, a.date or dt.date.today().isoformat())})
 
 
 def cmd_transcribe(a):
@@ -130,7 +270,8 @@ def _pending(st):
     last_done = max([i for i, c in enumerate(order) if c in done] or [-1])
     return [{"id": c, "at": ev[c]["at"], "kind": ev[c]["kind"], "meeting_kind": ev[c].get("meeting_kind"),
              "title": ev[c]["title"], "md": str(S.P(st, "evidence", c + ".md")),
-             "before_processed": i < last_done} for i, c in enumerate(order) if c not in done]
+             "before_processed": i < last_done} for i, c in enumerate(order)
+            if c not in done and ev[c]["kind"] != "message"]  # Teams messages are judged in sync, never extracted
 
 
 def cmd_pending(a):
@@ -156,10 +297,21 @@ def cmd_apply(a):
 
 
 def cmd_done(a):
+    from taska_lib import coverage as CV
     _, st = cfg_store(a)
-    if a.evidence not in S.evidence(st):
+    ev = S.evidence(st)
+    if a.evidence not in ev:
         out({"status": "error", "error": f"unknown evidence {a.evidence}"}, 1)
-    L.mark_processed(st, a.evidence, a.note or "")
+    note = a.note or ""
+    if ev[a.evidence].get("kind") == "meeting":
+        c = CV.coverage(ev[a.evidence], S.events(st))
+        if c["empty_parts"] and not a.ack:
+            out({"status": "coverage", "evidence": a.evidence, "empty_parts": c["empty_parts"], "parts": c["parts"],
+                 "hint": "re-read those parts of the transcript and add what was said (or nothing), then run done again; "
+                         "if they really hold no work, pass --ack \"<why>\""}, 1)
+        if c["empty_parts"]:
+            note = (note + " " if note else "") + f"coverage acknowledged: {a.ack} (empty parts {c['empty_parts']})"
+    L.mark_processed(st, a.evidence, note)
     out({"status": "ok", "processed": a.evidence, "pending": len(_pending(st))})
 
 
@@ -282,10 +434,16 @@ def cmd_status(a):
 
 def cmd_pack(a):
     cfg, st = cfg_store(a)
-    md = PK.build(st, cfg, a.days)
-    dest = Path(a.out) if a.out else S.P(st, "out", f"pack-{dt.date.today().isoformat()}.md")
-    dest.write_text(md)
-    out({"status": "ok", "out": str(dest), "words": len(md.split())})
+    if getattr(a, "json", False):
+        data = PK.build_client(st, cfg, a.days)
+        dest = Path(a.out) if a.out else S.P(st, "out", f"pack-client-{dt.date.today().isoformat()}.json")
+        dest.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        out({"status": "ok", "out": str(dest), "week": data["week"]})
+    else:
+        md = PK.build(st, cfg, a.days)
+        dest = Path(a.out) if a.out else S.P(st, "out", f"pack-{dt.date.today().isoformat()}.md")
+        dest.write_text(md)
+        out({"status": "ok", "out": str(dest), "words": len(md.split())})
 
 
 def cmd_serve(a):
@@ -296,6 +454,56 @@ def cmd_serve(a):
 def cmd_export(a):
     cfg, st = cfg_store(a)
     out({"status": "ok", "out": W.export(st, cfg, a.out or S.P(st, "out", "workbench.html"))})
+
+
+def cmd_compare_external(a):
+    """Compare an external note-taker's actions (e.g. Echo) against the taska tree.
+
+    --file FILE : JSON file produced by echo-actions.py (required)
+    --gold FILE : optional gold JSONL for gold_items counts (one annotation per line)
+
+    Prints per-meeting counts (echo_actions, taska_items, gold_items, tracked) and
+    the gap candidates (actions with a transcript span but no matching taska event).
+    """
+    from taska_lib import compare_external as CE
+    with open(a.file) as f:
+        external = json.load(f)
+    from taska_lib import evalscore as ES
+    gold = ES.load_gold(a.gold)[1] if a.gold else None   # same reader as `score`: header + fingerprint checked
+    cfg, st = cfg_store(a)
+    result = CE.compare_external(st, external, gold, cfg.timezone)
+    out({"status": "ok", **result})
+
+
+def cmd_score(a):
+    """Score an extraction run against a gold JSONL file (one JSON object per line).
+
+    Blank lines are skipped. A first line starting with '#' is treated as a header comment
+    and skipped. All other lines must be valid JSON objects containing an 'evidence' key;
+    a malformed line raises ValueError with the 1-based line number.
+    """
+    from taska_lib import evalscore as ES
+    gold = []
+    with open(a.gold) as f:
+        for i, line in enumerate(f):
+            raw = line.strip()
+            if not raw:
+                continue
+            if i == 0 and raw.startswith("#"):
+                continue  # header comment
+            try:
+                item = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"gold line {i + 1}: {exc}") from exc
+            if "evidence" not in item:
+                raise ValueError(f"gold line {i + 1}: missing 'evidence' key")
+            gold.append(item)
+    ES.load_gold(a.gold)   # the header's n and sha256, when present, must match: a key edited in place is refused
+    cfg, st = cfg_store(a)
+    result = ES.score(st, gold)
+    if a.out:
+        Path(a.out).write_text(json.dumps(result, indent=1, ensure_ascii=False))
+    out({"status": "ok", **result})
 
 
 def cmd_schedule(a):
@@ -324,11 +532,30 @@ def main():
     sp = ap.add_subparsers(dest="cmd", required=True)
     p = sp.add_parser("init"); p.add_argument("--name"); p.add_argument("--timezone", default="UTC")
     sp.add_parser("setup"); sp.add_parser("doctor"); sp.add_parser("context"); sp.add_parser("status")
-    p = sp.add_parser("sync"); p.add_argument("--source")
+    p = sp.add_parser("sync"); p.add_argument("--source"); p.add_argument("--dry", action="store_true",
+                                                                          help="run against a scratch copy of the store")
+    p = sp.add_parser("teams-report"); p.add_argument("--date")
+    sp.add_parser("infer", help="propose the closures a done/held task implies (each waits for Confirm)")
+    p = sp.add_parser("repair-evidence", help="re-date meetings dated only by file arrival; mark re-synced copies")
+    p.add_argument("--apply", action="store_true", help="write the repair (default: report only)")
+    p.add_argument("--calendar", help="JSON file [{subject, start, end}]: re-date file-dated meetings to their event")
+    p = sp.add_parser("audit-ingest", help="audit meetings for missing, misdated or truncated items")
+    p.add_argument("--expected", help="JSON file: [{at, title, source}] from an oracle (optional)")
+    p.add_argument("--calendar", help="JSON file: [{start, subject[, end]}] from a calendar export (optional)")
+    p = sp.add_parser("lint", help="tree health checks: duplicates, open-under-closed, cycles, zombie stories")
+    p.add_argument("--report", action="store_true", help="print results and exit 0 (default: exit 1 when any finding)")
+    p = sp.add_parser("similar", help="find nodes similar to a given title")
+    p.add_argument("--title", required=True, help="title to search against")
+    p.add_argument("--kind", required=True, help="node kind (task, story, decision, risk, epic)")
+    p.add_argument("--k", type=int, default=3, help="maximum results (default: 3)")
+    p = sp.add_parser("snapshot", help="copy the store up to a given evidence item for a re-extraction run")
+    p.add_argument("--before", required=True, help="evidence id: the first item NOT included in the copy")
+    p.add_argument("--out", required=True, help="output project directory (must not exist or be empty)")
     p = sp.add_parser("transcribe"); p.add_argument("--limit", type=int, default=3); p.add_argument("--source")
     p = sp.add_parser("pending"); p.add_argument("--limit", type=int, default=0)
     p = sp.add_parser("apply"); p.add_argument("--evidence", required=True); p.add_argument("--proposals", required=True)
     p = sp.add_parser("done"); p.add_argument("--evidence", required=True); p.add_argument("--note")
+    p.add_argument("--ack", help="why a third of a long meeting produced nothing (else done refuses: status coverage)")
     p = sp.add_parser("ingest"); p.add_argument("--file", required=True); p.add_argument("--source", default="ingest")
     p = sp.add_parser("people"); p.add_argument("--limit", type=int, default=0)
     p = sp.add_parser("redo"); p.add_argument("--evidence", required=True); p.add_argument("--why")
@@ -336,10 +563,16 @@ def main():
     p = sp.add_parser("verify-prep"); p.add_argument("--out"); p.add_argument("--weak", action="store_true")
     p = sp.add_parser("verify-apply"); p.add_argument("--file", required=True)
     p = sp.add_parser("asks"); p.add_argument("--all", action="store_true")
-    p = sp.add_parser("pack"); p.add_argument("--days", type=int, default=7); p.add_argument("--out")
+    p = sp.add_parser("pack"); p.add_argument("--days", type=int, default=7); p.add_argument("--out"); p.add_argument("--json", action="store_true", help="output ClientWeeklyData JSON instead of markdown")
     p = sp.add_parser("serve"); p.add_argument("--port", type=int, default=8766)
     p = sp.add_parser("export"); p.add_argument("--out")
+    p = sp.add_parser("score"); p.add_argument("--gold", required=True); p.add_argument("--out")
+    p = sp.add_parser("compare-external", help="compare an external note-taker's actions against the taska tree")
+    p.add_argument("--file", required=True, help="JSON file from echo-actions.py")
+    p.add_argument("--gold", help="gold JSONL file (one annotation per line) for gold_items counts")
     p = sp.add_parser("schedule"); p.add_argument("--time", default="18:30"); p.add_argument("--launchd", action="store_true")
+    p = sp.add_parser("handover", help="pack taska.toml + the store into a zip with a note for the next owner (read-only)")
+    p.add_argument("--out", required=True, help="folder to write <project>-<date>.zip and its note into")
     a = ap.parse_args()
     fn = globals()["cmd_" + a.cmd.replace("-", "_")]
     try:

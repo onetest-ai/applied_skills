@@ -80,6 +80,10 @@ def test_status_link_and_waiting_apply_only_when_verified(ledger):
     assert N["T001"]["state"] == "open"
     _supports_all(st)
     N, *_ = L.fold(st)
+    assert N["T001"]["state"] == "open"  # a closure waits for the user's Confirm, even when verified
+    done = next(x for x in N["T001"]["suggestions"] if x["op"] == "status" and x["effect"] == "done")
+    L.human_event(st, {"op": "accept", "target": done["mid"]})
+    N, *_ = L.fold(st)
     assert N["T001"]["state"] == "done" and N["T001"]["waiting_for"] is None
     assert N["S001"]["state"] == "done" and N["S001"]["derived"] == "all acceptance criteria met"
 
@@ -103,13 +107,17 @@ def test_human_pins_undo_merge_and_suggestions(ledger):
     N, *_ = L.fold(st)
     t = N["T001"]
     assert t["state"] == "blocked" and t["title"] == "Walkthrough (mine)"
-    assert any(h.get("effect") == "held" and h["applied"] is False and h["verdict"] == "supports" for h in t["history"])
+    assert any(h.get("effect") == "held" and h["applied"] is False and h.get("status") == "pending" for h in t["history"])
     assert N["T002"]["suggestions"][0]["status"] == "pending" and N["T002"]["state"] != "merged"
     L.human_event(st, {"op": "accept", "target": N["T002"]["suggestions"][0]["mid"]})
     L.human_event(st, {"op": "undo", "target": e["mid"]})
     N, *_ = L.fold(st)
     assert N["T002"]["state"] == "merged" and N["T002"]["merged_into"] == "T001"
-    assert N["T001"]["state"] == "done" and N["T001"]["title"] == "Walkthrough"  # pin undone: evidence applies
+    assert N["T001"]["state"] == "open" and N["T001"]["title"] == "Walkthrough"  # pin undone: evidence applies
+    held = next(x for x in N["T001"]["suggestions"] if x["op"] == "status" and x["effect"] == "held")
+    L.human_event(st, {"op": "accept", "target": held["mid"]})  # the closure itself waits for Confirm
+    N, *_ = L.fold(st)
+    assert N["T001"]["state"] == "done"
 
 
 def test_node_cannot_be_touched_before_it_existed(ledger):

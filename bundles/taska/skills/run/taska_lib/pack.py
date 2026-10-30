@@ -1,10 +1,22 @@
 """The status-meeting pack: computed from the tree, every line cited. The status colour stays the manager's call."""
 import datetime as dt
+import re
 from collections import defaultdict
 
 from . import ledger as L, staleness as ST
 from .deliverables import deliverables
 from .text import fmt_date
+
+_CITE_RE = re.compile(r'\s*\[[A-Z]\d{3}(?:[,\s]+[A-Z]\d{3})*\]')
+
+
+def _pmo_bullet(text):
+    """Strip taska citation brackets (e.g. [T113, D006]) for client-facing PMO output."""
+    return _CITE_RE.sub('', text or '').strip()
+
+
+def _fmt(d):
+    return fmt_date(d) if d else ""
 
 
 def _applied_in(n, start, pred):
@@ -138,3 +150,161 @@ def _epic(N, i):
     while i in N and N[i]["parent"]:
         i = N[i]["parent"]
     return i
+
+
+def _rag_of(flags):
+    if "slipping" in flags or "overdue" in flags or "blocked" in flags:
+        return "Red"
+    if "at_risk" in flags or "waiting" in flags:
+        return "Amber"
+    return "Green"
+
+
+def _state_label(state):
+    """Map ledger state to PMO English for client-facing output."""
+    return {"done": "Complete", "cancelled": "Closed", "in_progress": "In-Progress",
+            "blocked": "At-Risk"}.get(state or "", "On-Track")
+
+
+def build_client(store, cfg, days=7):
+    """Return a ClientWeeklyData dict: citation-stripped, PMO-English, ready for slide generation.
+
+    Column headers follow the standard PMO weekly template:
+    - slide5: Sr. | Decision | Status | Owner | Target | Requested | Comments
+    - slide6: Sr. | Requests | Status | Planned First Draft | Planned Final | Actual Delivery | Approver
+    """
+    folded = L.fold(store)
+    N, notes, order, ev = folded
+    empty = {
+        "week": dt.date.today().isoformat(), "project_name": cfg.name,
+        "generated": dt.datetime.now().isoformat(timespec="seconds"),
+        "slide3": {"headline": "", "week_label": "", "rag": {"overall": "Green", "delivery": "Green",
+                   "schedule": "Green", "scope": "Amber", "quality": "Green"},
+                   "milestones": [], "activities": [], "actions": [], "decisions": [], "narrative": ""},
+        "slide4": {"completed": [], "priorities": []},
+        "slide5": [], "slide6": [],
+    }
+    if not order:
+        return empty
+
+    rows, _ = ST.classify(store, cfg, folded=folded)
+    today = ev[order[-1]]["date"]
+    start = (dt.date.fromisoformat(today) - dt.timedelta(days=days - 1)).isoformat()
+    # week_label e.g. "Oct 19-23, 2026"
+    start_d = dt.date.fromisoformat(start)
+    end_d = dt.date.fromisoformat(today)
+    week_label = (f"{start_d.strftime('%b')} {start_d.day}-{end_d.day}, {end_d.year}"
+                  if start_d.month == end_d.month
+                  else f"{start_d.strftime('%b')} {start_d.day} – {end_d.strftime('%b')} {end_d.day}, {end_d.year}")
+
+    live = [n for n in N.values() if n["state"] not in ("merged", "deleted")]
+    stale_map = {r["node"]["id"]: r for r in rows}
+
+    # RAG summary (slide 3 top row)
+    all_flags = [f for r in rows for f in (r.get("flags") or [])]
+    rag_schedule = _rag_of(all_flags)
+    dl_all = [d for d in deliverables(N, ev) if d["state"] not in ("merged", "deleted")]
+    dl_rags = [d["rag"] for d in dl_all]
+    rag_delivery = "Red" if "Red" in dl_rags else "Amber" if "Amber" in dl_rags else "Green"
+    rag_overall = "Red" if "Red" in (rag_schedule, rag_delivery) else \
+                  "Amber" if "Amber" in (rag_schedule, rag_delivery) else "Green"
+    rag = {"overall": rag_overall, "delivery": rag_delivery, "schedule": rag_schedule,
+           "scope": "Amber", "quality": "Green"}
+
+    # slide 3 — milestones (one row per story)
+    milestones = []
+    for n in [n for n in live if n["kind"] == "story"]:
+        r = stale_map.get(n["id"])
+        flags = r.get("flags") or [] if r else []
+        if n["state"] in L.CLOSED:
+            story_rag = "Green"
+        elif r and r.get("top"):
+            story_rag = _rag_of(flags) if flags else "Red"
+        elif r and "slipping" in flags:
+            story_rag = "Amber"
+        else:
+            story_rag = "Green"
+        note = _pmo_bullet(ST.question(r, N)) if r and r.get("top") else ""
+        milestones.append({"title": _pmo_bullet(n["title"]), "status": story_rag, "note": note})
+
+    dec = [n for n in live if n["kind"] == "decision" and (n["created"] or "") >= start]
+    decisions = [{"title": _pmo_bullet(n["title"])} for n in dec]
+
+    # Activity table (slide 3): tasks/stories that completed or were planned this week
+    activities = []
+    act_seen: set = set()
+    ai = 1
+    for n in live:
+        for h in _applied_in(n, start, lambda h: h.get("effect") in ("done", "held")):
+            t = _pmo_bullet(n["title"])
+            if t not in act_seen:
+                activities.append({"sr": str(ai), "status": "Complete", "activity": t,
+                                    "planned": _fmt(n.get("due")), "actual": fmt_date(h["date"])})
+                act_seen.add(t); ai += 1
+
+    # Actions table (slide 3 lower): internal actions/decisions
+    actions = []
+    for i, n in enumerate([n for n in live if n["kind"] == "decision"
+                            and (n["created"] or "") >= start], 1):
+        actions.append({"sr": str(i), "status": "Open", "activity": _pmo_bullet(n["title"]),
+                        "planned": _fmt(n.get("due")), "actual": ""})
+
+    # slide 4 — completed / priorities
+    seen_c: set = set()
+    completed = []
+    for n in live:
+        for h in _applied_in(n, start, lambda h: h.get("effect") in ("done", "held")):
+            t = _pmo_bullet(n["title"])
+            if t and t not in seen_c:
+                completed.append(t); seen_c.add(t)
+    top = [r for r in rows if r["top"]]
+    priorities = [_pmo_bullet(r["node"]["title"]) for r in top[:8] if r["node"].get("title")]
+
+    # slide 5 — Decisions & Actions Needed from the Client
+    # Columns: Sr. | Decision | Status | Owner | Target | Requested | Comments
+    owed = [n for n in live if n["state"] not in L.CLOSED and (n["client_owed"] or
+            (n.get("waiting_for") and cfg.side((n.get("waiting_for") or {}).get("who")) == "client"))]
+    owed.sort(key=lambda n: (-len(n["blocks"]), (n.get("waiting_for") or {}).get("since") or n["created"] or ""))
+    slide5 = []
+    for i, n in enumerate(owed[:12], 1):
+        w = n.get("waiting_for")
+        owner = n.get("client_owner") or (w or {}).get("who") or "client"
+        target = _fmt((w or {}).get("due") or n.get("due"))
+        requested = _fmt((w or {}).get("since") or n.get("created"))
+        if n["state"] in L.CLOSED:
+            st_val = "Closed"
+        elif n["state"] == "in_progress":
+            st_val = "In-Progress"
+        else:
+            st_val = "Open"
+        slide5.append({
+            "sr": str(i), "decision": _pmo_bullet(n["title"]),
+            "status": st_val, "owner": owner, "target": target,
+            "requested": requested, "comments": "",
+        })
+
+    # slide 6 — Deliverable Tracker
+    # Columns: Sr. | Requests | Status | Planned First Draft | Planned Final | Actual Delivery | Approver
+    slide6 = [
+        {
+            "sr": str(i),
+            "requests": _pmo_bullet(d["title"] or ""),
+            "status": _state_label(d["state"]),
+            "rag": d["rag"],
+            "planned_first_draft": _fmt(d.get("first_draft_due")),
+            "planned_final": _fmt(d["due"]),
+            "actual_delivery": _fmt((d["landed"] or {}).get("date")) if d.get("landed") else "",
+            "approver": d["internal_owner"] or "",
+        }
+        for i, d in enumerate(dl_all, 1)
+    ]
+
+    return {
+        "week": today, "project_name": cfg.name,
+        "generated": dt.datetime.now().isoformat(timespec="seconds"),
+        "slide3": {"headline": "", "week_label": week_label, "rag": rag,
+                   "milestones": milestones, "activities": activities,
+                   "actions": actions, "decisions": decisions, "narrative": ""},
+        "slide4": {"completed": completed, "priorities": priorities},
+        "slide5": slide5, "slide6": slide6,
+    }

@@ -34,7 +34,10 @@ command prints JSON.
    - **Teams transcripts** (`msgraph_transcripts`) and **calendar** (`msgraph_calendar`) go through the user's
      `msgraph` skill, which owns sign-in. If `doctor` says it is not signed in, tell the user to run the login
      command it prints, prefixed with `!`, and wait. Use `subject` (transcripts) and `subjects` (calendar) to keep
-     to this project's meetings. A calendar source reported `unsupported` needs an msgraph that lists a past date
+     to this project's meetings. When titles are not unique to the project (a generic word such as "Performance",
+     or two series sharing one title), choose meetings by who attends instead: `attendee_domains = ["client.example"]`
+     and/or `organizer = ["<name>"]`, and set `client_domains` so a meeting with a client attendee is labelled a
+     client meeting. Ask the user which client domain and organizer mark this project's meetings. A calendar source reported `unsupported` needs an msgraph that lists a past date
      range; say so plainly.
    - **Files folder** (`files_folder`): a synced SharePoint/OneDrive library of deliverables. New and changed
      documents become evidence with a text excerpt (.docx .pptx .xlsx .md .txt .csv; .pdf when `pdftotext` is

@@ -24,13 +24,15 @@ PARENT_OK = {"story": {"epic"}, "task": {"story"}, "risk": {"epic", "story"}, "d
              "epic": {None}}
 PREFIX = {"epic": "E", "story": "S", "task": "T", "risk": "R", "decision": "D"}
 CLOSED = {"done", "cancelled", "merged", "deleted"}
+CLOSING = {"done", "held", "cancelled"}  # agent status effects that close a node: each waits for the user's Confirm
 HUMAN_FIELDS = {"title", "internal_owner", "client_owner", "due", "state", "parent", "type", "client_owed",
                 "waiting_for"}
-AGENT_OPS = {"create", "status", "revise", "ac_met", "link", "waiting", "suggest_move", "suggest_merge", "note"}
+AGENT_OPS = {"create", "propose", "status", "revise", "ac_met", "link", "waiting", "suggest_move", "suggest_merge", "note"}
 HUMAN_OPS = {"edit", "ac_add", "ac_set", "link", "unlink", "merge", "delete", "accept", "reject", "undo", "create"}
 MAX_AC = 6
 HIST_KEYS = ("mid", "type", "op", "effect", "evidence", "date", "ts", "speaker", "quote", "note", "due_text", "due",
-             "by", "kind", "set", "text", "met", "ac", "ac_text", "depends_on", "into", "title", "ac_add", "who", "what", "source")
+             "by", "kind", "set", "text", "met", "ac", "ac_text", "depends_on", "into", "title", "ac_add", "who", "what", "source",
+             "pending", "at", "from_proposal")
 
 
 def _chase(N, i):
@@ -53,6 +55,8 @@ def mid_of(*parts):
 
 
 def needs_verdict(e):
+    if e.get("pending") == "human":  # a human click decides it; a verifier pass would only spend tokens
+        return False
     return e.get("type") == "agent" and (e["op"] in VERIFIED_OPS or (e["op"] == "status" and e.get("effect") in STATUS))
 
 
@@ -114,13 +118,22 @@ def fold(store, upto=None, evs=None, ev=None):
         return _chase(N, i)
 
     for e in evs:
+        if ev.get(e.get("evidence"), {}).get("duplicate_of"):
+            # a re-synced copy of a meeting: whatever was read from it (your edits and the agent's work alike) is placed
+            # at the original meeting, so nothing is lost; the copy itself never counts as a meeting (S.order)
+            e = dict(e, evidence=ev[e["evidence"]]["duplicate_of"])
         if e.get("evidence") and e.get("by") != "human" and pos.get(e["evidence"], 1e9) > lim:
             continue
         if e.get("evidence") and e.get("by") == "human" and e["evidence"] in pos and pos[e["evidence"]] > lim:
             continue  # playback: a human edit appears once the evidence it was made against has been reached
         if e.get("mid") in undone:
             continue
+        x = ev.get(e.get("evidence")) if e.get("by") != "human" else None
+        if x and x.get("date") and e.get("date") != x["date"]:
+            e = dict(e, date=x["date"])   # the item was re-dated (repair.py): its events move with it
         t = e["type"]
+        if t == "create" and e.get("from_proposal") and decided.get(e["from_proposal"]) != "accept":
+            continue   # its Confirm was undone: the proposal is pending again and the node does not exist
         if t == "create":
             n = _node(e)
             N[e["id"]] = n
@@ -140,7 +153,17 @@ def fold(store, upto=None, evs=None, ev=None):
                 continue
             op = e["op"]
             ok = not needs_verdict(e) or verdict.get(e["mid"]) == "supports"
-            if op == "status":
+            if op == "status" and e.get("pending") == "human":
+                st = decided.get(e["mid"], "pending")
+                n["suggestions"].append({"mid": e["mid"], "op": op, "effect": e.get("effect"), "due": e.get("due"),
+                                         "quote": e.get("quote"), "note": e.get("note"), "why": e.get("why"),
+                                         "suggested": e.get("suggested"), "link": e.get("link"),
+                                         "gate": e.get("gate"), "source": e.get("source"), "speaker": e.get("speaker"),
+                                         "cause": e.get("cause"), "status": st, "evidence": e.get("evidence"),
+                                         "date": e.get("date")})
+                ok = st == "accept" and n["state"] not in ("merged", "deleted") and _apply_status(n, e, setf)
+                hist(n, e, ok, status=st)
+            elif op == "status":
                 if ok and n["state"] not in ("merged", "deleted"):
                     ok = _apply_status(n, e, setf)
                 hist(n, e, ok)
@@ -149,6 +172,20 @@ def fold(store, upto=None, evs=None, ev=None):
                 added = [{"text": x, "met": False, "met_by": None, "source": "agent"} for x in e.get("ac_add") or []]
                 n["ac"] += added
                 hist(n, e, ok or bool(added))  # ac_add applies even when a pinned title is refused — audit it
+            elif op == "ac_met" and e.get("pending") == "human":
+                st = decided.get(e["mid"], "pending")
+                n["suggestions"].append({"mid": e["mid"], "op": op, "ac": e["ac"], "ac_text": e.get("ac_text"),
+                                         "quote": e.get("quote"), "why": e.get("why"), "suggested": e.get("suggested"),
+                                         "gate": e.get("gate"), "cause": e.get("cause"), "source": e.get("source"),
+                                         "speaker": e.get("speaker"), "status": st, "evidence": e.get("evidence"),
+                                         "date": e.get("date")})
+                vis = _visible_ac(n)
+                k = next((j for j, a in enumerate(vis) if a["text"] == e["ac_text"]), -1) if e.get("ac_text") \
+                    else e["ac"] - 1
+                ok = st == "accept" and 0 <= k < len(vis) and not vis[k].get("human")
+                if ok:
+                    vis[k].update(met=True, met_by=e["mid"])
+                hist(n, e, ok, status=st)
             elif op == "ac_met":
                 # by the criterion the claim was about (its text), wherever it sits now; the number is only a
                 # fallback for events recorded before ac_text existed
@@ -168,6 +205,17 @@ def fold(store, upto=None, evs=None, ev=None):
                     ok = setf(n, "waiting_for", {"who": e.get("who"), "what": e.get("what"), "since": e["date"],
                                                  "evidence": e["evidence"]} if e.get("what") else None, e)
                 hist(n, e, ok)
+            elif op == "propose":
+                st = decided.get(e["mid"], "pending")
+                pr = e["proposal"]
+                n["suggestions"].append({"mid": e["mid"], "op": op, "kind": pr["kind"], "title": pr["title"],
+                                         "type": pr.get("type"), "owner": pr.get("internal_owner") or pr.get("client_owner"),
+                                         "owner_options": pr.get("owner_options") or [], "due": pr.get("due"),
+                                         "ac": pr.get("ac") or [], "quote": e.get("quote"), "why": e.get("why"),
+                                         "speaker": e.get("speaker"), "source": e.get("source"), "status": st,
+                                         "evidence": e.get("evidence"), "date": e.get("date"),
+                                         "suggested": f"new {pr['kind']}: {pr['title']}"})
+                hist(n, e, False, status=st)
             elif op in ("suggest_move", "suggest_merge"):
                 st = decided.get(e["mid"], "pending")
                 to = e.get("parent") or e.get("into")
@@ -255,7 +303,7 @@ def _apply_status(n, e, setf):
         for k in ("internal_owner", "client_owner"):
             if e.get(k):
                 setf(n, k, e[k], e)
-    if eff != "delayed" and e.get("due"):
+    if eff not in ("delayed", "mention") and e.get("due"):
         if "due" in n["pinned"]:
             return eff not in ("due",)
         if not n["due_history"] or n["due_history"][-1]["due"] != e["due"]:
@@ -320,6 +368,7 @@ def path(N, i):
 
 # ---------- context: what the extractor sees ----------
 def context(store, cfg):
+    from .ingest_audit import room_audio   # local: ingest_audit is an audit module, not needed by the fold
     N, notes, order, ev = fold(store)
 
     def view(n):
@@ -349,9 +398,16 @@ def context(store, cfg):
                 if h.get("type") == "agent" and needs_verdict(h) and h.get("verdict") is None]
         if pend:
             d["unverified_claims"] = pend[-3:]
-        sug = [f"{s['op'][8:]} -> {s['to']}" for s in n["suggestions"] if s["status"] == "pending"]
+        sug = [f"{s['op'][8:]} -> {s['to']}" for s in n["suggestions"]
+               if s["status"] == "pending" and s["op"].startswith("suggest_")]
         if sug:
             d["pending_suggestions"] = sug
+        tp = [f"{s['effect']}@{s['date']}" for s in n["suggestions"] if s["status"] == "pending" and s["op"] == "status"]
+        if tp:
+            d["awaiting_confirm"] = tp  # waiting for the user's Confirm; do not propose the same change again
+        pw = [f"{s['kind']}: {s['title']}" for s in n["suggestions"] if s["status"] == "pending" and s["op"] == "propose"]
+        if pw:
+            d["proposed_work"] = pw  # already waiting for Confirm: do not propose it again
         last = next((h for h in reversed(n["history"]) if h.get("evidence")), None)
         if last:
             d["last"] = last["date"]
@@ -369,6 +425,9 @@ def context(store, cfg):
                    key=lambda x: x["id"])
     return {"project": cfg.name,
             "people": [{"name": p.name, "side": p.side} for p in cfg.people],
+            "teams": [{"name": t.name, "members": t.members, "aliases": t.aliases} for t in getattr(cfg, "teams", [])],
+            # meetings recorded by one room microphone: their speaker tags are not who spoke (owners come from names said)
+            "room_recordings": [r["id"] for r in room_audio(ev)],
             "evidence_processed": {"count": len(order),
                                    "latest": [f"{ev[c]['date']} {ev[c]['kind']} {ev[c]['title'][:70]}" for c in order[-5:]]},
             "epics": [dict(view(e), window="→".join(x for x in (e.get("window") or []) if x)) for e in epics
@@ -478,6 +537,38 @@ def _apply(store, cfg, evid, proposals):
                 if d in N and N[d]["kind"] in ("story", "task") and k in ("story", "task"):
                     out.append(base(p, q, "link", nid, d) | {"type": "agent", "op": "link", "node": nid, "depends_on": d})
             continue
+        if op == "propose":
+            k, par = p.get("kind"), ref(p.get("parent"))
+            pk = N[par]["kind"] if par in N else None
+            if k not in ("story", "task", "risk", "decision"):
+                why = "propose a story, a task, a risk or a decision"
+            elif pk not in PARENT_OK[k]:
+                why = f"a {k} needs a parent of kind {sorted(x for x in PARENT_OK[k] if x)}, got {par!r} ({pk})"
+            elif k == "story" and not p.get("ac"):
+                why = "a story needs acceptance criteria (ac: [...]): what must be true for it to be done"
+            elif k == "story" and len(p["ac"]) > MAX_AC:
+                why = f"more than {MAX_AC} acceptance criteria"
+            elif k == "task" and p.get("type") not in TASK_TYPES:
+                why = f"task type must be one of {sorted(TASK_TYPES)}"
+            elif not p.get("title"):
+                why = "a proposal needs a title"
+            elif (N[par]["created"] or "") > item["date"]:
+                why = f"{par} did not exist yet on {item['date']}"
+            if why:
+                rej.append({"i": i, "why": why, "title": p.get("title")})
+                continue
+            io, co = owner(p.get("internal_owner")), owner(p.get("client_owner"))
+            team = cfg.team(io or co) if hasattr(cfg, "team") else None
+            e = base(p, q, "propose", par, norm(p["title"])) | {
+                "type": "agent", "op": "propose", "node": par, "pending": "human", "why": p.get("why"),
+                "proposal": {"kind": k, "title": p["title"], "type": p.get("type") if k == "task" else None,
+                             "internal_owner": io, "client_owner": co, "owner_options": list(team.members) if team else [],
+                             "client_owed": bool(p.get("client_owed")), "ac": p.get("ac") or [],
+                             "due": resolve_due(p.get("due_text"), item["date"], wd), "due_text": p.get("due_text")}}
+            if e["mid"] not in seen:
+                out.append(e)
+                seen.add(e["mid"])
+            continue
         node = ref(p.get("node"))
         if op == "note":
             if node not in N:
@@ -509,6 +600,8 @@ def _apply(store, cfg, evid, proposals):
             e |= {"effect": p["effect"], "due_text": p.get("due_text"),
                   "due": resolve_due(p.get("due_text"), item["date"], wd) if p["effect"] != "delayed" else None,
                   "internal_owner": owner(p.get("internal_owner")), "client_owner": owner(p.get("client_owner"))}
+            if p.get("pending") == "human" or p["effect"] in CLOSING:
+                e |= {"pending": "human"} | {k: p[k] for k in ("why", "suggested", "link", "gate", "cause") if p.get(k) is not None}
         elif op == "revise":
             if not (p.get("title") or p.get("ac_add")):
                 rej.append({"i": i, "why": "revise needs a new title and/or ac_add"})
@@ -528,6 +621,8 @@ def _apply(store, cfg, evid, proposals):
                                           f"“{agent_saw}”: the criteria changed since you read context; re-read it"})
                 continue
             e |= {"ac": p["ac"], "ac_text": live[p["ac"] - 1]["text"]}  # what the agent saw, for the verifier
+            if p.get("pending") == "human":
+                e |= {"pending": "human"} | {k: p[k] for k in ("why", "suggested", "link", "gate", "cause") if p.get(k) is not None}
         elif op == "link":
             d = ref(p.get("depends_on"))
             if d not in N or N[d]["kind"] not in ("story", "task") or N[node]["kind"] not in ("story", "task"):
@@ -557,7 +652,18 @@ def _apply(store, cfg, evid, proposals):
     by = defaultdict(int)
     for e in out:
         by["create_" + e["kind"] if e["type"] == "create" else e.get("op") or e["type"]] += 1
-    return {"events": len(out), "by_op": dict(by), "rejected": rej}
+    # look-alikes among open nodes for each new node or card: reported, never a reason to reject (same words != same work)
+    from .similar import similar
+    look = []
+    for e in out:
+        title, kind = ((e.get("fields") or {}).get("title"), e.get("kind")) if e["type"] == "create" else \
+            ((e.get("proposal") or {}).get("title"), (e.get("proposal") or {}).get("kind"))
+        if e["type"] != "create" and e.get("op") != "propose":
+            continue
+        m = [x for x in similar(N, title or "", kind) if x["state"] not in CLOSED and x["id"] != e.get("id")]
+        if m:
+            look.append({"title": title, "kind": kind, "matches": m})
+    return {"events": len(out), "by_op": dict(by), "rejected": rej, "similar": look}
 
 
 def mark_processed(store, evid, note=""):
@@ -628,6 +734,36 @@ def verify_apply(store, verdicts):
     return {"verdicts": dict(c), "rejected": rej}
 
 
+def _accept_proposal(store, evs, N, prop, body, e):
+    """Confirm on proposed work: one accept event plus the human create it stands for, appended together."""
+    pr, par = prop["proposal"], prop["node"]
+    if par not in N or N[par]["state"] in ("merged", "deleted"):
+        raise ValueError(f"{par} no longer exists: reject this proposal instead")
+    who = body.get("owner")
+    if who is not None:
+        known = set(pr.get("owner_options") or []) | {pr.get("internal_owner"), pr.get("client_owner")}
+        people = {h.get("speaker") for h in evs if h.get("speaker")} | {
+            n.get(k) for n in N.values() for k in ("internal_owner", "client_owner")}
+        if who not in known and who not in people:
+            raise ValueError(f"{who!r} is not a known person: pick one of {pr.get('owner_options') or 'the people list'}")
+    k = pr["kind"]
+    n_k = sum(1 for x in evs if x["type"] == "create" and x["kind"] == k) + 1
+    owner_field = "client_owner" if pr.get("client_owner") and not pr.get("internal_owner") else "internal_owner"
+    fields = {"title": pr["title"], "parent": par, "type": pr.get("type") or ("action" if k == "task" else None),
+              "ac": pr.get("ac") or [], "plan": None, "internal_owner": pr.get("internal_owner"),
+              "client_owner": pr.get("client_owner"), "client_owed": pr.get("client_owed", False),
+              "due": pr.get("due"), "due_text": pr.get("due_text")}
+    if who:
+        fields[owner_field] = who
+    e["target"] = prop["mid"]
+    e["mid"] = mid_of("human", e["at"], json.dumps(body, sort_keys=True, default=str))
+    c = {"type": "create", "id": f"{PREFIX[k]}{n_k:03d}", "kind": k, "by": "human", "evidence": prop["evidence"],
+         "date": prop["date"], "at": e["at"], "from_proposal": prop["mid"], "quote": prop.get("quote"),
+         "mid": mid_of("human", e["at"], "create", prop["mid"]), "fields": fields}
+    S.append(store, [e, c])
+    return c
+
+
 # ---------- human events (workbench) ----------
 HUMAN_STATES = {"open", "in_progress", "blocked", "done", "cancelled"}
 
@@ -686,6 +822,32 @@ def _human_event(store, body):
         if not body.get("target"):
             raise ValueError("target mid required")
         e["target"] = body["target"]
+        prop = next((x for x in evs if x.get("mid") == body["target"] and x.get("op") == "propose"), None)
+        if prop:
+            undone = {x["target"] for x in evs if x["type"] == "human" and x["op"] == "undo"}
+            done = {x["target"] for x in evs if x["type"] == "human" and x["op"] in ("accept", "reject")
+                    and x["mid"] not in undone}   # an undone decision leaves the card open again
+            if body["target"] in done:
+                raise ValueError("this proposal was already decided")
+        if op == "accept" and prop:
+            return _accept_proposal(store, evs, N, prop, body, e)
+        if op == "accept":
+            for n in N.values():
+                s_ = next((x for x in n["suggestions"] if x["mid"] == body["target"] and x["op"] == "status"), None)
+                if s_ and "state" in n["pinned"] and s_["effect"] not in ("due", "delayed", "reassign"):
+                    raise ValueError(f"{n['id']}: the state was set by you, so this Teams proposal cannot change it; "
+                                     "edit the state directly or undo your edit first")
+                a_ = next((x for x in n["suggestions"] if x["mid"] == body["target"] and x["op"] == "ac_met"), None)
+                if a_ and a_.get("ac_text"):   # the fold finds the criterion by this text: say so if it cannot
+                    hit = next((x for x in _visible_ac(n) if x["text"] == a_["ac_text"]), None)
+                    if hit is None:
+                        raise ValueError(f"{n['id']}: the criterion “{a_['ac_text']}” changed since this card was made; "
+                                         "reject the card, or re-read the meeting")
+                    if hit.get("human"):
+                        raise ValueError(f"{n['id']}: you set the criterion “{a_['ac_text']}” yourself, so this card "
+                                         "cannot change it; edit it directly or undo your edit first")
+        if op == "reject" and body.get("reason"):
+            e["reason"] = str(body["reason"])[:80]
     else:
         if body.get("node") not in N:
             raise ValueError(f"unknown node {body.get('node')!r}")

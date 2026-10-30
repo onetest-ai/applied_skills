@@ -24,13 +24,17 @@ Run one command per Bash call.
 
 For each evidence id you were given, in that order:
 1. `$TASKA context` — the live tree (`waits_for` / `holds_up` spell out each dependency's direction), the people directory (name + side) and what has been processed. Read it every
-   time; it changes after each item. `unverified_claims` are awaiting verification: do not repeat them.
+   time; it changes after each item. `unverified_claims` are awaiting verification and `awaiting_confirm` are closures waiting for the user's Confirm:
+   do not repeat either. A `held`/`done`/`cancelled` you propose is never applied by itself; it waits for the user.
    `pinned_by_human` fields were set by the manager: never try to change them.
 2. Read the item's `.md` file (path from `$TASKA pending`) in full.
 3. Write `<store>/proposals/<evidence_id>.json` (a JSON array, schema below): **pass 1, then pass 2**.
 4. `$TASKA apply --evidence <id> --proposals <that file>`. Fix every rejection in `<id>_fix.json` and apply only
    the fixed entries.
-5. `$TASKA done --evidence <id>` — even when the item changed nothing (say why in `--note`).
+5. `$TASKA done --evidence <id>` — even when the item changed nothing (say why in `--note`). For a long meeting,
+   `done` answers `"status": "coverage"` when a third of the transcript produced no event: re-read those parts
+   (`empty_parts`), apply what was said there, and run `done` again; only if they truly hold no work, pass
+   `--ack "<why>"`.
 
 ## What each kind of evidence can show
 - **meeting** — everything below. Most updates come from here.
@@ -78,17 +82,87 @@ prerequisites, a decision, someone's data or reply, another session) and say it 
 Phrases: "once we have…", "until…", "blocked on…", "waiting for…", "before we can…", "depends on…", "need X first",
 "can't start without…", and implicit ones: "we need the drawings for Monday's session".
 
+## What counts as work (the user's tracking rule)
+The same rule the eval readers, the judges and the scorer use (`evals/READER.md`, `evals/JUDGE.md`); the three
+blocks below are kept byte-identical by a test. Apply it before deciding between `create`, `propose`, a status op
+and nothing.
+
+<!-- READER-BLOCK:commitment:START -->
+- `committed` — a deliverable or analysis that outlives the meeting, which our side
+  will do ("we'll start sizing the options next", "maybe I'll try to finish the
+  question list by tomorrow") or which a named teammate was asked to do and nobody
+  refused ("Nora, please look into what slows the export down"). Hedging never
+  downgrades a commitment; only the absence of anyone on our side expected to act
+  does.
+- `proposed` — a specific deliverable is asked for or suggested (often by the
+  client) and nobody on our side has taken it yet ("what is the breakdown by
+  segment?", "maybe that area deserves a short deep-dive session").
+- `declined` — someone explicitly said no or rejected the idea outright.
+<!-- READER-BLOCK:commitment:END -->
+
+<!-- READER-BLOCK:not-work-bullets:START -->
+- Scheduling, booking or moving a session ("let's find time tomorrow", "I'll book
+  30 minutes with her").
+- Reviewing, tweaking or sending a deck or slides, and other logistics or small
+  courtesies ("take a look at the deck", "tag Nora on the transcript").
+- Same-day errands ("call them today", "send it tonight").
+- Anything done during the call.
+- An alignment or conversation that produces no deliverable.
+- Workshop brainstorming: future-state ideas, how-might-we statements, and the
+  client's own business ideas or data wishes.
+- A generic "we should …" or "we need to …" with no specific deliverable that
+  nobody takes up, and presentation ideas nobody owns.
+- Setting up a teammate's access or accounts.
+- Decisions about how a workshop session runs (which topics go to which session);
+  a decision that changes the engagement's scope is work.
+- The client's guidance on how to do work we already have ("talk to their IT team
+  first"), and the client's own open questions about their business.
+- Work that can only start once the client delivers data ("we'll build it once the
+  transcripts arrive"): track the client-owed delivery, not the work behind it.
+
+A status update on work already tracked ("the recruitment is ongoing") is work:
+record it so the existing item's status can be checked.
+<!-- READER-BLOCK:not-work-bullets:END -->
+
+<!-- READER-BLOCK:client-owed:START -->
+**`client_owed`** — `true` when the client's side owes the deliverable to us (a
+dependency: "Lisa will send us the vendor name"); `false` when our team owes it,
+including anything we deliver to the client. Work the client owes is still work:
+never treat it as not work because of who owns it.
+<!-- READER-BLOCK:client-owed:END -->
+
+- **Every piece of work said in the meeting is created, proposed, recorded as a status op on the node that
+  tracks it, or not work by the rule above: never silently dropped.** There is no limit on how many items one
+  meeting produces.
+- **A conditional** ("if there's no momentum by Tuesday, we'll…") is a `risk` with the trigger date in
+  `due_text`, or a `decision` when the group agreed it.
+- **Room recordings:** the context lists `room_recordings`, meetings where one speaker tag holds most of the
+  words: a room recording of several people on one microphone. For those, take an owner only from a name said in
+  the quote, never from the speaker tag; otherwise leave the owner null.
+
 ## Pass 2 — new nodes
 Only for work no existing node covers (check the whole tree: wording, nicknames, ASR mangling differ).
 - New story: needs `ac` (2–4), observable.
 - New task: under a story (create the story first in the same file via `ref`). **Admission bar:** an owner, a
   date, or type session/dependency. Logistics, colour, same-day self-chores ("I'll forward the invite") → `note`.
+- **Proposed work → `propose`, never dropped.** Someone puts forward concrete work ("it's a good project for the
+  AI guys", "we should digitise the boards", "can someone build…") and nobody rejects it, but no owner or date is
+  committed. That is not a `create` (it fails the admission bar) and not silence: write `op: "propose"` with the
+  same fields as a create (`kind` task or story, `parent`, `title`, `type`, `ac` for a story) and `why` (who
+  proposed it, to whom, what happened next). It becomes a card the user confirms; only their Confirm creates it.
+  Owner: a person or a **team** named or addressed ("the AI guys" → the team from `teams` in the context, whose
+  members the user can pick on Confirm); else null. A suggestion someone in the meeting declined or deferred
+  ("not now", "let's not") is not proposed. Check `proposed_work` in the context first: never propose it twice.
 - New dependency on the client: task `type: dependency`, `client_owed: true`, `client_owner`. Then make the work
   it unblocks wait for it: a `link` with `node` = the waiting task or story and `depends_on` = the new dependency
   (never the other way round).
 - Risks heard as findings about the client's estate → `risk` under the epic/story it threatens.
-- A daily meeting rarely creates more than ~2 stories and ~6 tasks. Quality over count.
-- Owners: "I" = the speaker, "we" = null. Use the names from the people directory.
+- `apply` answers with `similar`: open nodes that look like each new node or card. When one is the same work, add
+  a `suggest_merge` of the new node into the existing one in the same pass (the user confirms it), and put what
+  was said on the existing node (`status`/`note`/`link`); never keep both silently. Look-alike words alone are
+  not the same work.
+- Owners: "I" = the speaker, "we" = null. Use the names from the people directory; a group addressed by name
+  ("AI team", "the design folks") is the matching entry in `teams` when there is one.
 
 ## Schema (one object per proposal)
 ```json
@@ -97,6 +171,9 @@ Only for work no existing node covers (check the whole tree: wording, nicknames,
  "internal_owner": "name|null", "client_owner": "name|null", "client_owed": false,
  "depends_on": ["T012"], "due_text": "next Thursday", "plan": "Off-plan (epics only)",
  "quote": "exact contiguous words from ONE turn or passage (8–40 words)", "note": "≤ 20 words"}
+{"op": "propose", "kind": "task|story", "parent": "S003", "title": "…", "type": "action|session|dependency",
+ "ac": ["… (stories only)"], "internal_owner": "person or team|null", "due_text": "…", "quote": "…",
+ "why": "who proposed it, to whom, what happened next"}
 {"op": "status", "node": "T012", "effect": "held|done|progress|blocked|cancelled|reopen|due|delayed|reassign|mention",
  "due_text": "…", "internal_owner": "…", "client_owner": "…", "quote": "…", "note": "…"}
 {"op": "revise", "node": "S004", "title": "…", "ac_add": ["…"], "quote": "…", "note": "what changed"}

@@ -1,5 +1,6 @@
 # taska bundle: standard library only (Python 3.11+, for tomllib). Nothing to install.
 # Optional system tools, reported by `taska.py doctor`, never installed:
 #   ffmpeg + whisper.cpp (whisper-cli) and a ggml model: recordings that came without a transcript
-#   node + the user's msgraph skill: Teams transcripts and calendar
+#   node + the user's msgraph skill: Teams transcripts and calendar (Claude Code's or CodeMie's install, or [sources.<key>].cli)
+# Evals only: the claude CLI on PATH, for evals/planted's end-to-end run.
 # Tests only: pytest, pyyaml (passed with `uv run --with`).

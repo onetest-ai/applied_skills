@@ -29,6 +29,10 @@ finish with the summary.
    - other reasons (folder offline, unreadable file): report them; they are retried next sync.
    `late_arrivals` are items dated before something already processed — process them like any other; the fold
    replays them in time order.
+   Teams sources (`teams_chat`, `teams_channel`) are processed inside `sync` by the local decision model: their
+   messages never appear in `pending` and get no extraction or verification pass. Their proposals wait for the user
+   in the workbench. A Teams source with `status: error` (decision model or Graph unreachable) is reported, not
+   retried by hand; nothing from it was applied.
 3. `$TASKA pending`. Nothing pending → skip to step 7.
 4. **Extraction.** Take the pending ids oldest first, in batches of up to 5. For each batch, dispatch one
    subagent (a fast model such as Sonnet is enough) with this prompt, substituting the real values:
@@ -41,11 +45,20 @@ finish with the summary.
    > evidence ids: <ids>.
 6. **Verification.** One subagent that did not extract (independence is the point):
    > Follow `<skill-dir>/VERIFY.md` exactly. `$TASKA` is …; batch name `<today's date>`.
-7. `$TASKA export`, then `$TASKA status` and `$TASKA asks`.
+7. `$TASKA infer` (proposes the closures that done/held tasks imply: open prerequisites, missing prerequisites,
+   story criteria — every one waits for the user's Confirm), then `$TASKA export`, `$TASKA status` and `$TASKA asks`. With a Teams source configured, also
+   `$TASKA teams-report` (writes the findings page).
 8. Report to the user, briefly: items processed (by source), what changed in the tree (new stories, sessions
-   held, dates moved, new dependencies), the verifier's counts, the top asks grouped by person, and the workbench
+   held, dates moved, new dependencies), the verifier's counts, the closures and Teams proposals waiting for the
+   user's Confirm in the workbench (every `held`/`done`/`cancelled` waits; Teams counts from each source's `proposed`), the top asks grouped by person, and the workbench
    path from `export` (and that `/taska:workbench` opens it with editing). Unattended runs end with the same
    summary as their final message.
+
+## Handing a project over
+A project is handed over, never rebuilt: `$TASKA handover --out <folder>` packs `taska.toml` and the store into one
+zip with a note, and changes nothing. Tell the user the old owner stops their scheduled runs first (one runner at a
+time), and that the new owner runs `$TASKA doctor`: `portability` lists paths tied to the old owner's home folder
+(write them as `~/...`), and `handover_check` must show no source with `would_reread`.
 
 ## Rules
 - Never edit `events.jsonl`, evidence files or `taska.toml` by hand; everything goes through `$TASKA`.

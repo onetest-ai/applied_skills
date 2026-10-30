@@ -3,7 +3,7 @@ items through `store.write_evidence`. A cursor only advances past an item once i
 failed transcription or an offline folder is retried on the next sync."""
 import re
 
-from . import code_host, files_folder, meetings_folder, msgraph
+from . import code_host, files_folder, meetings_folder, msgraph, teams_common
 
 ADAPTERS = {
     "meetings_folder": meetings_folder.sync,
@@ -11,6 +11,8 @@ ADAPTERS = {
     "msgraph_calendar": msgraph.sync_calendar,
     "files_folder": files_folder.sync,
     "code_host": code_host.sync,
+    "teams_channel": teams_common.channel_adapter,
+    "teams_chat": teams_common.chat_adapter,
 }
 
 

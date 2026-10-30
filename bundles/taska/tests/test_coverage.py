@@ -1,0 +1,74 @@
+"""Coverage gate (r2 plan, R8): a long meeting whose last third (or any third) produced nothing is re-read before it is
+marked done, or the extractor says why nothing was there. Thirds are by text offset, never by timestamp: one long
+turn can hold a third of a meeting."""
+import json
+import textwrap
+
+from conftest import run_cli
+from taska_lib import config as C, coverage as CV, store as S
+
+EV = "2026-03-02_meetings_cv000001"
+FILLER = "the dock schedule and the yard plan were discussed again in some detail by everyone present today "
+LINES = ["Nora will send the forklift certification list to the client by Thursday morning",
+         "Ravi needs to book the warehouse site visit and confirm the date with Opal",
+         "Opal will share the crane inspection report with the team next week"]
+
+
+def _project(tmp_path, n_filler=40):
+    (tmp_path / "taska.toml").write_text(textwrap.dedent("""
+        [project]
+        name = "Harbor Logistics"
+        [[people]]
+        name = "Nora Quill"
+    """))
+    cfg = C.load(tmp_path)
+    S.ensure(cfg.store)
+    turns = []
+    for i, line in enumerate(LINES):   # one work line at the start of each third
+        turns.append({"speaker": "Nora Quill", "ts": f"00:{i * 10:02d}:00", "text": line})
+        turns.append({"speaker": "Ravi Tamsin", "ts": f"00:{i * 10 + 1:02d}:00", "text": FILLER * n_filler})
+    S.write_evidence(cfg.store, {"id": EV, "kind": "meeting", "at": "2026-03-02T10:00:00", "title": "Daily sync",
+                                 "source": "meetings", "turns": turns})
+    return cfg
+
+
+def _note(cfg, quote, mid):
+    S.append(cfg.store, [{"type": "note", "mid": mid, "by": "agent", "evidence": EV, "date": "2026-03-02", "node": "E01",
+                          "quote": quote, "text": "x"}])
+
+
+def test_coverage_counts_events_per_third_by_text_offset(tmp_path):
+    cfg = _project(tmp_path)
+    _note(cfg, LINES[0], "n1")
+    c = CV.coverage(S.evidence(cfg.store)[EV], S.events(cfg.store))
+    assert [p["events"] for p in c["parts"]] == [1, 0, 0] and c["empty_parts"] == [2, 3]
+
+
+def test_done_refuses_until_acknowledged(tmp_path):
+    cfg = _project(tmp_path)
+    _note(cfg, LINES[0], "n1")
+    r = run_cli(tmp_path, "done", "--evidence", EV, check=False)
+    assert r["status"] == "coverage" and r["empty_parts"] == [2, 3]
+    assert EV not in S.processed(S.events(cfg.store))
+    r = run_cli(tmp_path, "done", "--evidence", EV, "--ack", "parts 2 and 3 are status talk, no new work")
+    assert r["status"] == "ok"
+    p = [e for e in S.events(cfg.store) if e["type"] == "processed"][-1]
+    assert "coverage acknowledged: parts 2 and 3 are status talk" in p["note"]
+
+
+def test_full_coverage_passes(tmp_path):
+    cfg = _project(tmp_path)
+    for i, line in enumerate(LINES):
+        _note(cfg, line, f"n{i}")
+    assert run_cli(tmp_path, "done", "--evidence", EV)["status"] == "ok"
+
+
+def test_short_meeting_is_not_gated(tmp_path):
+    cfg = _project(tmp_path, n_filler=1)
+    assert run_cli(tmp_path, "done", "--evidence", EV)["status"] == "ok"
+
+
+def test_extract_says_what_to_do_when_done_answers_coverage():
+    from pathlib import Path
+    ext = " ".join((Path(__file__).resolve().parent.parent / "skills" / "run" / "EXTRACT.md").read_text().split())
+    assert '"status": "coverage"' in ext and "--ack" in ext and "re-read" in ext

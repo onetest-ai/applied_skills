@@ -206,3 +206,19 @@ def test_changed_evidence_is_requeued_and_redo_drop_rereads(project):
     d = run_cli(project, "redo", "--evidence", first, "--drop")
     assert d["dropped"] == first
     assert run_cli(project, "sync")["sources"][0]["new"] == [first]  # re-read from the folder
+
+
+def test_msgraph_is_found_where_codemie_installs_it(tmp_path, monkeypatch):
+    # CodeMie (codemie-claude) installs the msgraph skill under ~/.codemie/claude-plugin/skills/; a manager who set taska
+    # up through CodeMie must not have to write the path into taska.toml by hand
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("MSGRAPH_CLI", raising=False)
+    codemie = tmp_path / ".codemie/claude-plugin/skills/msgraph/scripts/msgraph.js"
+    codemie.parent.mkdir(parents=True)
+    codemie.write_text("// cli")
+    assert msgraph.cli_path({}) == str(codemie)
+    claude = tmp_path / ".claude/skills/msgraph/scripts/msgraph.js"      # a Claude Code install still wins
+    claude.parent.mkdir(parents=True)
+    claude.write_text("// cli")
+    assert msgraph.cli_path({}) == str(claude)
+    assert msgraph.cli_path({"cli": "/x/msgraph.js"}) == "/x/msgraph.js"   # an explicit path always wins

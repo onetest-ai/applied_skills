@@ -20,6 +20,7 @@ Closes #
 - [ ] Tests added/updated for behavior changes.
 - [ ] Relevant `SKILL.md` / `README.md` updated.
 - [ ] The relevant test suite passes locally.
+- [ ] taska: changed extraction rules, the ledger, the scorer or a source? Ran the free eval tier (unit tests, tree lint, meeting audit, scored record) and, for a rule change, the planted or golden tier; compared runs on the same key and snapshot.
 
 ## Notes for reviewers
 

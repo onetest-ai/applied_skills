@@ -48,7 +48,8 @@ def test_fmt_date_shows_year_only_when_it_differs():
 
 def test_manual_edits_are_never_gated_on_the_viewed_call():
     """Core promise: the manager can change anything by hand from any view. Edits always apply to the current tree
-    (the server stamps them on the latest evidence), so no control may be disabled because a past call is shown."""
+    (the server stamps them on the latest evidence), so no control may be disabled because a past call is shown,
+    except the criteria checkboxes: they send a number that can differ in the current tree (test_workbench_version.py)."""
     src = HTML.read_text()
     assert not re.search(r"const ro\s*=.*latest\(\)", src), "edit controls are disabled outside the latest call"
     assert "LIVE && latest()" not in src, "an edit control is still gated on the latest call"
@@ -71,6 +72,9 @@ def test_deliverables_view_matches_pack_rules_and_follows_the_viewed_call():
     ev = {c["id"]: {"kind": c["evidence_kind"], "date": c["date"], "title": c["title"]} for c in calls}
     py = {d["id"]: d for d in deliverables({k: dict(n, history=hist.get(k, [])) for k, n in nodes.items()}, ev)}
     js = {d["id"]: d for d in _js(f"deliverableRows({json.dumps(nodes)}, {json.dumps(hist)}, {json.dumps(calls)}, 2)")}
+    # `first_draft_due` and `rag` feed the client pack only (pack.build_client); the workbench never shows them,
+    # so the twin compares on every field the view renders
+    py = {i: {k: v for k, v in d.items() if k not in ("first_draft_due", "rag")} for i, d in py.items()}
     assert js == py, (js, py)
     at_f1 = {d["id"]: d["landed"] for d in _js(
         f"deliverableRows({json.dumps(nodes)}, {json.dumps(hist)}, {json.dumps(calls)}, 1)")}

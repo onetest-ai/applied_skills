@@ -21,6 +21,46 @@ def _next_working(d, working_days):
     return d
 
 
+def dotted_date(s):
+    """A numeric dotted date in a string -> date, else None: "2026.10.19", "10.19.2026" (month first, the Teams
+    export style) or "19.10.2026" (day first, taken only when the first number cannot be a month)."""
+    m = re.search(r"(?<!\d)(20\d\d)\.(\d{1,2})\.(\d{1,2})(?!\d)", s)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    else:
+        m = re.search(r"(?<!\d)(\d{1,2})\.(\d{1,2})\.(20\d\d)(?!\d)", s)
+        if not m:
+            return None
+        a, b, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        mo, d = (b, a) if a > 12 else (a, b)
+    try:
+        return dt.date(y, mo, d)
+    except ValueError:
+        return None
+
+
+def date_in_name(name, ref):
+    """The meeting date a file name carries, else None. `ref` (a date: the file's mtime day) resolves a year-less
+    "25 Aug" to the most recent such day no more than 30 days after it."""
+    m = re.search(r"(20\d\d)[-_]?(\d\d)[-_]?(\d\d)", name)
+    if m:
+        try:
+            return dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            pass
+    d = dotted_date(name)
+    if d:
+        return d
+    md = month_day(name)
+    if md:
+        try:
+            d = dt.date(ref.year, md[0], md[1])
+            return d.replace(year=ref.year - 1) if d > ref + dt.timedelta(days=30) else d
+        except ValueError:   # "Feb 29" rolled back into a year without one
+            return None
+    return None
+
+
 # a whole month word: full name or standard abbreviation ("Sept" too), never a word that merely starts like one
 # ("Decisions", "Marketing", "Mayday"), so a file name or a spoken phrase cannot invent a date
 _MONTH_WORD = r"(january|february|march|april|may|june|july|august|september|october|november|december" \

@@ -16,7 +16,10 @@ change is checked by a second agent, and what went quiet becomes a ranked list o
 - Python 3.11+ (standard library only; nothing to install).
 - Optional, reported by `taska.py doctor`: `ffmpeg` + `whisper-cli` and a ggml model for recordings that came
   without a transcript (a model cached by brain's video lane is found automatically); `node` + the user's
-  `msgraph` skill for Teams transcripts and calendar.
+  `msgraph` skill for Teams transcripts and calendar (found where Claude Code or CodeMie installs it,
+  e.g. `~/.codemie/claude-plugin/skills/msgraph/scripts/msgraph.js`; `[sources.<key>].cli` or `$MSGRAPH_CLI`
+  override).
+- Evals only: the `claude` CLI on PATH for the planted end-to-end run (`evals/planted/run.sh`).
 
 ## Model, in one paragraph
 Everything is an append-only event in `<project>/.taska/events.jsonl`; the tree is a fold. Sources become

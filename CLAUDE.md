@@ -116,6 +116,14 @@ These are the things that take several files to see, and that tests pass while v
 
 **Taska evidence is one item per meeting, deduplicated across sources** (`store.write_evidence` → `duplicate_of`: same date + same first 40 normalised words). A synced `.vtt` and the Teams copy of the same call must not both enter the ledger. A source's cursor advances past a file only once its evidence is written; unreadable or not-yet-transcribed recordings stay pending and are retried. Calendar evidence is timestamped when it became known (an event's end, or now for a future event), never its future start — `staleness` takes "today" from the newest processed item.
 
+**A re-synced copy of a meeting never counts as a meeting, and never loses what was read from it.** `repair-evidence` marks a later copy `duplicate_of` its original; `S.order` leaves the copy out, so it is never pending, never counted twice and never scored as its own meeting. But every event on the copy (the agent's work and your edits alike) is placed at the original by `ledger.fold`, by `evalscore.score`, by `compare_external` and by `snapshot`. Dropping them silently hid nine nodes a sent report had shown (Oct 2026). A new consumer of events by evidence id must apply the same mapping, and a true duplicate node goes through a `suggest_merge` card, never a silent drop. `repair-evidence --calendar` re-dates a meeting dated only by its file's arrival to the calendar event it records; ids keep their old date prefix.
+
+**One definition of work, byte-identical in three files.** `evals/READER.md`, `evals/JUDGE.md` and `skills/run/EXTRACT.md` carry the user's tracking rule in the shared blocks `<!-- READER-BLOCK:commitment|not-work-bullets|client-owed -->`, pinned by `test_extract_rules.py` and `test_check_judge.py`. Edit one, edit all three. The rule is the manager's call, so it changes only with their OK. `client_owed` means the client owes the deliverable to us, everywhere.
+
+**Answer keys are immutable versions.** A key file's header is `# gold vN <date> n=<count> sha256=<body>`; `evalscore.load_gold` refuses a body that no longer matches, and `evals/key_tools.write_version` writes a new `items.vN.jsonl` plus a CHANGELOG line instead of overwriting. A comparison of two runs on different keys is refused, not reported.
+
+**The workbench says which code it runs.** `/api/version` and `/api/data.code` report the code version at start against the code on disk. The page shows a banner when they differ, because a server started before a deploy silently hides newer ops. A deploy step must restart a stale server. `done` refuses a long meeting with an empty third of its text (`"status": "coverage"`) until it is re-read or `--ack`ed.
+
 ## Conventions
 
 - **Every `SKILL.md` description opens with the literal `Use when `.** The description is all a model sees when deciding to invoke a skill, so the trigger leads and the capability follows. Enforced by tests in both bundles.

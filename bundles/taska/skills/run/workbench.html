@@ -195,6 +195,15 @@ h3 .count{color:var(--ink-3);font-weight:400}
 .x:hover{color:var(--risk);background:var(--risk-soft)}
 .sugg{border:1px dashed var(--line-strong);border-radius:var(--r-md);padding:10px;margin-bottom:6px}
 .sugg .q{color:var(--ink-2);font-size:12px;margin:6px 0 8px}
+.revbanner{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:8px 16px 0;padding:10px 14px;border-radius:var(--r-md);background:var(--warn-soft);border:1px solid var(--warn);color:var(--ink)}
+.revbanner b{color:var(--warn)}.revbanner .btn{margin-left:auto}
+.rev-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:16px 0 6px;font-weight:600}.rev-h .btn{margin-left:auto}
+.rev-i{border:1px solid var(--line);border-radius:var(--r-md);padding:10px;margin-bottom:8px;display:flex;flex-direction:column;gap:4px}
+.rev-i .t{cursor:pointer;color:var(--accent)}.rev-howto{background:var(--accent-soft);border-radius:var(--r-md);padding:10px 12px;margin-bottom:8px}
+.tcard{border-style:solid;display:flex;flex-direction:column;gap:4px}.tcard.blocker{border-left:3px solid var(--risk)}.tcard.major{border-left:3px solid var(--warn)}
+.ttop{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.tconf{margin-left:auto;font-size:12px;color:var(--ink-2)}
+.tcard details summary{cursor:pointer;color:var(--accent);font-size:12px}.tbtns{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.tag.risk{color:var(--risk);background:var(--risk-soft)}
 .timeline{position:relative;margin:0;padding:0;list-style:none}
 .timeline li{position:relative;padding:0 0 14px 18px}
 .timeline li::before{content:"";position:absolute;left:4px;top:7px;bottom:-2px;width:1px;background:var(--line)}
@@ -218,6 +227,10 @@ h3 .count{color:var(--ink-3);font-weight:400}
 .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%) translateY(20px);opacity:0;background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:var(--r-md);transition:opacity .2s ease, transform .2s ease;z-index:50;pointer-events:none}
 .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
 .blank{color:var(--ink-3);padding:30px 4px;text-align:left}
+.recap-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0 12px}
+.recap{background:var(--bg-2, var(--card, #fff));border:1px solid var(--line);border-radius:12px;padding:6px 18px 14px;max-width:880px;line-height:1.55}
+.recap .rh1{font-size:1.15rem;margin:12px 0 2px}.recap .rh2{font-size:.98rem;margin:16px 0 4px;padding-top:8px;border-top:1px solid var(--line)}
+.recap ul{margin:4px 0;padding-left:20px}.recap li{margin:4px 0}.recap a.rlink{color:var(--accent, #2f54d4);text-decoration:none;border-bottom:1px dashed currentColor}
 .blank b{display:block;color:var(--ink-2);font-weight:500;margin-bottom:4px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 @media (max-width:1100px){main{grid-template-columns:1fr}.side{position:static;height:auto;border-left:0;border-top:1px solid var(--line)}
@@ -227,6 +240,8 @@ h3 .count{color:var(--ink-3);font-weight:400}
 </style>
 </head>
 <body>
+<div id="readonly" hidden style="background:var(--warn);color:#fff;padding:8px 16px;font-weight:600">This is a read-only copy of the workbench: changes made here are not saved. Make them in the live workbench (<code>taska serve</code>, e.g. http://127.0.0.1:8766/).</div>
+<div id="stale" hidden style="background:var(--risk);color:#fff;padding:8px 16px;font-weight:600">This workbench runs older code than is installed, so it can hide new items. Restart it: <code>taska serve</code> (or <code>bin/deploy.py</code>).</div>
 <header>
   <div class="bar">
     <div class="brand"><b>Taska</b><span id="project"></span></div>
@@ -236,8 +251,9 @@ h3 .count{color:var(--ink-3);font-weight:400}
       <button class="iconbtn" id="play" title="Play through calls"><i class="ph ph-play"></i></button>
       <button class="iconbtn" id="next" title="Next call (→)"><i class="ph ph-caret-right"></i></button>
       <div class="seg" id="views">
-        <button data-v="tree" class="on">Tree</button><button data-v="board">Board</button><button data-v="deliverables">Deliverables</button>
+        <button data-v="recap">Recap</button><button data-v="tree">Tree</button><button data-v="board">Board</button><button data-v="deliverables">Deliverables</button>
       </div>
+      <button class="iconbtn" id="download" title="Download a read-only copy to share (it contains meeting quotes: share inside the company only)"><i class="ph ph-download-simple"></i></button>
       <button class="iconbtn" id="theme" title="Theme"><i class="ph ph-circle-half"></i></button>
     </div>
   </div>
@@ -252,12 +268,13 @@ h3 .count{color:var(--ink-3);font-weight:400}
     <div class="legend"><span><i class="slot" style="display:inline-block"></i>Internal call</span><span><i class="slot client" style="display:inline-block"></i>Client call</span><span><i class="slot k-event" style="display:inline-block"></i>Calendar</span><span><i class="slot k-file" style="display:inline-block"></i>File</span><span><i class="slot k-pr" style="display:inline-block;transform:rotate(45deg)"></i>Code</span></div>
     <div class="summary" id="summary"></div>
   </div>
+  <div class="revbanner" id="revbanner" hidden></div>
 </header>
 <main>
   <section class="pane left" id="left"></section>
   <aside class="pane side">
     <div class="side-tabs" id="tabs">
-      <button data-t="detail" class="on">Details</button><button data-t="asks">Asks</button><button data-t="changes">This call</button>
+      <button data-t="review">To review <span id="revcount" class="count mono"></span></button><button data-t="detail" class="on">Details</button><button data-t="asks">Asks</button><button data-t="changes">This call</button>
     </div>
     <div class="side-body" id="side"></div>
   </aside>
@@ -269,11 +286,13 @@ const LIVE = !EMBED;
 let D = EMBED, ci = 0, sel = null, tab = "detail", view = "tree", playing = null;
 const F = {changed:false, attention:false, open:false, q:""};
 const openSet = new Set();
+const rejOpen = new Set();
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const fmt = d => d ? fmtDate(d, D.calls.length ? D.calls[D.calls.length-1].date : null) : "";
 const ts = t => !t ? "" : (t.startsWith("00:") ? t.slice(3,8) : t.slice(0,8));
 const store = {get(k){try{return localStorage.getItem(k)}catch(e){return null}}, set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+view = store.get("taska.view") || "recap";   // opens on the Recap (key items); the last view chosen is remembered
 
 const ICON = {open:"ph-circle", in_progress:"ph-circle-half", blocked:"ph-prohibit", done:"ph-check-circle",
   cancelled:"ph-x-circle", merged:"ph-git-merge", deleted:"ph-trash"};
@@ -283,13 +302,15 @@ const FLAG = {overdue:["Overdue","risk"], presumed_happened:["Did it happen?","r
   confirm_done:["Confirm done","dep"], close_out:["Close?","dep"], unconfirmed:["Unconfirmed","dep"]};
 const EFF = {create:"Created", held:"Took place", done:"Done", progress:"Progress", blocked:"Blocked", cancelled:"Cancelled",
   reopen:"Reopened", due:"Date set", delayed:"Slipped", reassign:"Reassigned", mention:"Mentioned", revise:"Revised",
-  ac_met:"Criterion met", link:"Dependency", suggest_move:"Move suggested", suggest_merge:"Merge suggested",
+  ac_met:"Criterion met", link:"Dependency", suggest_move:"Move suggested", suggest_merge:"Merge suggested", propose:"Proposed work",
   edit:"You edited", ac_add:"You added a criterion", ac_set:"You changed a criterion", unlink:"You removed a dependency",
   merge:"You merged", delete:"You deleted"};
 
 async function load(keep){
   if (LIVE){ const r = await fetch("/api/data",{cache:"no-store"}); D = await r.json(); }
-  if (!keep){ const saved = +store.get("taska.ci"); ci = D.calls.length ? (Number.isFinite(saved) && saved < D.calls.length && store.get("taska.ci") !== null ? saved : D.calls.length-1) : 0; }
+  $("#stale").hidden = !(D.code && D.code.stale);
+  $("#readonly").hidden = LIVE;
+  if (!keep){ const saved = +store.get("taska.ci"), wasLatest = store.get("taska.ci.latest") === "1"; ci = D.calls.length ? (Number.isFinite(saved) && saved < D.calls.length && !wasLatest && store.get("taska.ci") !== null ? saved : D.calls.length-1) : 0; }
   ci = Math.min(ci, Math.max(0, D.calls.length-1));
   if (D.project) $("#project").textContent = D.project;
   if (D.delta && !D._built){  // rebuild full node maps from the deltas, sharing unchanged node objects
@@ -306,8 +327,24 @@ async function load(keep){
     }
     D._built = true;
   }
+  if (!keep && D.calls.length && pendingAll().length) tab = "review";  // decisions waiting: show them first
+  if (!keep && openHash()) return;
   render();
 }
+// deep link: workbench.html#T117 opens that item on the latest call (used by the report's Ref links)
+function openHash(){
+  const id = decodeURIComponent((location.hash || "").slice(1));
+  if (!id || !D.calls.length) return false;
+  ci = D.calls.length - 1;
+  const ns = N(), n = ns[id];
+  if (!n) return false;
+  sel = id; tab = "detail";
+  if (n.parent && ns[n.parent] && ns[n.parent].kind === "story") openSet.add(n.parent);
+  if (n.kind === "story") openSet.add(id);
+  render();
+  return true;
+}
+window.addEventListener("hashchange", () => openHash());
 const call = () => D.calls[ci];
 const snap = () => D.snaps[call().id];
 const N = () => snap().nodes;
@@ -319,6 +356,7 @@ function changeKind(id){
   const h = (D.history[id]||[]).filter(x => x.evidence === call().id && x.by !== "human");
   if (!h.length) return null;
   if (h.some(x => x.op === "create")) return "New";
+  if (h.some(x => x.op === "propose" && x.status === "pending")) return "Proposed work";
   const a = h.find(x => x.op === "revise") ? "Revised" : h.find(x => x.op === "link") ? "Linked"
     : h.find(x => x.applied && x.effect && x.effect !== "mention") ? EFF[h.find(x => x.applied && x.effect && x.effect !== "mention").effect]
     : h.find(x => x.op === "ac_met" && x.applied) ? "Criterion met" : h.find(x => x.op && x.op.startsWith("suggest")) ? "Suggestion" : "Mentioned";
@@ -336,9 +374,10 @@ function visible(n){
 
 function render(){
   if (!D.calls.length){ $("#left").innerHTML = `<div class="blank"><b>No calls extracted yet</b>Run the extraction for the first call, then reload.</div>`; return; }
-  store.set("taska.ci", ci);
+  store.set("taska.ci", ci); store.set("taska.ci.latest", ci === D.calls.length - 1 ? "1" : "0");
   renderTicks(); renderSummary();
-  view === "tree" ? renderTree() : view === "board" ? renderBoard() : renderDeliverables();
+  document.querySelectorAll("#views button").forEach(x => x.classList.toggle("on", x.dataset.v === view));
+  view === "recap" ? renderRecap() : view === "tree" ? renderTree() : view === "board" ? renderBoard() : renderDeliverables();
   renderSide();
 }
 
@@ -547,6 +586,45 @@ function renderBoard(){
   }).join("")}</div>`;
 }
 
+/* ---------- recap: the key items (taska pack), Oct 29: "hard to see what to look for and where" ---------- */
+let recapDays = 7, recapMd = null, recapFor = null;
+function mdToHtml(md){
+  // the pack's own Markdown: "# ", "## ", "- ", "_..._", "**...**"; item titles become links to their item
+  const ns = N(), titles = Object.values(ns).filter(n => n.title && n.title.length > 12 && !["merged","deleted"].includes(n.state))
+    .sort((a,b) => b.title.length - a.title.length);
+  const link = s => { let h = esc(s);
+    for (const n of titles){ const t = esc(n.title); if (h.includes(t)) { h = h.replace(t, `<a href="#" class="rlink" data-go="${n.id}">${t}</a>`); } }
+    return h.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>"); };
+  const out = []; let ul = false;
+  for (const raw of md.split("\n")){
+    const l = raw.trimEnd();
+    if (l.startsWith("- ")){ if (!ul){ out.push("<ul>"); ul = true; } out.push(`<li>${link(l.slice(2))}</li>`); continue; }
+    if (ul){ out.push("</ul>"); ul = false; }
+    if (l.startsWith("# ")) out.push(`<h2 class="rh1">${esc(l.slice(2))}</h2>`);
+    else if (l.startsWith("## ")) out.push(`<h3 class="rh2">${esc(l.slice(3))}</h3>`);
+    else if (/^_.*_$/.test(l)) out.push(`<p class="muted">${esc(l.slice(1,-1)).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")}</p>`);
+    else if (l) out.push(`<p>${link(l)}</p>`);
+  }
+  if (ul) out.push("</ul>");
+  return out.join("");
+}
+async function renderRecap(){
+  const L = $("#left");
+  const bar = LIVE ? `<div class="recap-bar"><span class="muted">Key items from the last</span>
+      ${[7,14,30].map(d => `<button class="chip ${d===recapDays?"on":""}" data-rdays="${d}">${d} days</button>`).join("")}
+      <span class="muted">· click an item to open it · <b>To review</b> (right) holds what waits for your decision</span></div>`
+    : `<div class="recap-bar muted">Key items from the last 7 days (read-only copy)</div>`;
+  if (!LIVE) recapMd = D.recap || "";
+  else if (recapFor !== recapDays){
+    L.innerHTML = bar + `<div class="blank">Loading the recap…</div>`;
+    try { const r = await fetch(`/api/recap?days=${recapDays}`); recapMd = (await r.json()).markdown; recapFor = recapDays; }
+    catch(e){ recapMd = D.recap || ""; }
+    if (view !== "recap") return;
+  }
+  L.innerHTML = bar + `<div class="recap">${mdToHtml(recapMd || "_No recap yet._")}</div>`;
+  L.querySelectorAll("[data-rdays]").forEach(b => b.addEventListener("click", ev => { ev.stopPropagation(); recapDays = +b.dataset.rdays; renderRecap(); }));
+}
+
 function renderDeliverables(){
   const ns = N();   // the snapshot being viewed; the same filters as Tree and Board
   const dl = deliverableRows(ns, D.history, D.calls, ci).filter(d => visible(ns[d.id])).sort((a, b) => a.id < b.id ? -1 : 1);
@@ -568,9 +646,63 @@ function renderDeliverables(){
 /* ---------- side ---------- */
 function renderSide(){
   document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.t===tab));
+  renderReviewBanner();
+  if (tab==="review") return renderReview();
   if (tab==="asks") return renderAsks();
   if (tab==="changes") return renderChanges();
   renderDetail();
+}
+
+/* ---------- to review: every decision that waits for the user, in one place ---------- */
+const NL = () => D.calls.length ? D.snaps[D.calls[D.calls.length-1].id].nodes : {};  // decisions are about today's tree
+function pendingAll(){
+  const ns = NL(), out = [];
+  for (const x of Object.values(ns)) for (const s of (x.suggestions||[])) if (s.status==="pending") out.push([x, s]);
+  return out;
+}
+function renderReviewBanner(){
+  const n = pendingAll().length, b = $("#revbanner");
+  $("#revcount").textContent = n ? n : "";
+  if (!n || tab==="review"){ b.hidden = true; return; }
+  b.hidden = false;
+  b.innerHTML = `<i class="ph ph-hand-pointing"></i> <span><b>${n} decision${n>1?"s":""} waiting for you.</b> Nothing below changes until you confirm or reject it.</span><button class="btn primary" id="gorev">Review now</button>`;
+}
+function changeText(x, s){
+  if (s.op==="propose") return `new ${s.kind} under ${x.id}: ${s.title}` + (s.owner ? ` · owner ${s.owner}` : " · no owner yet");
+  if (s.op==="suggest_move") return `move under ${s.to}`;
+  if (s.op==="suggest_merge") return `merge into ${s.to}`;
+  return s.suggested || (s.op==="ac_met" ? `criterion ${s.ac} met` : `${s.effect}`);
+}
+function srcText(s){
+  if (s.cause) return "inferred from " + s.cause + (s.gate&&s.gate.rule ? " (rule)" : s.gate&&s.gate.score ? ` (model ${(+s.gate.score).toFixed(2)})` : "");
+  return (s.source==="teams" ? "Teams" : "meeting") + (s.speaker ? " · " + s.speaker : "") + (s.gate&&s.gate.score ? ` (model ${(+s.gate.score).toFixed(2)})` : "");
+}
+function renderReview(){
+  const all = pendingAll(), ro = !LIVE, ns = NL();
+  if (!all.length){ $("#side").innerHTML = `<div class="blank"><b>Nothing to review</b>Proposals from meetings, Teams and inferred closures appear here and wait for your decision.</div>`; return; }
+  const groups = {};
+  for (const [x, s] of all){
+    const k = s.cause ? "cause:" + s.cause : s.op==="propose" ? "propose" : s.op.startsWith("suggest_") ? "struct" : (s.source==="teams" ? "teams" : "meeting");
+    (groups[k] ||= []).push([x, s]);
+  }
+  const title = k => k.startsWith("cause:") ? (() => { const c = ns[k.slice(6)]; return `Because <span class="t" data-go="${c?c.id:""}">${esc(k.slice(6))}</span> ${esc(c?c.title.slice(0,60):"")} is ${esc(c?c.state.replace("_"," "):"")}`; })()
+    : k==="teams" ? "From Teams messages" : k==="struct" ? "Move or merge suggestions" : k==="propose" ? "New work proposed in meetings (nobody committed yet)" : "From meetings";
+  const H = [`<div class="rev-howto"><b>What to do</b><br>For each item, read <b>Why</b> and the quote. Click <b>Confirm</b> if it's right, <b>Reject</b> if not (pick a reason).
+    <b>Confirm all</b> accepts a whole group. Nothing changes in the tree until you click.${ro?`<br><b>This is a read-only export — open the workbench from the dashboard to decide.</b>`:""}</div>`];
+  for (const [k, items] of Object.entries(groups)){
+    H.push(`<div class="rev-h"><span>${title(k)}</span><span class="count mono">${items.length}</span>${!ro && items.length>1 ? `<button class="btn primary" data-acceptall="${items.map(([x,s])=>s.mid).join(",")}">Confirm all ${items.length}</button>` : ""}</div>`);
+    for (const [x, s] of items){
+      H.push(`<div class="rev-i"><div><span class="t" data-go="${x.id}"><b>${esc(x.id)}</b> ${esc(x.title.slice(0,80))}</span> <span class="muted">· now ${esc(x.state.replace("_"," "))}</span></div>
+        <div><b>Change:</b> <span class="mono">${esc(changeText(x, s))}</span></div>
+        ${s.why?`<div><b>Why:</b> ${esc(s.why)}</div>`:""}
+        ${s.quote?`<div class="muted">“${esc(s.quote.slice(0,200))}” · ${esc(srcText(s))} · <span class="mono">${fmt(s.date)}</span></div>`:""}
+        ${!ro && s.op==="propose" && (s.owner_options||[]).length ? `<div class="tbtns"><b>Owner:</b> <select class="btn" id="ow-${s.mid}"><option value="">${esc(s.owner)} (team)</option>${s.owner_options.map(o=>`<option value="${esc(o)}">${esc(o)}</option>`).join("")}</select></div>` : ""}
+        ${ro?"":`<div class="tbtns"><button class="btn primary" data-accept="${s.mid}">Confirm</button> <button class="btn" data-rejwhy="${s.mid}">Reject</button>${s.link?` <a class="btn" href="${esc(s.link)}" target="_blank" rel="noopener">Open in Teams</a>`:""}</div>
+        ${rejOpen.has(s.mid)?`<div class="tbtns"><select class="btn" id="rw-${s.mid}">${s.op==="propose"?`<option value="not_agreed">Not agreed in the meeting</option><option value="already_tracked">Already tracked</option><option value="not_our_work">Not our work</option>`:""}<option value="not_done_yet">Not done yet</option><option value="wrong_task">Wrong task</option><option value="cannot_decide">Sender can't decide this</option><option value="already_handled">Already handled</option></select> <button class="btn" data-reject="${s.mid}">Reject</button></div>`:""}`}
+      </div>`);
+    }
+  }
+  $("#side").innerHTML = H.join("");
 }
 
 function askHTML(a){
@@ -621,6 +753,8 @@ function renderDetail(){
   if (!n){ $("#side").innerHTML = `<div class="blank"><b>Select a story or task</b>See its acceptance criteria, what it waits on, and how it changed call by call. Use ← and → to step through calls.</div>`; return; }
   const ro = !LIVE ? "readonly" : "";
   const dis = ro ? "disabled" : "";
+  // a checkbox sends its criterion's number, which can differ in the current tree: tick only on the latest call
+  const acLock = dis || (!latest() ? `disabled title="Jump to the latest call to tick criteria"` : "");
   const pin = f => n.pinned && n.pinned.includes(f) ? `<span class="pin" title="You set this. The agent will not overwrite it."><i class="ph ph-push-pin"></i></span>` : "";
   const parents = Object.values(ns).filter(p => !["merged","deleted"].includes(p.state) && ({story:["epic"],task:["story"],risk:["epic","story"],decision:["epic","story"]}[n.kind]||[]).includes(p.kind));
   const H = [];
@@ -640,11 +774,12 @@ function renderDetail(){
   if (n.kind==="story"){
     H.push(`<h3>Acceptance criteria <span class="count mono">${n.ac.filter(a=>a.met).length}/${n.ac.length}</span></h3>`);
     H.push(`<ul class="ac">${n.ac.map((a,i) => { const ev = a.met_by && (D.history[n.id]||[]).find(h => h.mid===a.met_by);
-      return `<li class="${a.met?"met":""}"><input type="checkbox" data-ac="${i+1}" ${a.met?"checked":""} ${dis} aria-label="Met"><span class="txt">${esc(a.text)}</span><span class="src">${a.source==="human"?"you":a.human?"you ticked":a.source==="agent"?"from call":""}</span>${ev?`<div class="ev">“${esc(ev.quote)}” <span class="mono">${fmt(ev.date)} ${ts(ev.ts)}</span></div>`:""}</li>`; }).join("") || `<li><span></span><span class="muted">No criteria yet</span><span></span></li>`}</ul>`);
+      return `<li class="${a.met?"met":""}"><input type="checkbox" data-ac="${i+1}" ${a.met?"checked":""} ${acLock} aria-label="Met"><span class="txt">${esc(a.text)}</span><span class="src">${a.source==="human"?"you":a.human?"you ticked":a.source==="agent"?"from call":""}</span>${ev?`<div class="ev">“${esc(ev.quote)}” <span class="mono">${fmt(ev.date)} ${ts(ev.ts)}</span></div>`:""}</li>`; }).join("") || `<li><span></span><span class="muted">No criteria yet</span><span></span></li>`}</ul>`);
     if (!ro) H.push(`<div class="add"><input id="ac-new" placeholder="Add a criterion: what must be true when this is done"><button class="btn" id="ac-add">Add</button></div>`);
   }
 
   if (n.kind==="story" || n.kind==="task"){
+    if (n.waiting_for) H.push(`<h3>Waiting for</h3><div class="links"><div class="link"><span>${esc(n.waiting_for.who||"?")}: ${esc(n.waiting_for.what||"")} <span class="muted">since ${fmt(n.waiting_for.since)}</span></span>${ro?"<span></span>":`<button class="btn" id="f-wait-clear" title="The wait is over: clear it">Clear</button>`}</div></div>`);
     H.push(`<h3>Waits on <span class="count mono">${n.depends_on.length}</span></h3><div class="links">${n.depends_on.map(d => linkHTML(d, !ro)).join("") || `<span class="muted">No dependencies recorded</span>`}</div>`);
     if (!ro){
       const cands = Object.values(ns).filter(x => (x.kind==="story"||x.kind==="task") && x.id!==n.id && !n.depends_on.includes(x.id) && !["merged","deleted"].includes(x.state));
@@ -658,7 +793,42 @@ function renderDetail(){
     }
   }
 
-  const pend = (n.suggestions||[]).filter(s => s.status==="pending");
+  const isQ = s => s.status==="pending" && (s.op==="status" || s.op==="ac_met");
+  const byCause = {};
+  for (const x of Object.values(ns)) for (const s of (x.suggestions||[])) if (isQ(s) && s.cause) (byCause[s.cause] = byCause[s.cause] || []).push([x, s]);
+  const implied = byCause[n.id] || [];
+  if (implied.length){
+    H.push(`<h3>Implied by this task <span class="count mono">${implied.length}</span></h3><div class="sugg tcard">
+      <div class="muted">${esc(n.id)} is ${n.state==="done"?"done":esc(n.state)}, so these look done too. Each one waits for you.</div>
+      ${implied.map(([x,s]) => `<div>• <b>${esc(x.id)}</b> ${esc(x.title.slice(0,70))} <span class="muted">— ${esc(s.suggested||s.effect)}${s.gate&&s.gate.score?` · score ${(+s.gate.score).toFixed(2)}`:s.gate&&s.gate.rule?" · rule":""}</span></div>`).join("")}
+      ${ro?"":`<div class="tbtns"><button class="btn primary" data-acceptall="${implied.map(([x,s])=>s.mid).join(",")}">Confirm all ${implied.length}</button></div>`}</div>`);
+  }
+  const tpend = (n.suggestions||[]).filter(isQ);
+  if (tpend.length){
+    H.push(`<h3>Waiting for your confirm <span class="count mono">${tpend.length}</span></h3>`);
+    const met = n.ac.filter(a => a.met).length;
+    for (const s of tpend){
+      const g = s.gate || {}, sc = typeof g.score === "number" ? g.score : null, thr = g.threshold ?? 0;
+      const band = sc === null ? "" : sc >= thr + 0.1 ? "High" : sc >= thr ? "Medium" : "Low";
+      const closes = s.effect === "done" || s.effect === "cancelled";
+      const sev = closes || n.kind === "story" ? "Blocker" : "Major";
+      const per = g.scores ? Object.entries(g.scores).map(([c,p]) => `${esc(c)} ${(+p.yes).toFixed(2)} + ${(+p.partial).toFixed(2)}`).join(" · ") : "";
+      H.push(`<div class="sugg tcard ${sev==="Blocker"?"blocker":"major"}">
+        <div class="ttop"><span class="tag dep">${s.op==="ac_met"?"Criterion":s.effect==="progress"?"Outdated":"Incorrect"}</span><span class="tag ${sev==="Blocker"?"risk":"dep"}">${sev}${closes?" · closes it":""}</span>
+          ${sc===null?"":`<span class="tconf" title="yes + partial from ${esc(g.model||"the local model")}; proposals start at ${thr}">${band} · ${sc.toFixed(2)}</span>`}</div>
+        <div class="q">“${esc(s.quote)}”</div>
+        <div class="muted">${esc(s.speaker||"")} · ${s.cause?"inferred":s.source==="teams"?"Teams":"meeting"} · <span class="mono">${fmt(s.date)}</span></div>
+        ${s.why?`<div><b>Why:</b> ${esc(s.why)}</div>`:""}
+        <div><b>Suggested:</b> <span class="mono">${esc(s.suggested||s.effect)}</span></div>
+        ${s.cause&&ns[s.cause]?`<div class="muted">Because <b>${esc(s.cause)}</b> ${esc(ns[s.cause].title.slice(0,60))}${(byCause[s.cause]||[]).length>1&&!ro?` · <button class="btn" data-acceptall="${byCause[s.cause].map(([x,t])=>t.mid).join(",")}">Confirm all ${byCause[s.cause].length} from ${esc(s.cause)}</button>`:""}</div>`:""}
+        ${n.ac.length?`<div class="muted">Criteria ${met}/${n.ac.length} met: ${n.ac.map(a => (a.met?"✓ ":"○ ")+esc(a.text)).join("; ")}</div>`:""}
+        <details><summary>How it was decided</summary><div class="muted">Local model ${esc(g.model||"")}${g.revision?" ("+esc(String(g.revision).slice(0,7))+")":""}: score ${sc===null?"—":sc.toFixed(2)} ≥ ${thr} to propose. Candidate rank ${g.rank ?? "—"} (BM25 ${g.bm25 ?? "—"}). ${per?`Scores: ${per}.`:""} Closures and Teams proposals never apply by themselves: this waits for you.</div></details>
+        ${ro?"":`<div class="tbtns"><button class="btn primary" data-accept="${s.mid}">${closes?"Confirm close":"Confirm"}</button> <button class="btn" data-rejwhy="${s.mid}">Reject</button>${s.link?` <a class="btn" href="${esc(s.link)}" target="_blank" rel="noopener">Open in Teams</a>`:""}</div>
+        ${rejOpen.has(s.mid)?`<div class="tbtns"><select class="btn" id="rw-${s.mid}"><option value="not_done_yet">Not done yet (agreement, not completion)</option><option value="wrong_task">Wrong task</option><option value="cannot_decide">Sender can't decide this</option><option value="already_handled">Already handled</option></select> <button class="btn" data-reject="${s.mid}">Reject</button></div>`:""}`}
+      </div>`);
+    }
+  }
+  const pend = (n.suggestions||[]).filter(s => s.status==="pending" && s.op!=="status");
   if (pend.length){
     H.push(`<h3>Suggested by the agent <span class="count mono">${pend.length}</span></h3>`);
     for (const s of pend) H.push(`<div class="sugg"><b>${s.op==="suggest_merge"?"Merge into":"Move under"} ${esc(s.to)}</b> <span class="muted">${esc(ns[s.to]?ns[s.to].title:"")}</span><div class="q">“${esc(s.quote)}” <span class="mono">${fmt(s.date)}</span>${s.note?`<br>${esc(s.note)}`:""}</div>${ro?"":`<button class="btn primary" data-accept="${s.mid}">Accept</button> <button class="btn" data-reject="${s.mid}">Reject</button>`}</div>`);
@@ -693,13 +863,22 @@ function linkHTML(id, removable){
 
 /* ---------- edits ---------- */
 async function send(body, msg){
-  if (!LIVE) return;
+  if (!LIVE){ toast("This is a read-only copy: nothing was saved. Make the change in the live workbench (taska serve)."); return; }   // a read-only copy must say so, never drop an edit in silence
   const r = await fetch("/api/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   const j = await r.json();
   if (!r.ok){ toast(j.error || "Could not save"); return; }
   const past = !latest();
   toast((msg || "Saved") + (past ? " · applied to the current tree" : "")); await load(true);
   if (past){ ci = D.calls.length-1; render(); }
+}
+async function acceptAll(mids){
+  if (!LIVE){ toast("This is a read-only copy: nothing was saved. Make the change in the live workbench (taska serve)."); return; }
+  let ok = 0, err = "";
+  for (const m of mids){
+    const r = await fetch("/api/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({op:"accept", target:m})});
+    if (r.ok) ok++; else { const j = await r.json().catch(()=>({})); err = j.error || "Could not save"; }
+  }
+  toast(err ? `Confirmed ${ok} of ${mids.length}: ${err}` : `Confirmed ${ok}`); await load(true);
 }
 function toast(m){ const t = $("#toast"); t.textContent = m; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 1800); }
 
@@ -711,6 +890,7 @@ function bindDetail(n){
   $("#f-title").addEventListener("keydown", e => { if (e.key==="Enter" && !e.shiftKey){ e.preventDefault(); e.target.blur(); }});
   $("#f-title").addEventListener("blur", e => edit("title", e.target.value.trim(), "Title saved, pinned"));
   $("#f-state").addEventListener("change", e => edit("state", e.target.value, "Status saved, pinned"));
+  const wc = $("#f-wait-clear"); if (wc) wc.addEventListener("click", () => send({op:"edit", node:n.id, set:{waiting_for:null}}, "Wait cleared, pinned"));
   for (const f of ["internal_owner","client_owner"]) $("#f-"+f).addEventListener("change", e => edit(f, e.target.value.trim(), "Owner saved"));
   $("#f-due").addEventListener("change", e => edit("due", e.target.value, "Date saved"));
   const fp = $("#f-parent"); if (fp) fp.addEventListener("change", e => edit("parent", e.target.value, "Moved"));
@@ -724,22 +904,27 @@ function bindDetail(n){
 
 /* ---------- events ---------- */
 document.addEventListener("click", e => {
-  const t = e.target.closest("[data-close],.slot[data-i],[data-tog],[data-epic],[data-id],[data-go],[data-i],[data-unlink],[data-accept],[data-reject],[data-undo],#golatest");
+  const t = e.target.closest("[data-close],.slot[data-i],[data-tog],[data-epic],[data-id],[data-go],[data-i],[data-unlink],[data-accept],[data-acceptall],[data-reject],[data-rejwhy],[data-undo],#golatest,#gorev");
   if (!t) return;
   if (t.dataset.close){ e.stopPropagation(); return send({op:"edit", node:t.dataset.close, set:{state:"done"}}, "Closed. Undo from its history."); }
   if (t.id==="golatest"){ ci = D.calls.length-1; return render(); }
+  if (t.id==="gorev"){ tab = "review"; return renderSide(); }
   if (t.dataset.tog){ e.stopPropagation(); openSet.has(t.dataset.tog) ? openSet.delete(t.dataset.tog) : openSet.add(t.dataset.tog); return render(); }
   if (t.dataset.epic){ const k = "taska.c."+t.dataset.epic; store.set(k, store.get(k)==="1"?"0":"1"); return render(); }
   if (t.dataset.unlink){ e.stopPropagation(); return send({op:"unlink", node:sel, depends_on:t.dataset.unlink}, "Dependency removed"); }
-  if (t.dataset.accept) return send({op:"accept", target:t.dataset.accept}, "Accepted");
-  if (t.dataset.reject) return send({op:"reject", target:t.dataset.reject}, "Rejected");
+  if (t.dataset.accept){ const o = document.getElementById("ow-"+t.dataset.accept);
+    return send(o && o.value ? {op:"accept", target:t.dataset.accept, owner:o.value} : {op:"accept", target:t.dataset.accept}, "Accepted"); }
+  if (t.dataset.acceptall){ return acceptAll(t.dataset.acceptall.split(",").filter(Boolean)); }
+  if (t.dataset.rejwhy){ rejOpen.has(t.dataset.rejwhy) ? rejOpen.delete(t.dataset.rejwhy) : rejOpen.add(t.dataset.rejwhy); return render(); }
+  if (t.dataset.reject){ const w = document.getElementById("rw-"+t.dataset.reject); rejOpen.delete(t.dataset.reject);
+    return send(w ? {op:"reject", target:t.dataset.reject, reason:w.value} : {op:"reject", target:t.dataset.reject}, "Rejected"); }
   if (t.dataset.undo) return send({op:"undo", target:t.dataset.undo}, "Undone");
   if (t.dataset.i !== undefined){ ci = +t.dataset.i; stop(); return render(); }
   const id = t.dataset.id || t.dataset.go;
   if (id){ sel = id; tab = "detail"; const n = N()[id]; if (n && n.parent && N()[n.parent] && N()[n.parent].kind==="story") openSet.add(n.parent); if (n && n.kind==="story") openSet.add(id); render(); }
 });
 $("#tabs").addEventListener("click", e => { const b = e.target.closest("button"); if (b){ tab = b.dataset.t; renderSide(); }});
-$("#views").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; view = b.dataset.v; document.querySelectorAll("#views button").forEach(x => x.classList.toggle("on", x===b)); render(); });
+$("#views").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; view = b.dataset.v; store.set("taska.view", view); document.querySelectorAll("#views button").forEach(x => x.classList.toggle("on", x===b)); render(); });
 document.querySelectorAll("[data-f]").forEach(b => b.addEventListener("click", () => { F[b.dataset.f] = !F[b.dataset.f]; b.classList.toggle("on", F[b.dataset.f]); render(); }));
 $("#q").addEventListener("input", e => { F.q = e.target.value.trim().toLowerCase(); render(); });
 $("#prev").onclick = () => { if (ci > 0){ ci--; stop(); render(); } };
@@ -757,6 +942,9 @@ document.addEventListener("keydown", e => {
   if (e.key==="ArrowRight") $("#next").click();
   if (e.key==="/"){ e.preventDefault(); $("#q").focus(); }
 });
+// Download: a read-only copy of the workbench as it is now, to share (a copy has no Download button of its own)
+if (LIVE) $("#download").onclick = () => { location.href = "/api/export"; toast("Downloading a read-only copy: share inside the company only"); };
+else $("#download").hidden = true;
 $("#theme").onclick = () => {
   const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   const nx = cur==="dark" ? "light" : "dark"; document.documentElement.dataset.theme = nx; store.set("taska.theme", nx);
