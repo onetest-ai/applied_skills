@@ -23,7 +23,7 @@ A **marketplace of four Claude Code plugins**, not an application. The product i
 ```bash
 # The five suites (from the repo root)
 uv run --with-requirements bundles/brain/requirements.txt --with pytest python -m pytest bundles/brain/tests
-uv run --with pytest python -m pytest bundles/kb/tests
+uv run --with pytest --with python-docx --with python-pptx --with pymupdf python -m pytest bundles/kb/tests   # the fact-check tests read .docx/.pptx/.pdf
 uv run --with-requirements bundles/scribe/requirements.txt --with pytest python -m pytest bundles/scribe/tests
 uv run --with-requirements bundles/brain/requirements.txt --with pytest python -m pytest mcp/brain/test_semantic_mcp.py
 uv run --with pytest --with pyyaml python -m pytest bundles/taska/tests
