@@ -31,7 +31,7 @@
       "name": "taska",
       "source": "./bundles/taska",
       "description": "A manager's Epic > Story > Task tree kept current from meetings, calendar and files: cited evidence, dependencies, staleness and asks.",
-      "version": "0.2.0"
+      "version": "0.2.1"
     }
   ]
 }

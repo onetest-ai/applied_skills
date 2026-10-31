@@ -20,7 +20,8 @@ would recognise comes from `[report]` and `[[schedules]]` in `taska.toml`):
 | `report select --week W --out F` / `report apply --prose P --sel F` / `report build --week W --prose P --out X.docx` | What goes in the weekly report, decided from the tree; the writer's text kept only for open slots; the checked docx. |
 | `gate WEEK [--docx F]` | The pre-send gate: `presend.json` and `presend.html` under `reports/WEEK/`; exit 1 when a blocking gate fails. |
 | `deliver WEEK --to ADDR [--schedule NAME]` | `deliver.json` and a ready-to-send `mail.md` (subject, To, Cc, body, the attachments the schedule includes). |
-| `schedules` | The project's `[[schedules]]` with each one's next run. |
+| `schedules [--set rows.json] [--register] [--agents-dir D]` | The project's `[[schedules]]` with each one's next run and what is registered with the OS. `--set` replaces them from a JSON list (saved to `taska.toml`, previous file kept as `taska.toml.bak`) and registers; `--register` writes and (re)loads one launchd agent per schedule on a Mac, running `[run].scheduled` with `{kind}` filled in. The workbench's **Schedules** view does the same from the page. |
+| `serve [--port 8766] [--agents-dir D]` | The workbench; `--agents-dir` is where its Schedules view registers jobs (default `~/Library/LaunchAgents`). |
 | `run-log begin\|step\|finish\|failed WEEK_DIR` | A run's step record, written so an interrupted run never erases the last finished one. |
 | `render-evidence` | Rewrite every evidence `.md` from its `.json` in the current, line-limited format. |
 | `ai [--probe] -- <claude args>` | Reach Claude for an unattended run: a stored token, then CodeMie, then Bedrock if allowed. |
@@ -33,7 +34,7 @@ would recognise comes from `[report]` and `[[schedules]]` in `taska.toml`):
   e.g. `~/.codemie/claude-plugin/skills/msgraph/scripts/msgraph.js`; `[sources.<key>].cli` or `$MSGRAPH_CLI`
   override).
 - Evals only: the `claude` CLI on PATH for the planted end-to-end run (`evals/planted/run.sh`).
-- Unattended runs (`schedule`) reach Claude through `taska ai`: a token in `~/.config/taska/claude` (from
+- Unattended runs (the **Schedules** view, or `taska schedules --register`; Mac only for now — Windows registration is a later release) reach Claude through `taska ai`: a token in `~/.config/taska/claude` (from
   `claude setup-token`, chmod 600), else CodeMie while signed in; Bedrock only with `TASKA_ALLOW_BEDROCK=1`.
   `taska ai --probe` says which works.
 
