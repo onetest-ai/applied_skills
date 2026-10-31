@@ -5,7 +5,7 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import ledger as L, pack as PK, staleness as ST, store as S
+from . import ledger as L, schedules as SCH, pack as PK, staleness as ST, store as S
 
 PAGE = Path(__file__).resolve().parent.parent / "workbench.html"
 RUN_DIR = PAGE.parent
@@ -77,7 +77,31 @@ def _local_origin(headers, port):
     return origin is None or origin in {f"http://{h}" for h in hosts}
 
 
-def server(store, cfg, port):
+def schedules_view(cfg, register_opts=None):
+    """What the Schedules panel shows: each schedule with its next run (project time), what is registered with the OS."""
+    from zoneinfo import ZoneInfo
+    now = dt.datetime.now(ZoneInfo(cfg.timezone))
+    opts = register_opts or {}
+    rows = []
+    for s in cfg.schedules:
+        nxt = SCH.next_run(s, now)
+        rows.append(dict(vars(s), days=list(s.days), next=nxt.isoformat() if nxt else None, label=SCH.label(cfg.name, s)))
+    return {"schedules": rows, "registered": SCH.registered(cfg.name, opts.get("agents_dir")), "platform": SCH.sys.platform,
+            "can_register": SCH.sys.platform == "darwin", "command": (cfg.run or {}).get("scheduled")}
+
+
+def set_schedules(cfg, rows, register_opts=None):
+    """Validate `rows`, save them to taska.toml, register the jobs; ValueError before anything is written."""
+    scheds = SCH.parse(rows)
+    if SCH.sys.platform == "darwin" and scheds:
+        for s in scheds:
+            SCH.command_for(cfg, s)   # refuse before writing when the project has no command to schedule
+    SCH.save(cfg.project_dir, scheds)
+    cfg.schedules = scheds
+    return SCH.register(cfg, **(register_opts or {}))
+
+
+def server(store, cfg, port, register_opts=None):
     running, started = code_version(), dt.datetime.now().isoformat(timespec="seconds")
 
     def version():
@@ -106,6 +130,8 @@ def server(store, cfg, port):
                 return self._send(200, dict(data(store, cfg), code=version()))
             if self.path == "/api/version":
                 return self._send(200, version())
+            if self.path == "/api/schedules":
+                return self._send(200, schedules_view(cfg, register_opts))
             if self.path.startswith("/api/recap"):   # the Recap view: taska pack for the chosen period
                 from urllib.parse import urlparse, parse_qs
                 try:
@@ -121,7 +147,7 @@ def server(store, cfg, port):
             self._send(404, {"error": "not found"})
 
         def do_POST(self):
-            if self.path != "/api/event":
+            if self.path not in ("/api/event", "/api/schedules"):
                 return self._send(404, {"error": "not found"})
             if not _local_origin(self.headers, port):
                 return self._send(403, {"error": "forbidden host"})
@@ -129,6 +155,9 @@ def server(store, cfg, port):
                 return self._send(415, {"error": "Content-Type must be application/json"})
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+                if self.path == "/api/schedules":
+                    reg = set_schedules(cfg, body.get("schedules") or [], register_opts)
+                    return self._send(200, dict(schedules_view(cfg, register_opts), registered=reg))
                 e = L.human_event(store, body)
             except (ValueError, TypeError, AttributeError, KeyError) as x:  # json errors are ValueErrors
                 return self._send(400, {"error": f"{type(x).__name__}: {x}"})

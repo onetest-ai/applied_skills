@@ -526,11 +526,16 @@ def cmd_render_evidence(a):
 
 
 def cmd_schedules(a):
-    """The project's [[schedules]] with each one's next run, in the project's timezone."""
+    """The project's [[schedules]] with each one's next run; --set FILE replaces them from a JSON list (saved to
+    taska.toml); --register writes and (re)loads one launchd agent per schedule (a Mac)."""
     cfg = C.load(a.project)
-    now = dt.datetime.now(ZoneInfo(cfg.timezone))
-    out({"status": "ok", "schedules": [dict(vars(s), days=list(s.days), next=(SCH.next_run(s, now).isoformat() if SCH.next_run(s, now) else None))
-                                       for s in cfg.schedules]})
+    opts = {"agents_dir": a.agents_dir} if a.agents_dir else {}
+    reg = None
+    if a.set:
+        reg = W.set_schedules(cfg, json.loads(Path(a.set).read_text()), opts)
+    elif a.register:
+        reg = SCH.register(cfg, **opts)
+    out(dict(W.schedules_view(cfg, opts), status="ok", **({"registered": reg} if reg is not None else {})))
 
 
 def cmd_report(a):
@@ -659,7 +664,10 @@ def main():
     p.add_argument("what", choices=["select", "apply", "build"]); p.add_argument("--week"); p.add_argument("--out")
     p.add_argument("--prose"); p.add_argument("--sel"); p.add_argument("--reports"); p.add_argument("--today")
     p.add_argument("--snapshot", help="build: the workbench file name published next to the docx"); p.add_argument("--upto")
-    sp.add_parser("schedules", help="the project's [[schedules]] with each one's next run")
+    p = sp.add_parser("schedules", help="the project's [[schedules]] with each one's next run; --set FILE | --register")
+    p.add_argument("--set", help="a JSON list of schedules that replaces [[schedules]] in taska.toml and registers them")
+    p.add_argument("--register", action="store_true", help="write and (re)load one launchd agent per schedule")
+    p.add_argument("--agents-dir", help="where the agents go (default ~/Library/LaunchAgents)")
     p = sp.add_parser("deliver", help="a week's mail content: reports/WEEK/deliver.json and a ready-to-send mail.md")
     p.add_argument("week"); p.add_argument("--to", required=True); p.add_argument("--reports"); p.add_argument("--status")
     p.add_argument("--schedule", help="the [[schedules]] entry whose cc and Include checklist apply"); p.add_argument("--kind", default="preview")
