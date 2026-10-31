@@ -53,8 +53,10 @@ def cmd_setup(a):
 
 def cmd_doctor(a):
     cfg, st = cfg_store(a)
-    t = media.tools()
-    rep = {"project": cfg.name, "store": str(st), "people": len(cfg.people), "tools": t, "sources": {}}
+    from taska_lib import setup as SU
+    t = SU.tools()
+    rep = {"project": cfg.name, "store": str(st), "people": len(cfg.people), "platform": sys.platform,
+           "scheduler": SU.scheduler(), "tools": t, "install": SU.install_hints(t), "sources": {}}
     for k, s in cfg.sources.items():
         ad = s["adapter"]
         r = {"adapter": ad}
