@@ -451,7 +451,7 @@ def cmd_pack(a):
 
 def cmd_serve(a):
     cfg, st = cfg_store(a)
-    W.serve(st, cfg, a.port)
+    W.serve(st, cfg, a.port, register_opts={"agents_dir": a.agents_dir} if a.agents_dir else None)
 
 
 def cmd_export(a):
@@ -655,6 +655,7 @@ def main():
     p = sp.add_parser("asks"); p.add_argument("--all", action="store_true")
     p = sp.add_parser("pack"); p.add_argument("--days", type=int, default=7); p.add_argument("--out"); p.add_argument("--json", action="store_true", help="output ClientWeeklyData JSON instead of markdown")
     p = sp.add_parser("serve"); p.add_argument("--port", type=int, default=8766)
+    p.add_argument("--agents-dir", help="where the Schedules view registers jobs (default ~/Library/LaunchAgents)")
     p = sp.add_parser("export"); p.add_argument("--out")
     p = sp.add_parser("score"); p.add_argument("--gold", required=True); p.add_argument("--out")
     p = sp.add_parser("compare-external", help="compare an external note-taker's actions against the taska tree")

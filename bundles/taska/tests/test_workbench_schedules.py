@@ -95,4 +95,10 @@ def test_post_needs_json(served):
 
 def test_page_has_the_schedules_panel():
     page = W.PAGE.read_text()
-    assert 'id="schedules"' in page and "/api/schedules" in page and 'data-t="schedules"' in page
+    assert 'id="schedules"' in page and "/api/schedules" in page and 'data-v="schedules"' in page and "renderSchedules" in page
+
+
+def test_the_page_opens_on_a_view_named_in_the_query(served):
+    base, *_ = served
+    r = urllib.request.urlopen(base + "/?view=schedules")
+    assert r.status == 200 and r.headers["Content-Type"].startswith("text/html")

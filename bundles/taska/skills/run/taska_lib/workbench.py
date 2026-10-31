@@ -87,7 +87,7 @@ def schedules_view(cfg, register_opts=None):
         nxt = SCH.next_run(s, now)
         rows.append(dict(vars(s), days=list(s.days), next=nxt.isoformat() if nxt else None, label=SCH.label(cfg.name, s)))
     return {"schedules": rows, "registered": SCH.registered(cfg.name, opts.get("agents_dir")), "platform": SCH.sys.platform,
-            "can_register": SCH.sys.platform == "darwin", "command": (cfg.run or {}).get("scheduled")}
+            "can_register": SCH.sys.platform == "darwin", "command": (cfg.run or {}).get("scheduled"), "timezone": cfg.timezone}
 
 
 def set_schedules(cfg, rows, register_opts=None):
@@ -124,7 +124,7 @@ def server(store, cfg, port, register_opts=None):
         def do_GET(self):
             if not _local_origin(self.headers, port):
                 return self._send(403, {"error": "forbidden host"})
-            if self.path in ("/", "/index.html"):
+            if self.path.split("?", 1)[0] in ("/", "/index.html"):   # /?view=schedules opens that view
                 return self._send(200, PAGE.read_bytes(), "text/html")
             if self.path == "/api/data":
                 return self._send(200, dict(data(store, cfg), code=version()))
@@ -166,8 +166,8 @@ def server(store, cfg, port, register_opts=None):
     return ThreadingHTTPServer(("127.0.0.1", port), H)
 
 
-def serve(store, cfg, port):
-    srv = server(store, cfg, port)
+def serve(store, cfg, port, register_opts=None):
+    srv = server(store, cfg, port, register_opts)
     print(json.dumps({"url": f"http://127.0.0.1:{port}/", "store": str(store), "code": code_version()}), flush=True)
     srv.serve_forever()
 

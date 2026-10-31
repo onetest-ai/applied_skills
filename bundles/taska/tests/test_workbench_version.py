@@ -174,13 +174,13 @@ def test_the_recap_is_served_for_a_period_and_embedded_in_a_copy(project):
 def test_the_workbench_opens_on_the_recap_and_remembers_the_view():
     page = (RUN_DIR / "workbench.html").read_text()
     assert 'data-v="recap"' in page and "renderRecap" in page and "/api/recap" in page
-    assert 'view = store.get("taska.view") || "recap"' in page
+    assert 'store.get("taska.view") || "recap"' in page and 'get("view") || store.get("taska.view")' in page   # ?view= first, then the remembered one
 
 
 def test_the_saved_view_is_read_only_after_the_store_helper_exists():
     # Oct 29: reading the saved view before `const store` was defined stopped the whole page script (blank workbench)
     page = (RUN_DIR / "workbench.html").read_text()
-    assert page.index("const store = {get(k)") < page.index('view = store.get("taska.view")')
+    assert page.index("const store = {get(k)") < page.index('store.get("taska.view")')
 
 
 def test_criteria_checkboxes_are_locked_on_an_earlier_call():
