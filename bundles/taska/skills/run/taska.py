@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from taska_lib import ai as AI, config as C, ledger as L, media, runlog as RL, pack as PK, plan as PL, staleness as ST, store as S, workbench as W  # noqa: E402
+from taska_lib import ai as AI, config as C, gate as GT, ledger as L, media, runlog as RL, pack as PK, plan as PL, staleness as ST, store as S, workbench as W  # noqa: E402
 from taska_lib.sources import ADAPTERS, msgraph  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -522,6 +522,19 @@ def cmd_render_evidence(a):
     out({"status": "ok", "rewritten": S.rerender(st)})
 
 
+def cmd_gate(a):
+    """The pre-send gate on a week's draft (taska_lib/gate.py): presend.json + presend.html, exit 1 when a blocking gate fails."""
+    cfg, st = cfg_store(a)
+    reports = Path(a.reports) if a.reports else C.find_project(a.project) / "reports"
+    docx = Path(a.docx) if a.docx else GT.latest(reports / a.week, "*.docx")
+    if not docx:
+        out({"status": "error", "error": f"no draft .docx in {reports / a.week}"}, 2)
+    r = GT.run_gate(cfg, a.week, docx, reports, choices=a.choices, baseline=a.baseline, key=a.key, calendar=a.calendar,
+                    external=a.external, reader=a.reader, port=a.port, progress=a.progress)
+    out({"status": "ok" if not r["exit"] else "blocked", "page": r["page"], "failed": r["failed"], "coverage": r["coverage"]},
+        r["exit"])
+
+
 def cmd_run_log(a):
     """A run's step record (taska_lib/runlog.py): begin | step ID RC [DETAIL] | finish | failed [--this-run] | unfinished."""
     keep = tuple(a.keep.split(",")) if a.keep else RL.KEEP
@@ -605,6 +618,11 @@ def main():
     p = sp.add_parser("compare-external", help="compare an external note-taker's actions against the taska tree")
     p.add_argument("--file", required=True, help="JSON file from echo-actions.py")
     p.add_argument("--gold", help="gold JSONL file (one annotation per line) for gold_items counts")
+    p = sp.add_parser("gate", help="the pre-send gate on a week's draft: presend.json + presend.html under reports/WEEK/")
+    p.add_argument("week"); p.add_argument("--docx"); p.add_argument("--reports"); p.add_argument("--choices")
+    p.add_argument("--baseline"); p.add_argument("--key"); p.add_argument("--calendar"); p.add_argument("--external")
+    p.add_argument("--reader", default="the reader"); p.add_argument("--port", type=int, default=8766)
+    p.add_argument("--progress", help="append one line per run to this jsonl")
     p = sp.add_parser("run-log", help="a run's step record: begin | step ID RC [DETAIL] | finish | failed | unfinished")
     p.add_argument("what", choices=["begin", "step", "finish", "failed", "unfinished"]); p.add_argument("week_dir")
     p.add_argument("args", nargs="*"); p.add_argument("--report-only", action="store_true")
