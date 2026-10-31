@@ -11,6 +11,13 @@ LONG_CHARS = 60000  # ~10,000 words: a third with fewer than THIN events was rea
 THIN = 2
 
 
+def part_of(item, quote, parts=3):
+    """1-based part the quote falls in, 0 when it is not in the meeting's text (same coordinates as coverage)."""
+    n = len(norm(S.full_text(item)))
+    off = S.quote_offset(item, quote)
+    return min(parts, off * parts // n + 1) if off >= 0 and n else 0
+
+
 def coverage(item, events, parts=3):
     text = norm(S.full_text(item))
     n = len(text)

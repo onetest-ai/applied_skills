@@ -38,7 +38,10 @@ For each evidence id you were given, in that order:
 5. `$TASKA done --evidence <id>` — even when the item changed nothing (say why in `--note`). For a long meeting,
    `done` answers `"status": "coverage"` when a third of the transcript produced no event (`empty_parts`) or, over
    10,000 words, fewer than two (`thin_parts`): re-read those parts, apply what was said there, and run `done` again;
-   only if they truly hold no work, pass `--ack "<why>"` saying what the part contains instead.
+   only if they truly hold no work, pass `--ack "<why>"` saying what the part contains instead, with one
+   `--quote "<8+ contiguous words from that part>"` per acknowledged part: `done` looks each quote up and answers
+   `"status": "ack_unquoted"` naming the parts it could not find a quote for. The quote is the proof the part was
+   read; an acknowledgement written from memory is refused.
 
 ## What each kind of evidence can show
 - **meeting** — everything below. Most updates come from here.

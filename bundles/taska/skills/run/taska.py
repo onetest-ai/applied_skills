@@ -315,6 +315,13 @@ def cmd_done(a):
                  "hint": "re-read those parts of the transcript and add what was said (or nothing), then run done again; "
                          "if they really hold no work, pass --ack \"<why>\""}, 1)
         if gap:
+            quoted = {CV.part_of(ev[a.evidence], q): q for q in reversed(a.quote or [])}
+            missing = [p for p in gap if p not in quoted]
+            if missing:
+                out({"status": "ack_unquoted", "evidence": a.evidence, "parts_without_quote": missing,
+                     "quotes_not_found": [q for q in a.quote or [] if CV.part_of(ev[a.evidence], q) == 0],
+                     "hint": "an --ack needs proof of reading: pass --quote \"<8+ contiguous words>\" taken from each of "
+                             "those parts (one --quote per part), then run done again"}, 1)
             note = (note + " " if note else "") + f"coverage acknowledged: {a.ack} (parts {gap})"
     L.mark_processed(st, a.evidence, note)
     out({"status": "ok", "processed": a.evidence, "pending": len(_pending(st))})
@@ -659,6 +666,7 @@ def main():
     p = sp.add_parser("apply"); p.add_argument("--evidence", required=True); p.add_argument("--proposals", required=True)
     p = sp.add_parser("done"); p.add_argument("--evidence", required=True); p.add_argument("--note")
     p.add_argument("--ack", help="why a third of a long meeting produced nothing (else done refuses: status coverage)")
+    p.add_argument("--quote", action="append", help="with --ack: verbatim words from each acknowledged part (proof it was read)")
     p = sp.add_parser("ingest"); p.add_argument("--file", required=True); p.add_argument("--source", default="ingest")
     p = sp.add_parser("people"); p.add_argument("--limit", type=int, default=0)
     p = sp.add_parser("redo"); p.add_argument("--evidence", required=True); p.add_argument("--why")

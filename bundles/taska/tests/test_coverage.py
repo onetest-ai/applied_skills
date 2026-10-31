@@ -50,10 +50,37 @@ def test_done_refuses_until_acknowledged(tmp_path):
     r = run_cli(tmp_path, "done", "--evidence", EV, check=False)
     assert r["status"] == "coverage" and r["empty_parts"] == [2, 3]
     assert EV not in S.processed(S.events(cfg.store))
-    r = run_cli(tmp_path, "done", "--evidence", EV, "--ack", "parts 2 and 3 are status talk, no new work")
+    r = run_cli(tmp_path, "done", "--evidence", EV, "--ack", "parts 2 and 3 are status talk, no new work",
+                "--quote", LINES[1], "--quote", LINES[2])
     assert r["status"] == "ok"
     p = [e for e in S.events(cfg.store) if e["type"] == "processed"][-1]
     assert "coverage acknowledged: parts 2 and 3 are status talk" in p["note"]
+
+
+def test_ack_without_a_quote_from_each_gap_part_is_refused(tmp_path):
+    # Oct 31: five coverage refusals, five --ack "Middle part…" with no re-read in between (trajectory.py)
+    cfg = _project(tmp_path)
+    _note(cfg, LINES[0], "n1")
+    r = run_cli(tmp_path, "done", "--evidence", EV, "--ack", "status talk", check=False)
+    assert r["status"] == "ack_unquoted" and r["parts_without_quote"] == [2, 3] and "--quote" in r["hint"]
+    assert EV not in S.processed(S.events(cfg.store))
+
+
+def test_a_quote_from_the_wrong_part_names_the_missing_part(tmp_path):
+    cfg = _project(tmp_path)
+    _note(cfg, LINES[0], "n1")
+    r = run_cli(tmp_path, "done", "--evidence", EV, "--ack", "status talk", "--quote", LINES[1], "--quote", LINES[0],
+                check=False)
+    assert r["status"] == "ack_unquoted" and r["parts_without_quote"] == [3]
+    r = run_cli(tmp_path, "done", "--evidence", EV, "--ack", "status talk", "--quote", LINES[1], "--quote", "words not said",
+                check=False)
+    assert r["status"] == "ack_unquoted" and r["parts_without_quote"] == [3] and r["quotes_not_found"] == ["words not said"]
+
+
+def test_part_of_locates_a_quote_by_text_offset(tmp_path):
+    cfg = _project(tmp_path)
+    item = S.evidence(cfg.store)[EV]
+    assert [CV.part_of(item, q) for q in LINES] == [1, 2, 3] and CV.part_of(item, "never said here") == 0
 
 
 def test_full_coverage_passes(tmp_path):
@@ -71,7 +98,7 @@ def test_short_meeting_is_not_gated(tmp_path):
 def test_extract_says_what_to_do_when_done_answers_coverage():
     from pathlib import Path
     ext = " ".join((Path(__file__).resolve().parent.parent / "skills" / "run" / "EXTRACT.md").read_text().split())
-    assert '"status": "coverage"' in ext and "--ack" in ext and "re-read" in ext
+    assert '"status": "coverage"' in ext and "--ack" in ext and "re-read" in ext and "--quote" in ext
 
 
 def test_a_long_meeting_with_a_thin_third_is_gated(tmp_path):
