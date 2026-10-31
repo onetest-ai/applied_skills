@@ -16,7 +16,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from taska_lib import ai as AI, config as C, gate as GT, ledger as L, media, runlog as RL, schedules as SCH, pack as PK, plan as PL, staleness as ST, store as S, workbench as W  # noqa: E402
+from taska_lib import ai as AI, config as C, gate as GT, ledger as L, media, report as RP, runlog as RL, schedules as SCH, pack as PK, plan as PL, staleness as ST, store as S, workbench as W  # noqa: E402
 from taska_lib.sources import ADAPTERS, msgraph  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -533,6 +533,22 @@ def cmd_schedules(a):
                                        for s in cfg.schedules]})
 
 
+def cmd_report(a):
+    """The weekly report (taska_lib/report.py): select --week W --out F | apply --prose P --sel S | build --week W --prose P --out F."""
+    cfg, st = cfg_store(a)
+    reports = Path(a.reports) if a.reports else C.find_project(a.project) / "reports"
+    if a.what == "select":
+        sel = RP.select(cfg, a.week, reports, today=dt.date.fromisoformat(a.today) if a.today else None)
+        Path(a.out).write_text(json.dumps(sel, indent=1, ensure_ascii=False))
+        out({"status": "ok", "items": len(sel["items"]), "priorities": len(sel["priorities"]),
+             "cached": sum(1 for x in sel["items"] + sel["priorities"] if x["sentence"]), "milestones": len(sel["milestones"]),
+             "risks": len(sel["risks"]), "asks": len(sel["slide5"]), "slots": len(sel["slots"])})
+    if a.what == "apply":
+        out(RP.apply(cfg, a.prose, a.sel))
+    r = RP.build(cfg, a.week, a.prose, a.out, snapshot=a.snapshot, upto=a.upto)
+    out({"out": a.out, "slots": len(r["slots"]), "failed": r["errors"]})
+
+
 def cmd_gate(a):
     """The pre-send gate on a week's draft (taska_lib/gate.py): presend.json + presend.html, exit 1 when a blocking gate fails."""
     cfg, st = cfg_store(a)
@@ -629,6 +645,10 @@ def main():
     p = sp.add_parser("compare-external", help="compare an external note-taker's actions against the taska tree")
     p.add_argument("--file", required=True, help="JSON file from echo-actions.py")
     p.add_argument("--gold", help="gold JSONL file (one annotation per line) for gold_items counts")
+    p = sp.add_parser("report", help="the weekly report: select (what goes in) | apply (fixed content into prose.json) | build (the docx)")
+    p.add_argument("what", choices=["select", "apply", "build"]); p.add_argument("--week"); p.add_argument("--out")
+    p.add_argument("--prose"); p.add_argument("--sel"); p.add_argument("--reports"); p.add_argument("--today")
+    p.add_argument("--snapshot", help="build: the workbench file name published next to the docx"); p.add_argument("--upto")
     sp.add_parser("schedules", help="the project's [[schedules]] with each one's next run")
     p = sp.add_parser("gate", help="the pre-send gate on a week's draft: presend.json + presend.html under reports/WEEK/")
     p.add_argument("week"); p.add_argument("--docx"); p.add_argument("--reports"); p.add_argument("--choices")
