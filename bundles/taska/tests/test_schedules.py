@@ -157,3 +157,60 @@ def test_the_cli_lists_schedules_with_their_next_run(tmp_path):
     cfg = _project(tmp_path, '[[schedules]]\nname = "Monday send"\nkind = "send"\ndays = [1]\ntime = "14:00"\nto = ["opal@example.com"]\n')
     r = run_cli(tmp_path, "schedules")
     assert r["schedules"][0]["name"] == "Monday send" and r["schedules"][0]["next"].endswith("14:00:00+02:00") and r["schedules"][0]["to"] == ["opal@example.com"]
+
+
+# ---------- the writer: [[schedules]] are the only part of taska.toml it rewrites ----------
+
+TWO = [W.Schedule("Friday preview", "preview", (5,), "20:00"),
+       W.Schedule("Monday send", "send", (1,), "14:00", ["reader@example.com"], ["lead@example.com"],
+                  dict(W.INCLUDE, pptx=True, workbench=True), False)]
+
+
+def test_to_toml_round_trips_through_parse():
+    import tomllib
+    text = W.to_toml(TWO)
+    back = W.parse(tomllib.loads(text)["schedules"])
+    assert back == TWO
+    assert text.count("[[schedules]]") == 2 and 'name = "Monday send"' in text and "on = false" in text
+
+
+def test_save_replaces_only_the_schedules_blocks(tmp_path):
+    before = textwrap.dedent('''\
+        [project]
+        name = "Harbor Logistics"   # a comment that must survive
+
+        [[schedules]]
+        name = "old one"
+        kind = "update"
+        days = [2]
+        time = "09:00"
+
+        [plan]
+        epics = ["A"]
+
+        [[schedules]]
+        name = "old two"
+        kind = "preview"
+        days = [5]
+        time = "17:00"
+        to = ["x@example.com"]
+        [[people]]
+        name = "Ada Example"
+        ''')
+    (tmp_path / "taska.toml").write_text(before)
+    out = W.save(tmp_path, TWO)
+    after = out.read_text()
+    assert (tmp_path / "taska.toml.bak").read_text() == before
+    assert "old one" not in after and "old two" not in after and 'name = "Harbor Logistics"   # a comment that must survive' in after
+    assert after.index("[plan]") < after.index("[[people]]") < after.index("[[schedules]]")
+    assert after.count("[[schedules]]") == 2
+    assert C.load(tmp_path).schedules == TWO
+    assert W.strip_blocks(after).rstrip() == W.strip_blocks(before).rstrip()   # one blank line separates the new blocks
+
+
+def test_save_appends_when_there_were_none(tmp_path):
+    (tmp_path / "taska.toml").write_text('[project]\nname = "Harbor Logistics"\n')
+    W.save(tmp_path, TWO[:1])
+    text = (tmp_path / "taska.toml").read_text()
+    assert text.startswith('[project]\nname = "Harbor Logistics"\n') and text.count("[[schedules]]") == 1
+    assert C.load(tmp_path).schedules == TWO[:1]

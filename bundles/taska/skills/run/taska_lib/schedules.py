@@ -160,3 +160,49 @@ def next_run(s, now):
         if t.isoweekday() in s.days and t > now:
             return t
     return None
+
+
+# ---------- the writer: [[schedules]] blocks are the only part of taska.toml it rewrites ----------
+
+def _toml_str(s):
+    return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def to_toml(schedules):
+    """[Schedule] -> the [[schedules]] blocks as TOML text (every field written, so a reader sees the defaults)."""
+    blocks = []
+    for s in schedules:
+        lines = ["[[schedules]]", f"name = {_toml_str(s.name)}", f"kind = {_toml_str(s.kind)}",
+                 "days = [" + ", ".join(str(d) for d in s.days) + "]", f"time = {_toml_str(s.time)}",
+                 "to = [" + ", ".join(_toml_str(a) for a in s.to) + "]",
+                 "cc = [" + ", ".join(_toml_str(a) for a in s.cc) + "]",
+                 "include = {" + ", ".join(f"{k} = {str(bool(s.include.get(k, v))).lower()}" for k, v in INCLUDE.items()) + "}",
+                 f"on = {str(bool(s.on)).lower()}"]
+        blocks.append("\n".join(lines) + "\n")
+    return "\n".join(blocks)
+
+
+def strip_blocks(text):
+    """`text` without its [[schedules]] blocks: a block runs from its header to the next table header."""
+    out, skipping = [], False
+    for line in text.splitlines(keepends=True):
+        bare = line.strip()
+        if bare.startswith("["):
+            skipping = bare.startswith("[[schedules]]")
+        if not skipping:
+            out.append(line)
+    return "".join(out)
+
+
+def save(project_dir, schedules):
+    """Rewrite <project>/taska.toml with these schedules: every other byte stays, the old file is kept as
+    taska.toml.bak, and the swap is atomic (temp file + os.replace)."""
+    path = Path(project_dir) / "taska.toml"
+    before = path.read_text()
+    kept = strip_blocks(before).rstrip("\n")
+    text = kept + ("\n\n" if kept else "") + to_toml(schedules)
+    (path.parent / "taska.toml.bak").write_text(before)
+    tmp = path.with_name("taska.toml.tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+    return path
