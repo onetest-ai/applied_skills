@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from taska_lib import ai as AI, config as C, ledger as L, media, pack as PK, plan as PL, staleness as ST, store as S, workbench as W  # noqa: E402
+from taska_lib import ai as AI, config as C, ledger as L, media, runlog as RL, pack as PK, plan as PL, staleness as ST, store as S, workbench as W  # noqa: E402
 from taska_lib.sources import ADAPTERS, msgraph  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -522,6 +522,23 @@ def cmd_render_evidence(a):
     out({"status": "ok", "rewritten": S.rerender(st)})
 
 
+def cmd_run_log(a):
+    """A run's step record (taska_lib/runlog.py): begin | step ID RC [DETAIL] | finish | failed [--this-run] | unfinished."""
+    keep = tuple(a.keep.split(",")) if a.keep else RL.KEEP
+    if a.what == "begin":
+        RL.begin(a.week_dir, a.report_only, keep)
+    elif a.what == "step":
+        RL.step(a.week_dir, a.args[0], a.args[1], a.args[2] if len(a.args) > 2 else "")
+    elif a.what == "finish":
+        RL.finish(a.week_dir)
+    elif a.what == "unfinished":
+        out({"status": "ok", "unfinished": RL.unfinished(a.week_dir)})
+    elif a.what == "failed":
+        f = RL.failed(a.week_dir, a.this_run)
+        out({"status": "ok", "failed": f}, 1 if f else 0)
+    out({"status": "ok"})
+
+
 def cmd_schedule(a):
     """Print (never install) a cron line or launchd plist for an unattended `/taska:run --due`, run through `taska ai`
     so it finds a working sign-in (a stored token, then CodeMie)."""
@@ -588,6 +605,11 @@ def main():
     p = sp.add_parser("compare-external", help="compare an external note-taker's actions against the taska tree")
     p.add_argument("--file", required=True, help="JSON file from echo-actions.py")
     p.add_argument("--gold", help="gold JSONL file (one annotation per line) for gold_items counts")
+    p = sp.add_parser("run-log", help="a run's step record: begin | step ID RC [DETAIL] | finish | failed | unfinished")
+    p.add_argument("what", choices=["begin", "step", "finish", "failed", "unfinished"]); p.add_argument("week_dir")
+    p.add_argument("args", nargs="*"); p.add_argument("--report-only", action="store_true")
+    p.add_argument("--this-run", action="store_true", help="failed: leave out the steps a report-only rebuild kept")
+    p.add_argument("--keep", help="begin --report-only: step ids kept from the last finished run (comma-separated)")
     p = sp.add_parser("schedule"); p.add_argument("--time", default="18:30"); p.add_argument("--launchd", action="store_true")
     p = sp.add_parser("ai", help="reach Claude for an unattended run: a stored token, then CodeMie, then Bedrock if allowed")
     p.add_argument("--probe", action="store_true", help="one tiny call: which route answers, or how to fix each")
