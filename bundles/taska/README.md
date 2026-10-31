@@ -20,21 +20,22 @@ would recognise comes from `[report]` and `[[schedules]]` in `taska.toml`):
 | `report select --week W --out F` / `report apply --prose P --sel F` / `report build --week W --prose P --out X.docx` | What goes in the weekly report, decided from the tree; the writer's text kept only for open slots; the checked docx. |
 | `gate WEEK [--docx F]` | The pre-send gate: `presend.json` and `presend.html` under `reports/WEEK/`; exit 1 when a blocking gate fails. |
 | `deliver WEEK --to ADDR [--schedule NAME]` | `deliver.json` and a ready-to-send `mail.md` (subject, To, Cc, body, the attachments the schedule includes). |
-| `schedules [--set rows.json] [--register] [--agents-dir D]` | The project's `[[schedules]]` with each one's next run and what is registered with the OS. `--set` replaces them from a JSON list (saved to `taska.toml`, previous file kept as `taska.toml.bak`) and registers; `--register` writes and (re)loads one launchd agent per schedule on a Mac, running `[run].scheduled` with `{kind}` filled in. The workbench's **Schedules** view does the same from the page. |
+| `schedules [--set rows.json] [--register] [--force] [--agents-dir D]` | The project's `[[schedules]]` with each one's next run and what is registered with the OS. `--set` replaces them from a JSON list (saved to `taska.toml`, previous file kept as `taska.toml.bak`) and registers; `--register` writes one job per schedule with the OS scheduler — a launchd agent on a Mac, a hidden Task Scheduler task on Windows that runs once at wake when its time was missed — each running `taska run-schedule <name>`. One machine runs a project (`.taska/runner.json`); `--force` takes the schedules over from a machine that is gone. The workbench's **Schedules** view does the same from the page, with **Run now**. |
+| `run-schedule NAME [--week W] [--dry-run]` | One scheduled run: the project's `[[run.steps]]` for the schedule's kind (`{week} {dir} {project} {kind} {name} {python} {taska}` expanded), then for a preview or send the read-only workbench copy, the docx (when `[report]` has a template and `reports/WEEK/prose.json` exists), the gate and the delivery. A send whose required step or gate failed is **HELD** to the owner (`[report].owner`); the owner stays in Cc of a send. |
 | `serve [--port 8766] [--agents-dir D]` | The workbench; `--agents-dir` is where its Schedules view registers jobs (default `~/Library/LaunchAgents`). |
 | `run-log begin\|step\|finish\|failed WEEK_DIR` | A run's step record, written so an interrupted run never erases the last finished one. |
 | `render-evidence` | Rewrite every evidence `.md` from its `.json` in the current, line-limited format. |
 | `ai [--probe] -- <claude args>` | Reach Claude for an unattended run: a stored token, then CodeMie, then Bedrock if allowed. |
 
 ## Requirements
-- Python 3.11+ (standard library only; nothing to install).
+- Python 3.11+ (standard library only; nothing to install). `taska doctor` names the install command (`brew` / `winget`) for any tool that is missing.
 - Optional, reported by `taska.py doctor`: `ffmpeg` + `whisper-cli` and a ggml model for recordings that came
   without a transcript (a model cached by brain's video lane is found automatically); `node` + the user's
   `msgraph` skill for Teams transcripts and calendar (found where Claude Code or CodeMie installs it,
   e.g. `~/.codemie/claude-plugin/skills/msgraph/scripts/msgraph.js`; `[sources.<key>].cli` or `$MSGRAPH_CLI`
   override).
 - Evals only: the `claude` CLI on PATH for the planted end-to-end run (`evals/planted/run.sh`).
-- Unattended runs (the **Schedules** view, or `taska schedules --register`; Mac only for now — Windows registration is a later release) reach Claude through `taska ai`: a token in `~/.config/taska/claude` (from
+- Unattended runs (the **Schedules** view, or `taska schedules --register`; a Mac or Windows) reach Claude through `taska ai`: a token in `~/.config/taska/claude` (from
   `claude setup-token`, chmod 600), else CodeMie while signed in; Bedrock only with `TASKA_ALLOW_BEDROCK=1`.
   `taska ai --probe` says which works.
 

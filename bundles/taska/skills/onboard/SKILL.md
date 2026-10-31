@@ -60,5 +60,17 @@ command prints JSON.
 6. Offer unattended runs. They need a sign-in that works with nobody at the keyboard: run `$TASKA ai --probe`.
    If it is not `ok`, tell the user the fix it names: a subscription token (they run `claude setup-token` and save
    the token in `~/.config/taska/claude` with `chmod 600`; it lasts about a year), or `codemie profile login`
-   (lasts about a day, so runs after a weekend need a fresh login). Then `$TASKA schedule --time 18:30` (cron) or
-   `--launchd` prints the entry, which runs through `taska ai`; show it and let the user install it themselves.
+   (lasts about a day, so runs after a weekend need a fresh login). Then the schedules, one question each: what
+   (a preview to the owner, a send to the reader, an update of the tree only), which days, what time (the owner's
+   local time), who receives it (To, Cc). Write them as `[[schedules]]` in `taska.toml` (or let the user edit them
+   in the workbench's **Schedules** view, `/taska:workbench` → Schedules); set `[report].owner` to the owner's
+   address. Then `$TASKA schedules --register`: it writes one job per schedule with the OS's own scheduler
+   (launchd on a Mac, Task Scheduler on Windows — hidden, as the signed-in user, run once at wake when the time was
+   missed), each running `taska run-schedule <name>` through `taska ai`. One machine runs a project: if `--register`
+   says another machine holds the schedules, ask the user which machine should run them before `--force`. Show
+   `$TASKA schedules` (each job's next run) and tell the user that **Run now** on the Schedules view runs one
+   immediately.
+7. **Windows.** The same steps; `doctor` names the `winget` command for anything missing (Python 3.11+, Node for
+   the msgraph skill, ffmpeg and whisper.cpp only for recordings without a transcript). The workbench is at
+   `http://127.0.0.1:8766/` in the browser; scheduled runs use `pythonw`, so no console window opens. A synced
+   OneDrive folder is read as a plain path (no Finder step). The Word report builds without Office.
