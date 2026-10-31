@@ -16,7 +16,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from taska_lib import ai as AI, config as C, gate as GT, ledger as L, media, report as RP, runlog as RL, schedules as SCH, pack as PK, plan as PL, staleness as ST, store as S, workbench as W  # noqa: E402
+from taska_lib import ai as AI, config as C, deliver as DL, gate as GT, ledger as L, media, report as RP, runlog as RL, schedules as SCH, pack as PK, plan as PL, staleness as ST, store as S, workbench as W  # noqa: E402
 from taska_lib.sources import ADAPTERS, msgraph  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -549,6 +549,16 @@ def cmd_report(a):
     out({"out": a.out, "slots": len(r["slots"]), "failed": r["errors"]})
 
 
+def cmd_deliver(a):
+    """A week's mail content (taska_lib/deliver.py): reports/WEEK/deliver.json and a ready-to-send mail.md."""
+    cfg, st = cfg_store(a)
+    reports = Path(a.reports) if a.reports else C.find_project(a.project) / "reports"
+    sched = next((s for s in cfg.schedules if s.name == a.schedule), None) if a.schedule else None
+    d = DL.deliver(cfg, reports / a.week, a.to, schedule=sched, status=a.status, kind=a.kind)
+    out({"deliver": str(reports / a.week / "deliver.json"), "mail": str(reports / a.week / "mail.md"),
+         "failed": sum(1 for g in d["gates"] if not g["ok"])})
+
+
 def cmd_gate(a):
     """The pre-send gate on a week's draft (taska_lib/gate.py): presend.json + presend.html, exit 1 when a blocking gate fails."""
     cfg, st = cfg_store(a)
@@ -650,6 +660,9 @@ def main():
     p.add_argument("--prose"); p.add_argument("--sel"); p.add_argument("--reports"); p.add_argument("--today")
     p.add_argument("--snapshot", help="build: the workbench file name published next to the docx"); p.add_argument("--upto")
     sp.add_parser("schedules", help="the project's [[schedules]] with each one's next run")
+    p = sp.add_parser("deliver", help="a week's mail content: reports/WEEK/deliver.json and a ready-to-send mail.md")
+    p.add_argument("week"); p.add_argument("--to", required=True); p.add_argument("--reports"); p.add_argument("--status")
+    p.add_argument("--schedule", help="the [[schedules]] entry whose cc and Include checklist apply"); p.add_argument("--kind", default="preview")
     p = sp.add_parser("gate", help="the pre-send gate on a week's draft: presend.json + presend.html under reports/WEEK/")
     p.add_argument("week"); p.add_argument("--docx"); p.add_argument("--reports"); p.add_argument("--choices")
     p.add_argument("--baseline"); p.add_argument("--key"); p.add_argument("--calendar"); p.add_argument("--external")

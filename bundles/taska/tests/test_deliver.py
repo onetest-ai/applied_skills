@@ -121,3 +121,10 @@ def test_a_failed_step_makes_the_mail_need_attention(tmp_path):
     status.write_text(json.dumps({"steps": [{"id": "gate", "ok": False, "detail": "G4"}]}))
     d = D.deliver(cfg, wk, "opal@example.com", status=status)
     assert d["needs_attention"] is True and d["hold_reason"] == "gate: G4"
+
+
+def test_the_cli_writes_deliver_json_and_mail_md(tmp_path):
+    from conftest import run_cli
+    cfg, wk = _project(tmp_path)
+    r = run_cli(tmp_path, "deliver", "2026-03-02", "--to", "opal@example.com", "--reports", str(tmp_path / "reports"))
+    assert r["deliver"].endswith("deliver.json") and r["failed"] == 0 and (wk / "mail.md").exists()
