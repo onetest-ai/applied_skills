@@ -2,6 +2,7 @@
 import datetime as dt
 import hashlib
 import json
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -87,7 +88,29 @@ def schedules_view(cfg, register_opts=None):
         nxt = SCH.next_run(s, now)
         rows.append(dict(vars(s), days=list(s.days), next=nxt.isoformat() if nxt else None, label=SCH.label(cfg.name, s)))
     return {"schedules": rows, "registered": SCH.registered(cfg.name, opts.get("agents_dir")), "platform": SCH.sys.platform,
-            "can_register": SCH.sys.platform == "darwin", "command": (cfg.run or {}).get("scheduled"), "timezone": cfg.timezone}
+            "can_register": SCH.sys.platform in ("darwin", "win32"), "command": (cfg.run or {}).get("scheduled"), "timezone": cfg.timezone,
+            "reports_dir": str(cfg.project_dir / "reports"), "runner": SCH.runner_lock(cfg)}
+
+
+def _spawn(argv, log):
+    """Start a run detached from the server (its own session; output to the schedule's log)."""
+    import subprocess
+    with open(log, "ab") as f:
+        return subprocess.Popen(argv, stdout=f, stderr=subprocess.STDOUT, start_new_session=True, cwd=str(log.parent.parent)).pid
+
+
+def run_now(cfg, name, register_opts=None):
+    """Run now from the page: `taska run-schedule <name>` in the background. ValueError for an unknown schedule."""
+    from . import runner as RN
+    s = next((x for x in cfg.schedules if x.name == name), None)
+    if not s:
+        raise ValueError(f"no schedule named {name!r}")
+    week = RN.week_for(s.kind, dt.date.today())
+    log = cfg.project_dir / "logs" / f"{SCH._slug(s.name)}.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    argv = [sys.executable, str(Path(__file__).resolve().parent.parent / "taska.py"), "--project", str(cfg.project_dir), "run-schedule", s.name]
+    pid = ((register_opts or {}).get("spawn") or _spawn)(argv, log)
+    return {"started": True, "pid": pid, "week": week, "dir": str(cfg.project_dir / "reports" / week), "log": str(log)}
 
 
 def set_schedules(cfg, rows, register_opts=None):
@@ -147,7 +170,7 @@ def server(store, cfg, port, register_opts=None):
             self._send(404, {"error": "not found"})
 
         def do_POST(self):
-            if self.path not in ("/api/event", "/api/schedules"):
+            if self.path not in ("/api/event", "/api/schedules", "/api/schedules/run"):
                 return self._send(404, {"error": "not found"})
             if not _local_origin(self.headers, port):
                 return self._send(403, {"error": "forbidden host"})
@@ -155,6 +178,8 @@ def server(store, cfg, port, register_opts=None):
                 return self._send(415, {"error": "Content-Type must be application/json"})
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+                if self.path == "/api/schedules/run":
+                    return self._send(200, run_now(cfg, body.get("name"), register_opts))
                 if self.path == "/api/schedules":
                     reg = set_schedules(cfg, body.get("schedules") or [], register_opts)
                     return self._send(200, dict(schedules_view(cfg, register_opts), registered=reg))

@@ -16,7 +16,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from taska_lib import ai as AI, config as C, deliver as DL, gate as GT, ledger as L, media, report as RP, runlog as RL, schedules as SCH, pack as PK, plan as PL, staleness as ST, store as S, workbench as W  # noqa: E402
+from taska_lib import ai as AI, config as C, deliver as DL, gate as GT, ledger as L, media, report as RP, runlog as RL, runner as RN, schedules as SCH, pack as PK, plan as PL, staleness as ST, store as S, workbench as W  # noqa: E402
 from taska_lib.sources import ADAPTERS, msgraph  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -538,6 +538,17 @@ def cmd_schedules(a):
     out(dict(W.schedules_view(cfg, opts), status="ok", **({"registered": reg} if reg is not None else {})))
 
 
+def cmd_run_schedule(a):
+    """One scheduled run (taska_lib/runner.py): the project's steps for the schedule's kind, then the report, the gate
+    and the delivery; a send is HELD when something failed. --dry-run lists the commands."""
+    cfg, st = cfg_store(a)
+    s = next((x for x in cfg.schedules if x.name == a.name), None)
+    if not s:
+        out({"status": "error", "error": f"no schedule named {a.name!r}; known: {[x.name for x in cfg.schedules]}"}, 2)
+    r = RN.run(cfg, s, week=a.week, dry_run=a.dry_run)
+    out(dict(r, status="ok" if r["verdict"] != "busy" else "busy"), 0 if r["verdict"] in ("done", "ready") else 1)
+
+
 def cmd_report(a):
     """The weekly report (taska_lib/report.py): select --week W --out F | apply --prose P --sel S | build --week W --prose P --out F."""
     cfg, st = cfg_store(a)
@@ -669,6 +680,8 @@ def main():
     p.add_argument("--set", help="a JSON list of schedules that replaces [[schedules]] in taska.toml and registers them")
     p.add_argument("--register", action="store_true", help="write and (re)load one launchd agent per schedule")
     p.add_argument("--agents-dir", help="where the agents go (default ~/Library/LaunchAgents)")
+    p = sp.add_parser("run-schedule", help="one scheduled run: the project's steps, then report, gate, delivery")
+    p.add_argument("name"); p.add_argument("--week"); p.add_argument("--dry-run", action="store_true")
     p = sp.add_parser("deliver", help="a week's mail content: reports/WEEK/deliver.json and a ready-to-send mail.md")
     p.add_argument("week"); p.add_argument("--to", required=True); p.add_argument("--reports"); p.add_argument("--status")
     p.add_argument("--schedule", help="the [[schedules]] entry whose cc and Include checklist apply"); p.add_argument("--kind", default="preview")

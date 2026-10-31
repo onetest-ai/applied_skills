@@ -989,7 +989,7 @@ function schRow(s, i){
     <div><label>To (comma-separated)</label><input type="text" data-f="to" value="${esc((s.to||[]).join(", "))}"></div>
     <div><label>Cc</label><input type="text" data-f="cc" value="${esc((s.cc||[]).join(", "))}"></div>
     <div class="wide inc"><label>Include</label>${Object.keys(INC).map(k=>`<label><input type="checkbox" data-inc="${k}" ${inc[k]?"checked":""}>${INC[k]}</label>`).join("")}</div>
-    <div class="foot">${s.next?`<span>Next run: <b class="mono">${esc(s.next.replace("T"," ").slice(0,16))}</b></span>`:`<span>Not scheduled</span>`}${s.label?`<span class="mono">${esc(s.label)}</span>`:""}${reg?`<span>✓ registered</span>`:s.label?`<span>not registered yet</span>`:""}<button class="btn" data-rm="${i}" style="margin-left:auto">Remove</button></div>
+    <div class="foot">${s.next?`<span>Next run: <b class="mono">${esc(s.next.replace("T"," ").slice(0,16))}</b></span>`:`<span>Not scheduled</span>`}${s.label?`<span class="mono">${esc(s.label)}</span>`:""}${reg?`<span>✓ registered</span>`:s.label?`<span>not registered yet</span>`:""}<span style="margin-left:auto;display:inline-flex;gap:6px"><button class="btn" data-run="${esc(s.name||"")}" ${s.name?"":"disabled"} title="Run this schedule now, in the background">Run now</button><a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="file://${esc(SCH.reports_dir||"")}/" title="The report folder">Open the files</a><button class="btn" data-rm="${i}">Remove</button></span></div>
   </div>`;
 }
 function schRead(){
@@ -1011,6 +1011,12 @@ async function renderSchedules(){
     ${SCH.schedules.map(schRow).join("") || `<div class="blank"><b>No schedules yet</b>Add one: a preview to you on Friday, a send to the reader on Monday.</div>`}
     <div class="bar"><button class="btn" id="sch-add">Add schedule</button><button class="btn primary" id="sch-save">Save</button></div></div>`;
   $("#sch-add").onclick = () => { SCH.schedules = schRead().concat([{name:"", kind:"preview", days:[5], time:"17:00", to:[], cc:[], include:{}, on:true}]); schErr = ""; renderSchedules(); };
+  document.querySelectorAll("#schedules [data-run]").forEach(b => b.onclick = async () => {
+    const r = await fetch("/api/schedules/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name: b.dataset.run})});
+    const j = await r.json().catch(()=>({error:"Could not start"}));
+    if (!r.ok){ schErr = j.error || "Could not start"; return renderSchedules(); }
+    toast(`Started: ${b.dataset.run} for the week of ${j.week}; its files land in ${j.dir}`);
+  });
   document.querySelectorAll("#schedules [data-rm]").forEach(b => b.onclick = () => { const rows = schRead(); rows.splice(+b.dataset.rm, 1); SCH.schedules = rows; schErr = ""; renderSchedules(); });
   $("#sch-save").onclick = async () => {
     const r = await fetch("/api/schedules",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({schedules: schRead()})});

@@ -15,7 +15,7 @@ HOST = re.compile(r"\b(?:[a-z0-9-]+\.)+(?:com|net|org|io|co|de|ch|ua|eu|uk|us)\b
 RESERVED = re.compile(r"(?:^|\.)(?:example\.(?:com|net|org))$", re.I)   # RFC 2606; *.example/.test/.invalid have no TLD above
 SERVICES = {   # real services the code talks to or documents, never a client
     "github.com", "dev.azure.com", "graph.microsoft.com", "login.microsoftonline.com", "microsoft.com",
-    "example.sharepoint.com", "sharepoint.com", "schemas.openxmlformats.org", "fonts.googleapis.com",
+    "example.sharepoint.com", "sharepoint.com", "schemas.openxmlformats.org", "schemas.microsoft.com", "fonts.googleapis.com",
     "unpkg.com", "cdnjs.cloudflare.com", "www.apple.com", "www.w3.org", "purl.org",
 }
 

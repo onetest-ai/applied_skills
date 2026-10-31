@@ -102,3 +102,29 @@ def test_the_page_opens_on_a_view_named_in_the_query(served):
     base, *_ = served
     r = urllib.request.urlopen(base + "/?view=schedules")
     assert r.status == 200 and r.headers["Content-Type"].startswith("text/html")
+
+
+def test_run_now_spawns_the_schedule_detached(tmp_path, monkeypatch):
+    (tmp_path / "taska.toml").write_text(TOML)
+    cfg = C.load(tmp_path); S.ensure(cfg.store)
+    spawned = []
+    srv = W.server(cfg.store, cfg, _free_port(), register_opts={"agents_dir": tmp_path / "a", "launchctl": lambda *a: None,
+                                                               "spawn": lambda argv, log: spawned.append((argv, log)) or 4242})
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{srv.server_address[1]}"
+        req = urllib.request.Request(base + "/api/schedules/run", data=json.dumps({"name": "Friday preview"}).encode(), method="POST",
+                                     headers={"Content-Type": "application/json"})
+        d = json.loads(urllib.request.urlopen(req).read())
+        assert d["started"] is True and d["pid"] == 4242 and d["week"] and d["dir"].endswith(d["week"])
+        argv, log = spawned[0]
+        assert argv[-2:] == ["run-schedule", "Friday preview"] and "--project" in argv and str(log).endswith("friday-preview.log")
+        req = urllib.request.Request(base + "/api/schedules/run", data=json.dumps({"name": "nope"}).encode(), method="POST",
+                                     headers={"Content-Type": "application/json"})
+        with pytest.raises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(req)
+        assert e.value.code == 400
+        got = json.loads(urllib.request.urlopen(base + "/api/schedules").read())
+        assert got["reports_dir"] == str(tmp_path / "reports")
+    finally:
+        srv.shutdown()
