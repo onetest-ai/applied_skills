@@ -26,7 +26,7 @@ would recognise comes from `[report]` and `[[schedules]]` in `taska.toml`):
 | `run-log begin\|step\|finish\|failed WEEK_DIR` | A run's step record, written so an interrupted run never erases the last finished one. |
 | `render-evidence` | Rewrite every evidence `.md` from its `.json` in the current, line-limited format. |
 | `leftovers --evidence ID` | Per third of a meeting, the sentences that sound like work (will, needs to, by Friday, agreed, a risk) and that no applied quote covers, with a token for the current state. |
-| `done --evidence ID [--ack WHY --quote WORDS…] [--leftovers TOKEN]` | Marks an item processed. A coverage refusal is acknowledged only with a quote the script finds in each acknowledged part; a long meeting with leftovers needs the token `leftovers` printed after the last apply. |
+| `done --evidence ID [--ack WHY --quote WORDS…] [--leftovers TOKEN]` | Marks an item processed. A coverage refusal is acknowledged only with a quote of 8+ words the script finds in each acknowledged part (the refusal says at which `ts` each part starts); a long meeting with leftovers needs the token `leftovers` printed after the last apply — proof the list was produced then, not that each sentence was decided (the trajectory shows whether an apply followed). |
 | `evals/trajectory.py SESSION.jsonl [--evidence-dir D] [--out J] [--html H]` | What a headless run did, from its Claude Code session file and subagent files: per agent turns, tools, errors, tokens; per evidence lines read, proposals, `apply` answers, `done` refusals and acknowledgements without a re-read. |
 | `ai [--probe] -- <claude args>` | Reach Claude for an unattended run: a stored token, then CodeMie, then Bedrock if allowed. |
 
