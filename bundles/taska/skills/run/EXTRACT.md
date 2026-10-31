@@ -27,14 +27,18 @@ For each evidence id you were given, in that order:
    time; it changes after each item. `unverified_claims` are awaiting verification and `awaiting_confirm` are closures waiting for the user's Confirm:
    do not repeat either. A `held`/`done`/`cancelled` you propose is never applied by itself; it waits for the user.
    `pinned_by_human` fields were set by the manager: never try to change them.
-2. Read the item's `.md` file (path from `$TASKA pending`) in full.
+2. Read the item's `.md` file (path from `$TASKA pending`) in full. A long transcript (over 10,000 words, say
+   60,000 characters) is worked through in sections of about 3,000 words: read one section, add that section's
+   proposals to the file, then read the next; never summarise a section from memory. Long meetings hold the most
+   work and were read the most shallowly (a 20,000-word readout: 0.9 events per 1,000 words against 4 for a short
+   sync).
 3. Write `<store>/proposals/<evidence_id>.json` (a JSON array, schema below): **pass 1, then pass 2**.
 4. `$TASKA apply --evidence <id> --proposals <that file>`. Fix every rejection in `<id>_fix.json` and apply only
    the fixed entries.
 5. `$TASKA done --evidence <id>` — even when the item changed nothing (say why in `--note`). For a long meeting,
-   `done` answers `"status": "coverage"` when a third of the transcript produced no event: re-read those parts
-   (`empty_parts`), apply what was said there, and run `done` again; only if they truly hold no work, pass
-   `--ack "<why>"`.
+   `done` answers `"status": "coverage"` when a third of the transcript produced no event (`empty_parts`) or, over
+   10,000 words, fewer than two (`thin_parts`): re-read those parts, apply what was said there, and run `done` again;
+   only if they truly hold no work, pass `--ack "<why>"` saying what the part contains instead.
 
 ## What each kind of evidence can show
 - **meeting** — everything below. Most updates come from here.

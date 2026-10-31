@@ -6,7 +6,9 @@ against 53% in the first, the "stopped early" pattern this check exists to catch
 from . import store as S
 from .text import norm
 
-MIN_CHARS = 6000   # shorter meetings may honestly have nothing in a third
+MIN_CHARS = 6000    # shorter meetings may honestly have nothing in a third
+LONG_CHARS = 60000  # ~10,000 words: a third with fewer than THIN events was read shallowly (Oct 31: 13, 1, 3 on a 20,000-word readout)
+THIN = 2
 
 
 def coverage(item, events, parts=3):
@@ -22,4 +24,5 @@ def coverage(item, events, parts=3):
         if off >= 0 and n:
             counts[min(parts - 1, off * parts // n)] += 1
     return {"chars": n, "parts": [{"part": i + 1, "events": c} for i, c in enumerate(counts)],
-            "empty_parts": [i + 1 for i, c in enumerate(counts) if c == 0] if n >= MIN_CHARS else []}
+            "empty_parts": [i + 1 for i, c in enumerate(counts) if c == 0] if n >= MIN_CHARS else [],
+            "thin_parts": [i + 1 for i, c in enumerate(counts) if c < THIN] if n >= LONG_CHARS else []}

@@ -306,12 +306,14 @@ def cmd_done(a):
     note = a.note or ""
     if ev[a.evidence].get("kind") == "meeting":
         c = CV.coverage(ev[a.evidence], S.events(st))
-        if c["empty_parts"] and not a.ack:
-            out({"status": "coverage", "evidence": a.evidence, "empty_parts": c["empty_parts"], "parts": c["parts"],
+        gap = sorted(set(c["empty_parts"]) | set(c["thin_parts"]))
+        if gap and not a.ack:
+            out({"status": "coverage", "evidence": a.evidence, "empty_parts": c["empty_parts"], "thin_parts": c["thin_parts"],
+                 "parts": c["parts"],
                  "hint": "re-read those parts of the transcript and add what was said (or nothing), then run done again; "
                          "if they really hold no work, pass --ack \"<why>\""}, 1)
-        if c["empty_parts"]:
-            note = (note + " " if note else "") + f"coverage acknowledged: {a.ack} (empty parts {c['empty_parts']})"
+        if gap:
+            note = (note + " " if note else "") + f"coverage acknowledged: {a.ack} (parts {gap})"
     L.mark_processed(st, a.evidence, note)
     out({"status": "ok", "processed": a.evidence, "pending": len(_pending(st))})
 

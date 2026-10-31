@@ -34,7 +34,8 @@ finish with the summary.
    in the workbench. A Teams source with `status: error` (decision model or Graph unreachable) is reported, not
    retried by hand; nothing from it was applied.
 3. `$TASKA pending`. Nothing pending → skip to step 7.
-4. **Extraction.** Take the pending ids oldest first, in batches of up to 5. For each batch, dispatch one
+4. **Extraction.** Take the pending ids oldest first, in batches of up to 5; a meeting over 10,000 words goes to a
+   subagent on its own (it is read in sections, EXTRACT.md step 2). For each batch, dispatch one
    subagent (a fast model such as Sonnet is enough) with this prompt, substituting the real values:
    > Follow `<skill-dir>/EXTRACT.md` exactly (read it first). `$TASKA` is `python3 <skill-dir>/taska.py --project
    > <project-dir>`; the store is `<store>` (from `doctor`). Process these evidence ids strictly in this order:

@@ -69,3 +69,12 @@ def test_new_nodes_pass_the_tracking_rule_before_the_admission_bar():
     first = p2[:p2.index("**Admission bar:**")]
     assert "not work by the tracking rule" in first and "never created" in first
     assert "a `session` task is a deliverable session" in p2.lower()
+
+
+def test_a_long_transcript_is_worked_through_in_sections():
+    # Oct 31: a fully readable 20,000-word readout still yielded 0.9 events per 1,000 words against 4 for a short
+    # sync, and its middle third one event: one meeting was one unit of attention whatever its length
+    step2 = EXTRACT[EXTRACT.index("2. Read the item's"):EXTRACT.index("3. Write")]
+    assert "10,000 words" in step2 and "sections of about 3,000 words" in step2 and "never summarise" in step2.lower()
+    skill = (ROOT / "skills" / "run" / "SKILL.md").read_text(encoding="utf-8")
+    assert "over 10,000 words" in skill and "on its own" in skill

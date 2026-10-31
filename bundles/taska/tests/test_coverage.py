@@ -72,3 +72,31 @@ def test_extract_says_what_to_do_when_done_answers_coverage():
     from pathlib import Path
     ext = " ".join((Path(__file__).resolve().parent.parent / "skills" / "run" / "EXTRACT.md").read_text().split())
     assert '"status": "coverage"' in ext and "--ack" in ext and "re-read" in ext
+
+
+def test_a_long_meeting_with_a_thin_third_is_gated(tmp_path):
+    # Oct 31: a 20,000-word readout produced 13, 1 and 3 events per third; "no empty third" let it through
+    cfg = _project(tmp_path, n_filler=260)                       # ~80,000 characters: a long meeting
+    for i, line in enumerate(LINES):
+        _note(cfg, line, f"n{i}")
+    _note(cfg, LINES[0], "n4")
+    c = CV.coverage(S.evidence(cfg.store)[EV], S.events(cfg.store))
+    assert [p["events"] for p in c["parts"]] == [2, 1, 1] and c["empty_parts"] == [] and c["thin_parts"] == [2, 3]
+    r = run_cli(tmp_path, "done", "--evidence", EV, check=False)
+    assert r["status"] == "coverage" and r["thin_parts"] == [2, 3]
+
+
+def test_a_long_meeting_with_two_events_per_third_passes(tmp_path):
+    cfg = _project(tmp_path, n_filler=260)
+    for i, line in enumerate(LINES):
+        _note(cfg, line, f"n{i}")
+        _note(cfg, line, f"m{i}")
+    assert CV.coverage(S.evidence(cfg.store)[EV], S.events(cfg.store))["thin_parts"] == []
+    assert run_cli(tmp_path, "done", "--evidence", EV)["status"] == "ok"
+
+
+def test_a_short_meeting_is_never_thin(tmp_path):
+    cfg = _project(tmp_path, n_filler=40)
+    for i, line in enumerate(LINES):
+        _note(cfg, line, f"n{i}")
+    assert CV.coverage(S.evidence(cfg.store)[EV], S.events(cfg.store))["thin_parts"] == []
