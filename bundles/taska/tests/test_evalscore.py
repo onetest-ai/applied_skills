@@ -757,3 +757,23 @@ def test_a_story_holding_matched_tasks_is_not_invented(tmp_path):
     _processed(cfg)
     r = score(cfg.store, [_gold(quote=QA)])
     assert r["B15"]["ok"] == 2 and r["B15"]["n"] == 4 and {f["title"] for f in r["B15"]["fails"]} == {"story S003", "task T002"}
+
+
+def test_b7c_counts_cards_and_equals_b7_without_them(tmp_path):
+    """B7c is what the tracking rule can reach: a committed item the admission bar keeps as a card counts there."""
+    cfg = _cfg(tmp_path)
+    _meeting(cfg)
+    _epics(cfg)
+    _propose(cfg)
+    _processed(cfg)
+    r = score(cfg.store, [_gold()])
+    assert r["B7"]["ok"] == 0 and r["carded"] == 1 and r["B7c"] == {"n": 1, "ok": 1, "rate": 1.0, "lb95": r["B7c"]["lb95"], "fails": []}
+    other = tmp_path / "b"
+    other.mkdir()
+    cfg = _cfg(other)
+    _meeting(cfg)
+    _epics(cfg)
+    _task(cfg, "T001")
+    _processed(cfg)
+    r = score(cfg.store, [_gold()])
+    assert r["carded"] == 0 and r["B7c"]["ok"] == r["B7"]["ok"] == 1

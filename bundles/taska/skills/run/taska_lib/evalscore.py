@@ -440,6 +440,7 @@ def score(store, gold):
     # ── assemble result ───────────────────────────────────────────────────────
     result = {
         "B7":  dict(_gap(b7_ok,  len(b7_items),  b7_fails), distinct_nodes=distinct(b7_items)),
+        "B7c": _gap(b7_ok + carded, len(b7_items), []),
         "B8":  dict(_gap(b8_ok,  len(b8_items),  b8_fails), distinct_nodes=distinct(b8_items)),
         "B9":  dict(_gap(b9_ok, b9_n, b9_fails), by_part=by_part),
         "B10": _gap(b10_ok, len(b10_items), b10_fails),
