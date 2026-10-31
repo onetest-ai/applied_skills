@@ -256,14 +256,79 @@ def test_register_refuses_colliding_labels(tmp_path, monkeypatch):
         W.register(cfg, agents_dir=tmp_path / "a", launchctl=lambda *a: None)
 
 
-def test_register_needs_the_run_command(tmp_path, monkeypatch):
-    monkeypatch.setattr(W.sys, "platform", "darwin")
-    cfg = _cfg(tmp_path, scheduled="")
-    with pytest.raises(ValueError, match=r"\[run\]\.scheduled"):
-        W.register(cfg, agents_dir=tmp_path / "a", launchctl=lambda *a: None)
-
-
-def test_register_is_unsupported_off_mac(tmp_path, monkeypatch):
-    monkeypatch.setattr(W.sys, "platform", "win32")
+def test_register_is_unsupported_off_mac_and_windows(tmp_path, monkeypatch):
+    monkeypatch.setattr(W.sys, "platform", "linux")
     out = W.register(_cfg(tmp_path), agents_dir=tmp_path / "a", launchctl=lambda *a: None)
     assert [o["action"] for o in out] == ["unsupported", "unsupported"] and not (tmp_path / "a").exists()
+
+
+# ---------- Windows: a Task Scheduler task per schedule; the default command; one runner at a time ----------
+
+def test_task_name_is_backslash_scoped():
+    assert W.task_name("Harbor / Logistics 2", TWO[0]) == r"\taska\harbor-logistics-2\friday-preview"
+
+
+def test_task_xml_runs_hidden_at_wake_on_each_day():
+    s = W.Schedule("Night update", "update", (1, 5), "02:30")
+    x = W.task_xml(r"\taska\p\night-update", '"C:\\Python\\pythonw.exe" "C:\\t\\taska.py" --project "C:\\p" run-schedule "Night update"', s)
+    assert "<StartWhenAvailable>true</StartWhenAvailable>" in x and "<Hidden>true</Hidden>" in x
+    assert "<LogonType>InteractiveToken</LogonType>" in x and "<Monday />" in x and "<Friday />" in x and "<Tuesday />" not in x
+    assert "T02:30:00</StartBoundary>" in x and "<WeeksInterval>1</WeeksInterval>" in x
+    assert "<Command>C:\\Python\\pythonw.exe</Command>" in x and 'run-schedule &quot;Night update&quot;' in x
+
+
+def test_default_command_runs_run_schedule(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, scheduled="")
+    monkeypatch.setattr(W.sys, "platform", "win32"); monkeypatch.setattr(W.sys, "executable", r"C:\Python\python.exe")
+    c = W.default_command(cfg, TWO[0])
+    assert c.startswith(r'"C:\Python\pythonw.exe" "') and c.endswith(f'--project "{cfg.project_dir}" run-schedule "Friday preview"') and "taska.py" in c
+    assert W.command_for(cfg, TWO[0]) == c   # no [run].scheduled: the default
+    monkeypatch.setattr(W.sys, "platform", "darwin"); monkeypatch.setattr(W.sys, "executable", "/opt/homebrew/bin/python3")
+    assert W.default_command(cfg, TWO[0]).startswith('"/opt/homebrew/bin/python3" "')
+
+
+def test_register_on_windows_creates_from_xml_and_deletes_an_off_schedule(tmp_path, monkeypatch):
+    monkeypatch.setattr(W.sys, "platform", "win32")
+    cfg, calls = _cfg(tmp_path), []
+    out = W.register(cfg, schtasks=lambda *a: calls.append(a), machine="pc-1", now=dt.datetime(2026, 3, 2, tzinfo=dt.timezone.utc))
+    assert [o["action"] for o in out] == ["loaded", "unloaded"]
+    assert calls[0][0] == "create" and calls[0][1] == r"\taska\harbor-logistics\friday-preview" and Path(calls[0][2]).read_text(encoding="utf-16").count("<Hidden>true") == 1
+    assert ("delete", r"\taska\harbor-logistics\monday-send") in calls
+    assert out[0]["path"].endswith("friday-preview.xml") and (cfg.store / "runner.json").exists()
+
+
+def test_registered_on_windows_parses_the_query(monkeypatch):
+    monkeypatch.setattr(W.sys, "platform", "win32")
+    csv = '"\\taska\\harbor-logistics\\friday-preview","06/11/2026 20:00:00","Ready"\r\n"\\other\\job","N/A","Ready"\r\n'
+    assert W.registered("Harbor Logistics", schtasks=lambda *a: csv) == {r"\taska\harbor-logistics\friday-preview": "06/11/2026 20:00:00"}
+
+
+def test_a_fresh_lock_of_another_machine_refuses_registration(tmp_path, monkeypatch):
+    monkeypatch.setattr(W.sys, "platform", "darwin")
+    cfg = _cfg(tmp_path)
+    now = dt.datetime(2026, 3, 5, 12, 0, tzinfo=dt.timezone.utc)
+    W.claim_runner(cfg, "mac-1", now - dt.timedelta(days=3))
+    with pytest.raises(W.RunnerBusy, match="mac-1"):
+        W.register(cfg, agents_dir=tmp_path / "a", launchctl=lambda *a: None, machine="mac-2", now=now)
+    assert not (tmp_path / "a").exists() and W.runner_lock(cfg)["machine"] == "mac-1"
+
+
+def test_a_stale_lock_is_taken_over(tmp_path, monkeypatch):
+    monkeypatch.setattr(W.sys, "platform", "darwin")
+    cfg = _cfg(tmp_path)
+    now = dt.datetime(2026, 3, 10, 12, 0, tzinfo=dt.timezone.utc)
+    W.claim_runner(cfg, "mac-1", now - dt.timedelta(days=8))
+    W.register(cfg, agents_dir=tmp_path / "a", launchctl=lambda *a: None, machine="mac-2", now=now)
+    assert W.runner_lock(cfg)["machine"] == "mac-2"
+    W.claim_runner(cfg, "mac-3", now, force=True)   # --force: the owner says the old machine is gone
+    assert W.runner_lock(cfg)["machine"] == "mac-3"
+
+
+def test_unregister_removes_every_agent_and_the_lock(tmp_path, monkeypatch):
+    monkeypatch.setattr(W.sys, "platform", "darwin")
+    cfg, calls, agents = _cfg(tmp_path), [], tmp_path / "a"
+    W.register(cfg, agents_dir=agents, launchctl=lambda *a: calls.append(a), machine="mac-1")
+    assert W.registered("Harbor Logistics", agents_dir=agents)
+    out = W.unregister(cfg, agents_dir=agents, launchctl=lambda *a: calls.append(a))
+    assert [o["action"] for o in out] == ["unloaded", "unloaded"]
+    assert W.registered("Harbor Logistics", agents_dir=agents) == {} and W.runner_lock(cfg) is None

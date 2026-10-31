@@ -8,6 +8,7 @@ only), and the decisions a scheduled run makes. Every decision is a pure functio
   the owner's choices were missing) or when a meeting arrived after it.
 - `next_run(...)`: when a schedule fires next, in the owner's local time."""
 import datetime as dt
+import json
 import os
 import re
 import subprocess
@@ -211,7 +212,15 @@ def save(project_dir, schedules):
     return path
 
 
-# ---------- the registrar: one OS job per schedule (launchd on a Mac; Windows is a later phase) ----------
+# ---------- the registrar: one OS job per schedule (launchd on a Mac, Task Scheduler on Windows) ----------
+
+DAY_NAMES = {1: "Monday", 2: "Tuesday", 3: "Wednesday", 4: "Thursday", 5: "Friday", 6: "Saturday", 7: "Sunday"}
+FRESH_DAYS = 7   # a runner lock younger than this belongs to a live machine
+
+
+class RunnerBusy(ValueError):
+    """Another machine registered this project's schedules recently."""
+
 
 def _slug(s):
     return re.sub(r"[^a-z0-9]+", "-", str(s).lower()).strip("-")
@@ -219,6 +228,10 @@ def _slug(s):
 
 def label(project_name, s):
     return f"com.taska.{_slug(project_name)}.{_slug(s.name)}"
+
+
+def task_name(project_name, s):
+    return "\\taska\\" + _slug(project_name) + "\\" + _slug(s.name)
 
 
 def plist(lbl, command, s, log):
@@ -238,12 +251,47 @@ def plist(lbl, command, s, log):
             f"\t<key>StartCalendarInterval</key>\n\t<array>\n{cal}\t</array>\n</dict>\n</plist>\n")
 
 
+def _split_command(command):
+    """'"C:\\x\\pythonw.exe" "C:\\t\\taska.py" --project ...' -> (program, arguments) for a Task Scheduler <Exec>."""
+    m = re.match(r'\s*("([^"]+)"|(\S+))\s*(.*)$', command, re.S)
+    return (m.group(2) or m.group(3)), m.group(4).strip()
+
+
+def task_xml(name, command, s):
+    """A Task Scheduler task: weekly on the schedule's days at HH:MM, hidden, as the logged-on user, run once at
+    wake when the time was missed (StartWhenAvailable)."""
+    prog, args = _split_command(command)
+    days = "".join(f"          <{DAY_NAMES[d]} />\n" for d in sorted(set(s.days)))
+    return ('<?xml version="1.0" encoding="UTF-16"?>\n'
+            '<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
+            f"  <RegistrationInfo><Description>taska schedule {escape(s.name)} ({escape(name)})</Description></RegistrationInfo>\n"
+            "  <Triggers>\n    <CalendarTrigger>\n"
+            f"      <StartBoundary>2026-01-05T{escape(s.time)}:00</StartBoundary>\n      <Enabled>true</Enabled>\n"
+            f"      <ScheduleByWeek>\n        <DaysOfWeek>\n{days}        </DaysOfWeek>\n        <WeeksInterval>1</WeeksInterval>\n      </ScheduleByWeek>\n"
+            "    </CalendarTrigger>\n  </Triggers>\n"
+            "  <Principals><Principal id=\"Author\"><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>\n"
+            "  <Settings>\n    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\n    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n"
+            "    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n    <StartWhenAvailable>true</StartWhenAvailable>\n"
+            "    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>\n    <Hidden>true</Hidden>\n    <Enabled>true</Enabled>\n"
+            "    <ExecutionTimeLimit>PT4H</ExecutionTimeLimit>\n  </Settings>\n"
+            f"  <Actions Context=\"Author\"><Exec><Command>{escape(prog)}</Command><Arguments>{escape(args, {chr(34): '&quot;'})}</Arguments></Exec></Actions>\n"
+            "</Task>\n")
+
+
+def default_command(cfg, s):
+    """`taska run-schedule <name>` with this interpreter (pythonw on Windows: no console window)."""
+    py = sys.executable
+    if sys.platform == "win32":
+        py = re.sub(r"python(\.exe)?$", r"pythonw\1", py, flags=re.I)
+    taska = Path(__file__).resolve().parent.parent / "taska.py"
+    return f'"{py}" "{taska}" --project "{cfg.project_dir}" run-schedule "{s.name}"'
+
+
 def command_for(cfg, s):
-    """The project's [run].scheduled template with {kind}, {name} and {project} filled in."""
+    """The project's [run].scheduled template ({kind}, {name}, {project}) when set, else the default command."""
     tpl = (cfg.run or {}).get("scheduled")
     if not tpl:
-        raise ValueError("[run].scheduled is not set in taska.toml: the command a schedule runs, "
-                         "e.g. 'python3 bin/weekly.py {kind}' ({kind}, {name}, {project} are filled in)")
+        return default_command(cfg, s)
     return tpl.format(kind=s.kind, name=s.name, project=str(cfg.project_dir))
 
 
@@ -251,20 +299,83 @@ def _launchctl(verb, path):
     subprocess.run(["launchctl", verb, path], capture_output=True, text=True)
 
 
-def register(cfg, agents_dir=None, launchctl=None):
-    """Write, (re)load or unload one launchd agent per schedule. Returns one record per schedule:
-    {name, label, path, action: loaded|unloaded|unsupported}. Off a Mac nothing is written."""
+def _schtasks(verb, name, xml=None):
+    if verb == "create":
+        r = subprocess.run(["schtasks", "/Create", "/F", "/TN", name, "/XML", str(xml)], capture_output=True, text=True)
+    elif verb == "delete":
+        r = subprocess.run(["schtasks", "/Delete", "/F", "/TN", name], capture_output=True, text=True)
+    else:
+        r = subprocess.run(["schtasks", "/Query", "/FO", "CSV", "/NH"], capture_output=True, text=True)
+    return r.stdout
+
+
+def _lock_path(cfg):
+    return Path(cfg.store) / "runner.json"
+
+
+def runner_lock(cfg):
+    """{machine, at} of the machine that registered this project's schedules, or None."""
+    try:
+        return json.loads(_lock_path(cfg).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def claim_runner(cfg, machine, now=None, fresh_days=FRESH_DAYS, force=False):
+    """Name `machine` as the one runner. Refuses (RunnerBusy) while another machine's claim is younger than
+    `fresh_days`, unless `force` (the owner says that machine is gone)."""
+    now = now or dt.datetime.now(dt.timezone.utc)
+    cur = runner_lock(cfg)
+    if cur and cur.get("machine") != machine and not force:
+        try:
+            age = now - dt.datetime.fromisoformat(cur["at"])
+        except (KeyError, ValueError):
+            age = dt.timedelta(days=fresh_days)
+        if age < dt.timedelta(days=fresh_days):
+            raise RunnerBusy(f"{cur['machine']} registered these schedules on {cur['at'][:10]}; one machine runs a project "
+                             f"(taska handover, or --force when that machine is gone)")
+    lock = {"machine": machine, "at": now.isoformat(timespec="seconds")}
+    _lock_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    _lock_path(cfg).write_text(json.dumps(lock))
+    return lock
+
+
+def _machine():
+    import socket
+    return socket.gethostname()
+
+
+def register(cfg, agents_dir=None, launchctl=None, schtasks=None, machine=None, now=None, force=False):
+    """Write, (re)load or unload one OS job per schedule. Returns one record per schedule:
+    {name, label, path, action: loaded|unloaded|unsupported}. Claims the one-runner lock first."""
     labels = {}
     for s in cfg.schedules:
         lbl = label(cfg.name, s)
         if lbl in labels:
             raise ValueError(f"schedules {labels[lbl]!r} and {s.name!r} would get the same label {lbl}")
         labels[lbl] = s.name
-    if sys.platform != "darwin":
+    if sys.platform not in ("darwin", "win32"):
         return [{"name": s.name, "label": label(cfg.name, s), "path": None, "action": "unsupported"} for s in cfg.schedules]
+    if cfg.schedules:
+        claim_runner(cfg, machine or _machine(), now, force=force)
+    out = []
+    if sys.platform == "win32":
+        run = schtasks or _schtasks
+        xml_dir = Path(cfg.store) / "tasks"
+        for s in cfg.schedules:
+            name = task_name(cfg.name, s)
+            if not s.on:
+                run("delete", name)
+                out.append({"name": s.name, "label": name, "path": None, "action": "unloaded"})
+                continue
+            xml_dir.mkdir(parents=True, exist_ok=True)
+            path = xml_dir / f"{_slug(s.name)}.xml"
+            path.write_text(task_xml(name, command_for(cfg, s), s), encoding="utf-16")
+            run("create", name, path)
+            out.append({"name": s.name, "label": name, "path": str(path), "action": "loaded"})
+        return out
     agents = Path(agents_dir) if agents_dir else Path.home() / "Library/LaunchAgents"
     run = launchctl or _launchctl
-    out = []
     for s in cfg.schedules:
         lbl = label(cfg.name, s)
         cmd = command_for(cfg, s)
@@ -284,8 +395,36 @@ def register(cfg, agents_dir=None, launchctl=None):
     return out
 
 
-def registered(project_name, agents_dir=None):
-    """{label: plist path} of this project's agents currently on disk."""
+def unregister(cfg, agents_dir=None, launchctl=None, schtasks=None):
+    """Remove every job of this project and release the runner lock (the handover from this machine)."""
+    out = []
+    if sys.platform == "win32":
+        run = schtasks or _schtasks
+        for s in cfg.schedules:
+            run("delete", task_name(cfg.name, s))
+            out.append({"name": s.name, "label": task_name(cfg.name, s), "path": None, "action": "unloaded"})
+    elif sys.platform == "darwin":
+        agents = Path(agents_dir) if agents_dir else Path.home() / "Library/LaunchAgents"
+        run = launchctl or _launchctl
+        for s in cfg.schedules:
+            path = agents / f"{label(cfg.name, s)}.plist"
+            run("unload", str(path))
+            path.unlink(missing_ok=True)
+            out.append({"name": s.name, "label": label(cfg.name, s), "path": None, "action": "unloaded"})
+    _lock_path(cfg).unlink(missing_ok=True)
+    return out
+
+
+def registered(project_name, agents_dir=None, schtasks=None):
+    """{label: plist path} (Mac) or {task name: next run} (Windows) of this project's jobs on this machine."""
+    if sys.platform == "win32":
+        prefix = task_name(project_name, Schedule("x", "update", (1,), "00:00")).rsplit("\\", 1)[0] + "\\"
+        out = {}
+        for line in (schtasks or _schtasks)("query", "").splitlines():
+            cells = [c.strip('"') for c in line.strip().split('","')]
+            if len(cells) >= 2 and cells[0].startswith(prefix):
+                out[cells[0]] = cells[1]
+        return out
     agents = Path(agents_dir) if agents_dir else Path.home() / "Library/LaunchAgents"
     prefix = f"com.taska.{_slug(project_name)}."
     return {p.stem: str(p) for p in sorted(agents.glob(f"{prefix}*.plist"))} if agents.is_dir() else {}
