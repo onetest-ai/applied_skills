@@ -214,3 +214,56 @@ def test_save_appends_when_there_were_none(tmp_path):
     text = (tmp_path / "taska.toml").read_text()
     assert text.startswith('[project]\nname = "Harbor Logistics"\n') and text.count("[[schedules]]") == 1
     assert C.load(tmp_path).schedules == TWO[:1]
+
+
+# ---------- the registrar: one launchd job per schedule, nothing launched from a test ----------
+
+def _cfg(tmp_path, scheduled='[run]\nscheduled = "python3 ~/proj/bin/weekly.py {kind} --name {name}"\n'):
+    return _project(tmp_path, scheduled + W.to_toml(TWO))
+
+
+def test_label_is_stable_and_safe():
+    assert W.label("Harbor Logistics", TWO[0]) == "com.taska.harbor-logistics.friday-preview"
+
+
+def test_plist_has_one_calendar_entry_per_day_and_the_command():
+    s = W.Schedule("Night update", "update", (1, 7), "02:30")
+    text = W.plist("com.taska.p.night-update", "python3 run.py update", s, Path("/tmp/x.log"))
+    assert text.count("<key>Weekday</key>") == 2 and "<integer>0</integer>" in text   # ISO 7 (Sunday) -> launchd 0
+    assert "<integer>2</integer>" in text and "<integer>30</integer>" in text
+    assert "<string>/bin/zsh</string>" in text and "<string>-lic</string>" in text and "<string>python3 run.py update</string>" in text
+    assert "<string>/tmp/x.log</string>" in text and "<key>RunAtLoad</key>" in text
+
+
+def test_register_writes_loads_and_unloads(tmp_path, monkeypatch):
+    monkeypatch.setattr(W.sys, "platform", "darwin")
+    cfg = _cfg(tmp_path)
+    agents, calls = tmp_path / "agents", []
+    out = W.register(cfg, agents_dir=agents, launchctl=lambda *a: calls.append(a))
+    assert [o["action"] for o in out] == ["loaded", "unloaded"]            # Monday send is off
+    on = agents / "com.taska.harbor-logistics.friday-preview.plist"
+    assert on.is_file() and "weekly.py preview --name Friday preview" in on.read_text()
+    assert not (agents / "com.taska.harbor-logistics.monday-send.plist").exists()
+    assert ("unload", str(on)) in calls and ("load", str(on)) in calls   # reload = unload first, then load
+    assert W.registered("Harbor Logistics", agents_dir=agents) == {"com.taska.harbor-logistics.friday-preview": str(on)}
+
+
+def test_register_refuses_colliding_labels(tmp_path, monkeypatch):
+    monkeypatch.setattr(W.sys, "platform", "darwin")
+    cfg = _cfg(tmp_path)
+    cfg.schedules.append(W.Schedule("friday  Preview", "preview", (5,), "21:00"))
+    with pytest.raises(ValueError, match="same label"):
+        W.register(cfg, agents_dir=tmp_path / "a", launchctl=lambda *a: None)
+
+
+def test_register_needs_the_run_command(tmp_path, monkeypatch):
+    monkeypatch.setattr(W.sys, "platform", "darwin")
+    cfg = _cfg(tmp_path, scheduled="")
+    with pytest.raises(ValueError, match=r"\[run\]\.scheduled"):
+        W.register(cfg, agents_dir=tmp_path / "a", launchctl=lambda *a: None)
+
+
+def test_register_is_unsupported_off_mac(tmp_path, monkeypatch):
+    monkeypatch.setattr(W.sys, "platform", "win32")
+    out = W.register(_cfg(tmp_path), agents_dir=tmp_path / "a", launchctl=lambda *a: None)
+    assert [o["action"] for o in out] == ["unsupported", "unsupported"] and not (tmp_path / "a").exists()

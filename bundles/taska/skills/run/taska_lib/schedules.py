@@ -10,6 +10,9 @@ only), and the decisions a scheduled run makes. Every decision is a pure functio
 import datetime as dt
 import os
 import re
+import subprocess
+import sys
+from xml.sax.saxutils import escape
 from dataclasses import dataclass, field
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -206,3 +209,83 @@ def save(project_dir, schedules):
     tmp.write_text(text)
     os.replace(tmp, path)
     return path
+
+
+# ---------- the registrar: one OS job per schedule (launchd on a Mac; Windows is a later phase) ----------
+
+def _slug(s):
+    return re.sub(r"[^a-z0-9]+", "-", str(s).lower()).strip("-")
+
+
+def label(project_name, s):
+    return f"com.taska.{_slug(project_name)}.{_slug(s.name)}"
+
+
+def plist(lbl, command, s, log):
+    """A launchd agent: `/bin/zsh -lic <command>` at HH:MM on each of the schedule's days; never at load."""
+    hh, mm = (int(x) for x in s.time.split(":"))
+    cal = "".join(f"\t\t<dict>\n\t\t\t<key>Hour</key>\n\t\t\t<integer>{hh}</integer>\n\t\t\t<key>Minute</key>\n\t\t\t<integer>{mm}</integer>\n"
+                  f"\t\t\t<key>Weekday</key>\n\t\t\t<integer>{d % 7}</integer>\n\t\t</dict>\n" for d in s.days)   # ISO 7 -> launchd 0
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+            '<plist version="1.0">\n<dict>\n'
+            f"\t<key>Label</key>\n\t<string>{escape(lbl)}</string>\n"
+            "\t<key>ProgramArguments</key>\n\t<array>\n\t\t<string>/bin/zsh</string>\n\t\t<string>-lic</string>\n"
+            f"\t\t<string>{escape(command)}</string>\n\t</array>\n"
+            "\t<key>RunAtLoad</key>\n\t<false/>\n"
+            f"\t<key>StandardErrorPath</key>\n\t<string>{escape(str(log))}</string>\n"
+            f"\t<key>StandardOutPath</key>\n\t<string>{escape(str(log))}</string>\n"
+            f"\t<key>StartCalendarInterval</key>\n\t<array>\n{cal}\t</array>\n</dict>\n</plist>\n")
+
+
+def command_for(cfg, s):
+    """The project's [run].scheduled template with {kind}, {name} and {project} filled in."""
+    tpl = (cfg.run or {}).get("scheduled")
+    if not tpl:
+        raise ValueError("[run].scheduled is not set in taska.toml: the command a schedule runs, "
+                         "e.g. 'python3 bin/weekly.py {kind}' ({kind}, {name}, {project} are filled in)")
+    return tpl.format(kind=s.kind, name=s.name, project=str(cfg.project_dir))
+
+
+def _launchctl(verb, path):
+    subprocess.run(["launchctl", verb, path], capture_output=True, text=True)
+
+
+def register(cfg, agents_dir=None, launchctl=None):
+    """Write, (re)load or unload one launchd agent per schedule. Returns one record per schedule:
+    {name, label, path, action: loaded|unloaded|unsupported}. Off a Mac nothing is written."""
+    labels = {}
+    for s in cfg.schedules:
+        lbl = label(cfg.name, s)
+        if lbl in labels:
+            raise ValueError(f"schedules {labels[lbl]!r} and {s.name!r} would get the same label {lbl}")
+        labels[lbl] = s.name
+    if sys.platform != "darwin":
+        return [{"name": s.name, "label": label(cfg.name, s), "path": None, "action": "unsupported"} for s in cfg.schedules]
+    agents = Path(agents_dir) if agents_dir else Path.home() / "Library/LaunchAgents"
+    run = launchctl or _launchctl
+    out = []
+    for s in cfg.schedules:
+        lbl = label(cfg.name, s)
+        cmd = command_for(cfg, s)
+        path = agents / f"{lbl}.plist"
+        run("unload", str(path))   # always: a job loaded under this label from an older file must not run twice
+        if not s.on:
+            if path.exists():
+                path.unlink()
+            out.append({"name": s.name, "label": lbl, "path": None, "action": "unloaded"})
+            continue
+        agents.mkdir(parents=True, exist_ok=True)
+        log = cfg.project_dir / "logs" / f"{_slug(s.name)}.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(plist(lbl, cmd, s, log))
+        run("load", str(path))
+        out.append({"name": s.name, "label": lbl, "path": str(path), "action": "loaded"})
+    return out
+
+
+def registered(project_name, agents_dir=None):
+    """{label: plist path} of this project's agents currently on disk."""
+    agents = Path(agents_dir) if agents_dir else Path.home() / "Library/LaunchAgents"
+    prefix = f"com.taska.{_slug(project_name)}."
+    return {p.stem: str(p) for p in sorted(agents.glob(f"{prefix}*.plist"))} if agents.is_dir() else {}
