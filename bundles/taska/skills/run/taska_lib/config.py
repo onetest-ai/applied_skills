@@ -45,6 +45,8 @@ class Config:
     media: dict
     run: dict
     teams: list = field(default_factory=list)
+    schedules: list = field(default_factory=list)
+    report: dict = field(default_factory=dict)
 
     def person(self, label):
         """A speaker label, email or login -> Person, tolerant of Teams suffixes ("Ada Example1")."""
@@ -136,10 +138,15 @@ def load(project_dir="."):
     wd = tuple(pr.get("working_days", (1, 2, 3, 4, 5)))
     if not wd or any(x not in range(1, 8) for x in wd):
         raise ConfigError("[project].working_days must be a non-empty list of ISO weekdays (1-7)")
+    from . import schedules as SCH
+    try:
+        scheds = SCH.parse(raw.get("schedules"))
+    except ValueError as e:
+        raise ConfigError(str(e)) from e
     return Config(project_dir=pd, name=pr["name"], store=_resolve(pd, pr.get("store", ".taska")),
                   timezone=pr.get("timezone", "UTC"), working_days=wd,
                   plan=plan, people=people, sources=sources, media=dict(raw.get("media") or {}),
-                  run=dict(raw.get("run") or {}), teams=teams)
+                  run=dict(raw.get("run") or {}), teams=teams, schedules=scheds, report=dict(raw.get("report") or {}))
 
 
 def _resolve(base, p):

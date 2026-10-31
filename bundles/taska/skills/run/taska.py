@@ -13,9 +13,10 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from taska_lib import ai as AI, config as C, gate as GT, ledger as L, media, runlog as RL, pack as PK, plan as PL, staleness as ST, store as S, workbench as W  # noqa: E402
+from taska_lib import ai as AI, config as C, gate as GT, ledger as L, media, runlog as RL, schedules as SCH, pack as PK, plan as PL, staleness as ST, store as S, workbench as W  # noqa: E402
 from taska_lib.sources import ADAPTERS, msgraph  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -522,6 +523,14 @@ def cmd_render_evidence(a):
     out({"status": "ok", "rewritten": S.rerender(st)})
 
 
+def cmd_schedules(a):
+    """The project's [[schedules]] with each one's next run, in the project's timezone."""
+    cfg = C.load(a.project)
+    now = dt.datetime.now(ZoneInfo(cfg.timezone))
+    out({"status": "ok", "schedules": [dict(vars(s), days=list(s.days), next=(SCH.next_run(s, now).isoformat() if SCH.next_run(s, now) else None))
+                                       for s in cfg.schedules]})
+
+
 def cmd_gate(a):
     """The pre-send gate on a week's draft (taska_lib/gate.py): presend.json + presend.html, exit 1 when a blocking gate fails."""
     cfg, st = cfg_store(a)
@@ -618,6 +627,7 @@ def main():
     p = sp.add_parser("compare-external", help="compare an external note-taker's actions against the taska tree")
     p.add_argument("--file", required=True, help="JSON file from echo-actions.py")
     p.add_argument("--gold", help="gold JSONL file (one annotation per line) for gold_items counts")
+    sp.add_parser("schedules", help="the project's [[schedules]] with each one's next run")
     p = sp.add_parser("gate", help="the pre-send gate on a week's draft: presend.json + presend.html under reports/WEEK/")
     p.add_argument("week"); p.add_argument("--docx"); p.add_argument("--reports"); p.add_argument("--choices")
     p.add_argument("--baseline"); p.add_argument("--key"); p.add_argument("--calendar"); p.add_argument("--external")
