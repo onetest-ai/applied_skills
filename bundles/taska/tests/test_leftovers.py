@@ -93,3 +93,10 @@ def test_short_meetings_are_not_token_gated(tmp_path):
         _note(cfg, line, f"n{i}")
     assert run_cli(tmp_path, "leftovers", "--evidence", EV)["count"] == 1
     assert run_cli(tmp_path, "done", "--evidence", EV)["status"] == "ok"
+
+
+def test_extract_tells_the_reader_about_leftovers():
+    from pathlib import Path
+    ext = " ".join((Path(__file__).resolve().parent.parent / "skills" / "run" / "EXTRACT.md").read_text().split())
+    assert '"status": "leftovers"' in ext and "leftovers --evidence" in ext and "--leftovers" in ext
+    assert "owner cannot be read" in ext and "never dropped" in ext
