@@ -1,0 +1,19 @@
+[
+ {
+  "mid": "b5f08ce535",
+  "node": "S003",
+  "kind": "story",
+  "path": "Harbor warehouse operations › Inventory and yard operations",
+  "claimed": "is waiting on Nora Quill: inventory templates for Ravi to update the stock tracking sheet",
+  "due": null,
+  "quote": "Nora, can you send me the inventory templates so I can update the stock tracking sheet?",
+  "evidence": "2026-03-05 meeting 2026-03-05 Harbor daily sync",
+  "context": [
+   "[00:00:00] Nora Quill: Let us move on to the next item. Anything else before we close out? I will draft the warehouse onboarding checklist and have it ready for review by Thursday.",
+   "[00:01:52] Opal Brennick: That makes sense from our side. Understood, thank you.",
+   "[00:03:07] Ravi Tamsin: Nora, can you send me the inventory templates so I can update the stock tracking sheet?",
+   "[00:03:45] Opal Brennick: That works for us on the client side. Appreciate the update on that.",
+   "[00:05:00] Nora Quill: We need to submit the progress report to the client by next Tuesday. Anything else before we close out?"
+  ]
+ }
+]

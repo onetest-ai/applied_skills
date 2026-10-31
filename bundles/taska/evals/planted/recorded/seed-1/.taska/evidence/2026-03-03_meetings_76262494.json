@@ -1,0 +1,197 @@
+{
+"id": "2026-03-03_meetings_76262494",
+"source": "meetings",
+"kind": "meeting",
+"meeting_kind": "internal",
+"at": "2026-03-03T17:20:59",
+"date_source": "filename",
+"title": "2026-03-03 Harbor daily sync",
+"turns": [
+{
+"ts": "00:00:00",
+"speaker": "Opal Brennick",
+"text": "Understood, thank you.",
+"bc": true
+},
+{
+"ts": "00:00:37",
+"speaker": "Nora Quill",
+"text": "Anything else before we close out? I will draft the warehouse onboarding checklist and have it ready for review by Thursday.",
+"bc": false
+},
+{
+"ts": "00:01:52",
+"speaker": "Ravi Tamsin",
+"text": "Acknowledged, I will take a note of that.",
+"bc": false
+},
+{
+"ts": "00:02:30",
+"speaker": "Nora Quill",
+"text": "Great, let us keep moving.",
+"bc": false
+},
+{
+"ts": "00:03:07",
+"speaker": "Ravi Tamsin",
+"text": "Nora, can you send me the inventory templates so I can update the stock tracking sheet?",
+"bc": false
+},
+{
+"ts": "00:03:45",
+"speaker": "Nora Quill",
+"text": "Great, let us keep moving.",
+"bc": false
+},
+{
+"ts": "00:04:22",
+"speaker": "Ravi Tamsin",
+"text": "Sounds good to me.",
+"bc": false
+},
+{
+"ts": "00:05:00",
+"speaker": "Nora Quill",
+"text": "We need to submit the progress report to the client by next Tuesday.",
+"bc": false
+},
+{
+"ts": "00:05:37",
+"speaker": "Ravi Tamsin",
+"text": "Quick question on that point. Sounds good to me.",
+"bc": false
+},
+{
+"ts": "00:06:52",
+"speaker": "Nora Quill",
+"text": "Opal still needs the updated site access credentials from us, so we owe those to her by end of day.",
+"bc": false
+},
+{
+"ts": "00:07:30",
+"speaker": "Ravi Tamsin",
+"text": "Will do, no problem at all.",
+"bc": false
+},
+{
+"ts": "00:08:07",
+"speaker": "Nora Quill",
+"text": "Great, let us keep moving.",
+"bc": false
+},
+{
+"ts": "00:08:45",
+"speaker": "Ravi Tamsin",
+"text": "Will do, no problem at all. Will do, no problem at all. I will schedule a review session with the yard team and send calendar invites to everyone today. Nothing else from my end.",
+"bc": false
+},
+{
+"ts": "00:11:15",
+"speaker": "Nora Quill",
+"text": "Happy to follow up offline if needed. Ravi, please check the delivery manifest and flag any discrepancies before the client call. Great, let us keep moving. Let us move on to the next item.",
+"bc": false
+},
+{
+"ts": "00:13:45",
+"speaker": "Ravi Tamsin",
+"text": "The reconciliation report needs to be completed by end of week. Sounds good to me. Will do, no problem at all.",
+"bc": false
+},
+{
+"ts": "00:15:37",
+"speaker": "Nora Quill",
+"text": "I think the yard guys should take on the equipment audit and report back at the next sync. Thanks, noted.",
+"bc": false
+},
+{
+"ts": "00:16:52",
+"speaker": "Opal Brennick",
+"text": "Appreciate the update on that. Maybe someone should look into automating the daily stock alerts so we do not miss any inventory changes.",
+"bc": false
+},
+{
+"ts": "00:18:07",
+"speaker": "Ravi Tamsin",
+"text": "Acknowledged, I will take a note of that.",
+"bc": false
+},
+{
+"ts": "00:18:45",
+"speaker": "Nora Quill",
+"text": "Happy to follow up offline if needed. Happy to follow up offline if needed. Anything else before we close out? If we do not hear from the supplier by 2026-03-15 we will switch to the backup vendor immediately. Great, let us keep moving. Great, let us keep moving.",
+"bc": false
+},
+{
+"ts": "00:22:30",
+"speaker": "Ravi Tamsin",
+"text": "There is a risk that the pallet racking installation could be delayed if we do not confirm the site plan this week.",
+"bc": false
+},
+{
+"ts": "00:23:07",
+"speaker": "Nora Quill",
+"text": "Thanks, noted.",
+"bc": true
+},
+{
+"ts": "00:23:45",
+"speaker": "Opal Brennick",
+"text": "We are all good here.",
+"bc": false
+},
+{
+"ts": "00:24:22",
+"speaker": "Nora Quill",
+"text": "We should flag that the data migration could fail if the legacy system is offline during the cutover window.",
+"bc": false
+},
+{
+"ts": "00:25:00",
+"speaker": "Ravi Tamsin",
+"text": "Will do, no problem at all. Quick question on that point.",
+"bc": false
+},
+{
+"ts": "00:26:15",
+"speaker": "Nora Quill",
+"text": "The proposal to add a second reporting cycle per month was reviewed and the team decided not to proceed.",
+"bc": false
+},
+{
+"ts": "00:26:52",
+"speaker": "Opal Brennick",
+"text": "We are all good here.",
+"bc": false
+},
+{
+"ts": "00:27:30",
+"speaker": "Nora Quill",
+"text": "Great, let us keep moving.",
+"bc": false
+},
+{
+"ts": "00:28:07",
+"speaker": "Opal Brennick",
+"text": "Hiring a temporary data entry clerk was discussed but the request was turned down due to budget constraints.",
+"bc": false
+},
+{
+"ts": "00:28:45",
+"speaker": "Nora Quill",
+"text": "Let us move on to the next item. Anything else before we close out?",
+"bc": false
+}
+],
+"meta": {
+"transcript": "transcript",
+"file": "2026-03-03 Harbor daily sync.vtt",
+"recording": null,
+"duration_min": null,
+"speakers": [
+"Nora Quill",
+"Opal Brennick",
+"Ravi Tamsin"
+]
+},
+"date": "2026-03-03"
+}

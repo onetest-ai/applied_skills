@@ -678,3 +678,82 @@ def test_each_item_says_whether_its_owner_is_right(tmp_path):
     items = score(cfg.store, gold)["items"]
     assert [i.get("owner_ok") for i in items] == [True, False, None]
     assert "owner_ok" not in items[2]
+
+
+# ---------------------------------------------------------------------------
+# match_item picks the right node, not the first event that hits
+# ---------------------------------------------------------------------------
+QA = "I will draft the warehouse onboarding checklist and have it ready for Friday"
+QB = "Nora, can you send me the inventory templates so I can update the stock tracking"
+QNO = "The proposal to add a second reporting cycle per month was reviewed and the team decided not to proceed"
+
+
+def _create(cfg, nid, kind, quote, parent=None):
+    S.append(cfg.store, [
+        {"type": "create", "mid": f"m_{nid}", "id": nid, "kind": kind, "by": "agent", "evidence": EVID,
+         "date": "2026-03-02", "quote": quote, "quote_norm": quote,
+         "fields": {"title": f"{kind} {nid}", "parent": parent, "type": "action" if kind == "task" else None,
+                    "internal_owner": None, "client_owner": None, "client_owed": False, "ac": [], "due": None,
+                    "due_text": None, "plan": None}}])
+
+
+def test_the_most_specific_node_wins_when_several_share_a_quote(tmp_path):
+    # the planted runs: the agent made an epic, a story and a task from one sentence; the epic came first in the
+    # ledger and was returned, so the task was "unmatched" and 9 of 13 nodes read as invented
+    cfg = _cfg(tmp_path)
+    _meeting(cfg, text=QA)
+    _create(cfg, "E02", "epic", QA)
+    _create(cfg, "S002", "story", QA, parent="E02")
+    _create(cfg, "T001", "task", QA, parent="S002")
+    _processed(cfg)
+    assert match_item(_gold(quote=QA), *_view(cfg)) == "T001"
+
+
+def test_a_quote_hit_beats_a_nearby_position_hit(tmp_path):
+    cfg = _cfg(tmp_path)
+    _meeting(cfg, text=QA + " Fine. " + QB)       # the two sentences sit within 400 characters of each other
+    _create(cfg, "T001", "task", QA, parent="S001")
+    _create(cfg, "T002", "task", QB, parent="S001")
+    _processed(cfg)
+    assert match_item(_gold(quote=QB), *_view(cfg)) == "T002"
+
+
+def test_a_declined_item_recorded_as_a_decision_is_right_not_invented(tmp_path):
+    cfg = _cfg(tmp_path)
+    _meeting(cfg, text=QNO)
+    _epics(cfg)
+    _create(cfg, "D001", "decision", QNO, parent="E01")
+    _processed(cfg)
+    r = score(cfg.store, [_gold(quote=QNO, kind="decision", commitment="declined")])
+    assert r["B16"] == dict(r["B16"], ok=1, n=1) and r["B15"]["ok"] == 1 and r["B15"]["n"] == 1
+
+
+def test_a_declined_item_created_as_a_task_is_still_invented(tmp_path):
+    cfg = _cfg(tmp_path)
+    _meeting(cfg, text=QNO)
+    _epics(cfg)
+    _create(cfg, "T009", "task", QNO, parent="S001")
+    _processed(cfg)
+    r = score(cfg.store, [_gold(quote=QNO, kind="decision", commitment="declined")])
+    assert r["B16"]["ok"] == 0 and r["B15"]["ok"] == 0
+
+
+def _view(cfg):
+    from taska_lib import ledger as L
+    N, _, _, ev = L.fold(cfg.store)
+    return N, S.events(cfg.store), ev
+
+
+def test_a_story_holding_matched_tasks_is_not_invented(tmp_path):
+    # a task must sit under a story, so the agent creates one when the project has none (the planted runs): the
+    # container of matched work is not an invented node; a story none of whose tasks match still is
+    cfg = _cfg(tmp_path)
+    _meeting(cfg, text=QA + " Fine. " + QNO)
+    _epics(cfg)
+    _create(cfg, "S002", "story", QA, parent="E01")
+    _create(cfg, "T001", "task", QA, parent="S002")
+    _create(cfg, "S003", "story", QNO, parent="E01")
+    _create(cfg, "T002", "task", QNO, parent="S003")
+    _processed(cfg)
+    r = score(cfg.store, [_gold(quote=QA)])
+    assert r["B15"]["ok"] == 2 and r["B15"]["n"] == 4 and {f["title"] for f in r["B15"]["fails"]} == {"story S003", "task T002"}

@@ -112,18 +112,28 @@ def _resolve_node(node_id, N):
 # Core match logic
 # ---------------------------------------------------------------------------
 
-def _event_hit(e, gold_shingles, gold_offset, ev_item):
-    """True when event e's quote has containment ≥ 0.5 with gold, or offset within 400 chars."""
+def _hit_strength(e, gold_shingles, gold_offset, ev_item):
+    """(containment, distance) when event e hits gold: its quote has 5-word containment ≥ 0.5 with the gold quote, or
+    sits within 400 characters of it in the transcript. None when it does not hit."""
     eq = norm(e.get("quote") or "")
+    cont = 0.0
     if gold_shingles and eq:
         esh = _quote_shingles(eq)
-        if esh and _containment(gold_shingles, esh) >= 0.5:
-            return True
+        if esh:
+            cont = _containment(gold_shingles, esh)
+    dist = float("inf")
     if gold_offset is not None and ev_item:
         eq_off = S.quote_offset(ev_item, e.get("quote") or "")
-        if eq_off >= 0 and abs(eq_off - gold_offset) <= 400:
-            return True
-    return False
+        if eq_off >= 0:
+            dist = abs(eq_off - gold_offset)
+    return (cont, dist) if cont >= 0.5 or dist <= 400 else None
+
+
+def _event_hit(e, gold_shingles, gold_offset, ev_item):
+    return _hit_strength(e, gold_shingles, gold_offset, ev_item) is not None
+
+
+SPECIFICITY = {"task": 3, "story": 2, "decision": 2, "risk": 2, "epic": 0}
 
 
 def _gold_params(g, ev):
@@ -156,10 +166,12 @@ def match_item(g, N, events, ev):
     if cb:
         return _resolve_node(cb, N)
 
-    # 2. event scan
+    # 2. event scan: of every hitting event, the best, never the first (an epic, a story and a task made from one
+    # sentence all hit; a quote hit outranks a nearby-position hit; the most specific node wins a tie)
     evid = g["evidence"]
     gold_shingles, gold_offset, item = _gold_params(g, ev)
 
+    best, best_key = None, None
     for e in events:
         if e.get("evidence") != evid:
             continue
@@ -171,13 +183,18 @@ def match_item(g, N, events, ev):
         # Skip propose events — they are pending cards, not nodes; _card_match handles them
         if etype == "agent" and e.get("op") == "propose":
             continue
-        if not _event_hit(e, gold_shingles, gold_offset, item):
+        hit = _hit_strength(e, gold_shingles, gold_offset, item)
+        if hit is None:
             continue
         nid = e.get("id") if etype == "create" else e.get("node")
         resolved = _resolve_node(nid, N) if nid else None
-        if resolved:
-            return resolved
-    return None
+        if not resolved:
+            continue
+        cont, dist = hit
+        key = (cont >= 0.5, round(cont, 3), SPECIFICITY.get(N[resolved].get("kind"), 1), -dist)
+        if best_key is None or key > best_key:
+            best, best_key = resolved, key
+    return best
 
 
 def _decided(events):
@@ -391,9 +408,13 @@ def score(store, gold):
                  and n.get("by") == "agent"
                  and n.get("created_in") in gold_evids_set
                  and n.get("state") != "merged"]
-    # Which node ids are matched by a non-declined gold item?
-    matched_nids = {matches[idx] for idx, g in enumerate(gold)
-                    if g.get("commitment") != "declined" and matches[idx] is not None}
+    # Which node ids are matched by a gold item? A declined item matches only a decision or risk (the record of
+    # the "no"); a task or story made from it is invented.
+    matched_nids = {matches[idx] for idx, g in enumerate(gold) if matches[idx] is not None
+                    and (g.get("commitment") != "declined" or N[matches[idx]].get("kind") in ("decision", "risk"))}
+    # a story is the container a task must sit under: one that holds a matched task is matched work, not invented
+    matched_nids |= {n.get("parent") for nid, n in N.items() if nid in matched_nids and n.get("kind") == "task"
+                     and N.get(n.get("parent"), {}).get("kind") == "story"}
     b15_ok, b15_fails = 0, []
     create_quote = {e.get("id"): (e.get("quote") or "") for e in evs if e.get("type") == "create"}
     for nid, n in b15_nodes:
@@ -408,7 +429,7 @@ def score(store, gold):
     b16_items = [(idx, g) for idx, g in enumerate(gold) if g.get("commitment") == "declined"]
     b16_ok, b16_fails = 0, []
     for idx, g in b16_items:
-        if matches[idx] is None:
+        if matches[idx] is None or N[matches[idx]].get("kind") in ("decision", "risk"):   # a decision recording the "no"
             b16_ok += 1
         else:
             b16_fails.append(_fail(g, f"declined item matched node {matches[idx]!r}"))
