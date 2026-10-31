@@ -1,7 +1,7 @@
 {
   "name": "taska",
   "description": "A manager's Epic > Story > Task tree kept current from meetings (transcripts, video and audio), calendar and files: cited evidence, dependencies, staleness and asks, with an editable workbench.",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "author": { "name": "onetest-ai" },
   "homepage": "https://github.com/onetest-ai/applied_skills",
   "keywords": ["project-tracking", "meetings", "transcripts", "delivery-management", "poc"]

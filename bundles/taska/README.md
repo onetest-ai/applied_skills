@@ -12,6 +12,19 @@ change is checked by a second agent, and what went quiet becomes a ranked list o
 | `/taska:workbench` | Local, editable workbench: tree/board, calendar playback, acceptance criteria with quotes, dependencies, asks. Edits pin fields. `--share` exports read-only HTML. |
 | `/taska:prep` | A cited Markdown pack for the next status meeting. |
 
+The weekly-report engine, as `taska.py` commands a project's own scripts or schedules call (every value a client
+would recognise comes from `[report]` and `[[schedules]]` in `taska.toml`):
+
+| Command | What it does |
+|---|---|
+| `report select --week W --out F` / `report apply --prose P --sel F` / `report build --week W --prose P --out X.docx` | What goes in the weekly report, decided from the tree; the writer's text kept only for open slots; the checked docx. |
+| `gate WEEK [--docx F]` | The pre-send gate: `presend.json` and `presend.html` under `reports/WEEK/`; exit 1 when a blocking gate fails. |
+| `deliver WEEK --to ADDR [--schedule NAME]` | `deliver.json` and a ready-to-send `mail.md` (subject, To, Cc, body, the attachments the schedule includes). |
+| `schedules` | The project's `[[schedules]]` with each one's next run. |
+| `run-log begin\|step\|finish\|failed WEEK_DIR` | A run's step record, written so an interrupted run never erases the last finished one. |
+| `render-evidence` | Rewrite every evidence `.md` from its `.json` in the current, line-limited format. |
+| `ai [--probe] -- <claude args>` | Reach Claude for an unattended run: a stored token, then CodeMie, then Bedrock if allowed. |
+
 ## Requirements
 - Python 3.11+ (standard library only; nothing to install).
 - Optional, reported by `taska.py doctor`: `ffmpeg` + `whisper-cli` and a ggml model for recordings that came
