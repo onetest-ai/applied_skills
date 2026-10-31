@@ -25,6 +25,10 @@ def _assistant(agent, uid, name, inp, ts, model="claude-sonnet-5-5"):
     return rec
 
 
+def _lines(a, b):
+    return "\n".join(f"{i}\tline {i}" for i in range(a, b + 1))
+
+
 def _result(agent, uid, output, ts, is_error=False):
     block = {"type": "tool_result", "tool_use_id": uid, "content": output}
     if is_error:
@@ -53,9 +57,9 @@ def _session(tmp_path, with_cost=True, reread=True):
     a = "a1"
     reader = [
         _assistant(a, "r1", "Read", {"file_path": ev_md, "limit": 60}, "2026-03-02T07:01:00Z"),
-        _result(a, "r1", "1\tline", "2026-03-02T07:01:01Z"),
+        _result(a, "r1", _lines(1, 60), "2026-03-02T07:01:01Z"),
         _assistant(a, "r2", "Read", {"file_path": ev_md, "offset": 61, "limit": 60}, "2026-03-02T07:01:02Z"),
-        _result(a, "r2", "61\tline", "2026-03-02T07:01:03Z"),
+        _result(a, "r2", _lines(61, 120), "2026-03-02T07:01:03Z"),
         _assistant(a, "w1", "Write", {"file_path": f"/proj/.taska/proposals/{EV}.json",
                                       "content": json.dumps([{"op": "note"}, {"op": "status"}, {"op": "create"}])},
                    "2026-03-02T07:01:04Z"),
@@ -70,7 +74,7 @@ def _session(tmp_path, with_cost=True, reread=True):
     ]
     if reread:
         reader += [_assistant(a, "r3", "Read", {"file_path": ev_md, "offset": 100, "limit": 40}, "2026-03-02T07:01:10Z"),
-                   _result(a, "r3", "100\tline", "2026-03-02T07:01:11Z")]
+                   _result(a, "r3", _lines(100, 139), "2026-03-02T07:01:11Z")]
     reader += [
         _assistant(a, "b3", "Bash", {"command": f'{TASKA} done --evidence {EV} --note "n" --ack "part 3 is goodbyes"'},
                    "2026-03-02T07:01:12Z"),
@@ -78,7 +82,7 @@ def _session(tmp_path, with_cost=True, reread=True):
     ]
     (sub / f"agent-{a}.jsonl").write_text("\n".join(json.dumps(r) for r in reader) + "\n")
     later = [_assistant("a0", "d1", "Read", {"file_path": ev_md}, "2026-03-02T07:02:00Z"),
-             _result("a0", "d1", "1\tline", "2026-03-02T07:02:01Z")]
+             _result("a0", "d1", _lines(1, 140), "2026-03-02T07:02:01Z")]
     (sub / "agent-a0.jsonl").write_text("\n".join(json.dumps(r) for r in later) + "\n")
     evd = tmp_path / "evidence"
     evd.mkdir()
@@ -143,3 +147,37 @@ def test_html_lists_every_evidence(tmp_path):
     run = T.load_run(sess)
     page = T.render_html(run, T.evidence_traces(run, evd))
     assert EV in page and "claude-sonnet-5-5" in page and "part 3 is goodbyes" in page
+
+
+def test_errored_or_capped_reads_are_not_counted_as_read(tmp_path):
+    # review: a refused Read ("File content exceeds maximum allowed tokens") and a whole-file Read cut at the harness
+    # cap both counted as the whole file
+    sess, evd = _session(tmp_path)
+    sub = tmp_path / "s1" / "subagents" / "agent-a9.jsonl"
+    ev_md = f"/proj/.taska/evidence/{EV}.md"
+    recs = [_assistant("a9", "x1", "Read", {"file_path": ev_md}, "2026-03-02T07:03:00Z"),
+            _result("a9", "x1", "File content exceeds maximum allowed tokens", "2026-03-02T07:03:01Z", is_error=True),
+            _assistant("a9", "x2", "Read", {"file_path": ev_md}, "2026-03-02T07:03:02Z"),
+            _result("a9", "x2", _lines(1, 30), "2026-03-02T07:03:03Z")]
+    sub.write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+    t = T.evidence_traces(T.load_run(sess), evd)[0]
+    assert t.reads[-1] == (1, 30) and len(t.reads) == 5
+
+
+def test_leftovers_then_done_without_an_apply_is_flagged(tmp_path):
+    sess, evd = _session(tmp_path)
+    sub = tmp_path / "s1" / "subagents" / "agent-a1.jsonl"
+    recs = [_assistant("a1", "l1", "Bash", {"command": f"{TASKA} leftovers --evidence {EV}"}, "2026-03-02T07:01:14Z"),
+            _result("a1", "l1", json.dumps({"count": 4, "token": "abc123abc123", "status": "ok"}), "2026-03-02T07:01:15Z"),
+            _assistant("a1", "b4", "Bash", {"command": f"{TASKA} done --evidence {EV} --leftovers abc123abc123"}, "2026-03-02T07:01:16Z"),
+            _result("a1", "b4", json.dumps({"status": "ok"}), "2026-03-02T07:01:17Z")]
+    with open(sub, "a") as f:
+        f.write("\n".join(json.dumps(r) for r in recs) + "\n")
+    run = T.load_run(sess)
+    t = T.evidence_traces(run, evd)[0]
+    assert t.leftovers_calls == 1 and t.applied_after_leftovers is False
+    assert T.summary(run, [t]).leftovers_undecided == 1
+
+
+def test_json_answer_tolerates_text_after_the_json():
+    assert T._json_answer('{"status": "coverage"}\n\nExit code 1')["status"] == "coverage"

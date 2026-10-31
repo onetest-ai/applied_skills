@@ -777,3 +777,14 @@ def test_b7c_counts_cards_and_equals_b7_without_them(tmp_path):
     _processed(cfg)
     r = score(cfg.store, [_gold()])
     assert r["carded"] == 0 and r["B7c"]["ok"] == r["B7"]["ok"] == 1
+
+
+def test_b7c_mixed_case_counts_nodes_and_cards_once_each(tmp_path):
+    cfg = _cfg(tmp_path)
+    _meeting(cfg)
+    _epics(cfg)
+    _task(cfg, "T001", quote=QA)
+    _propose(cfg, quote=QB, mid="p2")
+    _processed(cfg)
+    r = score(cfg.store, [_gold(quote=QA), _gold(quote=QB), _gold(quote=QNO)])
+    assert (r["B7"]["ok"], r["carded"], r["B7c"]["ok"], r["B7c"]["n"]) == (1, 1, 2, 3)

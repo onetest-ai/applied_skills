@@ -72,9 +72,10 @@ def test_a_quote_from_the_wrong_part_names_the_missing_part(tmp_path):
     r = run_cli(tmp_path, "done", "--evidence", EV, "--ack", "status talk", "--quote", LINES[1], "--quote", LINES[0],
                 check=False)
     assert r["status"] == "ack_unquoted" and r["parts_without_quote"] == [3]
-    r = run_cli(tmp_path, "done", "--evidence", EV, "--ack", "status talk", "--quote", LINES[1], "--quote", "words not said",
-                check=False)
-    assert r["status"] == "ack_unquoted" and r["parts_without_quote"] == [3] and r["quotes_not_found"] == ["words not said"]
+    unsaid = "these eight words were never said in this meeting"
+    r = run_cli(tmp_path, "done", "--evidence", EV, "--ack", "status talk", "--quote", LINES[1], "--quote", unsaid, check=False)
+    assert r["status"] == "ack_unquoted" and r["parts_without_quote"] == [3] and r["quotes_not_found"] == [unsaid]
+    assert r["quotes_found"] == {LINES[1]: 2}
 
 
 def test_part_of_locates_a_quote_by_text_offset(tmp_path):
@@ -127,3 +128,31 @@ def test_a_short_meeting_is_never_thin(tmp_path):
     for i, line in enumerate(LINES):
         _note(cfg, line, f"n{i}")
     assert CV.coverage(S.evidence(cfg.store)[EV], S.events(cfg.store))["thin_parts"] == []
+
+
+def test_a_short_quote_or_the_title_does_not_acknowledge_a_part(tmp_path):
+    # review: one word per part, or the title (full_text ends with it, so it always lands in the last part), passed
+    cfg = _project(tmp_path)
+    _note(cfg, LINES[0], "n1")
+    r = run_cli(tmp_path, "done", "--evidence", EV, "--ack", "x", "--quote", "forklift", "--quote", "Daily sync", check=False)
+    assert r["status"] == "ack_unquoted" and r["parts_without_quote"] == [2, 3]
+    assert r["quotes_too_short"] == ["forklift", "Daily sync"]
+    assert CV.part_of(S.evidence(cfg.store)[EV], "Daily sync " * 4) == 0
+
+
+def test_a_quote_present_in_two_parts_counts_for_the_first(tmp_path):
+    cfg = _project(tmp_path)
+    _note(cfg, LINES[0], "n1")
+    everywhere = "the dock schedule and the yard plan were discussed again in some detail"
+    r = run_cli(tmp_path, "done", "--evidence", EV, "--ack", "x", "--quote", everywhere, check=False)
+    assert r["status"] == "ack_unquoted" and r["parts_without_quote"] == [2, 3] and r["quotes_found"] == {everywhere: 1}
+
+
+def test_the_refusal_says_where_each_part_starts(tmp_path):
+    cfg = _project(tmp_path)
+    _note(cfg, LINES[0], "n1")
+    r = run_cli(tmp_path, "done", "--evidence", EV, check=False)
+    assert [s["part"] for s in r["starts"]] == [1, 2, 3] and r["starts"][0] == {"part": 1, "ts": "00:00:00", "speaker": "Nora Quill"}
+    assert [s["ts"] for s in r["starts"]] == ["00:00:00", "00:01:00", "00:20:00"]   # the long filler turns hold the cuts
+    r = run_cli(tmp_path, "done", "--evidence", EV, "--ack", "x", "--quote", LINES[1], check=False)
+    assert r["status"] == "ack_unquoted" and [s["part"] for s in r["starts"]] == [1, 2, 3]

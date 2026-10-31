@@ -100,3 +100,21 @@ def test_extract_tells_the_reader_about_leftovers():
     ext = " ".join((Path(__file__).resolve().parent.parent / "skills" / "run" / "EXTRACT.md").read_text().split())
     assert '"status": "leftovers"' in ext and "leftovers --evidence" in ext and "--leftovers" in ext
     assert "owner cannot be read" in ext and "never dropped" in ext
+
+
+def test_markers_match_curly_quotes_and_skip_small_talk():
+    item = {"id": "x", "title": "Sync", "turns": [
+        {"ts": "00:00:01", "speaker": "Nora Quill", "text": "We’ll send the revised vendor list to the client on Monday morning."},
+        {"ts": "00:00:02", "speaker": "Ravi Tamsin", "text": "Can you hear me now, is the audio okay for everyone on the call?"},
+        {"ts": "00:00:03", "speaker": "Ravi Tamsin", "text": "It should work once the deploy finishes tonight for everyone here."},
+        {"ts": "00:00:04", "speaker": "Opal Reyes", "text": "We are still blocked on the crane permit from the port authority."}]}
+    assert [s.ts for s in LO.sentences(item)] == ["00:00:01", "00:00:04"]
+
+
+def test_the_leftovers_hint_says_to_repeat_the_same_done_command(tmp_path):
+    cfg = _project(tmp_path, n_filler=260)
+    for i, line in enumerate(WORK):
+        _note(cfg, line, f"n{i}")
+        _note(cfg, line, f"m{i}")
+    r = run_cli(tmp_path, "done", "--evidence", EV, check=False)
+    assert r["status"] == "leftovers" and "same done command" in r["hint"]

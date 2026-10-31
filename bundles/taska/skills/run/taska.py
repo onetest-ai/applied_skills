@@ -311,23 +311,28 @@ def cmd_done(a):
         gap = sorted(set(c["empty_parts"]) | set(c["thin_parts"]))
         if gap and not a.ack:
             out({"status": "coverage", "evidence": a.evidence, "empty_parts": c["empty_parts"], "thin_parts": c["thin_parts"],
-                 "parts": c["parts"],
-                 "hint": "re-read those parts of the transcript and add what was said (or nothing), then run done again; "
-                         "if they really hold no work, pass --ack \"<why>\""}, 1)
+                 "parts": c["parts"], "starts": c["starts"],
+                 "hint": "re-read those parts of the transcript (each starts at the ts in `starts`) and add what was said "
+                         "(or nothing), then run done again; if they really hold no work, pass --ack \"<why>\" with one "
+                         "--quote \"<8+ contiguous words from that part>\" per part"}, 1)
         if gap:
-            quoted = {CV.part_of(ev[a.evidence], q): q for q in reversed(a.quote or [])}
-            missing = [p for p in gap if p not in quoted]
+            item = ev[a.evidence]
+            short = [q for q in a.quote or [] if CV.too_short(q)]
+            found = {q: CV.part_of(item, q) for q in a.quote or [] if q not in short}
+            missing = [p for p in gap if p not in found.values()]
             if missing:
                 out({"status": "ack_unquoted", "evidence": a.evidence, "parts_without_quote": missing,
-                     "quotes_not_found": [q for q in a.quote or [] if CV.part_of(ev[a.evidence], q) == 0],
-                     "hint": "an --ack needs proof of reading: pass --quote \"<8+ contiguous words>\" taken from each of "
-                             "those parts (one --quote per part), then run done again"}, 1)
+                     "quotes_found": {q: p for q, p in found.items() if p},
+                     "quotes_not_found": [q for q, p in found.items() if not p], "quotes_too_short": short,
+                     "starts": c["starts"],
+                     "hint": "an --ack needs proof of reading: one --quote of 8+ contiguous words taken from each part in "
+                             "parts_without_quote (each part starts at the ts in `starts`), then run the same done command again"}, 1)
             note = (note + " " if note else "") + f"coverage acknowledged: {a.ack} (parts {gap})"
         lo = LO.leftovers(ev[a.evidence], S.events(st))
         if lo["long"] and lo["count"] and a.leftovers != lo["token"]:
             out({"status": "leftovers", "evidence": a.evidence, "count": lo["count"],
                  "hint": f"a long meeting: run `leftovers --evidence {a.evidence}`, decide each listed sentence (apply an op, "
-                         "or not work by the tracking rule), then run done again with --leftovers <its token>"}, 1)
+                         "or not work by the tracking rule), then run the same done command again, adding --leftovers <its token>"}, 1)
     L.mark_processed(st, a.evidence, note)
     out({"status": "ok", "processed": a.evidence, "pending": len(_pending(st))})
 

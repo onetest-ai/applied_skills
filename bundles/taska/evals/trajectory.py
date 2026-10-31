@@ -67,6 +67,8 @@ class EvidenceTrace:
     refusals: int = 0
     acks: list[str] = field(default_factory=list)
     reread_before_ack: bool = True
+    leftovers_calls: int = 0
+    applied_after_leftovers: bool = True
 
 
 @dataclass
@@ -83,6 +85,7 @@ class Summary:
     evidence_fully_read: int
     refusals: int
     acks_without_reread: int
+    leftovers_undecided: int
 
 
 def _records(path: Path) -> list[dict]:
@@ -166,10 +169,23 @@ def _json_answer(output: str) -> dict:
     if start < 0:
         return {}
     try:
-        answer = json.loads(output[start:])
+        answer, _ = json.JSONDecoder().raw_decode(output[start:])
     except json.JSONDecodeError:
         return {}
     return answer if isinstance(answer, dict) else {}
+
+
+LINE_PREFIX = re.compile(r"^\s*(\d+)\t", re.M)
+
+
+def _read_range(call: ToolCall, total: int) -> tuple[int, int]:
+    """Lines the Read actually returned (from the N<tab> prefixes); the request's range only when the output has none."""
+    seen = [int(x) for x in LINE_PREFIX.findall(call.output)]
+    if seen:
+        return (min(seen), min(max(seen), total))
+    offset = int(call.input.get("offset") or 1)
+    limit = call.input.get("limit")
+    return (offset, min(offset + int(limit) - 1 if limit else total, total))
 
 
 def _ack_of(command: str) -> str:
@@ -207,12 +223,12 @@ def evidence_traces(run: Run, evidence_dir: Path) -> list[EvidenceTrace]:
         tr = EvidenceTrace(evidence=eid, lines_total=total)
         refused_at: dict[str, int] = {}
         first_reader = applier = ""
+        last_leftovers = -1
         for i, c in enumerate(run.calls):
             if c.name == "Read" and c.input.get("file_path", "").endswith(f"/evidence/{eid}.md"):
-                offset = int(c.input.get("offset") or 1)
-                limit = c.input.get("limit")
-                end = offset + int(limit) - 1 if limit else total
-                tr.reads.append((offset, min(end, total)))
+                if c.is_error:
+                    continue
+                tr.reads.append(_read_range(c, total))
                 first_reader = first_reader or c.agent_id
             elif c.name == "Write" and Path(c.input.get("file_path", "")).name.startswith(eid) \
                     and c.input.get("file_path", "").endswith(".json"):
@@ -221,8 +237,13 @@ def evidence_traces(run: Run, evidence_dir: Path) -> list[EvidenceTrace]:
                 cmd = c.input.get("command", "")
                 if f"--evidence {eid}" not in cmd:
                     continue
-                if " apply " in cmd:
+                if " leftovers " in cmd:
+                    tr.leftovers_calls += 1
+                    last_leftovers = i
+                elif " apply " in cmd:
                     applier = applier or c.agent_id
+                    if last_leftovers >= 0:
+                        tr.applied_after_leftovers = True
                     answer = _json_answer(c.output)
                     tr.applied += int(answer.get("events") or 0)
                     rejected = answer.get("rejected") if isinstance(answer.get("rejected"), list) else []
@@ -244,6 +265,10 @@ def evidence_traces(run: Run, evidence_dir: Path) -> list[EvidenceTrace]:
                         tr.reread_before_ack = tr.reread_before_ack and reread
         tr.reader = applier or first_reader
         tr.lines_seen = _seen(tr.reads, total)
+        if tr.leftovers_calls and not any(x.name == "Bash" and " apply " in x.input.get("command", "")
+                                          and f"--evidence {eid}" in x.input.get("command", "")
+                                          for x in run.calls[last_leftovers + 1:]):
+            tr.applied_after_leftovers = False
         out.append(tr)
     return out
 
@@ -265,7 +290,8 @@ def summary(run: Run, traces: list[EvidenceTrace]) -> Summary:
         tool_errors=sum(a.errors for a in run.agents), evidence=len(traces),
         evidence_fully_read=sum(1 for t in traces if t.lines_total and t.lines_seen >= t.lines_total - 1),
         refusals=sum(t.refusals for t in traces),
-        acks_without_reread=sum(1 for t in traces if t.acks and not t.reread_before_ack))
+        acks_without_reread=sum(1 for t in traces if t.acks and not t.reread_before_ack),
+        leftovers_undecided=sum(1 for t in traces if t.leftovers_calls and not t.applied_after_leftovers))
 
 
 def to_json(run: Run, traces: list[EvidenceTrace]) -> str:
@@ -282,20 +308,21 @@ def render_html(run: Run, traces: list[EvidenceTrace]) -> str:
         rows.append(f"<tr><td>{e(a.agent_id)}</td><td>{e(a.model)}</td><td>{a.turns}</td><td>{e(tools)}</td>"
                     f"<td>{a.errors}</td><td>{a.output_tokens}</td></tr>")
     ev = ["<tr><th>evidence</th><th>reader</th><th>lines read</th><th>proposed</th><th>applied</th><th>rejected</th>"
-          "<th>done refused</th><th>acks</th><th>re-read before ack</th></tr>"]
+          "<th>done refused</th><th>acks</th><th>re-read before ack</th><th>leftovers → apply</th></tr>"]
     for t in traces:
         if not (t.reads or t.applied or t.refusals or t.acks):
             continue
         ev.append(f"<tr><td>{e(t.evidence)}</td><td>{e(t.reader)}</td><td>{t.lines_seen}/{t.lines_total}</td>"
                   f"<td>{t.ops_written}</td><td>{t.applied}</td><td>{t.rejected}</td><td>{t.refusals}</td>"
-                  f"<td>{e('; '.join(t.acks))}</td><td>{'yes' if t.reread_before_ack else 'no'}</td></tr>")
+                  f"<td>{e('; '.join(t.acks))}</td><td>{'yes' if t.reread_before_ack else 'no'}</td>"
+                  f"<td>{'—' if not t.leftovers_calls else ('yes' if t.applied_after_leftovers else 'no')}</td></tr>")
     return ("<!doctype html><meta charset='utf-8'><title>Trajectory</title>"
             "<style>body{font:14px system-ui;margin:24px}table{border-collapse:collapse;margin:12px 0}"
             "td,th{border:1px solid #ccc;padding:4px 8px;text-align:left}</style>"
             f"<h1>Run {e(run.session_id)}</h1><p>{'complete' if s.complete else 'incomplete'} · {s.duration_s}s · "
             f"${s.cost_usd} · {s.agents} agents · {s.turns} turns · {s.tool_calls} tool calls · {s.tool_errors} errors · "
             f"{s.evidence_fully_read}/{s.evidence} transcripts read in full · {s.refusals} done refusals · "
-            f"{s.acks_without_reread} acknowledged without a re-read</p>"
+            f"{s.acks_without_reread} acknowledged without a re-read · {s.leftovers_undecided} leftovers lists with no apply after</p>"
             f"<table>{''.join(rows)}</table><table>{''.join(ev)}</table>")
 
 
@@ -310,11 +337,11 @@ def main(argv: list[str]) -> int:
     traces = evidence_traces(run, Path(a.evidence_dir)) if a.evidence_dir else []
     text = to_json(run, traces)
     if a.out:
-        Path(a.out).write_text(text)
+        Path(a.out).write_text(text, encoding="utf-8")
     else:
         print(text)
     if a.html:
-        Path(a.html).write_text(render_html(run, traces))
+        Path(a.html).write_text(render_html(run, traces), encoding="utf-8")
     return 0 if run.complete else 1
 
 
