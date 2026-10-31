@@ -300,7 +300,7 @@ def cmd_apply(a):
 
 
 def cmd_done(a):
-    from taska_lib import coverage as CV
+    from taska_lib import coverage as CV, leftovers as LO
     _, st = cfg_store(a)
     ev = S.evidence(st)
     if a.evidence not in ev:
@@ -323,8 +323,22 @@ def cmd_done(a):
                      "hint": "an --ack needs proof of reading: pass --quote \"<8+ contiguous words>\" taken from each of "
                              "those parts (one --quote per part), then run done again"}, 1)
             note = (note + " " if note else "") + f"coverage acknowledged: {a.ack} (parts {gap})"
+        lo = LO.leftovers(ev[a.evidence], S.events(st))
+        if lo["long"] and lo["count"] and a.leftovers != lo["token"]:
+            out({"status": "leftovers", "evidence": a.evidence, "count": lo["count"],
+                 "hint": f"a long meeting: run `leftovers --evidence {a.evidence}`, decide each listed sentence (apply an op, "
+                         "or not work by the tracking rule), then run done again with --leftovers <its token>"}, 1)
     L.mark_processed(st, a.evidence, note)
     out({"status": "ok", "processed": a.evidence, "pending": len(_pending(st))})
+
+
+def cmd_leftovers(a):
+    from taska_lib import leftovers as LO
+    _, st = cfg_store(a)
+    ev = S.evidence(st)
+    if a.evidence not in ev:
+        out({"status": "error", "error": f"unknown evidence {a.evidence}"}, 1)
+    out(dict(LO.leftovers(ev[a.evidence], S.events(st)), status="ok"))
 
 
 def cmd_ingest(a):
@@ -667,6 +681,9 @@ def main():
     p = sp.add_parser("done"); p.add_argument("--evidence", required=True); p.add_argument("--note")
     p.add_argument("--ack", help="why a third of a long meeting produced nothing (else done refuses: status coverage)")
     p.add_argument("--quote", action="append", help="with --ack: verbatim words from each acknowledged part (proof it was read)")
+    p.add_argument("--leftovers", help="the token `leftovers` printed for this long meeting's current state")
+    p = sp.add_parser("leftovers", help="sentences that sound like work and that no applied event quotes, per third; with a token for done")
+    p.add_argument("--evidence", required=True)
     p = sp.add_parser("ingest"); p.add_argument("--file", required=True); p.add_argument("--source", default="ingest")
     p = sp.add_parser("people"); p.add_argument("--limit", type=int, default=0)
     p = sp.add_parser("redo"); p.add_argument("--evidence", required=True); p.add_argument("--why")

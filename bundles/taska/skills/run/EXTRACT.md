@@ -42,6 +42,12 @@ For each evidence id you were given, in that order:
    `--quote "<8+ contiguous words from that part>"` per acknowledged part: `done` looks each quote up and answers
    `"status": "ack_unquoted"` naming the parts it could not find a quote for. The quote is the proof the part was
    read; an acknowledgement written from memory is refused.
+   For a long meeting `done` also answers `"status": "leftovers"` with a count: run `$TASKA leftovers --evidence <id>`.
+   It lists, per third, every sentence that sounds like work ("will", "needs to", "by Friday", "agreed", a risk) and
+   that none of your applied quotes covers. Decide each one: work by the tracking rule → an op in a `<id>_more.json`
+   you apply (a commitment whose owner cannot be read, as in a room recording, is a `propose`, never dropped); not
+   work → nothing. Then `done --leftovers <the token leftovers printed>`; the token changes with every apply, so
+   run `leftovers` again after your last apply.
 
 ## What each kind of evidence can show
 - **meeting** — everything below. Most updates come from here.
