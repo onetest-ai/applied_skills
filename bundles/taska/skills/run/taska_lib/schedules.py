@@ -38,6 +38,7 @@ class Schedule:
     cc: list = field(default_factory=list)
     include: dict = field(default_factory=lambda: dict(INCLUDE))
     on: bool = True
+    review: bool = False
 
 
 def _all_words(s):
@@ -149,8 +150,10 @@ def parse(raw):
         if unknown:
             raise ValueError(f"schedule {name}: include has unknown items {sorted(unknown)}; known: {sorted(INCLUDE)}")
         inc.update({k: bool(v) for k, v in (s.get("include") or {}).items()})
+        if s.get("review") and s["kind"] != "send":
+            raise ValueError(f"schedule {name}: review applies to a send schedule (the owner looks first, then sends by command)")
         out.append(Schedule(name, s["kind"], days, s["time"], list(s.get("to") or []), list(s.get("cc") or []), inc,
-                            bool(s.get("on", True))))
+                            bool(s.get("on", True)), bool(s.get("review", False))))
     return out
 
 
@@ -182,6 +185,8 @@ def to_toml(schedules):
                  "cc = [" + ", ".join(_toml_str(a) for a in s.cc) + "]",
                  "include = {" + ", ".join(f"{k} = {str(bool(s.include.get(k, v))).lower()}" for k, v in INCLUDE.items()) + "}",
                  f"on = {str(bool(s.on)).lower()}"]
+        if s.kind == "send":
+            lines.append(f"review = {str(bool(s.review)).lower()}")
         blocks.append("\n".join(lines) + "\n")
     return "\n".join(blocks)
 
@@ -278,21 +283,25 @@ def task_xml(name, command, s):
             "</Task>\n")
 
 
-def default_command(cfg, s):
-    """`taska run-schedule <name>` with this interpreter (pythonw on Windows: no console window)."""
+SEND_FLAG = "--send"
+
+
+def default_command(cfg, s, send=False):
+    """`taska run-schedule <name>` with this interpreter (pythonw on Windows: no console window); `send` adds --send."""
     py = sys.executable
     if sys.platform == "win32":
         py = re.sub(r"python(\.exe)?$", r"pythonw\1", py, flags=re.I)
     taska = Path(__file__).resolve().parent.parent / "taska.py"
-    return f'"{py}" "{taska}" --project "{cfg.project_dir}" run-schedule "{s.name}"'
+    return f'"{py}" "{taska}" --project "{cfg.project_dir}" run-schedule "{s.name}"' + (f" {SEND_FLAG}" if send else "")
 
 
-def command_for(cfg, s):
-    """The project's [run].scheduled template ({kind}, {name}, {project}) when set, else the default command."""
+def command_for(cfg, s, send=False):
+    """The project's [run].scheduled template ({kind}, {name}, {project}, {flags}) when set, else the default command.
+    {flags} is --send when the owner sends a reviewed report now, else empty."""
     tpl = (cfg.run or {}).get("scheduled")
     if not tpl:
-        return default_command(cfg, s)
-    return tpl.format(kind=s.kind, name=s.name, project=str(cfg.project_dir))
+        return default_command(cfg, s, send)
+    return tpl.format(kind=s.kind, name=s.name, project=str(cfg.project_dir), flags=SEND_FLAG if send else "").rstrip()
 
 
 def _launchctl(verb, path):

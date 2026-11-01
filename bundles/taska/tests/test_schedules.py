@@ -332,3 +332,30 @@ def test_unregister_removes_every_agent_and_the_lock(tmp_path, monkeypatch):
     out = W.unregister(cfg, agents_dir=agents, launchctl=lambda *a: calls.append(a))
     assert [o["action"] for o in out] == ["unloaded", "unloaded"]
     assert W.registered("Harbor Logistics", agents_dir=agents) == {} and W.runner_lock(cfg) is None
+
+
+# ---------- review: a send the owner looks at first, sent to the reader by command ----------
+
+def test_review_is_read_only_on_a_send(tmp_path):
+    cfg = _project(tmp_path, '[[schedules]]\nname = "Monday send"\nkind = "send"\ndays = [1]\ntime = "14:00"\nto = ["opal@example.com"]\nreview = true\n'
+                             '[[schedules]]\nname = "Friday preview"\nkind = "preview"\ndays = [5]\ntime = "20:00"\n')
+    send, prev = cfg.schedules
+    assert send.review is True and prev.review is False
+    import tomllib
+    back = W.parse(tomllib.loads(W.to_toml(cfg.schedules))["schedules"])
+    assert back == cfg.schedules and "review = true" in W.to_toml(cfg.schedules)
+
+
+def test_review_on_a_preview_is_refused(tmp_path):
+    with pytest.raises(C.ConfigError, match="review"):
+        _project(tmp_path, '[[schedules]]\nname = "x"\nkind = "preview"\ndays = [5]\ntime = "20:00"\nreview = true\n')
+
+
+def test_command_for_passes_send_as_flags(tmp_path):
+    cfg = _cfg(tmp_path, '[run]\nscheduled = "python3 bin/weekly.py {kind} {flags}"\n')
+    assert W.command_for(cfg, TWO[1]) == "python3 bin/weekly.py send"
+    assert W.command_for(cfg, TWO[1], send=True) == "python3 bin/weekly.py send --send"
+    old = _cfg(tmp_path)   # a template without {flags} still formats
+    assert W.command_for(old, TWO[0]) == "python3 ~/proj/bin/weekly.py preview --name Friday preview"
+    assert W.command_for(old, TWO[0], send=True) == W.command_for(old, TWO[0])
+    assert W.default_command(cfg, TWO[1], send=True).endswith('run-schedule "Monday send" --send')
