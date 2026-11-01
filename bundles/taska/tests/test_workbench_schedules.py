@@ -100,6 +100,8 @@ def test_page_has_the_schedules_panel():
     assert "SCH.timezone" in page and "s.what" in page   # the sentence and the machine's time come from the API, not the page
     assert "SCH.owner" in page   # a preview with no To shows the owner it goes to
     assert 'data-f="owner"' in page   # the owner address is edited here, saved with Save
+    assert 'aria-live="polite"' in page and 'role="alert"' in page and "beforeunload" in page and 'inputmode="email"' in page
+    assert "Saving…" in page and "Sending…" in page   # the buttons say what they are doing and cannot be pressed twice
 
 
 def test_the_page_opens_on_a_view_named_in_the_query(served):

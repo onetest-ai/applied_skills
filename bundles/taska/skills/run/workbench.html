@@ -294,7 +294,7 @@ h3 .count{color:var(--ink-3);font-weight:400}
     <div class="side-body" id="side"></div>
   </aside>
 </main>
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" aria-live="polite"></div>
 <script>
 const EMBED = /*__DATA__*/null;
 const LIVE = !EMBED;
@@ -1021,8 +1021,8 @@ function schForm(s, i){
     <div class="wide days"><label>Days</label>${DAYS.map((d,k)=>`<label><input type="checkbox" data-d="${k+1}" ${(s.days||[]).includes(k+1)?"checked":""}>${d}</label>`).join("")}</div>
     <div><label>Time (${esc(SCH.timezone||"this machine's time")})</label><input type="time" data-f="time" value="${esc(s.time||"09:00")}"></div>
     <div><label>On</label><select data-f="on"><option value="1" ${s.on!==false?"selected":""}>On</option><option value="0" ${s.on===false?"selected":""}>Off</option></select></div>
-    <div><label>To (comma-separated)</label><input type="text" data-f="to" value="${esc((s.to||[]).join(", "))}"></div>
-    <div><label>Cc</label><input type="text" data-f="cc" value="${esc((s.cc||[]).join(", "))}"></div>
+    <div><label>To (comma-separated)</label><input type="text" data-f="to" inputmode="email" autocomplete="off" value="${esc((s.to||[]).join(", "))}"></div>
+    <div><label>Cc (comma-separated)</label><input type="text" data-f="cc" inputmode="email" autocomplete="off" value="${esc((s.cc||[]).join(", "))}"></div>
     <div class="wide inc"><label>Include</label>${Object.keys(INC).map(k=>`<label><input type="checkbox" data-inc="${k}" ${inc[k]?"checked":""}>${INC[k]}</label>`).join("")}</div>
     <div class="foot"><span class="muted">Save registers the job with this computer's scheduler.</span><span style="margin-left:auto;display:inline-flex;gap:6px"><button class="btn" data-done="${i}">Done</button><button class="btn" data-rm="${i}">Remove</button></span></div>
   </div>`;
@@ -1039,11 +1039,20 @@ function schRead(){
   document.querySelectorAll("#schedules .row").forEach(r => { SCH.schedules[+r.dataset.i] = schReadForm(r); });
   return SCH.schedules.map(s => ({name:s.name, kind:s.kind, days:s.days, time:s.time, to:s.to||[], cc:s.cc||[], include:s.include||{}, on:s.on!==false, review:!!s.review}));
 }
-async function schPost(path, body){
-  const r = await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  const j = await r.json().catch(()=>({error:"No answer"}));
-  return [r.ok, j];
+async function schPost(path, body, btn, busyText){
+  const was = btn ? btn.textContent : "";
+  if (btn){ btn.disabled = true; btn.textContent = busyText; }
+  try {
+    const r = await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const j = await r.json().catch(()=>({error:"No answer from the server"}));
+    return [r.ok, j];
+  } catch (e) {
+    return [false, {error: "The workbench did not answer: " + e.message}];
+  } finally {
+    if (btn){ btn.disabled = false; btn.textContent = was; }
+  }
 }
+window.addEventListener("beforeunload", e => { if (schDirty){ e.preventDefault(); e.returnValue = ""; } });
 async function renderSchedules(){
   if (!LIVE){ $("#left").innerHTML = `<div class="blank"><b>Schedules</b>Edited on the live workbench only.</div>`; return; }
   if (!SCH) await loadSchedules();
@@ -1052,7 +1061,7 @@ async function renderSchedules(){
                                 : `This computer (${esc(SCH.platform)}) cannot register jobs yet: saving keeps the rows in taska.toml.`;
   $("#left").innerHTML = `<div id="schedules"><div class="muted" style="font-size:13px;margin:2px 0 8px">${note}</div>
     <div class="owner"><label for="sch-owner">Previews, review copies and held mails go to</label><input id="sch-owner" type="email" data-f="owner" inputmode="email" autocomplete="off" placeholder="owner@example.com" value="${esc(SCH.owner||"")}"><span class="muted">saved with Save (<span class="mono">[report].owner</span>)</span></div>
-    ${schErr?`<div class="err">${esc(schErr)}</div>`:""}
+    ${schErr?`<div class="err" role="alert">${esc(schErr)}</div>`:""}
     ${SCH.schedules.map((s,i) => schEdit.has(i) ? schForm(s,i) : schCard(s,i)).join("") || `<div class="blank"><b>No schedules yet</b>Add one: a preview to you on Friday, a send to the reader on Monday.</div>`}
     <div class="bar"><button class="btn" id="sch-add">Add schedule</button><button class="btn primary" id="sch-save">Save</button>${schDirty?`<span class="muted">Unsaved changes</span>`:""}</div></div>`;
   const mark = () => { schDirty = true; };
@@ -1062,18 +1071,19 @@ async function renderSchedules(){
   document.querySelectorAll("#schedules [data-done]").forEach(b => b.onclick = () => { schRead(); schEdit.delete(+b.dataset.done); mark(); renderSchedules(); });
   document.querySelectorAll("#schedules [data-review]").forEach(r => r.onchange = () => { SCH.schedules[+r.dataset.review].review = r.value === "1"; mark(); renderSchedules(); });
   document.querySelectorAll("#schedules [data-rm]").forEach(b => b.onclick = () => { schRead(); SCH.schedules.splice(+b.dataset.rm, 1); schEdit = new Set(); schErr = ""; mark(); renderSchedules(); });
-  const start = async (i, send) => {
+  const start = async (i, send, btn) => {
     const s = SCH.schedules[i];
+    if (schDirty){ schErr = "Save first: the job runs what is saved in taska.toml, not what is on the screen."; return renderSchedules(); }
     if (send && !confirm(`Send the reviewed ${s.name} to ${(s.to||[]).join(", ") || "the reader"} now?`)) return;
-    const [ok, j] = await schPost("/api/schedules/run", {name: s.name, send});
+    const [ok, j] = await schPost("/api/schedules/run", {name: s.name, send}, btn, send ? "Sending…" : "Starting…");
     if (!ok){ schErr = j.error || "Could not start"; return renderSchedules(); }
     toast(`${send ? "Sending" : "Started"}: ${s.name} for the week of ${j.week}; its files land in ${j.dir}`);
   };
-  document.querySelectorAll("#schedules [data-run]").forEach(b => b.onclick = () => start(+b.dataset.run, false));
-  document.querySelectorAll("#schedules [data-send]").forEach(b => b.onclick = () => start(+b.dataset.send, true));
+  document.querySelectorAll("#schedules [data-run]").forEach(b => b.onclick = () => start(+b.dataset.run, false, b));
+  document.querySelectorAll("#schedules [data-send]").forEach(b => b.onclick = () => start(+b.dataset.send, true, b));
   $("#sch-save").onclick = async () => {
     const rows = schRead(), owner = $("#sch-owner").value.trim();
-    const [ok, j] = await schPost("/api/schedules", Object.assign({schedules: rows}, owner && owner !== (SCH.owner||"") ? {owner} : {}));
+    const [ok, j] = await schPost("/api/schedules", Object.assign({schedules: rows}, owner && owner !== (SCH.owner||"") ? {owner} : {}), $("#sch-save"), "Saving…");
     if (!ok){ schErr = j.error || "Could not save"; return renderSchedules(); }
     schErr = ""; await loadSchedules();
     toast(SCH.can_register ? `Saved and registered ${j.registered.filter(x=>x.action==="loaded").length} job(s)` : "Saved to taska.toml");
