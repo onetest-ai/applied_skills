@@ -58,16 +58,18 @@ def _owner(cfg, s):
     return prev.to[0] if prev else (s.to[0] if s.to else None)
 
 
-def run(cfg, s, week=None, today=None, run=None, reports=None, dry_run=False):
-    """Run schedule `s`. Returns {week, dir, kind, steps, verdict: done|ready|held|busy, held_why, deliver, commands}."""
+def run(cfg, s, week=None, today=None, run=None, reports=None, dry_run=False, send=False):
+    """Run schedule `s`. Returns {week, dir, kind, steps, verdict: done|ready|held|busy, held_why, deliver, commands, shadow}.
+    A send with `review` on is a shadow (the owner gets what the reader would) unless `send` says to send it now."""
     today = today or dt.date.today()
     week = week or week_for(s.kind, today)
     reports = Path(reports) if reports else cfg.project_dir / "reports"
     wd = reports / week
     plan = steps(cfg, s.kind)
     commands = [expand(x["command"], cfg, s, week, wd) for x in plan]
+    shadow = s.kind == "send" and bool(s.review) and not send
     out = {"week": week, "dir": str(wd), "kind": s.kind, "steps": [], "verdict": "done", "held_why": None, "deliver": None,
-           "commands": commands}
+           "commands": commands, "shadow": shadow}
     if dry_run:
         return out
     lock = Path(cfg.store) / "run.lock"
@@ -88,7 +90,7 @@ def run(cfg, s, week=None, today=None, run=None, reports=None, dry_run=False):
             if rc and x["required"]:
                 failed.append(x["name"])
         if s.kind in ("preview", "send"):
-            _report(cfg, s, week, wd, reports, out, failed)
+            _report(cfg, s, week, wd, reports, out, failed, shadow)
         RL.finish(wd)
         if s.kind == "send":
             out["verdict"] = "held" if failed else "ready"
@@ -98,7 +100,7 @@ def run(cfg, s, week=None, today=None, run=None, reports=None, dry_run=False):
         shutil.rmtree(lock, ignore_errors=True)
 
 
-def _report(cfg, s, week, wd, reports, out, failed):
+def _report(cfg, s, week, wd, reports, out, failed, shadow=False):
     """The workbench copy, the docx (when there is a template and prose), the gate, the delivery."""
     try:
         WB.export(cfg.store, cfg, wd / f"workbench {dt.date.today().isoformat()}.html")
@@ -128,14 +130,18 @@ def _report(cfg, s, week, wd, reports, out, failed):
             failed.append("gate")
     owner = _owner(cfg, s)
     held = s.kind == "send" and bool(failed)
-    to = owner if (s.kind == "preview" or held) else (s.to[0] if s.to else owner)
+    to = owner if (s.kind == "preview" or held or shadow) else (s.to[0] if s.to else owner)
     if not to:
         RL.step(wd, "deliver", 1, "no address: set the schedule's To or [report].owner")
         failed.append("deliver")
         return
     d = DL.deliver(cfg, wd, to, schedule=s, status=str(wd / "run-status.partial.json") if (wd / "run-status.partial.json").exists() else None,
                    kind=s.kind)
-    if s.kind == "send" and not held and owner and owner not in d["cc"] and owner != to:
+    if shadow and not held:
+        would = ", ".join(s.to) + (f", cc {', '.join(s.cc)}" if s.cc else "")
+        d["subject"] = f"[Review: would go to {would}] {d['subject']}"
+        d["cc"] = []
+    elif s.kind == "send" and not held and owner and owner not in d["cc"] and owner != to:
         d["cc"] = list(d["cc"]) + [owner]   # the owner stays in copy of every send
     if held:
         d["subject"] = f"HELD: {d['subject']} — {', '.join(failed)} failed"
@@ -143,5 +149,5 @@ def _report(cfg, s, week, wd, reports, out, failed):
     if held or (s.kind == "send" and owner):
         (wd / "deliver.json").write_text(json.dumps(d, indent=1, ensure_ascii=False))
         (wd / "mail.md").write_text(DL.mail_md(d, dict(s.include)))
-    RL.step(wd, "deliver", 0, f"{s.kind} to {to}" + (" (HELD)" if held else ""))
+    RL.step(wd, "deliver", 0, f"{s.kind} to {to}" + (" (HELD)" if held else " (review copy)" if shadow else ""))
     out["deliver"] = str(wd / "deliver.json")

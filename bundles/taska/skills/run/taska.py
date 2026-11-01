@@ -573,7 +573,7 @@ def cmd_run_schedule(a):
     s = next((x for x in cfg.schedules if x.name == a.name), None)
     if not s:
         out({"status": "error", "error": f"no schedule named {a.name!r}; known: {[x.name for x in cfg.schedules]}"}, 2)
-    r = RN.run(cfg, s, week=a.week, dry_run=a.dry_run)
+    r = RN.run(cfg, s, week=a.week, dry_run=a.dry_run, send=a.send)
     out(dict(r, status="ok" if r["verdict"] != "busy" else "busy"), 0 if r["verdict"] in ("done", "ready") else 1)
 
 
@@ -714,6 +714,7 @@ def main():
     p.add_argument("--agents-dir", help="where the agents go (default ~/Library/LaunchAgents)")
     p = sp.add_parser("run-schedule", help="one scheduled run: the project's steps, then report, gate, delivery")
     p.add_argument("name"); p.add_argument("--week"); p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--send", action="store_true", help="a reviewed send: the reader gets it now (otherwise the owner gets a review copy)")
     p = sp.add_parser("deliver", help="a week's mail content: reports/WEEK/deliver.json and a ready-to-send mail.md")
     p.add_argument("week"); p.add_argument("--to", required=True); p.add_argument("--reports"); p.add_argument("--status")
     p.add_argument("--schedule", help="the [[schedules]] entry whose cc and Include checklist apply"); p.add_argument("--kind", default="preview")

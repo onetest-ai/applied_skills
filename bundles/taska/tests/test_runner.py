@@ -149,3 +149,35 @@ def test_a_second_run_while_one_is_live_is_refused(tmp_path):
     run, log = _runner()
     r = R.run(cfg, _sched(cfg, "Daily update"), today=FRI, run=run)
     assert r["verdict"] == "busy" and log == []
+
+
+REVIEWED = TOML.replace('cc = ["lead@example.com"]\n', 'cc = ["lead@example.com"]\nreview = true\n')
+
+
+def test_a_reviewed_send_goes_to_the_owner_as_a_shadow(tmp_path):
+    cfg = _proj(tmp_path, REVIEWED)
+    run, _ = _runner()
+    r = R.run(cfg, _sched(cfg, "Monday send"), today=dt.date(2026, 3, 9), run=run)
+    assert r["verdict"] == "ready" and r["shadow"] is True
+    d = json.loads(Path(r["deliver"]).read_text())
+    assert d["to"] == ["owner@example.com"] and d["cc"] == [] and d["needs_attention"] is False
+    assert d["subject"].startswith("[Review: would go to reader@example.com, cc lead@example.com] ")
+    assert "reader@example.com" not in (tmp_path / "reports/2026-03-02/mail.md").read_text().split("\n")[1]
+
+
+def test_send_now_ignores_review(tmp_path):
+    cfg = _proj(tmp_path, REVIEWED)
+    run, _ = _runner()
+    r = R.run(cfg, _sched(cfg, "Monday send"), today=dt.date(2026, 3, 9), run=run, send=True)
+    assert r["verdict"] == "ready" and r["shadow"] is False
+    d = json.loads(Path(r["deliver"]).read_text())
+    assert d["to"] == ["reader@example.com"] and "owner@example.com" in d["cc"] and not d["subject"].startswith("[Review")
+
+
+def test_the_cli_takes_send(tmp_path):
+    from conftest import run_cli
+    _proj(tmp_path, REVIEWED)
+    r = run_cli(tmp_path, "run-schedule", "Monday send", "--send", "--dry-run")
+    assert r["status"] == "ok" and r["shadow"] is False
+    r = run_cli(tmp_path, "run-schedule", "Monday send", "--dry-run")
+    assert r["shadow"] is True
