@@ -203,12 +203,34 @@ def strip_blocks(text):
     return "".join(out)
 
 
-def save(project_dir, schedules):
-    """Rewrite <project>/taska.toml with these schedules: every other byte stays, the old file is kept as
-    taska.toml.bak, and the swap is atomic (temp file + os.replace)."""
+def with_owner(text, owner):
+    """`text` with `owner = "…"` as the first key of [report]: the existing line replaced, else inserted after the
+    header, else a [report] table appended. Every other byte stays."""
+    if not ADDRESS.match(owner or ""):
+        raise ValueError(f"owner must be one address: {owner!r}")
+    line = f"owner = {_toml_str(owner)}"
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, l in enumerate(lines) if l.strip() == "[report]"), None)
+    if start is None:
+        return text.rstrip("\n") + ("\n\n" if text.strip() else "") + f"[report]\n{line}\n"
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].strip().startswith("[")), len(lines))
+    for i in range(start + 1, end):
+        if re.match(r"\s*owner\s*=", lines[i]):
+            lines[i] = line + "\n"
+            return "".join(lines)
+    lines.insert(start + 1, line + "\n")
+    return "".join(lines)
+
+
+def save(project_dir, schedules, owner=None):
+    """Rewrite <project>/taska.toml with these schedules (and, when given, [report].owner): every other byte stays,
+    the old file is kept as taska.toml.bak, and the swap is atomic (temp file + os.replace)."""
     path = Path(project_dir) / "taska.toml"
     before = path.read_text()
-    kept = strip_blocks(before).rstrip("\n")
+    kept = strip_blocks(before)
+    if owner is not None:
+        kept = with_owner(kept, owner)
+    kept = kept.rstrip("\n")
     text = kept + ("\n\n" if kept else "") + to_toml(schedules)
     (path.parent / "taska.toml.bak").write_text(before)
     tmp = path.with_name("taska.toml.tmp")

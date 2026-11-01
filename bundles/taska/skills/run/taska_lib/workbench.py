@@ -134,14 +134,19 @@ def run_now(cfg, name, register_opts=None, send=False):
     return {"started": True, "pid": pid, "week": week, "dir": str(cfg.project_dir / "reports" / week), "log": str(log)}
 
 
-def set_schedules(cfg, rows, register_opts=None):
-    """Validate `rows`, save them to taska.toml, register the jobs; ValueError before anything is written."""
+def set_schedules(cfg, rows, register_opts=None, owner=None):
+    """Validate `rows` (and `owner`, when given), save them to taska.toml, register the jobs; ValueError before
+    anything is written."""
     scheds = SCH.parse(rows)
     if SCH.sys.platform == "darwin" and scheds:
         for s in scheds:
             SCH.command_for(cfg, s)   # refuse before writing when the project has no command to schedule
-    SCH.save(cfg.project_dir, scheds)
+    if owner is not None and not SCH.ADDRESS.match(owner):
+        raise ValueError(f"owner must be one address: {owner!r}")
+    SCH.save(cfg.project_dir, scheds, owner)
     cfg.schedules = scheds
+    if owner is not None:
+        cfg.report["owner"] = owner
     return SCH.register(cfg, **(register_opts or {}))
 
 
@@ -202,7 +207,7 @@ def server(store, cfg, port, register_opts=None):
                 if self.path == "/api/schedules/run":
                     return self._send(200, run_now(cfg, body.get("name"), register_opts, bool(body.get("send"))))
                 if self.path == "/api/schedules":
-                    reg = set_schedules(cfg, body.get("schedules") or [], register_opts)
+                    reg = set_schedules(cfg, body.get("schedules") or [], register_opts, body.get("owner"))
                     return self._send(200, dict(schedules_view(cfg, register_opts), registered=reg))
                 e = L.human_event(store, body)
             except (ValueError, TypeError, AttributeError, KeyError) as x:  # json errors are ValueErrors

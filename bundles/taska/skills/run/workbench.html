@@ -239,6 +239,7 @@ h3 .count{color:var(--ink-3);font-weight:400}
 #schedules .row input[type=text],#schedules .row input[type=time],#schedules .row select{height:30px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--bg);padding:0 8px;width:100%}
 #schedules .days label,#schedules .inc label{display:inline-flex;align-items:center;gap:4px;margin:0 10px 0 0;font-size:13px;color:var(--ink-2)}
 #schedules .wide{grid-column:1/-1}#schedules .foot{grid-column:1/-1;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px;color:var(--ink-3)}
+#schedules .owner{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px;margin:0 0 12px}#schedules .owner label{color:var(--ink-2)}#schedules .owner input{height:30px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface);padding:0 8px;min-width:260px;font-family:var(--mono);font-size:12px}
 #schedules .err{color:var(--warn);margin:6px 0}#schedules .bar{display:flex;gap:8px;align-items:center;margin:8px 0 12px;flex-wrap:wrap}
 @media (max-width:700px){#schedules .row{grid-template-columns:1fr}}
 .recap-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0 12px}
@@ -1049,12 +1050,13 @@ async function renderSchedules(){
   const note = SCH.can_register ? (SCH.command ? `Times are this computer's (${esc(SCH.timezone||"local")}): that is when its scheduler fires. Save registers each job with it; a job runs <span class="mono">${esc(SCH.command)}</span>.`
                                                : `Set <span class="mono">[run].scheduled</span> in taska.toml (the command a job runs) before saving.`)
                                 : `This computer (${esc(SCH.platform)}) cannot register jobs yet: saving keeps the rows in taska.toml.`;
-  const owner = SCH.owner ? `Previews, review copies and held mails go to <span class="mono">${esc(SCH.owner)}</span> (<span class="mono">[report].owner</span> in taska.toml).` : `No owner address yet: set <span class="mono">[report].owner</span> in taska.toml or a preview's To.`;
-  $("#left").innerHTML = `<div id="schedules"><div class="muted" style="font-size:13px;margin:2px 0 8px">${note}<br>${owner}</div>
+  $("#left").innerHTML = `<div id="schedules"><div class="muted" style="font-size:13px;margin:2px 0 8px">${note}</div>
+    <div class="owner"><label for="sch-owner">Previews, review copies and held mails go to</label><input id="sch-owner" type="email" data-f="owner" inputmode="email" autocomplete="off" placeholder="owner@example.com" value="${esc(SCH.owner||"")}"><span class="muted">saved with Save (<span class="mono">[report].owner</span>)</span></div>
     ${schErr?`<div class="err">${esc(schErr)}</div>`:""}
     ${SCH.schedules.map((s,i) => schEdit.has(i) ? schForm(s,i) : schCard(s,i)).join("") || `<div class="blank"><b>No schedules yet</b>Add one: a preview to you on Friday, a send to the reader on Monday.</div>`}
     <div class="bar"><button class="btn" id="sch-add">Add schedule</button><button class="btn primary" id="sch-save">Save</button>${schDirty?`<span class="muted">Unsaved changes</span>`:""}</div></div>`;
   const mark = () => { schDirty = true; };
+  $("#sch-owner").oninput = mark;
   $("#sch-add").onclick = () => { schRead(); SCH.schedules.push({name:"", kind:"preview", days:[5], time:"17:00", to:[], cc:[], include:{}, on:true, review:false}); schEdit.add(SCH.schedules.length-1); schErr = ""; mark(); renderSchedules(); };
   document.querySelectorAll("#schedules [data-edit]").forEach(b => b.onclick = () => { schRead(); schEdit.add(+b.dataset.edit); renderSchedules(); });
   document.querySelectorAll("#schedules [data-done]").forEach(b => b.onclick = () => { schRead(); schEdit.delete(+b.dataset.done); mark(); renderSchedules(); });
@@ -1070,8 +1072,8 @@ async function renderSchedules(){
   document.querySelectorAll("#schedules [data-run]").forEach(b => b.onclick = () => start(+b.dataset.run, false));
   document.querySelectorAll("#schedules [data-send]").forEach(b => b.onclick = () => start(+b.dataset.send, true));
   $("#sch-save").onclick = async () => {
-    const rows = schRead();
-    const [ok, j] = await schPost("/api/schedules", {schedules: rows});
+    const rows = schRead(), owner = $("#sch-owner").value.trim();
+    const [ok, j] = await schPost("/api/schedules", Object.assign({schedules: rows}, owner && owner !== (SCH.owner||"") ? {owner} : {}));
     if (!ok){ schErr = j.error || "Could not save"; return renderSchedules(); }
     schErr = ""; await loadSchedules();
     toast(SCH.can_register ? `Saved and registered ${j.registered.filter(x=>x.action==="loaded").length} job(s)` : "Saved to taska.toml");

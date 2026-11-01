@@ -361,3 +361,27 @@ def test_command_for_passes_send_as_flags(tmp_path):
     assert W.command_for(old, TWO[0]) == "python3 ~/proj/bin/weekly.py preview --name Friday preview"
     assert W.command_for(old, TWO[0], send=True) == W.command_for(old, TWO[0])
     assert W.default_command(cfg, TWO[1], send=True).endswith('run-schedule "Monday send" --send')
+
+
+# ---------- the owner address: the one [report] key the page edits ----------
+
+def test_save_sets_the_owner_in_report(tmp_path):
+    (tmp_path / "taska.toml").write_text('[project]\nname = "Harbor Logistics"\n\n[report]\ntitle = "Harbor"   # keep me\nowner = "old@example.com"\ngreet = "Nora"\n')
+    W.save(tmp_path, TWO[:1], owner="opal@example.com")
+    text = (tmp_path / "taska.toml").read_text()
+    assert 'title = "Harbor"   # keep me\nowner = "opal@example.com"\ngreet = "Nora"\n' in text and text.count("owner =") == 1
+    assert C.load(tmp_path).report["owner"] == "opal@example.com" and text.count("[[schedules]]") == 1
+
+    (tmp_path / "taska.toml").write_text('[project]\nname = "Harbor Logistics"\n[report]\ntitle = "Harbor"\n[plan]\nepics = []\n')
+    W.save(tmp_path, [], owner="opal@example.com")
+    text = (tmp_path / "taska.toml").read_text()
+    assert '[report]\nowner = "opal@example.com"\ntitle = "Harbor"\n[plan]\n' in text   # inserted after the header
+
+    (tmp_path / "taska.toml").write_text('[project]\nname = "Harbor Logistics"\n')
+    W.save(tmp_path, [], owner="opal@example.com")
+    assert C.load(tmp_path).report["owner"] == "opal@example.com"   # a [report] table appended
+
+    before = (tmp_path / "taska.toml").read_text()
+    with pytest.raises(ValueError, match="owner"):
+        W.save(tmp_path, [], owner="not an address")
+    assert (tmp_path / "taska.toml").read_text() == before

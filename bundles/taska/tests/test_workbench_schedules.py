@@ -99,6 +99,7 @@ def test_page_has_the_schedules_panel():
     assert "Send now" in page and 'data-send=' in page and "Review first" in page and "Send to the reader automatically" in page
     assert "SCH.timezone" in page and "s.what" in page   # the sentence and the machine's time come from the API, not the page
     assert "SCH.owner" in page   # a preview with no To shows the owner it goes to
+    assert 'data-f="owner"' in page   # the owner address is edited here, saved with Save
 
 
 def test_the_page_opens_on_a_view_named_in_the_query(served):
@@ -190,3 +191,11 @@ def test_rows_say_what_each_job_does_and_the_owner(tmp_path, monkeypatch):
         assert nxt.isoweekday() == 1 and nxt.strftime("%H:%M") == "14:00" and nxt.utcoffset() == dt.datetime.now().astimezone().utcoffset()
     finally:
         srv.shutdown()
+
+
+def test_post_saves_the_owner(served):
+    base, proj, agents, calls = served
+    code, d = _post(base, {"schedules": [{"name": "Friday preview", "kind": "preview", "days": [5], "time": "20:00"}], "owner": "opal@example.com"})
+    assert code == 200 and d["owner"] == "opal@example.com" and C.load(proj).report["owner"] == "opal@example.com"
+    code, d = _post(base, {"schedules": [], "owner": "nope"})
+    assert code == 400 and "owner" in d["error"] and C.load(proj).report["owner"] == "opal@example.com"
