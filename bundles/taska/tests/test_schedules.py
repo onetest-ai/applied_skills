@@ -156,7 +156,9 @@ def test_the_cli_lists_schedules_with_their_next_run(tmp_path):
     from conftest import run_cli
     cfg = _project(tmp_path, '[[schedules]]\nname = "Monday send"\nkind = "send"\ndays = [1]\ntime = "14:00"\nto = ["opal@example.com"]\n')
     r = run_cli(tmp_path, "schedules")
-    assert r["schedules"][0]["name"] == "Monday send" and r["schedules"][0]["next"].endswith("14:00:00+02:00") and r["schedules"][0]["to"] == ["opal@example.com"]
+    nxt = dt.datetime.fromisoformat(r["schedules"][0]["next"])
+    assert r["schedules"][0]["name"] == "Monday send" and r["schedules"][0]["to"] == ["opal@example.com"]
+    assert nxt.isoweekday() == 1 and nxt.strftime("%H:%M") == "14:00" and nxt.utcoffset() == dt.datetime.now().astimezone().utcoffset()   # the machine's time: when launchd fires
 
 
 # ---------- the writer: [[schedules]] are the only part of taska.toml it rewrites ----------

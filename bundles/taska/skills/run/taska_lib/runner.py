@@ -51,11 +51,8 @@ def _run_shell(cmd, cwd):
 
 
 def _owner(cfg, s):
-    """The owner's address: [report].owner, else where the project's preview schedule goes, else this schedule's To."""
-    if (cfg.report or {}).get("owner"):
-        return cfg.report["owner"]
-    prev = next((x for x in cfg.schedules if x.kind == "preview" and x.to), None)
-    return prev.to[0] if prev else (s.to[0] if s.to else None)
+    """The owner's address (workbench.owner_address), else this schedule's To."""
+    return WB.owner_address(cfg) or (s.to[0] if s.to else None)
 
 
 def run(cfg, s, week=None, today=None, run=None, reports=None, dry_run=False, send=False):

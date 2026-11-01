@@ -118,7 +118,7 @@ def test_run_now_spawns_the_schedule_detached(tmp_path, monkeypatch):
         d = json.loads(urllib.request.urlopen(req).read())
         assert d["started"] is True and d["pid"] == 4242 and d["week"] and d["dir"].endswith(d["week"])
         argv, log = spawned[0]
-        assert argv[-2:] == ["run-schedule", "Friday preview"] and "--project" in argv and str(log).endswith("friday-preview.log")
+        assert argv == ["/bin/zsh", "-lic", "python3 bin/weekly.py preview"] and str(log).endswith("friday-preview.log")   # what launchd runs
         req = urllib.request.Request(base + "/api/schedules/run", data=json.dumps({"name": "nope"}).encode(), method="POST",
                                      headers={"Content-Type": "application/json"})
         with pytest.raises(urllib.error.HTTPError) as e:
@@ -126,5 +126,64 @@ def test_run_now_spawns_the_schedule_detached(tmp_path, monkeypatch):
         assert e.value.code == 400
         got = json.loads(urllib.request.urlopen(base + "/api/schedules").read())
         assert got["reports_dir"] == str(tmp_path / "reports")
+    finally:
+        srv.shutdown()
+
+
+def _serve(tmp_path, toml, spawned):
+    (tmp_path / "taska.toml").write_text(toml)
+    cfg = C.load(tmp_path); S.ensure(cfg.store)
+    srv = W.server(cfg.store, cfg, _free_port(), register_opts={"agents_dir": tmp_path / "a", "launchctl": lambda *a: None,
+                                                               "spawn": lambda argv, log: spawned.append(argv) or 1})
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, f"http://127.0.0.1:{srv.server_address[1]}"
+
+
+def _run(base, body):
+    req = urllib.request.Request(base + "/api/schedules/run", data=json.dumps(body).encode(), method="POST",
+                                 headers={"Content-Type": "application/json"})
+    return json.loads(urllib.request.urlopen(req).read())
+
+
+REVIEWED = TOML.replace("{kind}", "{kind} {flags}") + '''
+[[schedules]]
+name = "Monday send"
+kind = "send"
+days = [1]
+time = "14:00"
+to = ["reader@example.com"]
+cc = ["lead@example.com"]
+review = true
+
+[report]
+owner = "owner@example.com"
+'''
+
+
+def test_send_now_adds_the_flag_and_run_now_does_not(tmp_path, monkeypatch):
+    monkeypatch.setattr(SCH.sys, "platform", "darwin")
+    spawned = []
+    srv, base = _serve(tmp_path, REVIEWED, spawned)
+    try:
+        _run(base, {"name": "Monday send", "send": True})
+        _run(base, {"name": "Monday send"})
+        assert [a[-1] for a in spawned] == ["python3 bin/weekly.py send --send", "python3 bin/weekly.py send"]
+    finally:
+        srv.shutdown()
+
+
+def test_rows_say_what_each_job_does_and_the_owner(tmp_path, monkeypatch):
+    import datetime as dt
+    monkeypatch.setattr(SCH.sys, "platform", "darwin")
+    srv, base = _serve(tmp_path, REVIEWED, [])
+    try:
+        d = json.loads(urllib.request.urlopen(base + "/api/schedules").read())
+        prev, send = d["schedules"]
+        assert prev["review"] is False and send["review"] is True
+        assert prev["what"] == "A preview of the week to owner@example.com"
+        assert send["what"] == "The weekly report to reader@example.com, cc lead@example.com, after your review"
+        assert d["owner"] == "owner@example.com" and d["timezone"] == dt.datetime.now().astimezone().tzname()
+        nxt = dt.datetime.fromisoformat(send["next"])
+        assert nxt.isoweekday() == 1 and nxt.strftime("%H:%M") == "14:00" and nxt.utcoffset() == dt.datetime.now().astimezone().utcoffset()
     finally:
         srv.shutdown()
