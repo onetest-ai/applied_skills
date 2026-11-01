@@ -999,7 +999,8 @@ function chips(list){ return (list||[]).length ? list.map(a => `<span class="chi
 function schCard(s, i){
   const reg = s.label && SCH.registered && SCH.registered[s.label];
   const when = s.on === false ? `<span class="tag off">Off</span>` : `Every ${esc(dayWords(s.days))} at <b class="mono">${esc(s.time)}</b> (${esc(SCH.timezone||"this machine's time")})` + (s.next ? ` · next <b class="mono">${esc(nextWords(s.next))}</b>` : "");
-  const who = s.kind === "update" ? "" : `<div class="who"><span>To</span>${chips(s.to)}${s.kind === "send" ? `<span>Cc</span>${chips(s.cc)}` : ""}</div>`;
+  const to = (s.to||[]).length ? s.to : (s.kind === "preview" && SCH.owner ? [SCH.owner] : []);   // a preview with no To goes to the owner
+  const who = s.kind === "update" ? "" : `<div class="who"><span>To</span>${chips(to)}${s.kind === "send" ? `<span>Cc</span>${chips(s.cc)}` : ""}</div>`;
   const mode = s.kind === "send" ? `<div class="mode">
       <label><input type="radio" name="mode-${i}" data-review="${i}" value="1" ${s.review?"checked":""}> Review first: the run mails me, I press Send</label>
       <label><input type="radio" name="mode-${i}" data-review="${i}" value="0" ${s.review?"":"checked"}> Send to the reader automatically</label></div>` : "";
