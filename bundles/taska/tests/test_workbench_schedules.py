@@ -96,6 +96,8 @@ def test_post_needs_json(served):
 def test_page_has_the_schedules_panel():
     page = W.PAGE.read_text()
     assert 'id="schedules"' in page and "/api/schedules" in page and 'data-v="schedules"' in page and "renderSchedules" in page
+    assert "Send now" in page and 'data-send=' in page and "Review first" in page and "Send to the reader automatically" in page
+    assert "SCH.timezone" in page and "s.what" in page   # the sentence and the machine's time come from the API, not the page
 
 
 def test_the_page_opens_on_a_view_named_in_the_query(served):

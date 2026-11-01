@@ -228,7 +228,13 @@ h3 .count{color:var(--ink-3);font-weight:400}
 .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%) translateY(20px);opacity:0;background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:var(--r-md);transition:opacity .2s ease, transform .2s ease;z-index:50;pointer-events:none}
 .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
 .blank{color:var(--ink-3);padding:30px 4px;text-align:left}
-#schedules .row{border:1px solid var(--line);border-radius:var(--r-md);padding:12px 14px;margin:0 0 10px;display:grid;grid-template-columns:1fr 1fr;gap:8px 14px}
+#schedules .card{border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);box-shadow:var(--shadow);padding:14px 16px;margin:0 0 10px;display:grid;gap:8px}
+#schedules .card .head{display:flex;align-items:center;gap:8px;font-size:15px}
+#schedules .card .what{color:var(--ink-2)}#schedules .card .when{font-size:13px;color:var(--ink-3)}
+#schedules .who{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:13px}#schedules .who>span:not(.chip){color:var(--ink-3);margin-right:2px}#schedules .who .chip{font-size:12px;padding:2px 8px}
+#schedules .mode{display:flex;flex-wrap:wrap;gap:4px 18px;font-size:13px;color:var(--ink-2)}#schedules .mode label{display:inline-flex;align-items:center;gap:6px}
+#schedules .tag.kind{background:var(--accent-soft);color:var(--accent)}#schedules .tag.done{background:var(--done-soft);color:var(--done)}#schedules .tag.warn{background:var(--warn-soft);color:var(--warn)}#schedules .tag.off{background:var(--surface-2);color:var(--ink-3)}
+#schedules .row{border:1px solid var(--line-strong);border-radius:var(--r-md);padding:12px 14px;margin:0 0 10px;display:grid;grid-template-columns:1fr 1fr;gap:8px 14px}
 #schedules .row label{display:block;font-size:12px;color:var(--ink-3);margin-bottom:2px}
 #schedules .row input[type=text],#schedules .row input[type=time],#schedules .row select{height:30px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--bg);padding:0 8px;width:100%}
 #schedules .days label,#schedules .inc label{display:inline-flex;align-items:center;gap:4px;margin:0 10px 0 0;font-size:13px;color:var(--ink-2)}
@@ -973,56 +979,100 @@ document.addEventListener("keydown", e => {
   if (e.key==="ArrowRight") $("#next").click();
   if (e.key==="/"){ e.preventDefault(); $("#q").focus(); }
 });
-/* ---------- schedules: the project's jobs, edited here and registered on Save (live page only) ---------- */
+/* ---------- schedules: the project's jobs as cards, edited in place and registered on Save (live page only) ---------- */
 const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], INC = {body:"mail body", docx:"the docx", link:"link to the folder", pptx:"slides (pptx)", workbench:"workbench copy"};
-let SCH = null, schErr = "";
-async function loadSchedules(){ const r = await fetch("/api/schedules",{cache:"no-store"}); SCH = await r.json(); }
-function schRow(s, i){
-  const inc = Object.assign({body:true,docx:true,link:true,pptx:false,workbench:false}, s.include || {});
+const KIND_LABEL = {preview:"Preview", send:"Send", update:"Update"};
+let SCH = null, schErr = "", schEdit = new Set(), schDirty = false;
+async function loadSchedules(){ const r = await fetch("/api/schedules",{cache:"no-store"}); SCH = await r.json(); schEdit = new Set(); schDirty = false; }
+function dayWords(days){
+  const d = [...new Set(days||[])].sort();
+  if (d.length === 7) return "Every day";
+  if (d.join() === "1,2,3,4,5") return "Mon–Fri";
+  return d.map(k => DAYS[k-1]).join(", ") || "no day";
+}
+function nextWords(iso){
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined,{weekday:"short",day:"numeric",month:"short"}) + " " + iso.slice(11,16);
+}
+function chips(list){ return (list||[]).length ? list.map(a => `<span class="chip mono">${esc(a)}</span>`).join("") : `<span class="muted">nobody</span>`; }
+function schCard(s, i){
   const reg = s.label && SCH.registered && SCH.registered[s.label];
+  const when = s.on === false ? `<span class="tag off">Off</span>` : `Every ${esc(dayWords(s.days))} at <b class="mono">${esc(s.time)}</b> (${esc(SCH.timezone||"this machine's time")})` + (s.next ? ` · next <b class="mono">${esc(nextWords(s.next))}</b>` : "");
+  const who = s.kind === "update" ? "" : `<div class="who"><span>To</span>${chips(s.to)}${s.kind === "send" ? `<span>Cc</span>${chips(s.cc)}` : ""}</div>`;
+  const mode = s.kind === "send" ? `<div class="mode">
+      <label><input type="radio" name="mode-${i}" data-review="${i}" value="1" ${s.review?"checked":""}> Review first: the run mails me, I press Send</label>
+      <label><input type="radio" name="mode-${i}" data-review="${i}" value="0" ${s.review?"":"checked"}> Send to the reader automatically</label></div>` : "";
+  return `<div class="card" data-i="${i}">
+    <div class="head"><b>${esc(s.name||"(unnamed)")}</b><span class="tag kind">${KIND_LABEL[s.kind]||esc(s.kind)}</span>${reg?`<span class="tag done">✓ registered</span>`:`<span class="tag warn">not registered yet</span>`}</div>
+    <div class="what">${esc(s.what||"")}</div>
+    <div class="when">${when}</div>
+    ${who}${mode}
+    <div class="foot"><button class="btn" data-run="${i}" ${s.name?"":"disabled"} title="Run this job now, in the background, exactly as the scheduler would">Run now</button>${s.kind === "send" && s.review ? `<button class="btn primary" data-send="${i}" title="Send the reviewed report to the reader now">Send now</button>` : ""}<a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="file://${esc(SCH.reports_dir||"")}/" title="The report folder">Open the files</a><span style="margin-left:auto;display:inline-flex;gap:6px"><button class="btn" data-edit="${i}">Edit</button><button class="btn" data-rm="${i}">Remove</button></span></div>
+  </div>`;
+}
+function schForm(s, i){
+  const inc = Object.assign({body:true,docx:true,link:true,pptx:false,workbench:false}, s.include || {});
   return `<div class="row" data-i="${i}">
     <div><label>Name</label><input type="text" data-f="name" value="${esc(s.name||"")}"></div>
     <div><label>What</label><select data-f="kind"><option value="preview" ${s.kind==="preview"?"selected":""}>Preview to me</option><option value="send" ${s.kind==="send"?"selected":""}>Send to the reader</option><option value="update" ${s.kind==="update"?"selected":""}>Update the tree only</option></select></div>
     <div class="wide days"><label>Days</label>${DAYS.map((d,k)=>`<label><input type="checkbox" data-d="${k+1}" ${(s.days||[]).includes(k+1)?"checked":""}>${d}</label>`).join("")}</div>
-    <div><label>Time (${esc(SCH.timezone||"project time")})</label><input type="time" data-f="time" value="${esc(s.time||"09:00")}"></div>
+    <div><label>Time (${esc(SCH.timezone||"this machine's time")})</label><input type="time" data-f="time" value="${esc(s.time||"09:00")}"></div>
     <div><label>On</label><select data-f="on"><option value="1" ${s.on!==false?"selected":""}>On</option><option value="0" ${s.on===false?"selected":""}>Off</option></select></div>
     <div><label>To (comma-separated)</label><input type="text" data-f="to" value="${esc((s.to||[]).join(", "))}"></div>
     <div><label>Cc</label><input type="text" data-f="cc" value="${esc((s.cc||[]).join(", "))}"></div>
     <div class="wide inc"><label>Include</label>${Object.keys(INC).map(k=>`<label><input type="checkbox" data-inc="${k}" ${inc[k]?"checked":""}>${INC[k]}</label>`).join("")}</div>
-    <div class="foot">${s.next?`<span>Next run: <b class="mono">${esc(s.next.replace("T"," ").slice(0,16))}</b></span>`:`<span>Not scheduled</span>`}${s.label?`<span class="mono">${esc(s.label)}</span>`:""}${reg?`<span>✓ registered</span>`:s.label?`<span>not registered yet</span>`:""}<span style="margin-left:auto;display:inline-flex;gap:6px"><button class="btn" data-run="${esc(s.name||"")}" ${s.name?"":"disabled"} title="Run this schedule now, in the background">Run now</button><a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="file://${esc(SCH.reports_dir||"")}/" title="The report folder">Open the files</a><button class="btn" data-rm="${i}">Remove</button></span></div>
+    <div class="foot"><span class="muted">Save registers the job with this computer's scheduler.</span><span style="margin-left:auto;display:inline-flex;gap:6px"><button class="btn" data-done="${i}">Done</button><button class="btn" data-rm="${i}">Remove</button></span></div>
   </div>`;
 }
+function schReadForm(r){
+  const f = n => r.querySelector(`[data-f="${n}"]`).value;
+  const list = v => v.split(",").map(x=>x.trim()).filter(Boolean);
+  const include = {}; r.querySelectorAll("[data-inc]").forEach(c => include[c.dataset.inc] = c.checked);
+  const kind = f("kind"), i = +r.dataset.i, review = kind === "send" && !!(SCH.schedules[i] && SCH.schedules[i].review);
+  return { name: f("name").trim(), kind, days: [...r.querySelectorAll("[data-d]")].filter(c=>c.checked).map(c=>+c.dataset.d),
+           time: f("time"), to: list(f("to")), cc: list(f("cc")), include, on: f("on")==="1", review };
+}
 function schRead(){
-  return [...document.querySelectorAll("#schedules .row")].map(r => {
-    const f = n => r.querySelector(`[data-f="${n}"]`).value;
-    const list = v => v.split(",").map(x=>x.trim()).filter(Boolean);
-    const include = {}; r.querySelectorAll("[data-inc]").forEach(c => include[c.dataset.inc] = c.checked);
-    return { name: f("name").trim(), kind: f("kind"), days: [...r.querySelectorAll("[data-d]")].filter(c=>c.checked).map(c=>+c.dataset.d),
-             time: f("time"), to: list(f("to")), cc: list(f("cc")), include, on: f("on")==="1" };
-  });
+  document.querySelectorAll("#schedules .row").forEach(r => { SCH.schedules[+r.dataset.i] = schReadForm(r); });
+  return SCH.schedules.map(s => ({name:s.name, kind:s.kind, days:s.days, time:s.time, to:s.to||[], cc:s.cc||[], include:s.include||{}, on:s.on!==false, review:!!s.review}));
+}
+async function schPost(path, body){
+  const r = await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const j = await r.json().catch(()=>({error:"No answer"}));
+  return [r.ok, j];
 }
 async function renderSchedules(){
   if (!LIVE){ $("#left").innerHTML = `<div class="blank"><b>Schedules</b>Edited on the live workbench only.</div>`; return; }
   if (!SCH) await loadSchedules();
-  const note = SCH.can_register ? (SCH.command ? `Saving registers each job with the Mac's scheduler (launchd) and runs <span class="mono">${esc(SCH.command)}</span>.` : `Set <span class="mono">[run].scheduled</span> in taska.toml (the command a job runs) before saving.`)
+  const note = SCH.can_register ? (SCH.command ? `Times are this computer's (${esc(SCH.timezone||"local")}): that is when its scheduler fires. Save registers each job with it; a job runs <span class="mono">${esc(SCH.command)}</span>.`
+                                               : `Set <span class="mono">[run].scheduled</span> in taska.toml (the command a job runs) before saving.`)
                                 : `This computer (${esc(SCH.platform)}) cannot register jobs yet: saving keeps the rows in taska.toml.`;
-  $("#left").innerHTML = `<div id="schedules"><div class="muted" style="font-size:13px;margin:2px 0 8px">${note}</div>
+  const owner = SCH.owner ? `Previews, review copies and held mails go to <span class="mono">${esc(SCH.owner)}</span> (<span class="mono">[report].owner</span> in taska.toml).` : `No owner address yet: set <span class="mono">[report].owner</span> in taska.toml or a preview's To.`;
+  $("#left").innerHTML = `<div id="schedules"><div class="muted" style="font-size:13px;margin:2px 0 8px">${note}<br>${owner}</div>
     ${schErr?`<div class="err">${esc(schErr)}</div>`:""}
-    ${SCH.schedules.map(schRow).join("") || `<div class="blank"><b>No schedules yet</b>Add one: a preview to you on Friday, a send to the reader on Monday.</div>`}
-    <div class="bar"><button class="btn" id="sch-add">Add schedule</button><button class="btn primary" id="sch-save">Save</button></div></div>`;
-  $("#sch-add").onclick = () => { SCH.schedules = schRead().concat([{name:"", kind:"preview", days:[5], time:"17:00", to:[], cc:[], include:{}, on:true}]); schErr = ""; renderSchedules(); };
-  document.querySelectorAll("#schedules [data-run]").forEach(b => b.onclick = async () => {
-    const r = await fetch("/api/schedules/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name: b.dataset.run})});
-    const j = await r.json().catch(()=>({error:"Could not start"}));
-    if (!r.ok){ schErr = j.error || "Could not start"; return renderSchedules(); }
-    toast(`Started: ${b.dataset.run} for the week of ${j.week}; its files land in ${j.dir}`);
-  });
-  document.querySelectorAll("#schedules [data-rm]").forEach(b => b.onclick = () => { const rows = schRead(); rows.splice(+b.dataset.rm, 1); SCH.schedules = rows; schErr = ""; renderSchedules(); });
+    ${SCH.schedules.map((s,i) => schEdit.has(i) ? schForm(s,i) : schCard(s,i)).join("") || `<div class="blank"><b>No schedules yet</b>Add one: a preview to you on Friday, a send to the reader on Monday.</div>`}
+    <div class="bar"><button class="btn" id="sch-add">Add schedule</button><button class="btn primary" id="sch-save">Save</button>${schDirty?`<span class="muted">Unsaved changes</span>`:""}</div></div>`;
+  const mark = () => { schDirty = true; };
+  $("#sch-add").onclick = () => { schRead(); SCH.schedules.push({name:"", kind:"preview", days:[5], time:"17:00", to:[], cc:[], include:{}, on:true, review:false}); schEdit.add(SCH.schedules.length-1); schErr = ""; mark(); renderSchedules(); };
+  document.querySelectorAll("#schedules [data-edit]").forEach(b => b.onclick = () => { schRead(); schEdit.add(+b.dataset.edit); renderSchedules(); });
+  document.querySelectorAll("#schedules [data-done]").forEach(b => b.onclick = () => { schRead(); schEdit.delete(+b.dataset.done); mark(); renderSchedules(); });
+  document.querySelectorAll("#schedules [data-review]").forEach(r => r.onchange = () => { SCH.schedules[+r.dataset.review].review = r.value === "1"; mark(); renderSchedules(); });
+  document.querySelectorAll("#schedules [data-rm]").forEach(b => b.onclick = () => { schRead(); SCH.schedules.splice(+b.dataset.rm, 1); schEdit = new Set(); schErr = ""; mark(); renderSchedules(); });
+  const start = async (i, send) => {
+    const s = SCH.schedules[i];
+    if (send && !confirm(`Send the reviewed ${s.name} to ${(s.to||[]).join(", ") || "the reader"} now?`)) return;
+    const [ok, j] = await schPost("/api/schedules/run", {name: s.name, send});
+    if (!ok){ schErr = j.error || "Could not start"; return renderSchedules(); }
+    toast(`${send ? "Sending" : "Started"}: ${s.name} for the week of ${j.week}; its files land in ${j.dir}`);
+  };
+  document.querySelectorAll("#schedules [data-run]").forEach(b => b.onclick = () => start(+b.dataset.run, false));
+  document.querySelectorAll("#schedules [data-send]").forEach(b => b.onclick = () => start(+b.dataset.send, true));
   $("#sch-save").onclick = async () => {
-    const r = await fetch("/api/schedules",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({schedules: schRead()})});
-    const j = await r.json().catch(()=>({error:"Could not save"}));
-    if (!r.ok){ schErr = j.error || "Could not save"; const rows = schRead(); SCH.schedules = rows; return renderSchedules(); }
-    schErr = ""; SCH = null; await loadSchedules();
+    const rows = schRead();
+    const [ok, j] = await schPost("/api/schedules", {schedules: rows});
+    if (!ok){ schErr = j.error || "Could not save"; return renderSchedules(); }
+    schErr = ""; await loadSchedules();
     toast(SCH.can_register ? `Saved and registered ${j.registered.filter(x=>x.action==="loaded").length} job(s)` : "Saved to taska.toml");
     renderSchedules();
   };
