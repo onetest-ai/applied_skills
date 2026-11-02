@@ -328,6 +328,12 @@ def cmd_done(a):
                      "hint": "an --ack needs proof of reading: one --quote of 8+ contiguous words taken from each part in "
                              "parts_without_quote (each part starts at the ts in `starts`), then run the same done command again"}, 1)
             note = (note + " " if note else "") + f"coverage acknowledged: {a.ack} (parts {gap})"
+        dc = LO.decisions(ev[a.evidence], S.events(st))
+        if dc["count"] and a.decisions != dc["token"]:   # every meeting: decisions and risks are said, not committed to
+            out({"status": "decisions", "evidence": a.evidence, "count": dc["count"],
+                 "hint": f"run `leftovers --evidence {a.evidence}` and decide each sentence under `decisions`: record it as a "
+                         "decision or a risk (create, quoting it), or leave it when it is neither; then run the same done "
+                         "command again, adding --decisions <decisions.token>"}, 1)
         lo = LO.leftovers(ev[a.evidence], S.events(st))
         if lo["long"] and lo["count"] and a.leftovers != lo["token"]:
             out({"status": "leftovers", "evidence": a.evidence, "count": lo["count"],
@@ -343,7 +349,8 @@ def cmd_leftovers(a):
     ev = S.evidence(st)
     if a.evidence not in ev:
         out({"status": "error", "error": f"unknown evidence {a.evidence}"}, 1)
-    out(dict(LO.leftovers(ev[a.evidence], S.events(st)), status="ok"))
+    item, events = ev[a.evidence], S.events(st)
+    out(dict(LO.leftovers(item, events), decisions=LO.decisions(item, events), status="ok"))
 
 
 def cmd_ingest(a):
@@ -695,6 +702,7 @@ def main():
     p.add_argument("--ack", help="why a third of a long meeting produced nothing (else done refuses: status coverage)")
     p.add_argument("--quote", action="append", help="with --ack: verbatim words from each acknowledged part (proof it was read)")
     p.add_argument("--leftovers", help="the token `leftovers` printed for this long meeting's current state")
+    p.add_argument("--decisions", help="the decisions token `leftovers` printed after the last apply (every meeting with decision or risk cues)")
     p = sp.add_parser("leftovers", help="sentences that sound like work and that no applied event quotes, per third; with a token for done")
     p.add_argument("--evidence", required=True)
     p = sp.add_parser("ingest"); p.add_argument("--file", required=True); p.add_argument("--source", default="ingest")

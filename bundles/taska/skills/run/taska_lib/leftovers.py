@@ -18,8 +18,15 @@ MARKERS = re.compile(   # matched on the normalised sentence: lower case, straig
     r"let's|let us|make sure|next steps?|action items?|deadline|deliverables?|assigned to|eta|blocked|waiting (on|for)|"
     r"by (monday|tuesday|wednesday|thursday|friday|tomorrow|next|end of|eod|early|mid|late|the end|the \d+(st|nd|rd|th)|"
     r"january|february|march|april|may|june|july|august|september|october|november|december)|"
-    r"decid(e|ed|es|ing|sion)|agreed?|risks?|owes?|follow(ing)? up|get back|come back|reach out|circle back|"
+    r"decid\w*|decisions?|agreed?|risks?|owes?|follow(ing)? up|get back|come back|reach out|circle back|"
     r"take (that|this|it) (on|away|offline)|take ownership|can you (?!hear|see)|could you|please (send|share|draft|look|check))\b")
+# decisions and risks are said as judgements, not commitments ("that's the rationale to deprioritize", "it's locked
+# in", "my concern is"). Measured Nov 2 on the 12 key meetings of the Oct 31 run: 101 sentences (median 4.5 per meeting, 27 at
+# most), 6 of the 8 missed key decisions/risks listed; "not going to" and "instead of" were dropped: 42 sentences, no miss
+DECISION_CUES = re.compile(
+    r"\b(decision|decisions|decid\w*|deprioriti[sz]\w*|go with|going with|locked? in|rather than|"
+    r"the plan is|rationale|we're aligned|aligned on|sign(ed)? off|approv\w*|risks?|risky|concern\w*|worried|worry|"
+    r"bugs?|blockers?|dependenc\w*|danger\w*|disruption)\b")
 MIN_WORDS = 6
 TEXT_CHARS = 240
 SPLIT = re.compile(r"(?<=[.?!])\s+")
@@ -35,8 +42,8 @@ class Sentence:
     part: int
 
 
-def sentences(item, parts=3) -> list[Sentence]:
-    """Marker-bearing sentences of at least MIN_WORDS words, in reading order, located in coverage's coordinates."""
+def sentences(item, parts=3, pattern=MARKERS) -> list[Sentence]:
+    """Sentences of at least MIN_WORDS words that `pattern` matches, in reading order, in coverage's coordinates."""
     full = norm(S.full_text(item))
     n = len(full)
     blocks = [(t.get("ts", ""), t.get("speaker", ""), t.get("text", "")) for t in item.get("turns") or []]
@@ -48,7 +55,7 @@ def sentences(item, parts=3) -> list[Sentence]:
         for s in SPLIT.split(text):
             s = s.strip()
             q = norm(s)
-            if len(q.split()) < MIN_WORDS or not MARKERS.search(q):
+            if len(q.split()) < MIN_WORDS or not pattern.search(q):
                 continue
             off = full.find(q, cursor)
             if off < 0:
@@ -60,14 +67,31 @@ def sentences(item, parts=3) -> list[Sentence]:
     return out
 
 
-def leftovers(item, events, parts=3) -> dict:
+def _uncovered(item, events, pattern, parts):
+    """(rows, spans): the sentences `pattern` matches that no applied quote covers, and those quotes' spans."""
     spans = quoted_spans(item, events)
+    rows = [{"ts": s.ts, "speaker": s.speaker, "text": s.text, "offset": s.offset, "part": s.part}
+            for s in sentences(item, parts, pattern) if not any(a < s.offset + s.length and s.offset < b for a, b in spans)]
+    return rows, spans
+
+
+def _token(kind, item, spans, rows):
+    return hashlib.sha256(f"{kind}|{item['id']}|{len(spans)}|{','.join(str(r['offset']) for r in rows)}".encode()).hexdigest()[:12]
+
+
+def decisions(item, events, parts=3) -> dict:
+    """Every sentence with a decision or risk cue that no applied quote covers, on any meeting; `done` needs the token
+    issued for the current state, so each was looked at after the last apply (a decision or a risk, or not one)."""
+    rows, spans = _uncovered(item, events, DECISION_CUES, parts)
+    return {"sentences": rows, "count": len(rows), "token": _token("d", item, spans, rows)}
+
+
+def leftovers(item, events, parts=3) -> dict:
+    rows, spans = _uncovered(item, events, MARKERS, parts)
     by_part: dict[int, list[dict]] = {p: [] for p in range(1, parts + 1)}
-    for s in sentences(item, parts):
-        if any(a < s.offset + s.length and s.offset < b for a, b in spans):
-            continue
-        by_part[s.part].append({"ts": s.ts, "speaker": s.speaker, "text": s.text, "offset": s.offset})
-    offsets = [x["offset"] for rows in by_part.values() for x in rows]
+    for r in rows:
+        by_part[r["part"]].append({k: r[k] for k in ("ts", "speaker", "text", "offset")})
+    offsets = [x["offset"] for x in rows]
     token = hashlib.sha256(f"{item['id']}|{len(spans)}|{','.join(map(str, offsets))}".encode()).hexdigest()[:12]
     chars = len(norm(S.full_text(item)))
     return {"evidence": item["id"], "chars": chars, "long": chars >= LONG_CHARS,

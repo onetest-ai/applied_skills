@@ -78,3 +78,8 @@ def test_a_long_transcript_is_worked_through_in_sections():
     assert "10,000 words" in step2 and "sections of about 3,000 words" in step2 and "never summarise" in step2.lower()
     skill = (ROOT / "skills" / "run" / "SKILL.md").read_text(encoding="utf-8")
     assert "over 10,000 words" in skill and "on its own" in skill
+
+
+def test_extract_tells_the_reader_about_the_decisions_check():
+    for s in ('"status": "decisions"', "On **every** meeting", "`done --decisions <decisions.token>`", "`create` a `decision`", "`create` a `risk`"):
+        assert s in EXTRACT, s

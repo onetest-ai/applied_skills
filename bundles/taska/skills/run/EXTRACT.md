@@ -48,6 +48,14 @@ For each evidence id you were given, in that order:
    you apply (a commitment whose owner cannot be read, as in a room recording, is a `propose`, never dropped); not
    work → nothing. Then `done --leftovers <the token leftovers printed>`; the token changes with every apply, so
    run `leftovers` again after your last apply.
+   On **every** meeting `done` also answers `"status": "decisions"` when a sentence sounds like a decision or a risk
+   ("we decided", "go with", "locked in", "rather than", "the rationale", "deprioritize", "my concern", "a bug",
+   "depends on") and none of your applied quotes covers it. `$TASKA leftovers --evidence <id>` lists them under
+   `decisions` (a few per meeting). Decisions and risks are said as judgements, not promised as work, so the
+   commitment list does not catch them: decide each one. A choice the group made → `create` a `decision` quoting it;
+   a threat to a date, scope or result → `create` a `risk`; neither (an idea in progress, a question) → nothing. Then
+   `done --decisions <decisions.token>` (with `--leftovers` too on a long meeting); run `leftovers` again after your
+   last apply.
 
 ## What each kind of evidence can show
 - **meeting** — everything below. Most updates come from here.

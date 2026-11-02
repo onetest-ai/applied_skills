@@ -118,3 +118,74 @@ def test_the_leftovers_hint_says_to_repeat_the_same_done_command(tmp_path):
         _note(cfg, line, f"m{i}")
     r = run_cli(tmp_path, "done", "--evidence", EV, check=False)
     assert r["status"] == "leftovers" and "same done command" in r["hint"]
+
+
+# ---------- decisions and risks: checked on every meeting (Nov 2: 8 of 17 key decisions/risks missed; 4 of 5
+# meetings were under the long-meeting threshold, and the marker list never matched "decision") ----------
+
+DECIDE = "So we decided to lock the berth plan the night before, it is locked in after that"
+RISK = "My concern is the crane dependency on the port authority permit for the tender"
+
+
+def test_markers_match_decision_and_decisions():
+    assert LO.MARKERS.search("the big decision is made today") and LO.MARKERS.search("two decisions are open")
+
+
+def test_decision_cues_list_only_uncovered_sentences():
+    for s in ("we will go with the second vendor", "that's the rationale to deprioritize billing",
+              "rather than keeping it in our sharepoint we move it", "there is a bug on the signup page"):
+        assert LO.DECISION_CUES.search(s), s
+    assert not LO.DECISION_CUES.search("Nora will send the forklift list")
+
+
+def test_the_decision_list_is_short_and_shrinks_when_a_decision_is_recorded(tmp_path):
+    cfg = _project(tmp_path)
+    item = dict(_item(cfg))
+    item["turns"] = list(item["turns"]) + [{"speaker": "Opal Rivers", "ts": "00:31:00", "text": DECIDE},
+                                           {"speaker": "Opal Rivers", "ts": "00:32:00", "text": RISK}]
+    d = LO.decisions(item, S.events(cfg.store))
+    assert [x["text"] for x in d["sentences"]] == [DECIDE, RISK] and d["count"] == 2 and len(d["token"]) == 12
+    S.append(cfg.store, [{"type": "create", "mid": "d1", "by": "agent", "evidence": EV, "date": "2026-03-02", "kind": "decision",
+                          "quote": "we decided to lock the berth plan the night before", "fields": {"title": "Lock the berth plan"}, "applied": True}])
+    d2 = LO.decisions(item, S.events(cfg.store))
+    assert [x["text"] for x in d2["sentences"]] == [RISK] and d2["token"] != d["token"]
+
+
+def _with_lines(tmp_path, lines, n_filler=40):
+    cfg = _project(tmp_path, n_filler=n_filler)
+    item = _item(cfg)
+    turns = list(item["turns"])
+    for k, line in enumerate(lines):
+        turns.insert(1 + 3 * k, {"speaker": "Opal Rivers", "ts": f"00:{3 + 10 * k:02d}:30", "text": line})
+    eid = "2026-03-03_meetings_lo000002"
+    S.write_evidence(cfg.store, dict(item, id=eid, at="2026-03-03T10:00:00", turns=turns))
+    for i, w in enumerate(WORK + [EXTRA]):
+        for k in ("w", "v"):   # two events per third: a long meeting's coverage gate wants at least THIN
+            S.append(cfg.store, [{"type": "note", "mid": f"{k}{i}", "by": "agent", "evidence": eid, "date": "2026-03-03",
+                                  "node": "E01", "quote": w, "text": "x"}])
+    return cfg, eid
+
+
+def test_done_refuses_until_the_decision_list_is_seen_on_a_short_meeting(tmp_path):
+    cfg, eid = _with_lines(tmp_path, [DECIDE, RISK])
+    r = run_cli(tmp_path, "done", "--evidence", eid, check=False)
+    assert r["status"] == "decisions" and r["count"] == 2 and "leftovers --evidence" in r["hint"] and "--decisions" in r["hint"]
+    lo = run_cli(tmp_path, "leftovers", "--evidence", eid)
+    assert [x["text"] for x in lo["decisions"]["sentences"]] == [DECIDE, RISK]
+    assert run_cli(tmp_path, "done", "--evidence", eid, "--decisions", "wrong", check=False)["status"] == "decisions"
+    assert run_cli(tmp_path, "done", "--evidence", eid, "--decisions", lo["decisions"]["token"])["status"] == "ok"
+
+
+def test_a_meeting_without_cues_is_not_blocked(tmp_path):
+    cfg, eid = _with_lines(tmp_path, [])
+    assert run_cli(tmp_path, "done", "--evidence", eid)["status"] == "ok"
+
+
+def test_long_meeting_needs_both_tokens(tmp_path):
+    cfg, eid = _with_lines(tmp_path, [DECIDE], n_filler=260)
+    lo = run_cli(tmp_path, "leftovers", "--evidence", eid)
+    first = run_cli(tmp_path, "done", "--evidence", eid, "--leftovers", lo["token"], check=False)
+    assert first["status"] == "decisions"
+    second = run_cli(tmp_path, "done", "--evidence", eid, "--decisions", lo["decisions"]["token"], check=False)
+    assert second["status"] in ("leftovers", "ok") and (second["status"] == "ok" or lo["count"])
+    assert run_cli(tmp_path, "done", "--evidence", eid, "--leftovers", lo["token"], "--decisions", lo["decisions"]["token"])["status"] == "ok"
