@@ -10,6 +10,18 @@ from . import ledger as L, schedules as SCH, pack as PK, staleness as ST, store 
 
 PAGE = Path(__file__).resolve().parent.parent / "workbench.html"
 RUN_DIR = PAGE.parent
+PAGES = ("workbench.html", "schedules.html")
+SHARED = ("tokens.css", "shared.js")
+
+
+def page(name, run_dir=RUN_DIR):
+    """A page of this skill with the shared design tokens and JS helpers inlined (one copy of each, two pages)."""
+    if name not in PAGES:
+        raise ValueError(f"no page {name!r}")
+    run_dir = Path(run_dir)
+    text = (run_dir / name).read_text()
+    text = text.replace("/*__TOKENS__*/", (run_dir / "tokens.css").read_text())
+    return text.replace("/*__SHARED__*/", (run_dir / "shared.js").read_text()).encode()
 
 
 def code_version(run_dir=RUN_DIR):
@@ -17,7 +29,7 @@ def code_version(run_dir=RUN_DIR):
     start-time version with the version on disk is how a stale server shows itself."""
     run_dir = Path(run_dir)
     h = hashlib.sha1()
-    for f in sorted([run_dir / "taska.py", run_dir / "workbench.html", *(run_dir / "taska_lib").rglob("*.py")]):
+    for f in sorted([run_dir / "taska.py", *(run_dir / n for n in PAGES + SHARED), *(run_dir / "taska_lib").rglob("*.py")]):
         h.update(str(f.relative_to(run_dir)).encode() + b"\0" + f.read_bytes())
     return h.hexdigest()[:10]
 
@@ -241,8 +253,9 @@ def server(store, cfg, port, register_opts=None):
         def do_GET(self):
             if not _local_origin(self.headers, port):
                 return self._send(403, {"error": "forbidden host"})
-            if self.path.split("?", 1)[0] in ("/", "/index.html", "/schedules"):   # /?view=schedules opens that view; /schedules is it alone
-                return self._send(200, PAGE.read_bytes(), "text/html", FRAME_CSP)   # every page: only local pages may frame it
+            route = self.path.split("?", 1)[0]
+            if route in ("/", "/index.html", "/schedules"):   # the workbench (content) or the schedules page (operations)
+                return self._send(200, page("schedules.html" if route == "/schedules" else "workbench.html"), "text/html", FRAME_CSP)
             if self.path == "/api/data":
                 return self._send(200, dict(data(store, cfg), code=version()))
             if self.path == "/api/version":
@@ -308,7 +321,7 @@ def export_html(store, cfg):
     # state, where the page's own closing tag no longer ends the script; U+2028/9 are not valid in older JS strings
     blob = json.dumps(data(store, cfg), ensure_ascii=False).replace("<", "\\u003c") \
         .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
-    return PAGE.read_text().replace("/*__DATA__*/null", blob)
+    return page("workbench.html").decode().replace("/*__DATA__*/null", blob)
 
 
 def export(store, cfg, out):

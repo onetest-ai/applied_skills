@@ -93,21 +93,33 @@ def test_post_needs_json(served):
     assert _post(base, {"schedules": []}, ctype="text/plain")[0] == 415
 
 
-def test_page_has_the_schedules_panel():
-    page = W.PAGE.read_text()
-    assert 'id="schedules"' in page and "/api/schedules" in page and 'data-v="schedules"' in page and "renderSchedules" in page
-    assert "Send now" in page and 'data-send=' in page and "Review first" in page and "Send to the reader automatically" in page
-    assert "SCH.timezone" in page and "s.what" in page   # the sentence and the machine's time come from the API, not the page
-    assert "SCH.owner" in page   # a preview with no To shows the owner it goes to
-    assert 'data-f="owner"' in page   # the owner address is edited here, saved with Save
-    assert 'aria-live="polite"' in page and 'role="alert"' in page and "beforeunload" in page and 'inputmode="email"' in page
-    assert "Saving…" in page and "Sending…" in page   # the buttons say what they are doing and cannot be pressed twice
-    for s in ("/api/schedules/preview", "/api/schedules/delete", "/api/schedules/retire", "body.framed", "Copy into a schedule",
-              "two jobs", "<dialog", "not described in taska.toml"):
-        assert s in page, s
-    assert 'dlg.returnValue = ""' in page   # Esc after an earlier OK must not confirm
-    assert 'schErr = esc(p.error' in page   # server text is never rendered as HTML
+def test_workbench_page_has_no_schedules():
+    page = W.page("workbench.html").decode()
+    assert 'data-v="schedules"' not in page and "renderSchedules" not in page and "/api/schedules" not in page
 
+
+def test_schedules_page_is_its_own_page():
+    page = W.page("schedules.html").decode()
+    assert 'id="schedules"' in page and "/api/schedules" in page and "renderSchedules" in page
+    assert "Saving…" in page and "Sending…" in page and 'aria-live="polite"' in page and 'role="alert"' in page
+    assert "beforeunload" in page and 'inputmode="email"' in page and 'data-f="owner"' in page and "SCH.owner" in page
+    for s in ("/api/schedules/preview", "/api/schedules/delete", "/api/schedules/retire", "Copy into a schedule",
+              "two jobs", "<dialog", "not described in taska.toml", "SCH.timezone", "s.what"):
+        assert s in page, s
+    assert 'dlg.returnValue = ""' in page and "schErr = esc(p.error" in page
+    assert 'get("theme")' in page   # the dashboard frame passes ?theme=dark
+
+
+def test_tokens_and_helpers_are_inlined_in_both_pages_and_the_export(tmp_path):
+    tokens = (W.RUN_DIR / "tokens.css").read_text()
+    shared = (W.RUN_DIR / "shared.js").read_text()
+    for name in ("workbench.html", "schedules.html"):
+        page = W.page(name).decode()
+        assert "/*__TOKENS__*/" not in page and "/*__SHARED__*/" not in page and tokens in page and shared in page, name
+    (tmp_path / "taska.toml").write_text(TOML)
+    cfg = C.load(tmp_path); S.ensure(cfg.store)
+    exported = W.export_html(cfg.store, cfg)
+    assert tokens in exported and shared in exported and "/*__DATA__*/null" not in exported
 
 def test_the_page_opens_on_a_view_named_in_the_query(served):
     base, *_ = served

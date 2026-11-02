@@ -10,36 +10,7 @@
 <style>
 /* Design read: dense internal ops workbench for one delivery manager. Calm, Linear-like.
    Dials: variance 3, motion 3, density 7. One accent (cobalt). Radius scale: 6px controls, 8px panels. */
-:root{
-  --bg:#f6f7f9; --surface:#ffffff; --surface-2:#f0f2f5; --line:#e3e6eb; --line-strong:#cfd4dc;
-  --ink:#16181d; --ink-2:#4a505c; --ink-3:#7a8190;
-  --accent:#2f54d4; --accent-ink:#ffffff; --accent-soft:#e8edfc;
-  --done:#2d7a52; --done-soft:#e3f2ea; --warn:#a15c07; --warn-soft:#fbf0de; --risk:#b4233c; --risk-soft:#fbe7ea;
-  --shadow:0 1px 2px rgba(22,24,29,.05),0 8px 24px -12px rgba(22,24,29,.12);
-  --r-sm:6px; --r-md:8px;
-  --mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
-  --sans:"Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
-  color-scheme:light;
-}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#0f1115; --surface:#16191f; --surface-2:#1c2028; --line:#262b34; --line-strong:#353c47;
-  --ink:#e8eaee; --ink-2:#a9b0bc; --ink-3:#757d8a;
-  --accent:#7d97ff; --accent-ink:#0f1115; --accent-soft:#1f2747;
-  --done:#6cc497; --done-soft:#16291f; --warn:#e3a54e; --warn-soft:#2c2214; --risk:#f07a8c; --risk-soft:#331a20;
-  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px -12px rgba(0,0,0,.5); color-scheme:dark;}}
-:root[data-theme="dark"]{
-  --bg:#0f1115; --surface:#16191f; --surface-2:#1c2028; --line:#262b34; --line-strong:#353c47;
-  --ink:#e8eaee; --ink-2:#a9b0bc; --ink-3:#757d8a;
-  --accent:#7d97ff; --accent-ink:#0f1115; --accent-soft:#1f2747;
-  --done:#6cc497; --done-soft:#16291f; --warn:#e3a54e; --warn-soft:#2c2214; --risk:#f07a8c; --risk-soft:#331a20;
-  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px -12px rgba(0,0,0,.5); color-scheme:dark;}
-*{box-sizing:border-box}
-[hidden]{display:none!important}
-html,body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 var(--sans);-webkit-font-smoothing:antialiased}
-button,input,select,textarea{font:inherit;color:inherit}
-button{cursor:pointer}
-.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
-.muted{color:var(--ink-3)}
+/*__TOKENS__*/
 i.ph{font-size:15px;vertical-align:-2px}
 
 /* header */
@@ -104,8 +75,6 @@ header{position:sticky;top:0;z-index:20;background:var(--surface);border-bottom:
 .tools{display:flex;gap:8px;align-items:center;padding:8px 20px;border-top:1px solid var(--line);flex-wrap:wrap}
 .search{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:var(--r-sm);padding:0 8px;height:30px;background:var(--bg);min-width:220px}
 .search input{border:0;outline:0;background:transparent;width:100%}
-.chip{border:1px solid var(--line);background:var(--surface);border-radius:var(--r-sm);padding:4px 10px;color:var(--ink-2)}
-.chip.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
 .summary{margin-left:18px;color:var(--ink-3);display:flex;gap:14px}
 .summary b{color:var(--ink);font-weight:500}
 
@@ -146,13 +115,6 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 440px;gap:0;min-height:cal
 .state{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);white-space:nowrap}
 .state i{font-size:14px}
 .st-done{color:var(--done)} .st-in_progress{color:var(--accent)} .st-blocked{color:var(--warn)} .st-cancelled,.st-merged,.st-deleted{color:var(--ink-3)}
-.tag{display:inline-flex;align-items:center;gap:4px;font-size:11px;line-height:1;padding:3px 6px;border-radius:4px;white-space:nowrap;border:1px solid transparent}
-.tag.chg{color:var(--accent);background:var(--accent-soft)}
-.tag.risk{color:var(--risk);background:var(--risk-soft)}
-.tag.warn{color:var(--warn);background:var(--warn-soft)}
-.tag.dep{color:var(--ink-2);border-color:var(--line)}
-.tag.kind{color:var(--ink-3);border-color:var(--line)}
-.tag.you{color:var(--ink-2);border-color:var(--line-strong)}
 .empty-epics{margin-top:22px;color:var(--ink-3)}
 .empty-epics summary{cursor:pointer;padding:6px 4px}
 .empty-epics ul{margin:6px 0 0;padding-left:22px;columns:2}
@@ -184,10 +146,6 @@ h3 .count{color:var(--ink-3);font-weight:400}
 .ac .src{font-size:11px;color:var(--ink-3)}
 .add{display:flex;gap:6px;margin-top:8px}
 .add input,.add select{flex:1;height:30px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--bg);padding:0 8px;min-width:0}
-.btn{height:30px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--surface);padding:0 12px;white-space:nowrap}
-.btn:hover{border-color:var(--line-strong)}
-.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
-.btn:active{transform:translateY(1px)}
 .links{display:flex;flex-direction:column;gap:4px}
 .link{display:grid;grid-template-columns:52px 1fr auto auto;gap:8px;align-items:center;padding:6px 8px;border:1px solid var(--line);border-radius:var(--r-sm);cursor:pointer}
 .link:hover{border-color:var(--line-strong)}
@@ -204,7 +162,6 @@ h3 .count{color:var(--ink-3);font-weight:400}
 .tcard{border-style:solid;display:flex;flex-direction:column;gap:4px}.tcard.blocker{border-left:3px solid var(--risk)}.tcard.major{border-left:3px solid var(--warn)}
 .ttop{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.tconf{margin-left:auto;font-size:12px;color:var(--ink-2)}
 .tcard details summary{cursor:pointer;color:var(--accent);font-size:12px}.tbtns{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
-.tag.risk{color:var(--risk);background:var(--risk-soft)}
 .timeline{position:relative;margin:0;padding:0;list-style:none}
 .timeline li{position:relative;padding:0 0 14px 18px}
 .timeline li::before{content:"";position:absolute;left:4px;top:7px;bottom:-2px;width:1px;background:var(--line)}
@@ -225,33 +182,10 @@ h3 .count{color:var(--ink-3);font-weight:400}
 .chg-group{margin-bottom:14px}
 .chg-item{display:grid;grid-template-columns:76px 52px 1fr;gap:8px;padding:5px 0;cursor:pointer;align-items:baseline}
 .chg-item:hover .t{color:var(--accent)}
-.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%) translateY(20px);opacity:0;background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:var(--r-md);transition:opacity .2s ease, transform .2s ease;z-index:50;pointer-events:none}
-.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
-.blank{color:var(--ink-3);padding:30px 4px;text-align:left}
-#schedules .card{border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);box-shadow:var(--shadow);padding:14px 16px;margin:0 0 10px;display:grid;gap:8px}
-#schedules .card .head{display:flex;align-items:center;gap:8px;font-size:15px}
-#schedules .card .what{color:var(--ink-2)}#schedules .card .when{font-size:13px;color:var(--ink-3)}
-#schedules .who{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:13px}#schedules .who>span:not(.chip){color:var(--ink-3);margin-right:2px}#schedules .who .chip{font-size:12px;padding:2px 8px}
-#schedules .mode{display:flex;flex-wrap:wrap;gap:4px 18px;font-size:13px;color:var(--ink-2)}#schedules .mode label{display:inline-flex;align-items:center;gap:6px}
-#schedules .tag.kind{background:var(--accent-soft);color:var(--accent)}#schedules .tag.done{background:var(--done-soft);color:var(--done)}#schedules .tag.warn{background:var(--warn-soft);color:var(--warn)}#schedules .tag.off{background:var(--surface-2);color:var(--ink-3)}
-#schedules .row{border:1px solid var(--line-strong);border-radius:var(--r-md);padding:12px 14px;margin:0 0 10px;display:grid;grid-template-columns:1fr 1fr;gap:8px 14px}
-#schedules .row label{display:block;font-size:12px;color:var(--ink-3);margin-bottom:2px}
-#schedules .row input[type=text],#schedules .row input[type=time],#schedules .row select{height:30px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--bg);padding:0 8px;width:100%}
-#schedules .days label,#schedules .inc label{display:inline-flex;align-items:center;gap:4px;margin:0 10px 0 0;font-size:13px;color:var(--ink-2)}
-#schedules .wide{grid-column:1/-1}#schedules .foot{grid-column:1/-1;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px;color:var(--ink-3)}
-#schedules .owner{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px;margin:0 0 12px}#schedules .owner label{color:var(--ink-2)}#schedules .owner input{height:30px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface);padding:0 8px;min-width:260px;font-family:var(--mono);font-size:12px}
-#schedules .err{color:var(--warn);margin:6px 0}
-#schedules .card.risk{border-color:var(--risk)}#schedules .tag.risk{background:var(--risk-soft);color:var(--risk)}#schedules .warn-text{color:var(--warn)}
-#sch-dialog{border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);color:var(--ink);max-width:640px;width:calc(100% - 32px);padding:16px 18px}
-#sch-dialog::backdrop{background:rgba(0,0,0,.35)}#sch-dialog h3{margin:0 0 10px;font-size:16px}
-#sch-dialog .pv{width:100%;border-collapse:collapse;font-size:13px}#sch-dialog .pv th{text-align:left;color:var(--ink-3);font-weight:500;padding:5px 12px 5px 0;vertical-align:top;white-space:nowrap}#sch-dialog .pv td{padding:5px 0}
-body.framed header,body.framed .pane.side,body.framed #readonly{display:none}body.framed main{grid-template-columns:minmax(0,1fr);min-height:100dvh}body.framed #left{padding:16px}#schedules .bar{display:flex;gap:8px;align-items:center;margin:8px 0 12px;flex-wrap:wrap}
-@media (max-width:700px){#schedules .row{grid-template-columns:1fr}}
 .recap-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0 12px}
 .recap{background:var(--bg-2, var(--card, #fff));border:1px solid var(--line);border-radius:12px;padding:6px 18px 14px;max-width:880px;line-height:1.55}
 .recap .rh1{font-size:1.15rem;margin:12px 0 2px}.recap .rh2{font-size:.98rem;margin:16px 0 4px;padding-top:8px;border-top:1px solid var(--line)}
 .recap ul{margin:4px 0;padding-left:20px}.recap li{margin:4px 0}.recap a.rlink{color:var(--accent, #2f54d4);text-decoration:none;border-bottom:1px dashed currentColor}
-.blank b{display:block;color:var(--ink-2);font-weight:500;margin-bottom:4px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 @media (max-width:1100px){main{grid-template-columns:1fr}.side{position:static;height:auto;border-left:0;border-top:1px solid var(--line)}
   .row{grid-template-columns:18px 44px minmax(0,1fr) 90px 64px}.row .who{display:none}}
@@ -271,7 +205,7 @@ body.framed header,body.framed .pane.side,body.framed #readonly{display:none}bod
       <button class="iconbtn" id="play" title="Play through calls"><i class="ph ph-play"></i></button>
       <button class="iconbtn" id="next" title="Next call (→)"><i class="ph ph-caret-right"></i></button>
       <div class="seg" id="views">
-        <button data-v="recap">Recap</button><button data-v="tree">Tree</button><button data-v="board">Board</button><button data-v="deliverables">Deliverables</button><button data-v="schedules" id="schedules-view" hidden>Schedules</button>
+        <button data-v="recap">Recap</button><button data-v="tree">Tree</button><button data-v="board">Board</button><button data-v="deliverables">Deliverables</button>
       </div>
       <button class="iconbtn" id="download" title="Download a read-only copy to share (it contains meeting quotes: share inside the company only)"><i class="ph ph-download-simple"></i></button>
       <button class="iconbtn" id="theme" title="Theme"><i class="ph ph-circle-half"></i></button>
@@ -302,17 +236,16 @@ body.framed header,body.framed .pane.side,body.framed #readonly{display:none}bod
 <div class="toast" id="toast" aria-live="polite"></div>
 <script>
 const EMBED = /*__DATA__*/null;
+/*__SHARED__*/
 const LIVE = !EMBED;
 let D = EMBED, ci = 0, sel = null, tab = "detail", view = "tree", playing = null;
 const F = {changed:false, attention:false, open:false, q:""};
 const openSet = new Set();
 const rejOpen = new Set();
-const $ = s => document.querySelector(s);
-const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const fmt = d => d ? fmtDate(d, D.calls.length ? D.calls[D.calls.length-1].date : null) : "";
 const ts = t => !t ? "" : (t.startsWith("00:") ? t.slice(3,8) : t.slice(0,8));
-const store = {get(k){try{return localStorage.getItem(k)}catch(e){return null}}, set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
-view = new URLSearchParams(location.search).get("view") || store.get("taska.view") || "recap";   // ?view=schedules opens that view; else the last one chosen, else the Recap
+view = new URLSearchParams(location.search).get("view") || store.get("taska.view") || "recap";
+if (!["recap", "tree", "board", "deliverables"].includes(view)) view = "recap";   // an old ?view=schedules bookmark lands on the Recap   // ?view=… opens that view; else the last one chosen, else the Recap
 
 const ICON = {open:"ph-circle", in_progress:"ph-circle-half", blocked:"ph-prohibit", done:"ph-check-circle",
   cancelled:"ph-x-circle", merged:"ph-git-merge", deleted:"ph-trash"};
@@ -393,11 +326,11 @@ function visible(n){
 }
 
 function render(){
-  if (!D.calls.length){ document.querySelectorAll("#views button").forEach(x => x.classList.toggle("on", x.dataset.v === view)); if (view === "schedules") return renderSchedules(); $("#left").innerHTML = `<div class="blank"><b>No calls extracted yet</b>Run the extraction for the first call, then reload.</div>`; return; }
+  if (!D.calls.length){ document.querySelectorAll("#views button").forEach(x => x.classList.toggle("on", x.dataset.v === view)); $("#left").innerHTML = `<div class="blank"><b>No calls extracted yet</b>Run the extraction for the first call, then reload.</div>`; return; }
   store.set("taska.ci", ci); store.set("taska.ci.latest", ci === D.calls.length - 1 ? "1" : "0");
   renderTicks(); renderSummary();
   document.querySelectorAll("#views button").forEach(x => x.classList.toggle("on", x.dataset.v === view));
-  view === "recap" ? renderRecap() : view === "tree" ? renderTree() : view === "board" ? renderBoard() : view === "schedules" ? renderSchedules() : renderDeliverables();
+  view === "recap" ? renderRecap() : view === "tree" ? renderTree() : view === "board" ? renderBoard() : renderDeliverables();
   renderSide();
 }
 
@@ -922,7 +855,6 @@ async function decideAll(mids, op){
   const did = op === "accept" ? "Confirmed" : "Rejected";
   toast(err ? `${did} ${ok} of ${mids.length}: ${err}` : `${did} ${ok}`); await load(true);
 }
-function toast(m){ const t = $("#toast"); t.textContent = m; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 1800); }
 
 function bindDetail(n){
   const now = (D.snaps[D.calls[D.calls.length-1].id].nodes[n.id]) || n;   // edits apply to the current tree
@@ -985,214 +917,6 @@ document.addEventListener("keydown", e => {
   if (e.key==="ArrowRight") $("#next").click();
   if (e.key==="/"){ e.preventDefault(); $("#q").focus(); }
 });
-/* ---------- schedules: what will run, reconciled with the OS; set up, run with a preview, delete (live page only) ---------- */
-const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], INC = {body:"mail body", docx:"the docx", link:"link to the folder", pptx:"slides (pptx)", workbench:"workbench copy"};
-const KIND_LABEL = {preview:"Preview", send:"Send", update:"Update"};
-const STATE = {active:["done","active"], not_registered:["warn","not registered"], not_loaded:["warn","not loaded"], off:["off","off"],
-               stale:["risk","left behind"], foreign:["risk","outside taska.toml"]};
-let SCH = null, schErr = "", schEdit = new Set(), schDirty = false;
-async function loadSchedules(){ const r = await fetch("/api/schedules",{cache:"no-store"}); SCH = await r.json(); schEdit = new Set(); schDirty = false; }
-function dayWords(days){
-  const d = [...new Set(days||[])].sort();
-  if (d.length === 7) return "day";
-  if (d.join() === "1,2,3,4,5") return "Mon–Fri";
-  return d.map(k => DAYS[k-1]).join(", ") || "no day";
-}
-function nextWords(iso){
-  if (!iso) return "";
-  return new Date(iso).toLocaleDateString(undefined,{weekday:"short",day:"numeric",month:"short"}) + " " + iso.slice(11,16);
-}
-function whenWords(when){
-  const byTime = {};
-  (when||[]).forEach(([d,t]) => (byTime[t] = byTime[t] || []).push(d));
-  return Object.entries(byTime).map(([t,ds]) => `${dayWords(ds)} at ${t}`).join("; ") || "no time";
-}
-function chips(list){ return (list||[]).length ? list.map(a => `<span class="chip mono">${esc(a)}</span>`).join("") : `<span class="muted">nobody</span>`; }
-function badge(state){ const [cls, words] = STATE[state] || ["off", state]; return `<span class="tag ${cls}">${esc(words)}</span>`; }
-const osRow = name => (SCH.os||[]).find(r => r.schedule === name);
-const unowned = () => (SCH.os||[]).filter(r => !r.schedule);
-function clashes(row){
-  const slots = new Set((row.when||[]).map(([d,t]) => d + " " + t));
-  return SCH.schedules.filter(s => s.on !== false && (osRow(s.name)||{}).state === "active" && (s.days||[]).some(d => slots.has(d + " " + s.time)));
-}
-function schCard(s, i){
-  const st = osRow(s.name), state = st ? st.state : "not_registered";
-  const exit = st && st.last_exit !== null && st.last_exit !== undefined ? ` · last exit ${st.last_exit}` : "";
-  const when = s.on === false ? "Paused" : `Every ${esc(dayWords(s.days))} at <b class="mono">${esc(s.time)}</b> (${esc(SCH.timezone||"this machine's time")})` + (s.next ? ` · next <b class="mono">${esc(nextWords(s.next))}</b>` : "") + exit;
-  const to = (s.to||[]).length ? s.to : (s.kind === "preview" && SCH.owner ? [SCH.owner] : []);
-  const who = s.kind === "update" ? "" : `<div class="who"><span>To</span>${chips(to)}${s.kind === "send" ? `<span>Cc</span>${chips(s.cc)}` : ""}</div>`;
-  const mode = s.kind === "send" ? `<div class="mode">
-      <label><input type="radio" name="mode-${i}" data-review="${i}" value="1" ${s.review?"checked":""}> Review first: the run mails me, I press Send</label>
-      <label><input type="radio" name="mode-${i}" data-review="${i}" value="0" ${s.review?"":"checked"}> Send to the reader automatically</label></div>` : "";
-  const why = {not_registered:"Not registered with this Mac's scheduler: Save registers it.", not_loaded:"The job file exists but launchd has not loaded it: Save reloads it."}[state];
-  return `<div class="card" data-i="${i}">
-    <div class="head">${badge(state)}<b>${esc(s.name||"(unnamed)")}</b><span class="tag kind">${KIND_LABEL[s.kind]||esc(s.kind)}</span></div>
-    <div class="what">${esc(s.what||"")}</div>
-    <div class="when">${when}</div>
-    ${why ? `<div class="when warn-text">${why}</div>` : ""}
-    ${who}${mode}
-    <div class="when">Runs <span class="mono">${esc(s.runs || s.command || SCH.command || "taska run-schedule")}</span></div>
-    <div class="foot"><button class="btn" data-run="${i}" ${s.name?"":"disabled"}>Run now…</button>${s.kind === "send" && s.review ? `<button class="btn primary" data-send="${i}">Send now…</button>` : ""}<a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="file://${esc(SCH.reports_dir||"")}/" title="The report folder">Open the files</a><span style="margin-left:auto;display:inline-flex;gap:6px"><button class="btn" data-edit="${i}">Edit</button><button class="btn" data-del="${i}">Delete…</button></span></div>
-  </div>`;
-}
-function unownedCard(r, k){
-  const two = clashes(r);
-  return `<div class="card risk" data-u="${k}">
-    <div class="head">${badge(r.state)}<b class="mono">${esc(r.label)}</b></div>
-    <div class="what">${r.state === "stale" ? "A job this plugin registered for a schedule that no longer exists." : "A job that runs this project but is not in taska.toml, so nothing else here knows about it."}</div>
-    <div class="when">${esc(whenWords(r.when))} · ${r.loaded ? "loaded" : "not loaded"}${r.last_exit !== null && r.last_exit !== undefined ? ` · last exit ${r.last_exit}` : ""}</div>
-    <div class="when">Runs <span class="mono">${esc(r.command||"")}</span></div>
-    ${two.length ? `<div class="when warn-text">Runs at the same time as ${two.map(s => esc(s.name)).join(", ")}: two jobs.</div>` : ""}
-    <div class="foot">${r.state === "foreign" ? `<button class="btn" data-copy="${k}">Copy into a schedule</button>` : ""}<button class="btn" data-retire="${k}">Retire…</button></div>
-  </div>`;
-}
-function schForm(s, i){
-  const inc = Object.assign({body:true,docx:true,link:true,pptx:false,workbench:false}, s.include || {});
-  return `<div class="row" data-i="${i}">
-    <div><label for="f-name-${i}">Name</label><input id="f-name-${i}" type="text" data-f="name" value="${esc(s.name||"")}"></div>
-    <div><label for="f-kind-${i}">What</label><select id="f-kind-${i}" data-f="kind"><option value="preview" ${s.kind==="preview"?"selected":""}>Preview to me</option><option value="send" ${s.kind==="send"?"selected":""}>Send to the reader</option><option value="update" ${s.kind==="update"?"selected":""}>Update the tree only</option></select></div>
-    <div class="wide days"><label>Days</label>${DAYS.map((d,k)=>`<label><input type="checkbox" data-d="${k+1}" ${(s.days||[]).includes(k+1)?"checked":""}>${d}</label>`).join("")}</div>
-    <div><label for="f-time-${i}">Time (${esc(SCH.timezone||"this machine's time")})</label><input id="f-time-${i}" type="time" data-f="time" value="${esc(s.time||"09:00")}"></div>
-    <div><label for="f-on-${i}">On</label><select id="f-on-${i}" data-f="on"><option value="1" ${s.on!==false?"selected":""}>On</option><option value="0" ${s.on===false?"selected":""}>Off</option></select></div>
-    <div><label for="f-to-${i}">To (comma-separated)</label><input id="f-to-${i}" type="text" data-f="to" inputmode="email" autocomplete="off" value="${esc((s.to||[]).join(", "))}"></div>
-    <div><label for="f-cc-${i}">Cc (comma-separated)</label><input id="f-cc-${i}" type="text" data-f="cc" inputmode="email" autocomplete="off" value="${esc((s.cc||[]).join(", "))}"></div>
-    <div class="wide"><label for="f-cmd-${i}">Command (empty: ${esc(SCH.command || "taska run-schedule")})</label><input id="f-cmd-${i}" type="text" data-f="command" class="mono" value="${esc(s.command||"")}"></div>
-    <div class="wide inc"><label>Include</label>${Object.keys(INC).map(k=>`<label><input type="checkbox" data-inc="${k}" ${inc[k]?"checked":""}>${INC[k]}</label>`).join("")}</div>
-    <div class="foot"><span class="muted">Save registers the job with this computer's scheduler.</span><span style="margin-left:auto;display:inline-flex;gap:6px"><button class="btn" data-done="${i}">Done</button><button class="btn" data-del="${i}">Delete…</button></span></div>
-  </div>`;
-}
-function schReadForm(r){
-  const f = n => r.querySelector(`[data-f="${n}"]`).value;
-  const list = v => v.split(",").map(x=>x.trim()).filter(Boolean);
-  const include = {}; r.querySelectorAll("[data-inc]").forEach(c => include[c.dataset.inc] = c.checked);
-  const kind = f("kind"), i = +r.dataset.i, review = kind === "send" && !!(SCH.schedules[i] && SCH.schedules[i].review);
-  return Object.assign({}, SCH.schedules[i], { name: f("name").trim(), kind, days: [...r.querySelectorAll("[data-d]")].filter(c=>c.checked).map(c=>+c.dataset.d),
-           time: f("time"), to: list(f("to")), cc: list(f("cc")), include, on: f("on")==="1", review, command: f("command").trim() });
-}
-function schRead(){
-  document.querySelectorAll("#schedules .row").forEach(r => { SCH.schedules[+r.dataset.i] = schReadForm(r); });
-  return SCH.schedules.map(s => ({name:s.name, kind:s.kind, days:s.days, time:s.time, to:s.to||[], cc:s.cc||[], include:s.include||{}, on:s.on!==false, review:!!s.review, command:s.command||""}));
-}
-function schProblems(rows, owner){
-  const out = [], names = new Set();
-  rows.forEach((s, i) => {
-    const n = s.name || `schedule ${i+1}`;
-    if (!s.name) out.push(`${n}: give it a name`);
-    else if (names.has(s.name)) out.push(`${n}: two schedules have this name`);
-    names.add(s.name);
-    if (!(s.days||[]).length) out.push(`${n}: pick at least one day`);
-    if (!/^\d\d:\d\d$/.test(s.time||"")) out.push(`${n}: set a time`);
-    if (s.kind === "send" && !(s.to||[]).length) out.push(`${n}: a send needs a To address`);
-    if (s.kind === "preview" && !(s.to||[]).length && !owner) out.push(`${n}: a preview needs a To address or the owner address above`);
-  });
-  return out;
-}
-async function schPost(path, body, btn, busyText){
-  const was = btn ? btn.textContent : "";
-  if (btn){ btn.disabled = true; btn.textContent = busyText; }
-  try {
-    const r = await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-    const j = await r.json().catch(()=>({error:"No answer from the server"}));
-    return [r.ok, j];
-  } catch (e) {
-    return [false, {error: "The workbench did not answer: " + e.message}];
-  } finally {
-    if (btn){ btn.disabled = false; btn.textContent = was; }
-  }
-}
-function previewHtml(p, send){
-  const m = p.mail;
-  const row = (k, v) => `<tr><th>${k}</th><td>${v}</td></tr>`;
-  return `<table class="pv">
-    ${row("Week", esc(p.week))}
-    ${row("Runs", `<span class="mono">${esc(p.command)}</span>`)}
-    ${row("Steps", p.steps_known ? esc(p.steps.join(" · ")) : `<span class="warn-text">Decided by that command; not described in taska.toml ([run].describe)</span>`)}
-    ${p.decided_by && m ? row("Note", `<span class="warn-text">That command sends the mail itself; below is what taska's rules say it should do.</span>`) : ""}
-    ${m ? row("Mail to", m.review_copy ? `${chips(m.to)} <span class="muted">review copy: the reader gets it only on Send now</span>` : chips(m.to)) + row("Cc", chips(m.cc)) +
-          row("Includes", esc(m.include.join(" · ") || "nothing")) + row("Not sent", esc(m.not_included.join(" · ") || "—")) +
-          (m.held ? row("If held", `a failed step or gate sends a HELD notice to ${chips(m.held.to)} only, never the reader`) : "") : row("Mail", "none: this job only updates the tree")}
-  </table>`;
-}
-async function confirmRun(s, send){
-  const r = await fetch(`/api/schedules/preview?name=${encodeURIComponent(s.name)}&send=${send?1:0}`, {cache:"no-store"});
-  const p = await r.json().catch(() => ({error: "No answer from the server"}));
-  if (!r.ok || p.error){ schErr = esc(p.error || "Could not describe this run"); renderSchedules(); return false; }
-  const dlg = $("#sch-dialog");
-  dlg.querySelector("h3").textContent = `${send ? "Send" : "Run"} "${s.name}" now?`;
-  dlg.querySelector(".body").innerHTML = previewHtml(p, send);
-  dlg.querySelector("[data-ok]").textContent = send ? "Send now" : "Run now";
-  dlg.returnValue = "";   // Esc closes without a value: an earlier OK must not count as this one
-  dlg.showModal();
-  return new Promise(res => { dlg.onclose = () => res(dlg.returnValue === "ok"); });
-}
-async function renderSchedules(){
-  if (!LIVE){ $("#left").innerHTML = `<div class="blank"><b>Schedules</b>Edited on the live workbench only.</div>`; return; }
-  if (!SCH) await loadSchedules();
-  const note = SCH.can_register ? `Times are this computer's (${esc(SCH.timezone||"local")}): that is when its scheduler fires.` + (SCH.os_scope !== "launchd" ? " Jobs made outside taska are not listed on this system." : "")
-                                : `This computer (${esc(SCH.platform)}) cannot register jobs yet: saving keeps the rows in taska.toml.`;
-  const extra = unowned();
-  $("#left").innerHTML = `<div id="schedules"><div class="muted" style="font-size:13px;margin:2px 0 8px">${note}</div>
-    <div class="owner"><label for="sch-owner">Previews, review copies and held mails go to</label><input id="sch-owner" type="email" data-f="owner" inputmode="email" autocomplete="off" placeholder="owner@example.com" value="${esc(SCH.owner||"")}"><span class="muted">saved with Save (<span class="mono">[report].owner</span>)</span></div>
-    ${schErr?`<div class="err" role="alert">${schErr}</div>`:""}
-    ${extra.length ? `<div class="err" role="status">${extra.length} job${extra.length>1?"s":""} on this Mac run${extra.length>1?"":"s"} this project outside the list below.</div>${extra.map(unownedCard).join("")}` : ""}
-    ${SCH.schedules.map((s,i) => schEdit.has(i) ? schForm(s,i) : schCard(s,i)).join("") || `<div class="blank"><b>No schedules yet</b>Add one, or copy a job listed above into a schedule.</div>`}
-    <div class="bar"><button class="btn" id="sch-add">Add schedule</button><button class="btn primary" id="sch-save">Save</button>${schDirty?`<span class="muted">Unsaved changes</span>`:""}</div></div>
-    <dialog id="sch-dialog" aria-labelledby="sch-dlg-title"><form method="dialog"><h3 id="sch-dlg-title"></h3><div class="body"></div>
-      <div class="bar"><button class="btn" value="cancel">Cancel</button><button class="btn primary" value="ok" data-ok>Run now</button></div></form></dialog>`;
-  const mark = () => { schDirty = true; };
-  $("#sch-owner").oninput = mark;
-  $("#sch-add").onclick = () => { schRead(); SCH.schedules.push({name:"", kind:"preview", days:[5], time:"17:00", to:[], cc:[], include:{}, on:true, review:false, command:""}); schEdit.add(SCH.schedules.length-1); schErr = ""; mark(); renderSchedules(); };
-  document.querySelectorAll("#schedules [data-edit]").forEach(b => b.onclick = () => { schRead(); schEdit.add(+b.dataset.edit); renderSchedules(); });
-  document.querySelectorAll("#schedules [data-done]").forEach(b => b.onclick = () => { schRead(); schEdit.delete(+b.dataset.done); mark(); renderSchedules(); });
-  document.querySelectorAll("#schedules [data-review]").forEach(r => r.onchange = () => { SCH.schedules[+r.dataset.review].review = r.value === "1"; mark(); renderSchedules(); });
-  document.querySelectorAll("#schedules [data-copy]").forEach(b => b.onclick = () => {
-    const r = extra[+b.dataset.copy], first = (r.when||[])[0] || [1, "06:00"];
-    schRead();
-    SCH.schedules.push({name: r.label.split(".").pop().replace(/[-_]/g, " "), kind:"update", days:[...new Set((r.when||[]).filter(w => w[1] === first[1]).map(w => w[0]))],
-                        time:first[1], to:[], cc:[], include:{}, on:true, review:false, command:r.command||""});
-    schEdit.add(SCH.schedules.length-1); schErr = ""; mark(); renderSchedules();
-  });
-  document.querySelectorAll("#schedules [data-retire]").forEach(b => b.onclick = async () => {
-    const r = extra[+b.dataset.retire];
-    if (!confirm(`Retire ${r.label}? It is unloaded and its file moves to .taska/retired-jobs/ (kept, not deleted).`)) return;
-    const [ok, j] = await schPost("/api/schedules/retire", {label: r.label}, b, "Retiring…");
-    if (!ok){ schErr = esc(j.error || "Could not retire"); return renderSchedules(); }
-    schErr = ""; await loadSchedules(); toast(`Retired ${r.label}; file kept at ${j.moved_to}`); renderSchedules();
-  });
-  document.querySelectorAll("#schedules [data-del]").forEach(b => b.onclick = async () => {
-    const i = +b.dataset.del, s = SCH.schedules[i];
-    if (!s.label){ schRead(); SCH.schedules.splice(i, 1); schEdit = new Set(); renderSchedules(); return; }   // never saved: only on screen
-    if (schDirty){ schErr = "Save first: Delete acts on what is saved in taska.toml."; return renderSchedules(); }
-    if (!confirm(`Delete "${s.name}" and unload its job? Its job file moves to .taska/retired-jobs/ (kept).`)) return;
-    const [ok, j] = await schPost("/api/schedules/delete", {name: s.name}, b, "Deleting…");
-    if (!ok){ schErr = esc(j.error || "Could not delete"); return renderSchedules(); }
-    schErr = ""; await loadSchedules(); toast(`Deleted ${s.name}`); renderSchedules();
-  });
-  const start = async (i, send, btn) => {
-    const s = SCH.schedules[i];
-    if (schDirty){ schErr = "Save first: the job runs what is saved in taska.toml, not what is on the screen."; return renderSchedules(); }
-    if (!(await confirmRun(s, send))) return;
-    const [ok, j] = await schPost("/api/schedules/run", {name: s.name, send}, btn, send ? "Sending…" : "Starting…");
-    if (!ok){ schErr = esc(j.error || "Could not start"); return renderSchedules(); }
-    toast(`${send ? "Sending" : "Started"}: ${s.name} for the week of ${j.week}; its files land in ${j.dir}`);
-  };
-  document.querySelectorAll("#schedules [data-run]").forEach(b => b.onclick = () => start(+b.dataset.run, false, b));
-  document.querySelectorAll("#schedules [data-send]").forEach(b => b.onclick = () => start(+b.dataset.send, true, b));
-  $("#sch-save").onclick = async () => {
-    const rows = schRead(), owner = $("#sch-owner").value.trim();
-    const problems = schProblems(rows, owner || SCH.owner);
-    if (problems.length){ schErr = "Not saved: " + problems.map(esc).join("; "); return renderSchedules(); }
-    const [ok, j] = await schPost("/api/schedules", Object.assign({schedules: rows}, owner && owner !== (SCH.owner||"") ? {owner} : {}), $("#sch-save"), "Saving…");
-    if (!ok){ schErr = esc(j.error || "Could not save"); return renderSchedules(); }
-    schErr = ""; await loadSchedules();
-    toast(SCH.can_register ? `Saved and registered ${j.registered.filter(x=>x.action==="loaded").length} job(s)` : "Saved to taska.toml");
-    renderSchedules();
-  };
-}
-if (LIVE) $("#schedules-view").hidden = false;
-window.addEventListener("beforeunload", e => { if (schDirty){ e.preventDefault(); e.returnValue = ""; } });
-const FRAMED = LIVE && (location.pathname === "/schedules" || new URLSearchParams(location.search).has("embed"));
-if (FRAMED){ document.body.classList.add("framed"); view = "schedules"; }
 
 // Download: a read-only copy of the workbench as it is now, to share (a copy has no Download button of its own)
 if (LIVE) $("#download").onclick = () => { location.href = "/api/export"; toast("Downloading a read-only copy: share inside the company only"); };

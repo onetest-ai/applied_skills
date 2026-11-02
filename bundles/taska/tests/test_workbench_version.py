@@ -179,7 +179,7 @@ def test_the_workbench_opens_on_the_recap_and_remembers_the_view():
 
 def test_the_saved_view_is_read_only_after_the_store_helper_exists():
     # Oct 29: reading the saved view before `const store` was defined stopped the whole page script (blank workbench)
-    page = (RUN_DIR / "workbench.html").read_text()
+    page = W.page("workbench.html").decode()   # as served: shared.js inlined where /*__SHARED__*/ stands
     assert page.index("const store = {get(k)") < page.index('store.get("taska.view")')
 
 
@@ -191,3 +191,11 @@ def test_criteria_checkboxes_are_locked_on_an_earlier_call():
     box = next(l for l in page.splitlines() if 'type="checkbox" data-ac=' in l)
     assert "${acLock}" in box
     assert re.search(r"const acLock = dis \|\| \(!latest\(\) \? `disabled title=\"[^\"]*latest call", page)
+
+
+def test_code_version_covers_the_schedules_page_and_the_shared_files(tmp_path):
+    run = _copy_run_dir(tmp_path)
+    for name in ("schedules.html", "tokens.css", "shared.js"):
+        before = W.code_version(run)
+        (run / name).write_text((run / name).read_text() + "\n")
+        assert W.code_version(run) != before, name
