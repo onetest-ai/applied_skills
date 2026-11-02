@@ -284,6 +284,9 @@ def server(store, cfg, port, register_opts=None):
             self._send(404, {"error": "not found"})
 
         def do_POST(self):
+            # read the body before any answer: replying first leaves the client's unsent body to hit a closed socket
+            # (seen as a connection reset under load), whatever the answer is
+            raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
             if self.path not in ("/api/event", "/api/schedules", "/api/schedules/run", "/api/schedules/delete", "/api/schedules/retire"):
                 return self._send(404, {"error": "not found"})
             if not _local_origin(self.headers, port):
@@ -291,7 +294,7 @@ def server(store, cfg, port, register_opts=None):
             if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
                 return self._send(415, {"error": "Content-Type must be application/json"})
             try:
-                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+                body = json.loads(raw or b"{}")
                 if self.path == "/api/schedules/delete":
                     return self._send(200, {"registered": delete_schedule(cfg, body.get("name"), register_opts)})
                 if self.path == "/api/schedules/retire":
