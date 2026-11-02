@@ -11,6 +11,7 @@ import datetime as dt
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from xml.sax.saxutils import escape
@@ -39,6 +40,7 @@ class Schedule:
     include: dict = field(default_factory=lambda: dict(INCLUDE))
     on: bool = True
     review: bool = False
+    command: str = ""
 
 
 def _all_words(s):
@@ -150,10 +152,12 @@ def parse(raw):
         if unknown:
             raise ValueError(f"schedule {name}: include has unknown items {sorted(unknown)}; known: {sorted(INCLUDE)}")
         inc.update({k: bool(v) for k, v in (s.get("include") or {}).items()})
+        if not isinstance(s.get("command", ""), str):
+            raise ValueError(f"schedule {name}: command must be a string (the shell command this job runs)")
         if s.get("review") and s["kind"] != "send":
             raise ValueError(f"schedule {name}: review applies to a send schedule (the owner looks first, then sends by command)")
         out.append(Schedule(name, s["kind"], days, s["time"], list(s.get("to") or []), list(s.get("cc") or []), inc,
-                            bool(s.get("on", True)), bool(s.get("review", False))))
+                            bool(s.get("on", True)), bool(s.get("review", False)), s.get("command", "")))
     return out
 
 
@@ -187,6 +191,8 @@ def to_toml(schedules):
                  f"on = {str(bool(s.on)).lower()}"]
         if s.kind == "send":
             lines.append(f"review = {str(bool(s.review)).lower()}")
+        if s.command:
+            lines.append(f"command = {_toml_str(s.command)}")
         blocks.append("\n".join(lines) + "\n")
     return "\n".join(blocks)
 
@@ -318,9 +324,9 @@ def default_command(cfg, s, send=False):
 
 
 def command_for(cfg, s, send=False):
-    """The project's [run].scheduled template ({kind}, {name}, {project}, {flags}) when set, else the default command.
-    {flags} is --send when the owner sends a reviewed report now, else empty."""
-    tpl = (cfg.run or {}).get("scheduled")
+    """The schedule's own command, else the project's [run].scheduled template ({kind}, {name}, {project}, {flags}),
+    else the default command. {flags} is --send when the owner sends a reviewed report now, else empty."""
+    tpl = s.command or (cfg.run or {}).get("scheduled")
     if not tpl:
         return default_command(cfg, s, send)
     return tpl.format(kind=s.kind, name=s.name, project=str(cfg.project_dir), flags=SEND_FLAG if send else "").rstrip()
@@ -407,6 +413,9 @@ def register(cfg, agents_dir=None, launchctl=None, schtasks=None, machine=None, 
         return out
     agents = Path(agents_dir) if agents_dir else Path.home() / "Library/LaunchAgents"
     run = launchctl or _launchctl
+    for lbl, path in registered(cfg.name, agents_dir).items():   # a deleted or renamed schedule leaves no job behind
+        if lbl not in labels:
+            out.append(retire(cfg, path, launchctl=run, why="no schedule of that name"))
     for s in cfg.schedules:
         lbl = label(cfg.name, s)
         cmd = command_for(cfg, s)
@@ -459,3 +468,107 @@ def registered(project_name, agents_dir=None, schtasks=None):
     agents = Path(agents_dir) if agents_dir else Path.home() / "Library/LaunchAgents"
     prefix = f"com.taska.{_slug(project_name)}."
     return {p.stem: str(p) for p in sorted(agents.glob(f"{prefix}*.plist"))} if agents.is_dir() else {}
+
+
+# ---------- the OS side: every job that runs this project, reconciled with [[schedules]] ----------
+
+STATES = ("active", "not_registered", "not_loaded", "off", "stale", "foreign")
+
+
+def _plist(path):
+    import plistlib
+    try:
+        with open(path, "rb") as f:
+            return plistlib.load(f)
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return None
+
+
+def _points_into(d, project_dir):
+    """True when a job's command, working directory or logs name this project's folder, written absolute or with
+    ~/, $HOME/ or ${HOME}/; a sibling folder (…-old) does not count: the folder must end at /, a quote, a space or the
+    end. macOS's /private/var and /var are the same folder."""
+    home = str(Path.home())
+    roots = {str(Path(project_dir)), str(Path(project_dir).resolve())}
+    roots |= {re.sub(r"^/private(?=/var/|/tmp/)", "", r) for r in roots}
+    pattern = re.compile("(" + "|".join(re.escape(r) for r in sorted(roots)) + r")(?=$|[/\s'\"])")
+    texts = [*(d.get("ProgramArguments") or []), d.get("Program", ""), d.get("WorkingDirectory", ""),
+             d.get("StandardOutPath", ""), d.get("StandardErrorPath", "")]
+    for text in texts:
+        text = str(text).replace("${HOME}", home).replace("$HOME", home).replace("~/", home + "/")
+        if pattern.search(re.sub(r"/private(?=/var/|/tmp/)", "", text)):
+            return True
+    return False
+
+
+def _when(d):
+    """[(ISO weekday, "HH:MM")] from StartCalendarInterval (one dict or a list); no Weekday means every day."""
+    cal = d.get("StartCalendarInterval") or []
+    cal = [cal] if isinstance(cal, dict) else cal
+    out = set()
+    for c in cal:
+        hm = f"{int(c.get('Hour', 0)):02d}:{int(c.get('Minute', 0)):02d}"
+        days = [int(c["Weekday"]) % 7 or 7] if "Weekday" in c else range(1, 8)
+        out.update((day, hm) for day in days)
+    return sorted(out)
+
+
+def os_jobs(cfg, agents_dir=None):
+    """Every launchd job on this Mac that runs this project: ours (by label) and foreign (by path)."""
+    agents = Path(agents_dir) if agents_dir else Path.home() / "Library/LaunchAgents"
+    prefix = f"com.taska.{_slug(cfg.name)}."
+    out = []
+    for path in sorted(agents.glob("*.plist")) if agents.is_dir() else []:
+        d = _plist(path)
+        if not d:
+            continue
+        lbl = d.get("Label") or path.stem
+        ours = lbl.startswith(prefix)
+        if not ours and not _points_into(d, cfg.project_dir):
+            continue
+        args = d.get("ProgramArguments") or [d.get("Program", "")]
+        out.append({"label": lbl, "path": str(path), "ours": ours, "when": _when(d),
+                    "command": str(args[-1]) if args else "", "log": d.get("StandardOutPath")})
+    return out
+
+
+def launchd_state(label, run=None):
+    """{"loaded", "last_exit"} from `launchctl list <label>`; a non-zero exit means launchd has not loaded it."""
+    r = (run or subprocess.run)(["launchctl", "list", label], capture_output=True, text=True)
+    if r.returncode != 0:
+        return {"loaded": False, "last_exit": None}
+    m = re.search(r'"LastExitStatus"\s*=\s*(-?\d+);', r.stdout)
+    return {"loaded": True, "last_exit": int(m.group(1)) if m else None}
+
+
+def reconcile(cfg, agents_dir=None, state=None):
+    """One row per schedule, then one per OS job no schedule owns: {schedule, label, state, loaded, last_exit, path}
+    (+ when, command for unowned rows). Off a Mac only the schedules themselves are known."""
+    state = state or launchd_state
+    jobs = {j["label"]: j for j in os_jobs(cfg, agents_dir)} if sys.platform == "darwin" or agents_dir else {}
+    rows = []
+    for s in cfg.schedules:
+        lbl = label(cfg.name, s)
+        j = jobs.pop(lbl, None)
+        st = state(lbl) if j else {"loaded": False, "last_exit": None}
+        status = "off" if not s.on else "not_registered" if not j else "active" if st["loaded"] else "not_loaded"
+        rows.append({"schedule": s.name, "label": lbl, "state": status, **st, "path": j["path"] if j else None})
+    for lbl, j in jobs.items():
+        rows.append({"schedule": None, "label": lbl, "state": "stale" if j["ours"] else "foreign", **state(lbl),
+                     "path": j["path"], "when": j["when"], "command": j["command"]})
+    return rows
+
+
+def retire(cfg, path, launchctl=None, why=""):
+    """Unload a job and move its file to <store>/retired-jobs/<stamp>-<name>: never deleted. Refuses a file that is
+    neither ours nor pointing into this project."""
+    path = Path(path)
+    d = _plist(path) or {}
+    lbl = d.get("Label") or path.stem
+    if not (lbl.startswith(f"com.taska.{_slug(cfg.name)}.") or _points_into(d, cfg.project_dir)):
+        raise ValueError(f"{path.name} does not run this project; not retired")
+    (launchctl or _launchctl)("unload", str(path))
+    dest = Path(cfg.store) / "retired-jobs" / f"{dt.datetime.now():%Y%m%d-%H%M%S}-{path.name}"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(path), str(dest))
+    return {"name": None, "label": lbl, "path": None, "action": "retired", "moved_to": str(dest), "why": why}

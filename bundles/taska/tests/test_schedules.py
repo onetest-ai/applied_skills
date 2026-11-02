@@ -385,3 +385,113 @@ def test_save_sets_the_owner_in_report(tmp_path):
     with pytest.raises(ValueError, match="owner"):
         W.save(tmp_path, [], owner="not an address")
     assert (tmp_path / "taska.toml").read_text() == before
+
+
+# ---------- a schedule's own command; what the OS holds; reconcile; retire ----------
+
+import plistlib
+
+
+def test_command_on_a_schedule_wins_over_run_scheduled(tmp_path):
+    import tomllib
+    cfg = _cfg(tmp_path, '[run]\nscheduled = "python3 bin/weekly.py {kind}"\n')
+    own = W.Schedule("Night", "update", (1,), "06:40", command="/p/bin/full-run.sh")
+    assert W.command_for(cfg, own) == "/p/bin/full-run.sh" and W.command_for(cfg, TWO[0]) == "python3 bin/weekly.py preview"
+    assert "command =" not in W.to_toml(TWO) and 'command = "/p/bin/full-run.sh"' in W.to_toml([own])
+    assert W.parse(tomllib.loads(W.to_toml([own]))["schedules"]) == [own]
+
+
+def test_a_non_string_command_is_refused(tmp_path):
+    with pytest.raises(C.ConfigError, match="command"):
+        _project(tmp_path, '[[schedules]]\nname = "x"\nkind = "update"\ndays = [1]\ntime = "06:40"\ncommand = 3\n')
+
+
+def _job(agents, name, label, args, cal=None):
+    agents.mkdir(parents=True, exist_ok=True)
+    path = agents / f"{name}.plist"
+    d = {"Label": label, "ProgramArguments": args, "StandardOutPath": "/tmp/x.log",
+         "StartCalendarInterval": cal if cal is not None else [{"Hour": 6, "Minute": 40, "Weekday": 1}]}
+    path.write_bytes(plistlib.dumps(d))
+    return path
+
+
+def test_points_into_expands_home_forms(tmp_path, monkeypatch):
+    monkeypatch.setattr(W.Path, "home", classmethod(lambda cls: tmp_path))
+    proj = tmp_path / "harbor"
+    proj.mkdir()
+    for form in ("~/harbor/bin/run.sh", "$HOME/harbor/bin/run.sh", "${HOME}/harbor", f'cd "{proj}" && x'):
+        assert W._points_into({"ProgramArguments": ["/bin/zsh", "-lic", form]}, proj), form
+
+
+def test_points_into_ignores_a_sibling_folder(tmp_path):
+    proj = tmp_path / "harbor"
+    proj.mkdir()
+    assert not W._points_into({"ProgramArguments": [str(tmp_path / "harbor-old" / "run.sh")]}, proj)
+    assert not W._points_into({"ProgramArguments": ["/bin/zsh"]}, proj)
+
+
+def test_when_reads_dict_and_list_calendar_intervals():
+    assert W._when({"StartCalendarInterval": {"Hour": 6, "Minute": 40}}) == [(d, "06:40") for d in range(1, 8)]
+    assert W._when({"StartCalendarInterval": [{"Hour": 6, "Minute": 40, "Weekday": 1},
+                                              {"Hour": 6, "Minute": 40, "Weekday": 0}]}) == [(1, "06:40"), (7, "06:40")]
+
+
+def test_os_jobs_finds_ours_by_label_and_foreign_by_path(tmp_path):
+    cfg = _cfg(tmp_path)
+    agents = tmp_path / "agents"
+    _job(agents, "com.taska.harbor-logistics.friday-preview", "com.taska.harbor-logistics.friday-preview", ["/bin/zsh", "-lic", "x"])
+    _job(agents, "com.example.nightly", "com.example.nightly", ["/bin/zsh", "-lic", f"{tmp_path}/bin/full-run.sh"])
+    _job(agents, "com.example.other", "com.example.other", ["/bin/zsh", "-lic", "/elsewhere/run.sh"])
+    jobs = {j["label"]: j for j in W.os_jobs(cfg, agents)}
+    assert set(jobs) == {"com.taska.harbor-logistics.friday-preview", "com.example.nightly"}
+    assert jobs["com.taska.harbor-logistics.friday-preview"]["ours"] and not jobs["com.example.nightly"]["ours"]
+    assert jobs["com.example.nightly"]["command"].endswith("full-run.sh") and jobs["com.example.nightly"]["when"] == [(1, "06:40")]
+
+
+def test_reconcile_states(tmp_path):
+    cfg = _project(tmp_path, W.to_toml([
+        W.Schedule("Active", "update", (1,), "06:00"), W.Schedule("Unregistered", "update", (2,), "06:00"),
+        W.Schedule("Unloaded", "update", (3,), "06:00"), W.Schedule("Paused", "update", (4,), "06:00", on=False)]))
+    agents = tmp_path / "agents"
+    for n in ("active", "unloaded", "gone"):
+        _job(agents, f"com.taska.harbor-logistics.{n}", f"com.taska.harbor-logistics.{n}", ["x"])
+    _job(agents, "com.example.nightly", "com.example.nightly", [f"{tmp_path}/bin/run.sh"])
+    loaded = {"com.taska.harbor-logistics.active", "com.taska.harbor-logistics.gone", "com.example.nightly"}
+    state = lambda lbl: {"loaded": lbl in loaded, "last_exit": 0 if lbl in loaded else None}
+    rows = {r["schedule"] or r["label"]: r["state"] for r in W.reconcile(cfg, agents, state)}
+    assert rows == {"Active": "active", "Unregistered": "not_registered", "Unloaded": "not_loaded", "Paused": "off",
+                    "com.taska.harbor-logistics.gone": "stale", "com.example.nightly": "foreign"}
+
+
+def test_launchd_state_parses_list_output():
+    class R:
+        def __init__(self, rc, out): self.returncode, self.stdout = rc, out
+    assert W.launchd_state("x", run=lambda *a, **k: R(0, '{\n\t"LastExitStatus" = 0;\n\t"Label" = "x";\n};')) == {"loaded": True, "last_exit": 0}
+    assert W.launchd_state("x", run=lambda *a, **k: R(113, "")) == {"loaded": False, "last_exit": None}
+
+
+def test_retire_moves_a_foreign_job_aside(tmp_path):
+    cfg = _cfg(tmp_path)
+    path = _job(tmp_path / "agents", "com.example.nightly", "com.example.nightly", [f"{tmp_path}/bin/run.sh"])
+    calls = []
+    r = W.retire(cfg, path, launchctl=lambda *a: calls.append(a), why="test")
+    assert r["action"] == "retired" and not path.exists() and Path(r["moved_to"]).is_file()
+    assert Path(r["moved_to"]).parent == Path(cfg.store) / "retired-jobs" and calls == [("unload", str(path))]
+
+
+def test_retire_refuses_a_job_of_another_project(tmp_path):
+    cfg = _cfg(tmp_path)
+    path = _job(tmp_path / "agents", "com.example.other", "com.example.other", ["/elsewhere/run.sh"])
+    with pytest.raises(ValueError, match="does not run this project"):
+        W.retire(cfg, path, launchctl=lambda *a: None)
+    assert path.is_file()
+
+
+def test_register_retires_a_managed_job_with_no_schedule(tmp_path, monkeypatch):
+    monkeypatch.setattr(W.sys, "platform", "darwin")
+    cfg = _cfg(tmp_path)
+    agents, calls = tmp_path / "agents", []
+    old = _job(agents, "com.taska.harbor-logistics.renamed", "com.taska.harbor-logistics.renamed", ["x"])
+    out = W.register(cfg, agents_dir=agents, launchctl=lambda *a: calls.append(a))
+    gone = next(o for o in out if o["label"] == "com.taska.harbor-logistics.renamed")
+    assert gone["action"] == "retired" and not old.exists() and ("unload", str(old)) in calls
