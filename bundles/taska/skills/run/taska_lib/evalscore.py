@@ -50,15 +50,22 @@ def _wilson(ok, n, z=1.96):
     return round((centre - spread) / denom, 3)
 
 
+BUCKET_NAMES = {
+    "B7": "Committed work found", "B7c": "Committed work found, proposal cards counted", "B8": "Proposed work found",
+    "B9": "Committed work found in the last third", "B10": "Owner right", "B11": "Due date right", "B12": "Status right",
+    "B13": "Decisions and risks found", "B14": "Client-owed flag right", "B15": "Created items the key has (precision)",
+    "B16": "Declined work not created"}
+
+
 def _gap(ok, n, fails):
-    """Build a gap dict. rate and lb95 are None when n == 0."""
+    """Build a gap dict. rate and lb95 are None when n == 0. `fails` is never cut: a capped list hides misses."""
     if n:
         rate = round(ok / n, 3)
         lb95 = _wilson(ok, n)
     else:
         rate = None
         lb95 = None
-    return {"n": n, "ok": ok, "rate": rate, "lb95": lb95, "fails": fails[:20]}
+    return {"n": n, "ok": ok, "rate": rate, "lb95": lb95, "fails": fails}
 
 
 def _fail(g, why):
@@ -287,11 +294,29 @@ def score(store, gold):
         matches[idx] = nid
         carded_flags[idx] = False if nid is not None else _card_match(g, evs, ev)
 
+    rows = []
+
+    def run_fields(nid):
+        n = N.get(nid) or {}
+        return {"run_node": nid or "", "run_kind": n.get("kind") or "", "run_title": n.get("title") or "",
+                "run_owner": (_node_owner(n) or "") if n else "", "run_due": n.get("due") or "", "run_status": n.get("state") or ""}
+
+    def verdict(idx, bucket, ok, why=""):
+        g = gold[idx]
+        rows.append({"key_id": g.get("cid") or "", "bucket": bucket, "bucket_name": BUCKET_NAMES[bucket],
+                     "meeting": g.get("evidence") or "", "ts": g.get("ts") or "", "speaker": g.get("speaker") or "",
+                     "quote": g.get("quote") or "", "expected_kind": g.get("kind") or "", "expected_title": g.get("title") or "",
+                     "expected_owner": g.get("owner") or "", "expected_due": g.get("due") or "", "expected_status": g.get("status") or "",
+                     "commitment": g.get("commitment") or "", "verdict": "hit" if ok else "miss", "why": "" if ok else why,
+                     **run_fields(matches[idx])})
+
     # ── B7: committed task/story recall ─────────────────────────────────────
     b7_items = [(idx, g) for idx, g in enumerate(gold)
                 if g.get("commitment") == "committed" and g.get("kind") in ("task", "story")]
     b7_ok, b7_fails = 0, []
     for idx, g in b7_items:
+        verdict(idx, "B7", matches[idx] is not None, "no matching node")
+        verdict(idx, "B7c", matches[idx] is not None or carded_flags[idx], "no matching node or proposal card")
         if matches[idx] is not None:
             b7_ok += 1
         else:
@@ -304,6 +329,7 @@ def score(store, gold):
     b8_items = [(idx, g) for idx, g in enumerate(gold) if g.get("commitment") == "proposed"]
     b8_ok, b8_fails = 0, []
     for idx, g in b8_items:
+        verdict(idx, "B8", matches[idx] is not None or carded_flags[idx], "no matching node or propose card")
         if matches[idx] is not None or carded_flags[idx]:
             b8_ok += 1
         else:
@@ -327,6 +353,7 @@ def score(store, gold):
         parts[part][0] += 1
         parts[part][1] += hit
         if part == "3":
+            verdict(idx, "B9", bool(hit), "last-third miss")
             b9_n += 1
             b9_ok += hit
             if not hit:
@@ -355,6 +382,7 @@ def score(store, gold):
                     if can_nown == team.name or can_nown in member_names:
                         ok = True
         owner_ok[idx] = ok
+        verdict(idx, "B10", ok, f"owner {nown!r} != {gown!r}")
         if ok:
             b10_ok += 1
         else:
@@ -365,6 +393,7 @@ def score(store, gold):
     b11_ok, b11_fails = 0, []
     for idx, g in b11_items:
         node = N[matches[idx]]
+        verdict(idx, "B11", node.get("due") == g["due"], f"due {node.get('due')!r} != {g['due']!r}")
         if node.get("due") == g["due"]:
             b11_ok += 1
         else:
@@ -375,6 +404,7 @@ def score(store, gold):
     b12_ok, b12_fails = 0, []
     for idx, g in b12_items:
         node = N[matches[idx]]
+        verdict(idx, "B12", _map_node_state(node["state"]) == _map_gold_status(g["status"]), f"status {node['state']!r} != {g['status']!r}")
         if _map_node_state(node["state"]) == _map_gold_status(g["status"]):
             b12_ok += 1
         else:
@@ -385,6 +415,7 @@ def score(store, gold):
                  if g.get("kind") in ("decision", "risk") and g.get("commitment") != "declined"]
     b13_ok, b13_fails = 0, []
     for idx, g in b13_items:
+        verdict(idx, "B13", matches[idx] is not None, "no matching decision/risk node")
         if matches[idx] is not None:
             b13_ok += 1
         else:
@@ -395,6 +426,8 @@ def score(store, gold):
     b14_ok, b14_fails = 0, []
     for idx, g in b14_items:
         node = N[matches[idx]]
+        verdict(idx, "B14", bool(node.get("client_owed")) == bool(g.get("client_owed")),
+                f"client_owed {node.get('client_owed')} != {g.get('client_owed')}")
         if bool(node.get("client_owed")) == bool(g.get("client_owed")):
             b14_ok += 1
         else:
@@ -418,6 +451,11 @@ def score(store, gold):
     b15_ok, b15_fails = 0, []
     create_quote = {e.get("id"): (e.get("quote") or "") for e in evs if e.get("type") == "create"}
     for nid, n in b15_nodes:
+        rows.append({"key_id": "", "bucket": "B15", "bucket_name": BUCKET_NAMES["B15"], "meeting": n.get("created_in") or "",
+                     "ts": "", "speaker": "", "quote": create_quote.get(nid, ""), "expected_kind": "", "expected_title": "",
+                     "expected_owner": "", "expected_due": "", "expected_status": "", "commitment": "",
+                     "verdict": "hit" if nid in matched_nids else "invented", "why": "" if nid in matched_nids else "false positive node",
+                     **run_fields(nid)})
         if nid in matched_nids:
             b15_ok += 1
         else:
@@ -429,7 +467,9 @@ def score(store, gold):
     b16_items = [(idx, g) for idx, g in enumerate(gold) if g.get("commitment") == "declined"]
     b16_ok, b16_fails = 0, []
     for idx, g in b16_items:
-        if matches[idx] is None or N[matches[idx]].get("kind") in ("decision", "risk"):   # a decision recording the "no"
+        ok16 = matches[idx] is None or N[matches[idx]].get("kind") in ("decision", "risk")   # a decision recording the "no"
+        verdict(idx, "B16", ok16, f"declined item matched node {matches[idx]!r}")
+        if ok16:
             b16_ok += 1
         else:
             b16_fails.append(_fail(g, f"declined item matched node {matches[idx]!r}"))
@@ -452,6 +492,8 @@ def score(store, gold):
         "B16": _gap(b16_ok, len(b16_items), b16_fails),
         "incomplete": incomplete,
         "carded": carded,
+        "bucket_names": BUCKET_NAMES,
+        "rows": rows,   # one per key item and bucket, plus one per created node in B15: items.csv
         # one line per gold item, never truncated: per-item comparisons read this, not the capped `fails`
         "items": [{"cid": g.get("cid"), "evidence": g.get("evidence"),
                    "match": f"node:{matches[idx]}" if matches[idx] else ("card" if carded_flags[idx] else None)}

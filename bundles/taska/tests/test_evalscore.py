@@ -600,7 +600,7 @@ def test_items_list_is_complete(tmp_path):
     for i, g in enumerate(gold):
         g["cid"] = f"c{i:02d}"
     result = score(cfg.store, gold)
-    assert len(result["B7"]["fails"]) == 20                       # display stays capped
+    assert len(result["B7"]["fails"]) == 25                       # never capped: a cut list hides misses (Nov 2: B15 had 21)
     assert [it["cid"] for it in result["items"]] == [g["cid"] for g in gold]
     assert all(it["match"] is None for it in result["items"])
 
@@ -788,3 +788,20 @@ def test_b7c_mixed_case_counts_nodes_and_cards_once_each(tmp_path):
     _processed(cfg)
     r = score(cfg.store, [_gold(quote=QA), _gold(quote=QB), _gold(quote=QNO)])
     assert (r["B7"]["ok"], r["carded"], r["B7c"]["ok"], r["B7c"]["n"]) == (1, 1, 2, 3)
+
+
+def test_buckets_keep_every_item_with_its_verdict(tmp_path):
+    cfg = _cfg(tmp_path)
+    _meeting(cfg)
+    _epics(cfg)
+    _processed(cfg)
+    gold = [_gold(quote=f"Nora will write onboarding checklist number {i} and send it to Opal today") for i in range(3)]
+    for i, g in enumerate(gold):
+        g["cid"] = f"c{i:02d}"
+    rows = score(cfg.store, gold)["rows"]
+    b7 = [r for r in rows if r["bucket"] == "B7"]
+    assert [r["key_id"] for r in b7] == ["c00", "c01", "c02"] and {r["verdict"] for r in b7} == {"miss"}
+    assert all(r["bucket_name"] == "Committed work found" and r["why"] == "no matching node" and r["quote"] for r in b7)
+    assert set(rows[0]) >= {"key_id", "bucket", "bucket_name", "meeting", "ts", "speaker", "quote", "expected_kind",
+                            "expected_title", "expected_owner", "expected_due", "expected_status", "verdict", "why",
+                            "run_node", "run_kind", "run_title", "run_owner", "run_due", "run_status"}
