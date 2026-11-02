@@ -294,7 +294,9 @@ def test_register_on_windows_creates_from_xml_and_deletes_an_off_schedule(tmp_pa
     cfg, calls = _cfg(tmp_path), []
     out = W.register(cfg, schtasks=lambda *a: calls.append(a), machine="pc-1", now=dt.datetime(2026, 3, 2, tzinfo=dt.timezone.utc))
     assert [o["action"] for o in out] == ["loaded", "unloaded"]
-    assert calls[0][0] == "create" and calls[0][1] == r"\taska\harbor-logistics\friday-preview" and Path(calls[0][2]).read_text(encoding="utf-16").count("<Hidden>true") == 1
+    assert calls[0] == ("query", "")   # first: which tasks exist, so a deleted schedule's task goes too
+    create = next(c for c in calls if c[0] == "create")
+    assert create[1] == r"\taska\harbor-logistics\friday-preview" and Path(create[2]).read_text(encoding="utf-16").count("<Hidden>true") == 1
     assert ("delete", r"\taska\harbor-logistics\monday-send") in calls
     assert out[0]["path"].endswith("friday-preview.xml") and (cfg.store / "runner.json").exists()
 
@@ -406,10 +408,10 @@ def test_a_non_string_command_is_refused(tmp_path):
         _project(tmp_path, '[[schedules]]\nname = "x"\nkind = "update"\ndays = [1]\ntime = "06:40"\ncommand = 3\n')
 
 
-def _job(agents, name, label, args, cal=None):
+def _job(agents, name, label, args, cal=None, log="/tmp/x.log"):
     agents.mkdir(parents=True, exist_ok=True)
     path = agents / f"{name}.plist"
-    d = {"Label": label, "ProgramArguments": args, "StandardOutPath": "/tmp/x.log",
+    d = {"Label": label, "ProgramArguments": args, "StandardOutPath": str(log),
          "StartCalendarInterval": cal if cal is not None else [{"Hour": 6, "Minute": 40, "Weekday": 1}]}
     path.write_bytes(plistlib.dumps(d))
     return path
@@ -439,7 +441,7 @@ def test_when_reads_dict_and_list_calendar_intervals():
 def test_os_jobs_finds_ours_by_label_and_foreign_by_path(tmp_path):
     cfg = _cfg(tmp_path)
     agents = tmp_path / "agents"
-    _job(agents, "com.taska.harbor-logistics.friday-preview", "com.taska.harbor-logistics.friday-preview", ["/bin/zsh", "-lic", "x"])
+    _job(agents, "com.taska.harbor-logistics.friday-preview", "com.taska.harbor-logistics.friday-preview", ["/bin/zsh", "-lic", "x"], log=tmp_path / "logs/x.log")
     _job(agents, "com.example.nightly", "com.example.nightly", ["/bin/zsh", "-lic", f"{tmp_path}/bin/full-run.sh"])
     _job(agents, "com.example.other", "com.example.other", ["/bin/zsh", "-lic", "/elsewhere/run.sh"])
     jobs = {j["label"]: j for j in W.os_jobs(cfg, agents)}
@@ -454,7 +456,7 @@ def test_reconcile_states(tmp_path):
         W.Schedule("Unloaded", "update", (3,), "06:00"), W.Schedule("Paused", "update", (4,), "06:00", on=False)]))
     agents = tmp_path / "agents"
     for n in ("active", "unloaded", "gone"):
-        _job(agents, f"com.taska.harbor-logistics.{n}", f"com.taska.harbor-logistics.{n}", ["x"])
+        _job(agents, f"com.taska.harbor-logistics.{n}", f"com.taska.harbor-logistics.{n}", ["x"], log=tmp_path / "logs/x.log")
     _job(agents, "com.example.nightly", "com.example.nightly", [f"{tmp_path}/bin/run.sh"])
     loaded = {"com.taska.harbor-logistics.active", "com.taska.harbor-logistics.gone", "com.example.nightly"}
     state = lambda lbl: {"loaded": lbl in loaded, "last_exit": 0 if lbl in loaded else None}
@@ -491,7 +493,7 @@ def test_register_retires_a_managed_job_with_no_schedule(tmp_path, monkeypatch):
     monkeypatch.setattr(W.sys, "platform", "darwin")
     cfg = _cfg(tmp_path)
     agents, calls = tmp_path / "agents", []
-    old = _job(agents, "com.taska.harbor-logistics.renamed", "com.taska.harbor-logistics.renamed", ["x"])
+    old = _job(agents, "com.taska.harbor-logistics.renamed", "com.taska.harbor-logistics.renamed", ["x"], log=tmp_path / "logs/renamed.log")
     out = W.register(cfg, agents_dir=agents, launchctl=lambda *a: calls.append(a))
     gone = next(o for o in out if o["label"] == "com.taska.harbor-logistics.renamed")
     assert gone["action"] == "retired" and not old.exists() and ("unload", str(old)) in calls
@@ -504,3 +506,39 @@ def test_os_jobs_skips_a_file_nobody_can_read(tmp_path):
     (agents / "net.vendor.client.plist").write_text('<?xml version="1.0"?>\n<plist version="1.0"><dict><key>Label</key><string>a & b</string></dict></plist>')
     _job(agents, "com.example.nightly", "com.example.nightly", [f"{tmp_path}/bin/run.sh"])
     assert [j["label"] for j in W.os_jobs(cfg, agents)] == ["com.example.nightly"]
+
+
+# ---------- review fixes: ownership by folder; Windows leaves nothing behind ----------
+
+def test_a_same_named_project_in_another_folder_never_loses_its_jobs(tmp_path, monkeypatch):
+    monkeypatch.setattr(W.sys, "platform", "darwin")
+    a_dir, b_dir = tmp_path / "a", tmp_path / "b"
+    a_dir.mkdir(); b_dir.mkdir()
+    cfg_b = _cfg(b_dir)
+    agents = tmp_path / "agents"
+    a_job = _job(agents, "com.taska.harbor-logistics.weekly", "com.taska.harbor-logistics.weekly", ["x"])
+    d = plistlib.loads(a_job.read_bytes()); d["StandardOutPath"] = str(a_dir / "logs" / "weekly.log"); a_job.write_bytes(plistlib.dumps(d))
+    assert all(j["label"] != "com.taska.harbor-logistics.weekly" for j in W.os_jobs(cfg_b, agents))
+    W.register(cfg_b, agents_dir=agents, launchctl=lambda *a: None)
+    assert a_job.is_file()
+    with pytest.raises(ValueError, match="does not run this project"):
+        W.retire(cfg_b, a_job, launchctl=lambda *a: None)
+
+
+def test_register_on_windows_deletes_a_task_no_schedule_names(tmp_path, monkeypatch):
+    monkeypatch.setattr(W.sys, "platform", "win32")
+    cfg = _cfg(tmp_path)
+    calls = []
+    def schtasks(verb, name, xml=None):
+        calls.append((verb, name))
+        return '"\\taska\\harbor-logistics\\renamed","11/3/2026 6:00:00 AM","Ready"\n' if verb == "query" else ""
+    W.register(cfg, schtasks=schtasks)
+    assert ("delete", "\\taska\\harbor-logistics\\renamed") in calls
+
+
+def test_reconcile_on_windows_reads_the_registered_tasks(tmp_path, monkeypatch):
+    monkeypatch.setattr(W.sys, "platform", "win32")
+    cfg = _cfg(tmp_path)
+    q = lambda verb, name, xml=None: '"\\taska\\harbor-logistics\\friday-preview","11/6/2026 8:00:00 PM","Ready"\n' if verb == "query" else ""
+    rows = {r["schedule"]: r["state"] for r in W.reconcile(cfg, schtasks=q)}
+    assert rows == {"Friday preview": "active", "Monday send": "off"}

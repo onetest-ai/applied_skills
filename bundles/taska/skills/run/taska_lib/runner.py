@@ -141,6 +141,7 @@ def _report(cfg, s, week, wd, reports, out, failed, shadow=False):
     elif s.kind == "send" and not held and owner and owner not in d["cc"] and owner != to:
         d["cc"] = list(d["cc"]) + [owner]   # the owner stays in copy of every send
     if held:
+        d["cc"] = []   # a held notice goes to the owner only
         d["subject"] = f"HELD: {d['subject']} — {', '.join(failed)} failed"
         d["needs_attention"] = True
     if held or (s.kind == "send" and owner):

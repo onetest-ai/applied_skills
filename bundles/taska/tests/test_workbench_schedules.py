@@ -105,6 +105,8 @@ def test_page_has_the_schedules_panel():
     for s in ("/api/schedules/preview", "/api/schedules/delete", "/api/schedules/retire", "body.framed", "Copy into a schedule",
               "two jobs", "<dialog", "not described in taska.toml"):
         assert s in page, s
+    assert 'dlg.returnValue = ""' in page   # Esc after an earlier OK must not confirm
+    assert 'schErr = esc(p.error' in page   # server text is never rendered as HTML
 
 
 def test_the_page_opens_on_a_view_named_in_the_query(served):
@@ -246,7 +248,9 @@ def test_schedules_page_is_framable_only_locally(served):
     base, *_ = served
     r = urllib.request.urlopen(base + "/schedules")
     assert r.status == 200 and "frame-ancestors 'self' http://127.0.0.1:* http://localhost:*" in r.headers["Content-Security-Policy"]
-    assert urllib.request.urlopen(base + "/").headers.get("Content-Security-Policy") is None
+    for path in ("/", "/?view=schedules&embed", "/index.html"):   # every HTML page carries it: ?embed shows the same controls
+        assert "frame-ancestors 'self'" in urllib.request.urlopen(base + path).headers["Content-Security-Policy"]
+    assert "http://[::1]:*" in r.headers["Content-Security-Policy"]
     d = json.loads(urllib.request.urlopen(base + "/api/schedules/preview?name=Friday%20preview").read())
     assert d["schedule"] == "Friday preview" and d["mail"]["include"]
 

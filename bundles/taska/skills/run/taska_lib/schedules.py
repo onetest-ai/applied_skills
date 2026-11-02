@@ -399,6 +399,11 @@ def register(cfg, agents_dir=None, launchctl=None, schtasks=None, machine=None, 
     if sys.platform == "win32":
         run = schtasks or _schtasks
         xml_dir = Path(cfg.store) / "tasks"
+        keep = {task_name(cfg.name, s) for s in cfg.schedules}
+        for name in registered(cfg.name, schtasks=run):   # a deleted or renamed schedule leaves no task behind
+            if name not in keep:
+                run("delete", name)
+                out.append({"name": None, "label": name, "path": None, "action": "unloaded"})
         for s in cfg.schedules:
             name = task_name(cfg.name, s)
             if not s.on:
@@ -413,9 +418,9 @@ def register(cfg, agents_dir=None, launchctl=None, schtasks=None, machine=None, 
         return out
     agents = Path(agents_dir) if agents_dir else Path.home() / "Library/LaunchAgents"
     run = launchctl or _launchctl
-    for lbl, path in registered(cfg.name, agents_dir).items():   # a deleted or renamed schedule leaves no job behind
-        if lbl not in labels:
-            out.append(retire(cfg, path, launchctl=run, why="no schedule of that name"))
+    for j in os_jobs(cfg, agents_dir):   # a deleted or renamed schedule leaves no job behind (only this folder's jobs)
+        if j["ours"] and j["label"] not in labels:
+            out.append(retire(cfg, j["path"], launchctl=run, why="no schedule of that name"))
     for s in cfg.schedules:
         lbl = label(cfg.name, s)
         cmd = command_for(cfg, s)
@@ -460,7 +465,7 @@ def registered(project_name, agents_dir=None, schtasks=None):
     if sys.platform == "win32":
         prefix = task_name(project_name, Schedule("x", "update", (1,), "00:00")).rsplit("\\", 1)[0] + "\\"
         out = {}
-        for line in (schtasks or _schtasks)("query", "").splitlines():
+        for line in ((schtasks or _schtasks)("query", "") or "").splitlines():
             cells = [c.strip('"') for c in line.strip().split('","')]
             if len(cells) >= 2 and cells[0].startswith(prefix):
                 out[cells[0]] = cells[1]
@@ -531,9 +536,9 @@ def os_jobs(cfg, agents_dir=None):
         if not d:
             continue
         lbl = d.get("Label") or path.stem
-        ours = lbl.startswith(prefix)
-        if not ours and not _points_into(d, cfg.project_dir):
+        if not _points_into(d, cfg.project_dir):   # by folder, never by name: two projects may share a name
             continue
+        ours = lbl.startswith(prefix)
         args = d.get("ProgramArguments") or [d.get("Program", "")]
         out.append({"label": lbl, "path": str(path), "ours": ours, "when": _when(d),
                     "command": str(args[-1]) if args else "", "log": d.get("StandardOutPath")})
@@ -549,9 +554,21 @@ def launchd_state(label, run=None):
     return {"loaded": True, "last_exit": int(m.group(1)) if m else None}
 
 
-def reconcile(cfg, agents_dir=None, state=None):
+def reconcile(cfg, agents_dir=None, state=None, schtasks=None):
     """One row per schedule, then one per OS job no schedule owns: {schedule, label, state, loaded, last_exit, path}
-    (+ when, command for unowned rows). Off a Mac only the schedules themselves are known."""
+    (+ when, command for unowned rows). On Windows the tasks under taska's folder say which schedules are registered;
+    jobs made outside taska are not detected there."""
+    if sys.platform == "win32":
+        tasks = registered(cfg.name, schtasks=schtasks)
+        rows = []
+        for s in cfg.schedules:
+            name = task_name(cfg.name, s)
+            status = "off" if not s.on else "active" if name in tasks else "not_registered"
+            rows.append({"schedule": s.name, "label": name, "state": status, "loaded": name in tasks, "last_exit": None, "path": None})
+        keep = {task_name(cfg.name, s) for s in cfg.schedules}
+        rows += [{"schedule": None, "label": n, "state": "stale", "loaded": True, "last_exit": None, "path": None, "when": [], "command": ""}
+                 for n in tasks if n not in keep]
+        return rows
     state = state or launchd_state
     jobs = {j["label"]: j for j in os_jobs(cfg, agents_dir)} if sys.platform == "darwin" or agents_dir else {}
     rows = []
@@ -573,7 +590,7 @@ def retire(cfg, path, launchctl=None, why=""):
     path = Path(path)
     d = _plist(path) or {}
     lbl = d.get("Label") or path.stem
-    if not (lbl.startswith(f"com.taska.{_slug(cfg.name)}.") or _points_into(d, cfg.project_dir)):
+    if not _points_into(d, cfg.project_dir):
         raise ValueError(f"{path.name} does not run this project; not retired")
     (launchctl or _launchctl)("unload", str(path))
     dest = Path(cfg.store) / "retired-jobs" / f"{dt.datetime.now():%Y%m%d-%H%M%S}-{path.name}"

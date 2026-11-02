@@ -1107,18 +1107,21 @@ function previewHtml(p, send){
     ${row("Week", esc(p.week))}
     ${row("Runs", `<span class="mono">${esc(p.command)}</span>`)}
     ${row("Steps", p.steps_known ? esc(p.steps.join(" · ")) : `<span class="warn-text">Decided by that command; not described in taska.toml ([run].describe)</span>`)}
+    ${p.decided_by && m ? row("Note", `<span class="warn-text">That command sends the mail itself; below is what taska's rules say it should do.</span>`) : ""}
     ${m ? row("Mail to", m.review_copy ? `${chips(m.to)} <span class="muted">review copy: the reader gets it only on Send now</span>` : chips(m.to)) + row("Cc", chips(m.cc)) +
-          row("Includes", esc(m.include.join(" · ") || "nothing")) + row("Not sent", esc(m.not_included.join(" · ") || "—")) : row("Mail", "none: this job only updates the tree")}
+          row("Includes", esc(m.include.join(" · ") || "nothing")) + row("Not sent", esc(m.not_included.join(" · ") || "—")) +
+          (m.held ? row("If held", `a failed step or gate sends a HELD notice to ${chips(m.held.to)} only, never the reader`) : "") : row("Mail", "none: this job only updates the tree")}
   </table>`;
 }
 async function confirmRun(s, send){
   const r = await fetch(`/api/schedules/preview?name=${encodeURIComponent(s.name)}&send=${send?1:0}`, {cache:"no-store"});
-  const p = await r.json();
-  if (!r.ok){ schErr = p.error || "Could not describe this run"; renderSchedules(); return false; }
+  const p = await r.json().catch(() => ({error: "No answer from the server"}));
+  if (!r.ok || p.error){ schErr = esc(p.error || "Could not describe this run"); renderSchedules(); return false; }
   const dlg = $("#sch-dialog");
   dlg.querySelector("h3").textContent = `${send ? "Send" : "Run"} "${s.name}" now?`;
   dlg.querySelector(".body").innerHTML = previewHtml(p, send);
   dlg.querySelector("[data-ok]").textContent = send ? "Send now" : "Run now";
+  dlg.returnValue = "";   // Esc closes without a value: an earlier OK must not count as this one
   dlg.showModal();
   return new Promise(res => { dlg.onclose = () => res(dlg.returnValue === "ok"); });
 }

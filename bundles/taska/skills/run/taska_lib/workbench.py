@@ -95,6 +95,7 @@ def what(s, owner):
     return f"The weekly report to {who}{cc}, " + ("after your review" if s.review else "automatically")
 
 
+FRAME_CSP = {"Content-Security-Policy": "frame-ancestors 'self' http://127.0.0.1:* http://localhost:* http://[::1]:*"}
 REGISTER_KEYS = ("agents_dir", "launchctl", "schtasks", "machine", "now", "force")
 REPORT_STEPS = ["workbench copy", "build the docx", "pre-send gate", "deliver"]
 
@@ -118,7 +119,7 @@ def schedules_view(cfg, register_opts=None):
     return {"schedules": rows, "registered": SCH.registered(cfg.name, opts.get("agents_dir")), "platform": SCH.sys.platform,
             "can_register": SCH.sys.platform in ("darwin", "win32"), "command": (cfg.run or {}).get("scheduled"),
             "timezone": now.tzname(), "owner": owner, "reports_dir": str(cfg.project_dir / "reports"), "runner": SCH.runner_lock(cfg),
-            "os": SCH.reconcile(cfg, opts.get("agents_dir"), opts.get("state")),
+            "os": SCH.reconcile(cfg, opts.get("agents_dir"), opts.get("state"), opts.get("schtasks")),
             "os_scope": "launchd" if SCH.sys.platform == "darwin" else "managed only"}
 
 
@@ -132,7 +133,8 @@ def run_preview(cfg, name, send=False, today=None):
         raise ValueError(f"no schedule named {name!r}")
     owner = RN._owner(cfg, s)
     shadow = s.kind == "send" and bool(s.review) and not send
-    if s.command or (cfg.run or {}).get("scheduled"):
+    script = SCH.command_for(cfg, s, send) if (s.command or (cfg.run or {}).get("scheduled")) else None
+    if script:
         described = ((cfg.run or {}).get("describe") or {}).get(s.kind)
         steps, known = (list(described), True) if described else ([], False)
     else:
@@ -144,9 +146,11 @@ def run_preview(cfg, name, send=False, today=None):
         if s.kind == "send" and not shadow and owner and owner not in cc and owner != to:
             cc.append(owner)
         mail = {"to": [to] if to else [], "cc": cc, "review_copy": shadow,
+                "held": {"to": [owner] if owner else [], "cc": []} if s.kind == "send" else None,
                 "include": [k for k, v in s.include.items() if v], "not_included": [k for k, v in s.include.items() if not v]}
     return {"schedule": s.name, "kind": s.kind, "week": RN.week_for(s.kind, today or dt.date.today()),
-            "command": SCH.command_for(cfg, s, send), "steps": steps, "steps_known": known, "mail": mail}
+            "command": SCH.command_for(cfg, s, send), "steps": steps, "steps_known": known, "mail": mail,
+            "decided_by": script}
 
 
 def delete_schedule(cfg, name, register_opts=None):
@@ -162,7 +166,7 @@ def delete_schedule(cfg, name, register_opts=None):
 def retire_job(cfg, label, register_opts=None):
     """Retire a stale or foreign job the view lists; any other label is refused."""
     opts = register_opts or {}
-    row = next((r for r in SCH.reconcile(cfg, opts.get("agents_dir"), opts.get("state"))
+    row = next((r for r in SCH.reconcile(cfg, opts.get("agents_dir"), opts.get("state"), opts.get("schtasks"))
                 if r["label"] == label and r["state"] in ("stale", "foreign")), None)
     if not row:
         raise ValueError(f"{label} is not a stale or foreign job of this project")
@@ -237,17 +241,14 @@ def server(store, cfg, port, register_opts=None):
         def do_GET(self):
             if not _local_origin(self.headers, port):
                 return self._send(403, {"error": "forbidden host"})
-            if self.path.split("?", 1)[0] in ("/", "/index.html"):   # /?view=schedules opens that view
-                return self._send(200, PAGE.read_bytes(), "text/html")
+            if self.path.split("?", 1)[0] in ("/", "/index.html", "/schedules"):   # /?view=schedules opens that view; /schedules is it alone
+                return self._send(200, PAGE.read_bytes(), "text/html", FRAME_CSP)   # every page: only local pages may frame it
             if self.path == "/api/data":
                 return self._send(200, dict(data(store, cfg), code=version()))
             if self.path == "/api/version":
                 return self._send(200, version())
             if self.path == "/api/schedules":
                 return self._send(200, schedules_view(cfg, register_opts))
-            if self.path.split("?", 1)[0] == "/schedules":   # the standalone page the dashboard frames
-                return self._send(200, PAGE.read_bytes(), "text/html",
-                                  {"Content-Security-Policy": "frame-ancestors 'self' http://127.0.0.1:* http://localhost:*"})
             if self.path.startswith("/api/schedules/preview"):
                 from urllib.parse import urlparse, parse_qs
                 q = parse_qs(urlparse(self.path).query)

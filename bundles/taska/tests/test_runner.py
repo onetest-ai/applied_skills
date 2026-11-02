@@ -115,6 +115,7 @@ def test_a_send_is_held_when_a_required_step_failed(tmp_path):
     assert r["verdict"] == "held" and "extract" in r["held_why"]
     d = json.loads(Path(r["deliver"]).read_text())
     assert d["kind"] == "send" and d["subject"].startswith("HELD") and d["to"] == ["owner@example.com"]
+    assert d["cc"] == []   # a held notice goes to the owner only
     assert "HELD" in (tmp_path / "reports/2026-03-02/mail.md").read_text()
 
 
@@ -214,3 +215,13 @@ def test_run_preview_uses_describe_or_says_it_cannot(tmp_path):
     assert up["steps"] == ["pull", "extract"] and up["steps_known"] and up["mail"] is None and up["command"] == "bin/weekly.py update"
     pv = WB.run_preview(cfg, "Friday preview", today=FRI)
     assert pv["steps"] == [] and pv["steps_known"] is False
+
+
+def test_run_preview_says_a_project_script_decides_the_mail_and_shows_the_held_path(tmp_path):
+    from taska_lib import workbench as WB
+    script = REVIEWED.replace("[[run.steps]]", '[run]\nscheduled = "bin/weekly.py {kind}"\n\n[[run.steps]]', 1)
+    cfg = _proj(tmp_path, script)
+    p = WB.run_preview(cfg, "Monday send", today=dt.date(2026, 3, 9))
+    assert p["decided_by"] == "bin/weekly.py send" and p["mail"]["held"] == {"to": ["owner@example.com"], "cc": []}
+    (tmp_path / "plain").mkdir()
+    assert WB.run_preview(_proj(tmp_path / "plain", REVIEWED), "Monday send", today=dt.date(2026, 3, 9))["decided_by"] is None
