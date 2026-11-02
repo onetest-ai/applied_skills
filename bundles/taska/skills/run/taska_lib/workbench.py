@@ -134,7 +134,7 @@ def schedules_view(cfg, register_opts=None):
                          fires_local=[f"{SCH.DAY_ABBR[d - 1]} {hh:02d}:{mm:02d}" for d, hh, mm in SCH.local_slots(s)]))
     return {"schedules": rows, "registered": SCH.registered(cfg.name, opts.get("agents_dir")), "platform": SCH.sys.platform,
             "can_register": SCH.sys.platform in ("darwin", "win32"), "command": (cfg.run or {}).get("scheduled"),
-            "timezone": now.tzname(), "owner": owner, "reports_dir": str(cfg.project_dir / "reports"), "runner": SCH.runner_lock(cfg),
+            "timezone": now.tzname(), "local_zone": SCH.local_zone(), "owner": owner, "reports_dir": str(cfg.project_dir / "reports"), "runner": SCH.runner_lock(cfg),
             "os": SCH.reconcile(cfg, opts.get("agents_dir"), opts.get("state"), opts.get("schtasks")),
             "os_scope": "launchd" if SCH.sys.platform == "darwin" else "managed only"}
 
@@ -226,7 +226,7 @@ def set_schedules(cfg, rows, register_opts=None, owner=None):
     has_owner = bool(owner or (cfg.report or {}).get("owner"))
     for s in scheds:
         if s.kind == "send" and not s.to:
-            raise ValueError(f"schedule {s.name}: a send needs a To address (the reader)")
+            raise ValueError(f"schedule {s.name}: the weekly report needs a To address (yours, for a review copy)")
         if s.kind == "preview" and not s.to and not has_owner:
             raise ValueError(f"schedule {s.name}: a preview needs a To address or the owner address ([report].owner)")
     SCH.save(cfg.project_dir, scheds, owner)

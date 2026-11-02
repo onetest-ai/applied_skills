@@ -613,3 +613,8 @@ def test_command_for_has_no_send_flag_and_a_stale_template_is_named(tmp_path):
     cfg = _cfg(tmp_path, '[run]\nscheduled = "python3 bin/weekly.py {kind} {flags}"\n')
     with pytest.raises(ValueError, match="flags"):
         W.command_for(cfg, TWO[1])
+
+
+def test_the_machines_zone_is_named_by_its_current_name(monkeypatch):
+    monkeypatch.setenv("TZ", "Europe/Kiev")   # macOS links /etc/localtime to the old name
+    assert W.local_zone() == "Europe/Kyiv"

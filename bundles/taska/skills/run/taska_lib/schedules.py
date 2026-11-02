@@ -81,15 +81,20 @@ def when_text(s):
     return f"{spec} {s.time}" + (f" {s.tz}" if s.tz else "")
 
 
+RENAMED_ZONES = {"Europe/Kiev": "Europe/Kyiv", "Asia/Calcutta": "Asia/Kolkata", "Asia/Saigon": "Asia/Ho_Chi_Minh",
+                 "Asia/Katmandu": "Asia/Kathmandu", "America/Godthab": "America/Nuuk"}   # old names macOS still links to
+
+
 def local_zone():
-    """This machine's IANA zone (TZ, else /etc/localtime), or '' when it cannot be named (then times stay as written)."""
-    if os.environ.get("TZ"):
-        return os.environ["TZ"]
-    try:
-        target = os.path.realpath("/etc/localtime")
-    except OSError:
-        return ""
-    return target.split("zoneinfo/", 1)[1] if "zoneinfo/" in target else ""
+    """This machine's IANA zone (TZ, else /etc/localtime) under its current name, or '' when it cannot be named."""
+    zone = os.environ.get("TZ", "")
+    if not zone:
+        try:
+            target = os.path.realpath("/etc/localtime")
+        except OSError:
+            return ""
+        zone = target.split("zoneinfo/", 1)[1] if "zoneinfo/" in target else ""
+    return RENAMED_ZONES.get(zone, zone)
 
 
 def local_slots(s, local=None, today=None):

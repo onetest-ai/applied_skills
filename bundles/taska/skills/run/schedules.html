@@ -41,7 +41,6 @@ const LIVE = true;
   if (th === "dark" || th === "light") document.documentElement.dataset.theme = th; }
 /* ---------- schedules: what will run, reconciled with the OS; set up, run with a preview, delete (live page only) ---------- */
 const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], INC = {body:"mail body", docx:"the docx", link:"link to the folder", pptx:"slides (pptx)", workbench:"workbench copy"};
-const KIND_LABEL = {preview:"Preview", send:"Send", update:"Update"};
 const STATE = {active:["done","active"], not_registered:["warn","not registered"], not_loaded:["warn","not loaded"], off:["off","off"],
                stale:["risk","left behind"], foreign:["risk","outside taska.toml"], unreadable:["risk","unreadable job file"]};
 let SCH = null, schErr = "", schEdit = new Set(), schDirty = false;
@@ -67,26 +66,22 @@ const osRow = name => (SCH.os||[]).find(r => r.schedule === name);
 const unowned = () => (SCH.os||[]).filter(r => !r.schedule);
 function clashes(row){
   const slots = new Set((row.when||[]).map(([d,t]) => d + " " + t));
-  return SCH.schedules.filter(s => s.on !== false && (osRow(s.name)||{}).state === "active" && (s.days||[]).some(d => slots.has(d + " " + s.time)));
+  return SCH.schedules.filter(s => s.on !== false && (osRow(s.name)||{}).state === "active"
+    && (s.fires_local||[]).some(x => slots.has((DAYS.indexOf(x.split(" ")[0]) + 1) + " " + x.split(" ")[1])));
 }
 function schCard(s, i){
   const st = osRow(s.name), state = st ? st.state : "not_registered";
   const exit = st && st.last_exit !== null && st.last_exit !== undefined ? ` · last exit ${st.last_exit}` : "";
-  const when = s.on === false ? "Paused" : `Every ${esc(dayWords(s.days))} at <b class="mono">${esc(s.time)}</b> (${esc(SCH.timezone||"this machine's time")})` + (s.next ? ` · next <b class="mono">${esc(nextWords(s.next))}</b>` : "") + exit;
-  const to = (s.to||[]).length ? s.to : (s.kind === "preview" && SCH.owner ? [SCH.owner] : []);
-  const who = s.kind === "update" ? "" : `<div class="who"><span>To</span>${chips(to)}${s.kind === "send" ? `<span>Cc</span>${chips(s.cc)}` : ""}</div>`;
-  const mode = s.kind === "send" ? `<div class="mode">
-      <label><input type="radio" name="mode-${i}" data-review="${i}" value="1" ${s.review?"checked":""}> Review first: the run mails me, I press Send</label>
-      <label><input type="radio" name="mode-${i}" data-review="${i}" value="0" ${s.review?"":"checked"}> Send to the reader automatically</label></div>` : "";
-  const why = {not_registered:"Not registered with this Mac's scheduler: Save registers it.", not_loaded:"The job file exists but launchd has not loaded it: Save reloads it."}[state];
+  const byTime = {};
+  (s.fires_local || []).forEach(x => { const [d, hm] = x.split(" "); (byTime[hm] = byTime[hm] || []).push(DAYS.indexOf(d) + 1); });
+  const local = Object.entries(byTime).map(([hm, ds]) => `${dayWords(ds)} ${hm}`).join(", "), written = (s.when || "").split(" ").slice(0, 2).join(" ");
+  const elsewhere = s.tz && local && !(s.fires_local || []).every(x => written.includes(x.split(" ")[1])) ? ` · fires ${esc(local)} on this Mac` : "";
+  const why = {not_registered: "not registered yet: Save registers it", not_loaded: "not loaded: Save reloads it"}[state];
   return `<div class="card" data-i="${i}">
-    <div class="head">${badge(state)}<b>${esc(s.name||"(unnamed)")}</b><span class="tag kind">${KIND_LABEL[s.kind]||esc(s.kind)}</span></div>
-    <div class="what">${esc(s.what||"")}</div>
-    <div class="when">${when}</div>
-    ${why ? `<div class="when warn-text">${why}</div>` : ""}
-    ${who}${mode}
-    <div class="when">Runs <span class="mono">${esc(s.runs || s.command || SCH.command || "taska run-schedule")}</span></div>
-    <div class="foot"><button class="btn" data-run="${i}" ${s.name?"":"disabled"}>Run now…</button>${s.kind === "send" && s.review ? `<button class="btn primary" data-send="${i}">Send now…</button>` : ""}<a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="file://${esc(SCH.reports_dir||"")}/" title="The report folder">Open the files</a><span style="margin-left:auto;display:inline-flex;gap:6px"><button class="btn" data-edit="${i}">Edit</button><button class="btn" data-del="${i}">Delete…</button></span></div>
+    <div class="head">${badge(state)}<b>${esc(s.name || "(unnamed)")}</b><span class="mono">${esc(s.when || "")}</span></div>
+    <div class="what">${esc(s.what || "")}</div>
+    <div class="when">${s.next ? `next <b class="mono">${esc(nextWords(s.next))}</b>` : (s.on === false ? "runs only when you press Run now" : "")}${elsewhere}${exit}${why ? ` · <span class="warn-text">${why}</span>` : ""}</div>
+    <div class="foot"><button class="btn" data-run="${i}" ${s.name ? "" : "disabled"}>Run now…</button><span style="margin-left:auto;display:inline-flex;gap:6px"><button class="btn" data-edit="${i}">Edit</button><button class="btn" data-del="${i}">Delete…</button></span></div>
   </div>`;
 }
 function unownedCard(r, k){
@@ -102,14 +97,16 @@ function unownedCard(r, k){
 }
 function schForm(s, i){
   const inc = Object.assign({body:true,docx:true,link:true,pptx:false,workbench:false}, s.include || {});
+  const zones = [...new Set([SCH.local_zone, "Europe/Kyiv", "Europe/London", "America/New_York", "Asia/Kolkata", "UTC"].filter(Boolean))];
   return `<div class="row" data-i="${i}">
     <div><label for="f-name-${i}">Name</label><input id="f-name-${i}" type="text" data-f="name" value="${esc(s.name||"")}"></div>
-    <div><label for="f-kind-${i}">What</label><select id="f-kind-${i}" data-f="kind"><option value="preview" ${s.kind==="preview"?"selected":""}>Preview to me</option><option value="send" ${s.kind==="send"?"selected":""}>Send to the reader</option><option value="update" ${s.kind==="update"?"selected":""}>Update the tree only</option></select></div>
+    <div><label for="f-kind-${i}">What</label><select id="f-kind-${i}" data-f="kind"><option value="send" ${s.kind==="send"?"selected":""}>The weekly report</option><option value="preview" ${s.kind==="preview"?"selected":""}>A Friday draft (waits for the week's transcripts)</option><option value="update" ${s.kind==="update"?"selected":""}>Update the tree only (no mail)</option></select></div>
     <div class="wide days"><label>Days</label>${DAYS.map((d,k)=>`<label><input type="checkbox" data-d="${k+1}" ${(s.days||[]).includes(k+1)?"checked":""}>${d}</label>`).join("")}</div>
-    <div><label for="f-time-${i}">Time (${esc(SCH.timezone||"this machine's time")})</label><input id="f-time-${i}" type="time" data-f="time" value="${esc(s.time||"09:00")}"></div>
-    <div><label for="f-on-${i}">On</label><select id="f-on-${i}" data-f="on"><option value="1" ${s.on!==false?"selected":""}>On</option><option value="0" ${s.on===false?"selected":""}>Off</option></select></div>
-    <div><label for="f-to-${i}">To (comma-separated)</label><input id="f-to-${i}" type="text" data-f="to" inputmode="email" autocomplete="off" value="${esc((s.to||[]).join(", "))}"></div>
+    <div><label for="f-time-${i}">Time</label><input id="f-time-${i}" type="time" data-f="time" value="${esc(s.time||"09:00")}"></div>
+    <div><label for="f-tz-${i}">Time zone (IANA, e.g. Europe/Kyiv)</label><input id="f-tz-${i}" type="text" data-f="tz" list="sch-zones" autocomplete="off" value="${esc(s.tz || SCH.local_zone || "UTC")}"><datalist id="sch-zones">${zones.map(z => `<option value="${esc(z)}">`).join("")}</datalist></div>
+    <div><label for="f-to-${i}">To (comma-separated; just you = a review copy)</label><input id="f-to-${i}" type="text" data-f="to" inputmode="email" autocomplete="off" value="${esc((s.to||[]).join(", "))}"></div>
     <div><label for="f-cc-${i}">Cc (comma-separated)</label><input id="f-cc-${i}" type="text" data-f="cc" inputmode="email" autocomplete="off" value="${esc((s.cc||[]).join(", "))}"></div>
+    <div><label for="f-on-${i}">On</label><select id="f-on-${i}" data-f="on"><option value="1" ${s.on!==false?"selected":""}>On: runs at its time</option><option value="0" ${s.on===false?"selected":""}>Off: only when you press Run now</option></select></div>
     <div class="wide"><label for="f-cmd-${i}">Command (empty: ${esc(SCH.command || "taska run-schedule")})</label><input id="f-cmd-${i}" type="text" data-f="command" class="mono" value="${esc(s.command||"")}"></div>
     <div class="wide inc"><label>Include</label>${Object.keys(INC).map(k=>`<label><input type="checkbox" data-inc="${k}" ${inc[k]?"checked":""}>${INC[k]}</label>`).join("")}</div>
     <div class="foot"><span class="muted">Save registers the job with this computer's scheduler.</span><span style="margin-left:auto;display:inline-flex;gap:6px"><button class="btn" data-done="${i}">Done</button><button class="btn" data-del="${i}">Delete…</button></span></div>
@@ -119,13 +116,14 @@ function schReadForm(r){
   const f = n => r.querySelector(`[data-f="${n}"]`).value;
   const list = v => v.split(",").map(x=>x.trim()).filter(Boolean);
   const include = {}; r.querySelectorAll("[data-inc]").forEach(c => include[c.dataset.inc] = c.checked);
-  const kind = f("kind"), i = +r.dataset.i, review = kind === "send" && !!(SCH.schedules[i] && SCH.schedules[i].review);
-  return Object.assign({}, SCH.schedules[i], { name: f("name").trim(), kind, days: [...r.querySelectorAll("[data-d]")].filter(c=>c.checked).map(c=>+c.dataset.d),
-           time: f("time"), to: list(f("to")), cc: list(f("cc")), include, on: f("on")==="1", review, command: f("command").trim() });
+  const i = +r.dataset.i, days = [...r.querySelectorAll("[data-d]")].filter(c=>c.checked).map(c=>+c.dataset.d);
+  return Object.assign({}, SCH.schedules[i], { name: f("name").trim(), kind: f("kind"), days, time: f("time"), tz: f("tz").trim(),
+           to: list(f("to")), cc: list(f("cc")), include, on: f("on")==="1", command: f("command").trim() });
 }
+const whenOf = s => `${(s.days||[]).map(d => DAYS[d-1]).join(",")} ${s.time} ${s.tz}`;
 function schRead(){
   document.querySelectorAll("#schedules .row").forEach(r => { SCH.schedules[+r.dataset.i] = schReadForm(r); });
-  return SCH.schedules.map(s => ({name:s.name, kind:s.kind, days:s.days, time:s.time, to:s.to||[], cc:s.cc||[], include:s.include||{}, on:s.on!==false, review:!!s.review, command:s.command||""}));
+  return SCH.schedules.map(s => ({name:s.name, kind:s.kind, when:whenOf(s), to:s.to||[], cc:s.cc||[], include:s.include||{}, on:s.on!==false, command:s.command||""}));
 }
 function schProblems(rows, owner){
   const out = [], names = new Set();
@@ -134,9 +132,10 @@ function schProblems(rows, owner){
     if (!s.name) out.push(`${n}: give it a name`);
     else if (names.has(s.name)) out.push(`${n}: two schedules have this name`);
     names.add(s.name);
-    if (!(s.days||[]).length) out.push(`${n}: pick at least one day`);
-    if (!/^\d\d:\d\d$/.test(s.time||"")) out.push(`${n}: set a time`);
-    if (s.kind === "send" && !(s.to||[]).length) out.push(`${n}: a send needs a To address`);
+    if (!((s.when||"").split(" ")[0])) out.push(`${n}: pick at least one day`);
+    if (!/^\d\d:\d\d$/.test((s.when||"").split(" ")[1]||"")) out.push(`${n}: set a time`);
+    if (!(s.when||"").split(" ")[2]) out.push(`${n}: name its time zone (e.g. Europe/Kyiv)`);
+    if (s.kind === "send" && !(s.to||[]).length) out.push(`${n}: the weekly report needs a To address (yours, for a review copy)`);
     if (s.kind === "preview" && !(s.to||[]).length && !owner) out.push(`${n}: a preview needs a To address or the owner address above`);
   });
   return out;
@@ -154,27 +153,27 @@ async function schPost(path, body, btn, busyText){
     if (btn){ btn.disabled = false; btn.textContent = was; }
   }
 }
-function previewHtml(p, send){
+function previewHtml(p){
   const m = p.mail;
   const row = (k, v) => `<tr><th>${k}</th><td>${v}</td></tr>`;
   return `<table class="pv">
     ${row("Week", esc(p.week))}
     ${row("Runs", `<span class="mono">${esc(p.command)}</span>`)}
-    ${row("Steps", p.steps_known ? esc(p.steps.join(" · ")) : `<span class="warn-text">Decided by that command; not described in taska.toml ([run].describe)</span>`)}
+    ${row("Steps", p.audience === "reader" ? "none: nothing is rebuilt" : p.steps_known ? esc(p.steps.join(" · ")) : `<span class="warn-text">Decided by that command; not described in taska.toml ([run].describe)</span>`)}
     ${p.decided_by && m ? row("Note", `<span class="warn-text">That command sends the mail itself; below is what taska's rules say it should do.</span>`) : ""}
-    ${m ? row("Mail to", m.review_copy ? `${chips(m.to)} <span class="muted">review copy: the reader gets it only on Send now</span>` : chips(m.to)) + row("Cc", chips(m.cc)) +
+    ${m ? row("Mail to", chips(m.to)) + row("Cc", chips(m.cc)) + (m.condition ? row("Sends", esc(m.condition)) : "") +
           row("Includes", esc(m.include.join(" · ") || "nothing")) + row("Not sent", esc(m.not_included.join(" · ") || "—")) +
-          (m.held ? row("If held", `a failed step or gate sends a HELD notice to ${chips(m.held.to)} only, never the reader`) : "") : row("Mail", "none: this job only updates the tree")}
+          (m.held ? row("If held", `a HELD notice goes to ${chips(m.held.to)} only, never the reader`) : "") : row("Mail", "none: this job only updates the tree")}
   </table>`;
 }
-async function confirmRun(s, send){
-  const r = await fetch(`/api/schedules/preview?name=${encodeURIComponent(s.name)}&send=${send?1:0}`, {cache:"no-store"});
+async function confirmRun(s){
+  const r = await fetch(`/api/schedules/preview?name=${encodeURIComponent(s.name)}`, {cache:"no-store"});
   const p = await r.json().catch(() => ({error: "No answer from the server"}));
   if (!r.ok || p.error){ schErr = esc(p.error || "Could not describe this run"); renderSchedules(); return false; }
   const dlg = $("#sch-dialog");
-  dlg.querySelector("h3").textContent = `${send ? "Send" : "Run"} "${s.name}" now?`;
-  dlg.querySelector(".body").innerHTML = previewHtml(p, send);
-  dlg.querySelector("[data-ok]").textContent = send ? "Send now" : "Run now";
+  dlg.querySelector("h3").textContent = `Run "${s.name}" now?`;
+  dlg.querySelector(".body").innerHTML = previewHtml(p);
+  dlg.querySelector("[data-ok]").textContent = "Run now";
   dlg.returnValue = "";   // Esc closes without a value: an earlier OK must not count as this one
   dlg.showModal();
   return new Promise(res => { dlg.onclose = () => res(dlg.returnValue === "ok"); });
@@ -182,11 +181,11 @@ async function confirmRun(s, send){
 async function renderSchedules(){
   if (!LIVE){ $("#left").innerHTML = `<div class="blank"><b>Schedules</b>Edited on the live workbench only.</div>`; return; }
   if (!SCH) await loadSchedules();
-  const note = SCH.can_register ? `Times are this computer's (${esc(SCH.timezone||"local")}): that is when its scheduler fires.` + (SCH.os_scope !== "launchd" ? " Jobs made outside taska are not listed on this system." : "")
+  const note = SCH.can_register ? `Each schedule names its time zone; this Mac is on ${esc(SCH.local_zone||SCH.timezone||"local time")}, and a time written in another zone is converted for its scheduler.` + (SCH.os_scope !== "launchd" ? " Jobs made outside taska are not listed on this system." : "")
                                 : `This computer (${esc(SCH.platform)}) cannot register jobs yet: saving keeps the rows in taska.toml.`;
   const extra = unowned();
   $("#left").innerHTML = `<div id="schedules"><div class="muted" style="font-size:13px;margin:2px 0 8px">${note}</div>
-    <div class="owner"><label for="sch-owner">Previews, review copies and held mails go to</label><input id="sch-owner" type="email" data-f="owner" inputmode="email" autocomplete="off" placeholder="owner@example.com" value="${esc(SCH.owner||"")}"><span class="muted">saved with Save (<span class="mono">[report].owner</span>)</span></div>
+    <div class="owner"><label for="sch-owner">You (previews, review copies, held notices, and cc of every report)</label><input id="sch-owner" type="email" data-f="owner" inputmode="email" autocomplete="off" placeholder="owner@example.com" value="${esc(SCH.owner||"")}"><span class="muted">saved with Save (<span class="mono">[report].owner</span>)</span></div>
     ${schErr?`<div class="err" role="alert">${schErr}</div>`:""}
     ${extra.length ? `<div class="err" role="status">${extra.length} job${extra.length>1?"s":""} on this Mac run${extra.length>1?"":"s"} this project outside the list below.</div>${extra.map(unownedCard).join("")}` : ""}
     ${SCH.schedules.map((s,i) => schEdit.has(i) ? schForm(s,i) : schCard(s,i)).join("") || `<div class="blank"><b>No schedules yet</b>Add one, or copy a job listed above into a schedule.</div>`}
@@ -195,15 +194,14 @@ async function renderSchedules(){
       <div class="bar"><button class="btn" value="cancel">Cancel</button><button class="btn primary" value="ok" data-ok>Run now</button></div></form></dialog>`;
   const mark = () => { schDirty = true; };
   $("#sch-owner").oninput = mark;
-  $("#sch-add").onclick = () => { schRead(); SCH.schedules.push({name:"", kind:"preview", days:[5], time:"17:00", to:[], cc:[], include:{}, on:true, review:false, command:""}); schEdit.add(SCH.schedules.length-1); schErr = ""; mark(); renderSchedules(); };
+  $("#sch-add").onclick = () => { schRead(); SCH.schedules.push({name:"", kind:"send", days:[1], time:"09:00", tz:SCH.local_zone||"UTC", to:[], cc:[], include:{}, on:true, command:""}); schEdit.add(SCH.schedules.length-1); schErr = ""; mark(); renderSchedules(); };
   document.querySelectorAll("#schedules [data-edit]").forEach(b => b.onclick = () => { schRead(); schEdit.add(+b.dataset.edit); renderSchedules(); });
   document.querySelectorAll("#schedules [data-done]").forEach(b => b.onclick = () => { schRead(); schEdit.delete(+b.dataset.done); mark(); renderSchedules(); });
-  document.querySelectorAll("#schedules [data-review]").forEach(r => r.onchange = () => { SCH.schedules[+r.dataset.review].review = r.value === "1"; mark(); renderSchedules(); });
   document.querySelectorAll("#schedules [data-copy]").forEach(b => b.onclick = () => {
     const r = extra[+b.dataset.copy], first = (r.when||[])[0] || [1, "06:00"];
     schRead();
     SCH.schedules.push({name: r.label.split(".").pop().replace(/[-_]/g, " "), kind:"update", days:[...new Set((r.when||[]).filter(w => w[1] === first[1]).map(w => w[0]))],
-                        time:first[1], to:[], cc:[], include:{}, on:true, review:false, command:r.command||""});
+                        time:first[1], tz:SCH.local_zone||"UTC", to:[], cc:[], include:{}, on:true, command:r.command||""});
     schEdit.add(SCH.schedules.length-1); schErr = ""; mark(); renderSchedules();
   });
   document.querySelectorAll("#schedules [data-retire]").forEach(b => b.onclick = async () => {
@@ -222,16 +220,15 @@ async function renderSchedules(){
     if (!ok){ schErr = esc(j.error || "Could not delete"); return renderSchedules(); }
     schErr = ""; await loadSchedules(); toast(`Deleted ${s.name}`); renderSchedules();
   });
-  const start = async (i, send, btn) => {
+  const start = async (i, btn) => {
     const s = SCH.schedules[i];
     if (schDirty){ schErr = "Save first: the job runs what is saved in taska.toml, not what is on the screen."; return renderSchedules(); }
-    if (!(await confirmRun(s, send))) return;
-    const [ok, j] = await schPost("/api/schedules/run", {name: s.name, send}, btn, send ? "Sending…" : "Starting…");
+    if (!(await confirmRun(s))) return;
+    const [ok, j] = await schPost("/api/schedules/run", {name: s.name}, btn, "Starting…");
     if (!ok){ schErr = esc(j.error || "Could not start"); return renderSchedules(); }
-    toast(`${send ? "Sending" : "Started"}: ${s.name} for the week of ${j.week}; its files land in ${j.dir}`);
+    toast(`Started: ${s.name} for the week of ${j.week}; its files land in ${j.dir}`);
   };
-  document.querySelectorAll("#schedules [data-run]").forEach(b => b.onclick = () => start(+b.dataset.run, false, b));
-  document.querySelectorAll("#schedules [data-send]").forEach(b => b.onclick = () => start(+b.dataset.send, true, b));
+  document.querySelectorAll("#schedules [data-run]").forEach(b => b.onclick = () => start(+b.dataset.run, b));
   $("#sch-save").onclick = async () => {
     const rows = schRead(), owner = $("#sch-owner").value.trim();
     const problems = schProblems(rows, owner || SCH.owner);

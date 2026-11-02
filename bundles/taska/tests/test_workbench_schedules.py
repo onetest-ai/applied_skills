@@ -101,14 +101,14 @@ def test_workbench_page_has_no_schedules():
 def test_schedules_page_is_its_own_page():
     page = W.page("schedules.html").decode()
     assert 'id="schedules"' in page and "/api/schedules" in page and "renderSchedules" in page
-    assert "Saving…" in page and "Sending…" in page and 'aria-live="polite"' in page and 'role="alert"' in page
+    assert "Saving…" in page and 'aria-live="polite"' in page and 'role="alert"' in page
     assert "beforeunload" in page and 'inputmode="email"' in page and 'data-f="owner"' in page and "SCH.owner" in page
     for s in ("/api/schedules/preview", "/api/schedules/delete", "/api/schedules/retire", "Copy into a schedule",
-              "two jobs", "<dialog", "not described in taska.toml", "SCH.timezone", "s.what"):
+              "two jobs", "<dialog", "not described in taska.toml", 'data-f="tz"', "s.when", "fires_local", "SCH.local_zone"):
         assert s in page, s
-    assert 'dlg.returnValue = ""' in page and "schErr = esc(p.error" in page
-    assert 'get("theme")' in page   # the dashboard frame passes ?theme=dark
-
+    for gone in ("data-review", "data-send", "Send now", "Review first", "&send="):
+        assert gone not in page, gone
+    assert 'dlg.returnValue = ""' in page and "schErr = esc(p.error" in page and 'get("theme")' in page
 
 def test_tokens_and_helpers_are_inlined_in_both_pages_and_the_export(tmp_path):
     tokens = (W.RUN_DIR / "tokens.css").read_text()
