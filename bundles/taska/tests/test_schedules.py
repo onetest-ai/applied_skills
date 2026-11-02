@@ -587,3 +587,24 @@ def test_an_unreadable_job_file_of_this_project_is_listed_not_skipped(tmp_path, 
     rows = W.reconcile(cfg, agents, state=lambda lbl: {"loaded": False, "last_exit": None})
     bad = [r for r in rows if r["state"] == "unreadable"]
     assert [r["label"] for r in bad] == ["com.example.broken"] and bad[0]["path"].endswith("com.example.broken.plist")
+
+
+def test_a_corrupt_file_of_one_of_our_schedules_shows_as_unreadable(tmp_path, monkeypatch):
+    monkeypatch.setattr(W.subprocess, "run", lambda *a, **k: type("R", (), {"returncode": 1, "stdout": b""})())
+    cfg = _cfg(tmp_path)
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    (agents / "com.taska.harbor-logistics.friday-preview.plist").write_text("<plist><dict><key>Label</key><string>a & b</string>")
+    rows = {r["label"]: r["state"] for r in W.reconcile(cfg, agents, state=lambda lbl: {"loaded": True, "last_exit": 0})}
+    assert rows["com.taska.harbor-logistics.friday-preview"] == "unreadable"
+
+
+def test_an_unreadable_file_of_a_neighbour_folder_is_not_ours_and_an_empty_plist_is_readable(tmp_path, monkeypatch):
+    import plistlib
+    monkeypatch.setattr(W.subprocess, "run", lambda *a, **k: type("R", (), {"returncode": 1, "stdout": b""})())
+    cfg = _cfg(tmp_path)
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    (agents / "com.example.neighbour.plist").write_text(f"<plist><string>{tmp_path}-old/bin/run.sh & x</string>")
+    (agents / "com.example.empty.plist").write_bytes(plistlib.dumps({}))
+    assert [r for r in W.reconcile(cfg, agents, state=lambda lbl: {"loaded": False, "last_exit": None}) if r["state"] == "unreadable"] == []

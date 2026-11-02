@@ -34,3 +34,12 @@ def test_items_csv_names_the_judge_and_the_grader(tmp_path):
         r = next(csv.DictReader(f))
     assert "READER.md" in r["key_built_by"] and "JUDGE.md" in r["key_built_by"] and "sha256:" in r["key_built_by"]
     assert "evalscore" in r["graded_by"] and "code" in r["graded_by"] and r["record"] == "20261031-154912-2" and r["key_version"] == "v1"
+
+
+def test_a_quote_that_looks_like_a_formula_is_written_as_text(tmp_path):
+    # review Nov 2: "+1, let's ship it Friday" became #NAME? in a spreadsheet
+    out = tmp_path / "items.csv"
+    X.write([dict(ROW, quote="+1, let's ship it Friday", expected_title="=SUM(A1)")], META, out)
+    with open(out, newline="", encoding="utf-8") as f:
+        r = next(csv.DictReader(f))
+    assert r["quote"] == "'+1, let's ship it Friday" and r["expected_title"] == "'=SUM(A1)"

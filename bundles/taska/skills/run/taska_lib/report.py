@@ -21,9 +21,12 @@ CITE_END = re.compile(r"\[([A-Z]\d{3}(?:,\s*[A-Z]\d{3})*)\]\s*\.?\s*$")
 
 def no_new_decisions(N):
     """The sentence for a week with no new decision: how many decisions stay in force and the latest one's date."""
-    live = sorted(str(n.get("created") or "")[:10] for n in N.values() if n.get("kind") == "decision" and n.get("state") not in CLOSED)
-    if not live:
+    decisions = [n for n in N.values() if n.get("kind") == "decision"]
+    live = sorted(str(n.get("created") or "")[:10] for n in decisions if n.get("state") not in CLOSED)
+    if not decisions:
         return "No decisions recorded yet."
+    if not live:
+        return f"No new decisions recorded this week; none in force ({len(decisions)} closed)."
     word = "decision" if len(live) == 1 else "decisions"
     latest = f", the latest on {md(live[-1])}" if live[-1] else ""
     return f"No new decisions recorded this week; {len(live)} {word} in force{latest}."

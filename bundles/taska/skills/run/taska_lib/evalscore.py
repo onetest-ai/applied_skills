@@ -494,7 +494,7 @@ def score(store, gold):
         "carded": carded,
         "bucket_names": BUCKET_NAMES,
         "rows": rows,   # one per key item and bucket, plus one per created node in B15: items.csv
-        # one line per gold item, never truncated: per-item comparisons read this, not the capped `fails`
+        # one line per gold item: per-item comparisons read this (`rows` carries the verdict per bucket)
         "items": [{"cid": g.get("cid"), "evidence": g.get("evidence"),
                    "match": f"node:{matches[idx]}" if matches[idx] else ("card" if carded_flags[idx] else None)}
                   | ({"owner_ok": owner_ok[idx]} if idx in owner_ok else {})

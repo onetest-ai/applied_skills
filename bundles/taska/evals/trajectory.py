@@ -223,7 +223,7 @@ def evidence_traces(run: Run, evidence_dir: Path) -> list[EvidenceTrace]:
         tr = EvidenceTrace(evidence=eid, lines_total=total)
         refused_at: dict[str, int] = {}
         first_reader = applier = ""
-        last_leftovers = -1
+        first_leftovers = -1
         for i, c in enumerate(run.calls):
             if c.name == "Read" and c.input.get("file_path", "").endswith(f"/evidence/{eid}.md"):
                 if c.is_error:
@@ -239,10 +239,10 @@ def evidence_traces(run: Run, evidence_dir: Path) -> list[EvidenceTrace]:
                     continue
                 if " leftovers " in cmd:
                     tr.leftovers_calls += 1
-                    last_leftovers = i
+                    first_leftovers = i if first_leftovers < 0 else first_leftovers
                 elif " apply " in cmd:
                     applier = applier or c.agent_id
-                    if last_leftovers >= 0:
+                    if first_leftovers >= 0:
                         tr.applied_after_leftovers = True
                     answer = _json_answer(c.output)
                     tr.applied += int(answer.get("events") or 0)
@@ -267,7 +267,7 @@ def evidence_traces(run: Run, evidence_dir: Path) -> list[EvidenceTrace]:
         tr.lines_seen = _seen(tr.reads, total)
         if tr.leftovers_calls and not any(x.name == "Bash" and " apply " in x.input.get("command", "")
                                           and f"--evidence {eid}" in x.input.get("command", "")
-                                          for x in run.calls[last_leftovers + 1:]):
+                                          for x in run.calls[first_leftovers + 1:]):   # the list led to an apply; a final check after the last apply is expected
             tr.applied_after_leftovers = False
         out.append(tr)
     return out

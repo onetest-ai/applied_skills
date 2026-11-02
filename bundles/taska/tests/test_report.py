@@ -248,3 +248,8 @@ def test_an_empty_decisions_table_says_so_and_names_the_decisions_in_force(tmp_p
     H.build(cfg, "2026-03-02", wk / "prose.json", wk / "out.docx")
     text = _docx_text(wk / "out.docx")
     assert "No new decisions recorded this week; 1 decision in force, the latest on Feb 20." in text
+
+
+def test_closed_decisions_are_not_called_none_recorded():
+    N = {"D1": {"kind": "decision", "state": "cancelled", "created": "2026-02-20"}}
+    assert H.no_new_decisions(N) == "No new decisions recorded this week; none in force (1 closed)."

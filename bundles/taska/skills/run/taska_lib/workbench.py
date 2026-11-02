@@ -19,9 +19,9 @@ def page(name, run_dir=RUN_DIR):
     if name not in PAGES:
         raise ValueError(f"no page {name!r}")
     run_dir = Path(run_dir)
-    text = (run_dir / name).read_text()
-    text = text.replace("/*__TOKENS__*/", (run_dir / "tokens.css").read_text())
-    return text.replace("/*__SHARED__*/", (run_dir / "shared.js").read_text()).encode()
+    text = (run_dir / name).read_text(encoding="utf-8")   # never the locale: cp1252 cannot decode these pages
+    text = text.replace("/*__TOKENS__*/", (run_dir / "tokens.css").read_text(encoding="utf-8"))
+    return text.replace("/*__SHARED__*/", (run_dir / "shared.js").read_text(encoding="utf-8")).encode("utf-8")
 
 
 def code_version(run_dir=RUN_DIR):
@@ -321,7 +321,7 @@ def export_html(store, cfg):
     # state, where the page's own closing tag no longer ends the script; U+2028/9 are not valid in older JS strings
     blob = json.dumps(data(store, cfg), ensure_ascii=False).replace("<", "\\u003c") \
         .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
-    return page("workbench.html").decode().replace("/*__DATA__*/null", blob)
+    return page("workbench.html").decode("utf-8").replace("/*__DATA__*/null", blob)
 
 
 def export(store, cfg, out):

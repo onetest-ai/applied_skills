@@ -533,12 +533,12 @@ def os_jobs(cfg, agents_dir=None):
     out = []
     for path in sorted(agents.glob("*.plist")) if agents.is_dir() else []:
         d = _plist(path)
-        if not d:   # neither Python nor plutil can read it: list it when it names this project, never skip it silently
+        if d is None:   # neither Python nor plutil can read it: list it when it names this project, never skip it silently
             try:
-                raw = path.read_bytes()
+                raw = path.read_bytes().decode("utf-8", errors="replace")
             except OSError:
-                raw = b""
-            if path.stem.startswith(prefix) or str(Path(cfg.project_dir).resolve()).encode() in raw or str(cfg.project_dir).encode() in raw:
+                raw = ""
+            if path.stem.startswith(prefix) or _points_into({"ProgramArguments": [raw]}, cfg.project_dir):
                 out.append({"label": path.stem, "path": str(path), "ours": path.stem.startswith(prefix), "when": [],
                             "command": "", "log": None, "unreadable": True})
             continue
@@ -583,7 +583,8 @@ def reconcile(cfg, agents_dir=None, state=None, schtasks=None):
         lbl = label(cfg.name, s)
         j = jobs.pop(lbl, None)
         st = state(lbl) if j else {"loaded": False, "last_exit": None}
-        status = "off" if not s.on else "not_registered" if not j else "active" if st["loaded"] else "not_loaded"
+        status = ("unreadable" if j and j.get("unreadable") else "off" if not s.on else "not_registered" if not j
+                  else "active" if st["loaded"] else "not_loaded")
         rows.append({"schedule": s.name, "label": lbl, "state": status, **st, "path": j["path"] if j else None})
     for lbl, j in jobs.items():
         rows.append({"schedule": None, "label": lbl, "state": "unreadable" if j.get("unreadable") else "stale" if j["ours"] else "foreign", **state(lbl),

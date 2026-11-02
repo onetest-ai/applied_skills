@@ -199,3 +199,11 @@ def test_code_version_covers_the_schedules_page_and_the_shared_files(tmp_path):
         before = W.code_version(run)
         (run / name).write_text((run / name).read_text() + "\n")
         assert W.code_version(run) != before, name
+
+
+def test_pages_are_read_as_utf8_whatever_the_locale(monkeypatch):
+    # review Nov 2: read_text() without an encoding decodes with the locale; cp1252 (Windows) cannot decode workbench.html
+    import io
+    monkeypatch.setattr(io, "text_encoding", lambda encoding, stacklevel=2: encoding or "cp1252")
+    for name in ("workbench.html", "schedules.html"):
+        assert W.page(name)

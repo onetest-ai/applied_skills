@@ -73,8 +73,9 @@ command prints JSON.
    Schedules are operations, not content: the workbench does not show them. The user manages them by asking you, any
    time, with these commands (each prints JSON; tell the user the result in plain sentences, never as JSON):
    - "What is scheduled?" → `$TASKA schedules`: say each schedule's state (`os[].state`: active, not registered,
-     not loaded, off), when it runs next and who gets the mail; then every job in `os[]` with no schedule
-     (`foreign`: made outside taska; `stale`: left by a deleted schedule) and that it still runs unless retired.
+     not loaded, off, or unreadable: its job file is corrupt, so say its path and that what it runs is unknown), when it
+     runs next and who gets the mail; then every job in `os[]` with no schedule (`foreign`: made outside taska;
+     `stale`: left by a deleted schedule) and that it still runs unless retired.
    - "Change / add one" → the whole list as JSON to `$TASKA schedules --set rows.json` (it validates before writing,
      keeps `taska.toml.bak`, and registers).
    - "Delete one" → `$TASKA schedules --delete "NAME"` (the schedule and its job, in one step).

@@ -32,6 +32,12 @@ def provenance():
     return built, graded
 
 
+def _text(v):
+    """A cell a spreadsheet shows as text: one starting with = + - @ (or a tab or CR) would run as a formula."""
+    v = "" if v is None else str(v)
+    return "'" + v if v[:1] in ("=", "+", "-", "@", "\t", "\r") else v
+
+
 def write(rows, meta, out):
     built, graded = provenance()
     extra = {"key_version": meta.get("key_version", ""), "key_sha": (meta.get("key_sha") or "")[:12], "key_built_by": built,
@@ -40,7 +46,7 @@ def write(rows, meta, out):
         w = csv.DictWriter(f, fieldnames=COLUMNS, quoting=csv.QUOTE_MINIMAL)
         w.writeheader()
         for r in rows:
-            w.writerow({**{c: r.get(c, "") for c in COLUMNS}, **extra})
+            w.writerow({c: _text(v) for c, v in {**{c: r.get(c, "") for c in COLUMNS}, **extra}.items()})
     return out
 
 

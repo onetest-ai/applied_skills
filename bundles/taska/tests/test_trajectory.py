@@ -181,3 +181,19 @@ def test_leftovers_then_done_without_an_apply_is_flagged(tmp_path):
 
 def test_json_answer_tolerates_text_after_the_json():
     assert T._json_answer('{"status": "coverage"}\n\nExit code 1')["status"] == "coverage"
+
+
+def test_an_apply_after_the_first_leftovers_call_counts_even_with_a_final_check(tmp_path):
+    # review Nov 2: EXTRACT says run leftovers again after the last apply, so "an apply after the last call" is never true
+    sess, evd = _session(tmp_path)
+    sub = tmp_path / "s1" / "subagents" / "agent-a1.jsonl"
+    recs = [_assistant("a1", "l1", "Bash", {"command": f"{TASKA} leftovers --evidence {EV}"}, "2026-03-02T07:01:14Z"),
+            _result("a1", "l1", json.dumps({"count": 2, "token": "abc123abc123", "status": "ok"}), "2026-03-02T07:01:15Z"),
+            _assistant("a1", "p2", "Bash", {"command": f"{TASKA} apply --evidence {EV} --proposals /proj/.taska/proposals/{EV}_more.json"}, "2026-03-02T07:01:16Z"),
+            _result("a1", "p2", json.dumps({"events": 1, "rejected": [], "status": "ok"}), "2026-03-02T07:01:17Z"),
+            _assistant("a1", "l2", "Bash", {"command": f"{TASKA} leftovers --evidence {EV}"}, "2026-03-02T07:01:18Z"),
+            _result("a1", "l2", json.dumps({"count": 1, "token": "def456def456", "status": "ok"}), "2026-03-02T07:01:19Z")]
+    with open(sub, "a") as f:
+        f.write("\n".join(json.dumps(r) for r in recs) + "\n")
+    t = T.evidence_traces(T.load_run(sess), evd)[0]
+    assert t.leftovers_calls == 2 and t.applied_after_leftovers is True
