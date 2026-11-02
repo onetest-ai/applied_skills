@@ -61,9 +61,10 @@ command prints JSON.
    If it is not `ok`, tell the user the fix it names: a subscription token (they run `claude setup-token` and save
    the token in `~/.config/taska/claude` with `chmod 600`; it lasts about a year), or `codemie profile login`
    (lasts about a day, so runs after a weekend need a fresh login). Then the schedules, one question each: what
-   (a preview to the owner, a send to the reader, an update of the tree only), which days, what time (this computer's
-   local time: that is when its scheduler fires), who receives it (To, Cc), and for a send whether the owner reviews
-   it first (`review = true`: the run mails the owner a review copy; the reader gets it only when the owner sends it).
+   (the weekly report, a Friday draft, or an update of the tree only), when (days, time and the time zone, e.g.
+   `when = "Mon 14:00 Europe/Kyiv"`: the zone is always written), and who receives it (To, Cc). A review is just a
+   schedule addressed to the owner; the one to the reader can stay `on = false` until the owner trusts it, and then
+   sends the owner's review copy of that week unchanged (or is held when the tree changed since).
    Write them as `[[schedules]]` in `taska.toml`; set `[report].owner` to the owner's address. Then
    `$TASKA schedules --register`: one job per schedule with the OS's own scheduler (launchd on a Mac,
    Task Scheduler on Windows: hidden, as the signed-in user, run once at wake when the time was missed), each running
@@ -80,9 +81,9 @@ command prints JSON.
      keeps `taska.toml.bak`, and registers).
    - "Delete one" → `$TASKA schedules --delete "NAME"` (the schedule and its job, in one step).
    - "Stop that other job" → `$TASKA schedules --retire LABEL` (unloaded; its file moves to `.taska/retired-jobs/`).
-   - "Run it now" → first `$TASKA schedules --preview "NAME"` (add `--send` for a reviewed send) and read the user the
-     week, the steps, To, Cc and what is attached; run `$TASKA run-schedule "NAME"` (`--send` to send a reviewed one)
-     only after they say yes. **Run now** and **Send now** on the schedules page do the same, with the same preview.
+   - "Run it now" → first `$TASKA schedules --preview "NAME"` and read the user the week, the steps, To, Cc and what
+     is attached; run `$TASKA run-schedule "NAME"` only after they say yes. **Run now** on the schedules page does the
+     same, with the same preview.
    Someone who keeps a control panel can also open the same schedules as a page: `http://127.0.0.1:<port>/schedules`.
 7. **Windows.** The same steps; `doctor` names the `winget` command for anything missing (Python 3.11+, Node for
    the msgraph skill, ffmpeg and whisper.cpp only for recordings without a transcript). The workbench is at
