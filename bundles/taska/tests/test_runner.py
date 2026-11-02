@@ -261,3 +261,38 @@ def test_run_preview_says_a_project_script_decides_the_mail_and_shows_the_held_p
     assert p["decided_by"] == "bin/weekly.py send" and p["mail"]["held"] == {"to": ["owner@example.com"], "cc": []}
     (tmp_path / "plain").mkdir()
     assert WB.run_preview(_proj(tmp_path / "plain", REVIEW), "Monday send", today=MON)["decided_by"] is None
+
+
+# ---------- review fixes (Nov 2): the reader gets exactly what the owner was mailed ----------
+
+def test_a_review_copy_changed_after_it_was_mailed_is_held(tmp_path):
+    cfg = _proj(tmp_path, REVIEW)
+    wd = tmp_path / "reports/2026-03-02"
+    R.run(cfg, _sched(cfg, "Monday review"), today=MON, run=_runner()[0])
+    (wd / "prose.json").write_text('{"lead": "rewritten after the review"}')   # the ledger does not move
+    r = R.run(cfg, _sched(cfg, "Monday send"), today=MON, run=_runner()[0])
+    assert r["verdict"] == "held" and "changed after it was mailed" in r["held_why"]
+
+
+def test_every_address_in_to_gets_the_report(tmp_path):
+    two = REVIEW.replace('to = ["reader@example.com"]', 'to = ["reader@example.com", "second@example.com"]')
+    cfg = _proj(tmp_path, two)
+    R.run(cfg, _sched(cfg, "Monday review"), today=MON, run=_runner()[0])
+    d = _deliver(R.run(cfg, _sched(cfg, "Monday send"), today=MON, run=_runner()[0]))
+    assert d["to"] == ["reader@example.com", "second@example.com"]
+
+
+def test_a_send_without_an_owner_is_never_a_review_copy(tmp_path):
+    lone = TOML.split("[[schedules]]")[0] + '[[schedules]]\nname = "Monday send"\nkind = "send"\ndays = [1]\ntime = "14:00"\nto = ["reader@example.com"]\n'
+    cfg = _proj(tmp_path, lone)
+    assert R.audience(cfg, _sched(cfg, "Monday send")) == "reader"
+    r = R.run(cfg, _sched(cfg, "Monday send"), today=MON, run=_runner()[0])
+    assert r["verdict"] == "held" and "[report].owner" in r["held_why"]
+
+
+def test_a_corrupt_review_record_holds_instead_of_crashing(tmp_path):
+    cfg = _proj(tmp_path, REVIEW)
+    (tmp_path / "reports/2026-03-02").mkdir(parents=True)
+    (tmp_path / "reports/2026-03-02/reviewed.json").write_text("{not json")
+    r = R.run(cfg, _sched(cfg, "Monday send"), today=MON, run=_runner()[0])
+    assert r["verdict"] == "held" and "unreadable" in r["held_why"]

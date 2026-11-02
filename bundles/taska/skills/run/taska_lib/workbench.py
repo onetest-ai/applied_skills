@@ -94,7 +94,7 @@ def _local_origin(headers, port):
 def owner_address(cfg):
     """[report].owner, else where the project's preview goes."""
     prev = next((x for x in cfg.schedules if x.kind == "preview" and x.to), None)
-    return (cfg.report or {}).get("owner") or (prev.to[0] if prev else None)
+    return ((cfg.report or {}).get("owner") or (prev.to[0] if prev else "") or "").strip() or None
 
 
 def what(s, owner):

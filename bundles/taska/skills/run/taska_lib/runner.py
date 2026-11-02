@@ -58,20 +58,36 @@ def _owner(cfg, s):
 REVIEWED = "reviewed.json"
 
 
+def _addr(a):
+    return str(a or "").strip().lower()
+
+
 def audience(cfg, s):
-    """'owner' when the schedule's To is only the owner (a review copy), else 'reader'."""
-    owner = (_owner(cfg, s) or "").lower()
-    return "owner" if not s.to or {a.lower() for a in s.to} <= {owner} else "reader"
+    """'owner' when the schedule mails only the owner ([report].owner: the review copy), else 'reader'. Without an
+    owner nothing is a review copy."""
+    owner = _addr(WB.owner_address(cfg))
+    return "owner" if owner and {_addr(a) for a in s.to} <= {owner} else "reader"
+
+
+def _sha(path):
+    import hashlib
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def reviewed_copy(cfg, wd):
-    """(record, None) when the owner was mailed this week's report and the tree has not changed since, else (None, why)."""
+    """(record, None) when the owner was mailed this week's report, every file of that mail (and the prose its body
+    came from) is byte-for-byte unchanged and the tree has not changed since; else (None, why)."""
     f = Path(wd) / REVIEWED
     if not f.exists():
         return None, "no review copy of this week yet: run the schedule addressed to you first"
-    rec = json.loads(f.read_text())
-    if rec.get("docx") and not (Path(wd) / rec["docx"]).exists():
-        return None, f"the review copy {rec['docx']} is no longer in the week's folder"
+    try:
+        rec = json.loads(f.read_text())
+    except ValueError:
+        return None, f"the review record {REVIEWED} is unreadable: run the review again"
+    for name, sha in (rec.get("files") or {}).items():
+        p = Path(wd) / name
+        if (_sha(p) if p.exists() else "") != sha:
+            return None, f"the review copy's {name} changed after it was mailed: run the review again"
     ev = Path(cfg.store) / "events.jsonl"
     if ev.exists() and ev.stat().st_mtime_ns > rec.get("ledger_mtime_ns", 0):
         return None, "the tree changed since your review copy: run the review again, then this one"
@@ -131,8 +147,13 @@ def _write_mail(wd, d, s):
 
 def _send_reviewed(cfg, s, wd, out, failed):
     """A send to the reader: the review copy the owner was mailed, unchanged since, with the owner in cc; else HELD."""
-    owner = _owner(cfg, s)
-    rec, why = reviewed_copy(cfg, wd)
+    owner = WB.owner_address(cfg)
+    rec, why = (None, "no owner address: set [report].owner, who receives the review copy") if not owner else reviewed_copy(cfg, wd)
+    if rec is None and not owner:
+        failed.append("owner")
+        RL.step(wd, "deliver", 1, f"held: {why}")
+        out["held_why"] = why
+        return
     if rec is None:
         failed.append("review copy")
         d = DL.deliver(cfg, wd, owner, schedule=s, kind=s.kind)
@@ -143,17 +164,19 @@ def _send_reviewed(cfg, s, wd, out, failed):
         out["deliver"] = str(wd / "deliver.json")
         return
     d = DL.deliver(cfg, wd, s.to[0], schedule=s, kind=s.kind)
-    if rec.get("docx"):
-        d["attach"] = [str(wd / rec["docx"])] + [a for a in d["attach"] if not a.endswith(".docx")]
-    if owner and owner not in d["cc"]:
+    d["to"] = list(s.to)   # every address in To
+    d["attach"] = [str(wd / n) for n in rec.get("attach") or []]   # exactly the files the owner was mailed
+    if _addr(owner) not in {_addr(c) for c in d["cc"]}:
         d["cc"] = list(d["cc"]) + [owner]   # the owner stays in copy of every send
     _write_mail(wd, d, s)
-    RL.step(wd, "deliver", 0, f"send to {s.to[0]}: the review copy {rec.get('docx') or '(no docx)'}")
+    RL.step(wd, "deliver", 0, f"send to {', '.join(s.to)}: the review copy ({', '.join(rec.get('attach') or []) or 'no files'})")
     out["deliver"] = str(wd / "deliver.json")
 
 
 def _report(cfg, s, week, wd, reports, out, failed):
     """The workbench copy, the docx (when there is a template and prose), the gate, the delivery."""
+    ev = Path(cfg.store) / "events.jsonl"
+    ledger_at_build = ev.stat().st_mtime_ns if ev.exists() else 0   # the tree this mail was built from
     try:
         WB.export(cfg.store, cfg, wd / f"workbench {dt.date.today().isoformat()}.html")
         RL.step(wd, "workbench", 0, "read-only copy")
@@ -199,10 +222,10 @@ def _report(cfg, s, week, wd, reports, out, failed):
         d["needs_attention"] = True
     if held or (s.kind == "send" and owner):
         _write_mail(wd, d, s)
-    if s.kind == "send" and not held:   # what a later send to the reader may send, while the tree stays as it is now
-        ev = Path(cfg.store) / "events.jsonl"
-        (wd / REVIEWED).write_text(json.dumps({"docx": docx.name if docx and docx.exists() else None, "to": to,
-                                               "at": dt.datetime.now().isoformat(timespec="seconds"),
-                                               "ledger_mtime_ns": ev.stat().st_mtime_ns if ev.exists() else 0}, indent=1))
+    if s.kind == "send" and not held:   # what a later send to the reader may send: these files, byte for byte
+        attach = [Path(a).name for a in d.get("attach") or []]
+        files = {n: _sha(wd / n) if (wd / n).exists() else "" for n in attach + ["prose.json"]}   # "" = absent, must stay so
+        (wd / REVIEWED).write_text(json.dumps({"to": to, "attach": attach, "files": files, "ledger_mtime_ns": ledger_at_build,
+                                               "at": dt.datetime.now().isoformat(timespec="seconds")}, indent=1))
     RL.step(wd, "deliver", 0, f"{s.kind} to {to}" + (" (HELD)" if held else " (review copy)" if s.kind == "send" else ""))
     out["deliver"] = str(wd / "deliver.json")

@@ -55,17 +55,19 @@ def parse_when(when):
     spec, time, zone = parts
     if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", time):
         raise ValueError(f"when: time must be HH:MM (00:00-23:59): {time!r}")
-    try:
-        ZoneInfo(zone)
-    except (ValueError, KeyError, OSError):
-        raise ValueError(f"when: unknown time zone {zone!r}; use an IANA name such as Europe/Kyiv, America/New_York or UTC") from None
+    zone = canonical_zone(zone)
+    if not zone:
+        raise ValueError(f"when: unknown time zone {parts[2]!r}; use an IANA name such as Europe/Kyiv, America/New_York or UTC")
     idx = {d.lower(): i + 1 for i, d in enumerate(DAY_ABBR)}
     days = []
     for piece in (["mon-sun"] if spec.lower() == "daily" else spec.lower().split(",")):
         a, _, b = piece.partition("-")
         if a not in idx or (b and b not in idx):
             raise ValueError(f"when: unknown day {piece!r}; use Mon..Sun, Mon-Fri, Mon,Wed or Daily")
-        days += list(range(idx[a], idx[b] + 1)) if b else [idx[a]]
+        if b and idx[b] < idx[a]:   # a range that wraps the week: Fri-Mon
+            days += list(range(idx[a], 8)) + list(range(1, idx[b] + 1))
+        else:
+            days += list(range(idx[a], idx[b] + 1)) if b else [idx[a]]
     return tuple(sorted(set(days))), time, zone
 
 
@@ -85,6 +87,15 @@ RENAMED_ZONES = {"Europe/Kiev": "Europe/Kyiv", "Asia/Calcutta": "Asia/Kolkata", 
                  "Asia/Katmandu": "Asia/Kathmandu", "America/Godthab": "America/Nuuk"}   # old names macOS still links to
 
 
+def canonical_zone(zone):
+    """The IANA name as the zone database spells it (utc -> UTC, Europe/Kiev -> Europe/Kyiv), or '' when unknown."""
+    import zoneinfo
+    zone = RENAMED_ZONES.get(zone, zone)
+    names = zoneinfo.available_timezones()
+    zone = zone if zone in names else {z.lower(): z for z in names}.get(zone.lower(), "")
+    return RENAMED_ZONES.get(zone, zone)
+
+
 def local_zone():
     """This machine's IANA zone (TZ, else /etc/localtime) under its current name, or '' when it cannot be named."""
     zone = os.environ.get("TZ", "")
@@ -94,7 +105,7 @@ def local_zone():
         except OSError:
             return ""
         zone = target.split("zoneinfo/", 1)[1] if "zoneinfo/" in target else ""
-    return RENAMED_ZONES.get(zone, zone)
+    return canonical_zone(zone) if zone else ""
 
 
 def local_slots(s, local=None, today=None):
@@ -206,6 +217,9 @@ def parse(raw):
         name = s.get("name")
         if not name or name in names:
             raise ValueError(f"[[schedules]].name must be present and unique: {name!r}")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._-]*", str(name)):
+            raise ValueError(f"schedule {name!r}: a name may hold letters, digits, spaces, '.', '_' and '-' only "
+                             "(it is passed to the scheduled shell command)")
         names.add(name)
         if s.get("kind") not in KINDS:
             raise ValueError(f"schedule {name}: kind must be one of {KINDS}")
@@ -647,7 +661,7 @@ def launchd_state(label, run=None):
     return {"loaded": True, "last_exit": int(m.group(1)) if m else None}
 
 
-def reconcile(cfg, agents_dir=None, state=None, schtasks=None):
+def reconcile(cfg, agents_dir=None, state=None, schtasks=None, local=None):
     """One row per schedule, then one per OS job no schedule owns: {schedule, label, state, loaded, last_exit, path}
     (+ when, command for unowned rows). On Windows the tasks under taska's folder say which schedules are registered;
     jobs made outside taska are not detected there."""
@@ -671,6 +685,8 @@ def reconcile(cfg, agents_dir=None, state=None, schtasks=None):
         st = state(lbl) if j else {"loaded": False, "last_exit": None}
         status = ("unreadable" if j and j.get("unreadable") else "off" if not s.on else "not_registered" if not j
                   else "active" if st["loaded"] else "not_loaded")
+        if status in ("active", "not_loaded") and j.get("when") != sorted((d, f"{hh:02d}:{mm:02d}") for d, hh, mm in local_slots(s, local=local)):
+            status = "outdated"   # registered for another local time: a zone's daylight saving moved it; Save re-registers
         rows.append({"schedule": s.name, "label": lbl, "state": status, **st, "path": j["path"] if j else None})
     for lbl, j in jobs.items():
         rows.append({"schedule": None, "label": lbl, "state": "unreadable" if j.get("unreadable") else "stale" if j["ours"] else "foreign", **state(lbl),

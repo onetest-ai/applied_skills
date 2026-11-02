@@ -404,8 +404,9 @@ def test_reconcile_states(tmp_path):
         W.Schedule("Active", "update", (1,), "06:00"), W.Schedule("Unregistered", "update", (2,), "06:00"),
         W.Schedule("Unloaded", "update", (3,), "06:00"), W.Schedule("Paused", "update", (4,), "06:00", on=False)]))
     agents = tmp_path / "agents"
-    for n in ("active", "unloaded", "gone"):
-        _job(agents, f"com.taska.harbor-logistics.{n}", f"com.taska.harbor-logistics.{n}", ["x"], log=tmp_path / "logs/x.log")
+    for n, day in (("active", 1), ("unloaded", 3), ("gone", 5)):   # registered for exactly the schedules' local times
+        _job(agents, f"com.taska.harbor-logistics.{n}", f"com.taska.harbor-logistics.{n}", ["x"], log=tmp_path / "logs/x.log",
+             cal=[{"Hour": 6, "Minute": 0, "Weekday": day}])
     _job(agents, "com.example.nightly", "com.example.nightly", [f"{tmp_path}/bin/run.sh"])
     loaded = {"com.taska.harbor-logistics.active", "com.taska.harbor-logistics.gone", "com.example.nightly"}
     state = lambda lbl: {"loaded": lbl in loaded, "last_exit": 0 if lbl in loaded else None}
@@ -618,3 +619,33 @@ def test_command_for_has_no_send_flag_and_a_stale_template_is_named(tmp_path):
 def test_the_machines_zone_is_named_by_its_current_name(monkeypatch):
     monkeypatch.setenv("TZ", "Europe/Kiev")   # macOS links /etc/localtime to the old name
     assert W.local_zone() == "Europe/Kyiv"
+
+
+# ---------- review fixes (Nov 2): when, names, zones, outdated registrations ----------
+
+def test_a_range_may_wrap_the_week():
+    s = W.parse([{"name": "x", "kind": "update", "when": "Fri-Mon 01:30 UTC"}])[0]
+    assert s.days == (1, 5, 6, 7)
+
+
+@pytest.mark.parametrize("name", ["Nora's report", "a $(rm) b", "back`tick`"])
+def test_a_schedule_name_that_a_shell_would_read_is_refused(name):
+    with pytest.raises(ValueError, match="name"):
+        W.parse([{"name": name, "kind": "update", "when": "Mon 06:00 UTC"}])
+
+
+def test_zone_case_is_normalised_and_a_bad_tz_is_ignored(monkeypatch):
+    assert W.parse([{"name": "x", "kind": "update", "when": "Mon 06:00 utc"}])[0].tz == "UTC"
+    monkeypatch.setenv("TZ", "UTC0")
+    assert W.local_zone() == ""
+
+
+def test_a_job_registered_for_an_old_local_time_is_outdated(tmp_path):
+    cfg = _project(tmp_path, '[[schedules]]\nname = "Night"\nkind = "update"\nwhen = "Mon 06:00 UTC"\n')
+    agents = tmp_path / "agents"
+    log = tmp_path / "logs/night.log"
+    _job(agents, "com.taska.harbor-logistics.night", "com.taska.harbor-logistics.night", ["x"],
+         cal=[{"Hour": 5, "Minute": 0, "Weekday": 1}], log=log)
+    rows = {r["schedule"]: r["state"] for r in W.reconcile(cfg, agents, state=lambda lbl: {"loaded": True, "last_exit": 0},
+                                                           local=ZoneInfo("UTC"))}
+    assert rows["Night"] == "outdated"
