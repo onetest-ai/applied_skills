@@ -163,9 +163,9 @@ def test_the_cli_lists_schedules_with_their_next_run(tmp_path):
 
 # ---------- the writer: [[schedules]] are the only part of taska.toml it rewrites ----------
 
-TWO = [W.Schedule("Friday preview", "preview", (5,), "20:00"),
+TWO = [W.Schedule("Friday preview", "preview", (5,), "20:00", tz="UTC"),
        W.Schedule("Monday send", "send", (1,), "14:00", ["reader@example.com"], ["lead@example.com"],
-                  dict(W.INCLUDE, pptx=True, workbench=True), False)]
+                  dict(W.INCLUDE, pptx=True, workbench=True), False, tz="UTC")]
 
 
 def test_to_toml_round_trips_through_parse():
@@ -338,57 +338,6 @@ def test_unregister_removes_every_agent_and_the_lock(tmp_path, monkeypatch):
     assert W.registered("Harbor Logistics", agents_dir=agents) == {} and W.runner_lock(cfg) is None
 
 
-# ---------- review: a send the owner looks at first, sent to the reader by command ----------
-
-def test_review_is_read_only_on_a_send(tmp_path):
-    cfg = _project(tmp_path, '[[schedules]]\nname = "Monday send"\nkind = "send"\ndays = [1]\ntime = "14:00"\nto = ["opal@example.com"]\nreview = true\n'
-                             '[[schedules]]\nname = "Friday preview"\nkind = "preview"\ndays = [5]\ntime = "20:00"\n')
-    send, prev = cfg.schedules
-    assert send.review is True and prev.review is False
-    import tomllib
-    back = W.parse(tomllib.loads(W.to_toml(cfg.schedules))["schedules"])
-    assert back == cfg.schedules and "review = true" in W.to_toml(cfg.schedules)
-
-
-def test_review_on_a_preview_is_refused(tmp_path):
-    with pytest.raises(C.ConfigError, match="review"):
-        _project(tmp_path, '[[schedules]]\nname = "x"\nkind = "preview"\ndays = [5]\ntime = "20:00"\nreview = true\n')
-
-
-def test_command_for_passes_send_as_flags(tmp_path):
-    cfg = _cfg(tmp_path, '[run]\nscheduled = "python3 bin/weekly.py {kind} {flags}"\n')
-    assert W.command_for(cfg, TWO[1]) == "python3 bin/weekly.py send"
-    assert W.command_for(cfg, TWO[1], send=True) == "python3 bin/weekly.py send --send"
-    old = _cfg(tmp_path)   # a template without {flags} still formats
-    assert W.command_for(old, TWO[0]) == "python3 ~/proj/bin/weekly.py preview --name Friday preview"
-    assert W.command_for(old, TWO[0], send=True) == W.command_for(old, TWO[0])
-    assert W.default_command(cfg, TWO[1], send=True).endswith('run-schedule "Monday send" --send')
-
-
-# ---------- the owner address: the one [report] key the page edits ----------
-
-def test_save_sets_the_owner_in_report(tmp_path):
-    (tmp_path / "taska.toml").write_text('[project]\nname = "Harbor Logistics"\n\n[report]\ntitle = "Harbor"   # keep me\nowner = "old@example.com"\ngreet = "Nora"\n')
-    W.save(tmp_path, TWO[:1], owner="opal@example.com")
-    text = (tmp_path / "taska.toml").read_text()
-    assert 'title = "Harbor"   # keep me\nowner = "opal@example.com"\ngreet = "Nora"\n' in text and text.count("owner =") == 1
-    assert C.load(tmp_path).report["owner"] == "opal@example.com" and text.count("[[schedules]]") == 1
-
-    (tmp_path / "taska.toml").write_text('[project]\nname = "Harbor Logistics"\n[report]\ntitle = "Harbor"\n[plan]\nepics = []\n')
-    W.save(tmp_path, [], owner="opal@example.com")
-    text = (tmp_path / "taska.toml").read_text()
-    assert '[report]\nowner = "opal@example.com"\ntitle = "Harbor"\n[plan]\n' in text   # inserted after the header
-
-    (tmp_path / "taska.toml").write_text('[project]\nname = "Harbor Logistics"\n')
-    W.save(tmp_path, [], owner="opal@example.com")
-    assert C.load(tmp_path).report["owner"] == "opal@example.com"   # a [report] table appended
-
-    before = (tmp_path / "taska.toml").read_text()
-    with pytest.raises(ValueError, match="owner"):
-        W.save(tmp_path, [], owner="not an address")
-    assert (tmp_path / "taska.toml").read_text() == before
-
-
 # ---------- a schedule's own command; what the OS holds; reconcile; retire ----------
 
 import plistlib
@@ -397,7 +346,7 @@ import plistlib
 def test_command_on_a_schedule_wins_over_run_scheduled(tmp_path):
     import tomllib
     cfg = _cfg(tmp_path, '[run]\nscheduled = "python3 bin/weekly.py {kind}"\n')
-    own = W.Schedule("Night", "update", (1,), "06:40", command="/p/bin/full-run.sh")
+    own = W.Schedule("Night", "update", (1,), "06:40", command="/p/bin/full-run.sh", tz="UTC")
     assert W.command_for(cfg, own) == "/p/bin/full-run.sh" and W.command_for(cfg, TWO[0]) == "python3 bin/weekly.py preview"
     assert "command =" not in W.to_toml(TWO) and 'command = "/p/bin/full-run.sh"' in W.to_toml([own])
     assert W.parse(tomllib.loads(W.to_toml([own]))["schedules"]) == [own]
@@ -552,13 +501,13 @@ def test_cli_delete_retire_and_preview_call_the_page_functions(tmp_path, monkeyp
     monkeypatch.setattr(T.W, "delete_schedule", lambda cfg, name, opts=None: seen.append(("delete", name)) or [{"action": "retired"}])
     monkeypatch.setattr(T.W, "retire_job", lambda cfg, label, opts=None: seen.append(("retire", label)) or {"action": "retired"})
     monkeypatch.setattr(T.W, "schedules_view", lambda cfg, opts=None: {"schedules": []})
-    base = dict(project=str(tmp_path), set=None, register=False, agents_dir=None, force=False, delete=None, retire=None, preview=None, send=False)
+    base = dict(project=str(tmp_path), set=None, register=False, agents_dir=None, force=False, delete=None, retire=None, preview=None)
     for extra in ({"delete": "Monday send"}, {"retire": "com.example.nightly"}):
         with pytest.raises(SystemExit) as e:
             T.cmd_schedules(types.SimpleNamespace(**{**base, **extra}))
         assert e.value.code == 0
     with pytest.raises(SystemExit):
-        T.cmd_schedules(types.SimpleNamespace(**{**base, "preview": "Monday send", "send": True}))
+        T.cmd_schedules(types.SimpleNamespace(**{**base, "preview": "Monday send"}))
     printed = capsys.readouterr().out
     assert seen == [("delete", "Monday send"), ("retire", "com.example.nightly")]
     assert '"decided_by"' in printed and '"command": "python3 ~/proj/bin/weekly.py send --name Monday send"' in printed
@@ -573,7 +522,7 @@ def test_cli_force_reaches_register(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(T.W, "schedules_view", lambda cfg, opts=None: {"schedules": []})
     with pytest.raises(SystemExit):
         T.cmd_schedules(types.SimpleNamespace(project=str(tmp_path), set=None, register=True, agents_dir=None, force=True,
-                                              delete=None, retire=None, preview=None, send=False))
+                                              delete=None, retire=None, preview=None))
     assert got.get("force") is True
 
 
@@ -608,3 +557,59 @@ def test_an_unreadable_file_of_a_neighbour_folder_is_not_ours_and_an_empty_plist
     (agents / "com.example.neighbour.plist").write_text(f"<plist><string>{tmp_path}-old/bin/run.sh & x</string>")
     (agents / "com.example.empty.plist").write_bytes(plistlib.dumps({}))
     assert [r for r in W.reconcile(cfg, agents, state=lambda lbl: {"loaded": False, "last_exit": None}) if r["state"] == "unreadable"] == []
+
+
+# ---------- one mechanism: `when` carries days, time and the time zone; review is gone (Nov 2) ----------
+
+@pytest.mark.parametrize("when, days, time, tz", [
+    ("Mon 14:00 Europe/Kyiv", (1,), "14:00", "Europe/Kyiv"),
+    ("Mon-Fri 06:00 UTC", (1, 2, 3, 4, 5), "06:00", "UTC"),
+    ("Mon,Wed 09:30 America/New_York", (1, 3), "09:30", "America/New_York"),
+    ("Daily 07:00 Europe/Kyiv", (1, 2, 3, 4, 5, 6, 7), "07:00", "Europe/Kyiv"),
+])
+def test_when_carries_days_time_and_zone(when, days, time, tz):
+    s = W.parse([{"name": "x", "kind": "update", "when": when}])[0]
+    assert (s.days, s.time, s.tz) == (days, time, tz) and W.when_text(s) == when
+
+
+@pytest.mark.parametrize("when, why", [("Mon 14:00 Mars/Olympus", "zone"), ("Funday 14:00 UTC", "day"),
+                                       ("Mon 25:00 UTC", "time"), ("Mon 14:00", "zone")])
+def test_a_bad_when_is_refused_by_name(when, why):
+    with pytest.raises(ValueError, match=why):
+        W.parse([{"name": "x", "kind": "update", "when": when}])
+
+
+def test_review_is_refused_with_its_replacement():
+    with pytest.raises(ValueError, match="a schedule addressed to you"):
+        W.parse([{"name": "x", "kind": "send", "when": "Mon 14:00 UTC", "to": ["r@example.com"], "review": True}])
+
+
+def test_the_writer_writes_when_and_old_blocks_still_load():
+    import tomllib
+    s = W.parse([{"name": "Monday report", "kind": "send", "when": "Mon 14:00 Europe/Kyiv", "to": ["r@example.com"], "on": False}])
+    text = W.to_toml(s)
+    assert 'when = "Mon 14:00 Europe/Kyiv"' in text and "days =" not in text and "review" not in text
+    assert W.parse(tomllib.loads(text)["schedules"]) == s
+    old = W.parse([{"name": "y", "kind": "update", "days": [1, 2], "time": "06:00"}])[0]
+    assert old.tz == "" and old.days == (1, 2)
+
+
+def test_next_run_is_in_the_schedules_zone():
+    s = W.parse([{"name": "x", "kind": "send", "when": "Mon 14:00 Europe/Kyiv", "to": ["r@example.com"]}])[0]
+    now = dt.datetime(2026, 11, 2, 9, 0, tzinfo=ZoneInfo("UTC"))           # Mon 11:00 in Kyiv (UTC+2)
+    assert W.next_run(s, now) == dt.datetime(2026, 11, 2, 14, 0, tzinfo=ZoneInfo("Europe/Kyiv"))
+
+
+def test_registration_converts_to_the_machines_zone():
+    s = W.parse([{"name": "x", "kind": "send", "when": "Mon 14:00 Europe/Kyiv", "to": ["r@example.com"]}])[0]
+    assert W.local_slots(s, local=ZoneInfo("Europe/Kyiv"), today=dt.date(2026, 11, 2)) == [(1, 14, 0)]
+    assert W.local_slots(s, local=ZoneInfo("America/New_York"), today=dt.date(2026, 11, 2)) == [(1, 7, 0)]
+    assert W.local_slots(s, local=ZoneInfo("Asia/Tokyo"), today=dt.date(2026, 11, 2)) == [(1, 21, 0)]
+    late = W.parse([{"name": "y", "kind": "send", "when": "Mon 23:30 Europe/Kyiv", "to": ["r@example.com"]}])[0]
+    assert W.local_slots(late, local=ZoneInfo("Asia/Tokyo"), today=dt.date(2026, 11, 2)) == [(2, 6, 30)]   # Tuesday in Tokyo
+
+
+def test_command_for_has_no_send_flag_and_a_stale_template_is_named(tmp_path):
+    cfg = _cfg(tmp_path, '[run]\nscheduled = "python3 bin/weekly.py {kind} {flags}"\n')
+    with pytest.raises(ValueError, match="flags"):
+        W.command_for(cfg, TWO[1])

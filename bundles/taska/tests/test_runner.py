@@ -109,9 +109,9 @@ def test_a_preview_delivers_even_without_a_docx(tmp_path):
 
 
 def test_a_send_is_held_when_a_required_step_failed(tmp_path):
-    cfg = _proj(tmp_path)
+    cfg = _proj(tmp_path, REVIEW)
     run, _ = _runner({"extract": 2})
-    r = R.run(cfg, _sched(cfg, "Monday send"), today=dt.date(2026, 3, 9), run=run)
+    r = R.run(cfg, _sched(cfg, "Monday review"), today=dt.date(2026, 3, 9), run=run)
     assert r["verdict"] == "held" and "extract" in r["held_why"]
     d = json.loads(Path(r["deliver"]).read_text())
     assert d["kind"] == "send" and d["subject"].startswith("HELD") and d["to"] == ["owner@example.com"]
@@ -120,12 +120,12 @@ def test_a_send_is_held_when_a_required_step_failed(tmp_path):
 
 
 def test_a_send_is_ready_when_everything_passed(tmp_path):
-    cfg = _proj(tmp_path)
+    cfg = _proj(tmp_path, REVIEW)
     run, _ = _runner()
-    r = R.run(cfg, _sched(cfg, "Monday send"), today=dt.date(2026, 3, 9), run=run)
+    r = R.run(cfg, _sched(cfg, "Monday review"), today=dt.date(2026, 3, 9), run=run)
     assert r["verdict"] == "ready"
     d = json.loads(Path(r["deliver"]).read_text())
-    assert d["to"] == ["reader@example.com"] and "owner@example.com" in d["cc"] and "lead@example.com" in d["cc"]
+    assert d["to"] == ["owner@example.com"] and d["cc"] == []   # a schedule to the owner is the review copy
 
 
 def test_a_project_without_steps_still_previews(tmp_path):
@@ -152,59 +152,95 @@ def test_a_second_run_while_one_is_live_is_refused(tmp_path):
     assert r["verdict"] == "busy" and log == []
 
 
-REVIEWED = TOML.replace('cc = ["lead@example.com"]\n', 'cc = ["lead@example.com"]\nreview = true\n')
+REVIEW = TOML + '''
+[[schedules]]
+name = "Monday review"
+kind = "send"
+days = [1]
+time = "13:00"
+to = ["owner@example.com"]
+'''
+MON = dt.date(2026, 3, 9)
 
 
-def test_a_reviewed_send_goes_to_the_owner_as_a_shadow(tmp_path):
-    cfg = _proj(tmp_path, REVIEWED)
+def _deliver(r):
+    return json.loads(Path(r["deliver"]).read_text())
+
+
+def test_a_send_to_the_owner_is_a_review_copy_and_is_recorded(tmp_path):
+    cfg = _proj(tmp_path, REVIEW)
+    run, log = _runner()
+    r = R.run(cfg, _sched(cfg, "Monday review"), today=MON, run=run)
+    d = _deliver(r)
+    assert r["verdict"] == "ready" and r["audience"] == "owner" and log
+    assert d["to"] == ["owner@example.com"] and d["cc"] == [] and d["subject"].startswith("Review copy: ")
+    rec = json.loads((tmp_path / "reports/2026-03-02/reviewed.json").read_text())
+    assert "ledger_mtime_ns" in rec and "at" in rec and rec["to"] == "owner@example.com"
+
+
+def test_a_send_to_the_reader_sends_what_the_owner_was_mailed_and_runs_no_step(tmp_path):
+    cfg = _proj(tmp_path, REVIEW)
     run, _ = _runner()
-    r = R.run(cfg, _sched(cfg, "Monday send"), today=dt.date(2026, 3, 9), run=run)
-    assert r["verdict"] == "ready" and r["shadow"] is True
-    d = json.loads(Path(r["deliver"]).read_text())
-    assert d["to"] == ["owner@example.com"] and d["cc"] == [] and d["needs_attention"] is False
-    assert d["subject"].startswith("[Review: would go to reader@example.com, cc lead@example.com] ")
-    assert "reader@example.com" not in (tmp_path / "reports/2026-03-02/mail.md").read_text().split("\n")[1]
+    R.run(cfg, _sched(cfg, "Monday review"), today=MON, run=run)
+    run2, log2 = _runner()
+    r = R.run(cfg, _sched(cfg, "Monday send"), today=MON, run=run2)
+    d = _deliver(r)
+    assert log2 == [] and r["verdict"] == "ready" and r["audience"] == "reader"   # nothing rebuilt: the reviewed state
+    assert d["to"] == ["reader@example.com"] and set(d["cc"]) == {"lead@example.com", "owner@example.com"}
+    assert not d["subject"].startswith(("Review", "HELD"))
 
 
-def test_send_now_ignores_review(tmp_path):
-    cfg = _proj(tmp_path, REVIEWED)
+def test_a_send_to_the_reader_without_a_review_copy_is_held_to_the_owner(tmp_path):
+    cfg = _proj(tmp_path, REVIEW)
+    run, log = _runner()
+    r = R.run(cfg, _sched(cfg, "Monday send"), today=MON, run=run)
+    d = _deliver(r)
+    assert r["verdict"] == "held" and "no review copy" in r["held_why"] and log == []
+    assert d["to"] == ["owner@example.com"] and d["cc"] == [] and d["subject"].startswith("HELD")
+
+
+def test_a_send_to_the_reader_after_the_tree_changed_is_held(tmp_path):
+    import os
+    cfg = _proj(tmp_path, REVIEW)
     run, _ = _runner()
-    r = R.run(cfg, _sched(cfg, "Monday send"), today=dt.date(2026, 3, 9), run=run, send=True)
-    assert r["verdict"] == "ready" and r["shadow"] is False
-    d = json.loads(Path(r["deliver"]).read_text())
-    assert d["to"] == ["reader@example.com"] and "owner@example.com" in d["cc"] and not d["subject"].startswith("[Review")
+    R.run(cfg, _sched(cfg, "Monday review"), today=MON, run=run)
+    ev = cfg.store / "events.jsonl"
+    ev.touch()   # the ledger is written after the review copy (its mtime moves on)
+    st = ev.stat(); os.utime(ev, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000_000))
+    r = R.run(cfg, _sched(cfg, "Monday send"), today=MON, run=_runner()[0])
+    assert r["verdict"] == "held" and "changed since your review copy" in r["held_why"]
 
 
-def test_the_cli_takes_send(tmp_path):
+def test_the_cli_has_no_send_flag(tmp_path):
     from conftest import run_cli
-    _proj(tmp_path, REVIEWED)
-    r = run_cli(tmp_path, "run-schedule", "Monday send", "--send", "--dry-run")
-    assert r["status"] == "ok" and r["shadow"] is False
-    r = run_cli(tmp_path, "run-schedule", "Monday send", "--dry-run")
-    assert r["shadow"] is True
+    _proj(tmp_path, REVIEW)
+    r = run_cli(tmp_path, "run-schedule", "Monday send", "--send", check=False)
+    assert "error" in (r.get("err") or "") or r.get("status") == "error"
 
 
-def _preview_matches_deliver(tmp_path, toml, name, today, send):
+def _preview_matches_deliver(tmp_path, toml, names, today):
     from taska_lib import workbench as WB
     tmp_path.mkdir(parents=True)
     cfg = _proj(tmp_path, toml)
-    p = WB.run_preview(cfg, name, send=send, today=today)
-    run, _ = _runner()
-    r = R.run(cfg, _sched(cfg, name), today=today, run=run, send=send)
-    d = json.loads(Path(r["deliver"]).read_text())
+    for name in names[:-1]:
+        R.run(cfg, _sched(cfg, name), today=today, run=_runner()[0])
+    name = names[-1]
+    p = WB.run_preview(cfg, name, today=today)
+    r = R.run(cfg, _sched(cfg, name), today=today, run=_runner()[0])
+    d = _deliver(r)
     assert p["week"] == r["week"] and p["mail"]["to"] == d["to"] and sorted(p["mail"]["cc"]) == sorted(d["cc"])
-    assert p["mail"]["review_copy"] == r["shadow"]
     assert set(p["mail"]["include"]) == {k for k, v in _sched(cfg, name).include.items() if v}
     return p
 
 
 def test_run_preview_matches_what_the_runner_delivers(tmp_path):
-    p = _preview_matches_deliver(tmp_path / "a", TOML, "Friday preview", FRI, False)
+    p = _preview_matches_deliver(tmp_path / "a", TOML, ["Friday preview"], FRI)
     assert p["mail"]["to"] == ["owner@example.com"] and p["steps_known"]
-    p = _preview_matches_deliver(tmp_path / "b", REVIEWED, "Monday send", dt.date(2026, 3, 9), False)
-    assert p["mail"]["review_copy"] and p["mail"]["to"] == ["owner@example.com"] and p["mail"]["cc"] == []
-    p = _preview_matches_deliver(tmp_path / "c", REVIEWED, "Monday send", dt.date(2026, 3, 9), True)
-    assert p["mail"]["to"] == ["reader@example.com"] and "owner@example.com" in p["mail"]["cc"]
+    p = _preview_matches_deliver(tmp_path / "b", REVIEW, ["Monday review"], MON)
+    assert p["mail"]["to"] == ["owner@example.com"] and p["mail"]["cc"] == [] and p["audience"] == "owner"
+    p = _preview_matches_deliver(tmp_path / "c", REVIEW, ["Monday review", "Monday send"], MON)
+    assert p["mail"]["to"] == ["reader@example.com"] and "owner@example.com" in p["mail"]["cc"] and p["audience"] == "reader"
+    assert p["steps"] == [] and "review copy" in p["mail"]["condition"]
 
 
 def test_run_preview_uses_describe_or_says_it_cannot(tmp_path):
@@ -219,9 +255,9 @@ def test_run_preview_uses_describe_or_says_it_cannot(tmp_path):
 
 def test_run_preview_says_a_project_script_decides_the_mail_and_shows_the_held_path(tmp_path):
     from taska_lib import workbench as WB
-    script = REVIEWED.replace("[[run.steps]]", '[run]\nscheduled = "bin/weekly.py {kind}"\n\n[[run.steps]]', 1)
+    script = REVIEW.replace("[[run.steps]]", '[run]\nscheduled = "bin/weekly.py {kind}"\n\n[[run.steps]]', 1)
     cfg = _proj(tmp_path, script)
-    p = WB.run_preview(cfg, "Monday send", today=dt.date(2026, 3, 9))
+    p = WB.run_preview(cfg, "Monday send", today=MON)
     assert p["decided_by"] == "bin/weekly.py send" and p["mail"]["held"] == {"to": ["owner@example.com"], "cc": []}
     (tmp_path / "plain").mkdir()
-    assert WB.run_preview(_proj(tmp_path / "plain", REVIEWED), "Monday send", today=dt.date(2026, 3, 9))["decided_by"] is None
+    assert WB.run_preview(_proj(tmp_path / "plain", REVIEW), "Monday send", today=MON)["decided_by"] is None

@@ -39,8 +39,74 @@ class Schedule:
     cc: list = field(default_factory=list)
     include: dict = field(default_factory=lambda: dict(INCLUDE))
     on: bool = True
-    review: bool = False
     command: str = ""
+    tz: str = ""   # IANA zone the time is in ("" = this machine's: an old days/time block)
+
+
+DAY_ABBR = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def parse_when(when):
+    """'Mon 14:00 Europe/Kyiv' | 'Mon-Fri 06:00 UTC' | 'Mon,Wed 09:30 America/New_York' | 'Daily 07:00 Europe/Kyiv'
+    -> (days, 'HH:MM', zone). ValueError names the part that is wrong."""
+    parts = str(when or "").split()
+    if len(parts) != 3:
+        raise ValueError(f"when must be '<days> <HH:MM> <time zone>', e.g. 'Mon 14:00 Europe/Kyiv' (the zone is required): {when!r}")
+    spec, time, zone = parts
+    if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", time):
+        raise ValueError(f"when: time must be HH:MM (00:00-23:59): {time!r}")
+    try:
+        ZoneInfo(zone)
+    except (ValueError, KeyError, OSError):
+        raise ValueError(f"when: unknown time zone {zone!r}; use an IANA name such as Europe/Kyiv, America/New_York or UTC") from None
+    idx = {d.lower(): i + 1 for i, d in enumerate(DAY_ABBR)}
+    days = []
+    for piece in (["mon-sun"] if spec.lower() == "daily" else spec.lower().split(",")):
+        a, _, b = piece.partition("-")
+        if a not in idx or (b and b not in idx):
+            raise ValueError(f"when: unknown day {piece!r}; use Mon..Sun, Mon-Fri, Mon,Wed or Daily")
+        days += list(range(idx[a], idx[b] + 1)) if b else [idx[a]]
+    return tuple(sorted(set(days))), time, zone
+
+
+def when_text(s):
+    """The schedule's `when`: days as Daily, a range (Mon-Fri) or a list (Mon,Wed), then HH:MM and the zone."""
+    d = sorted(set(s.days))
+    if d == list(range(1, 8)):
+        spec = "Daily"
+    elif len(d) > 2 and d == list(range(d[0], d[-1] + 1)):
+        spec = f"{DAY_ABBR[d[0] - 1]}-{DAY_ABBR[d[-1] - 1]}"
+    else:
+        spec = ",".join(DAY_ABBR[x - 1] for x in d)
+    return f"{spec} {s.time}" + (f" {s.tz}" if s.tz else "")
+
+
+def local_zone():
+    """This machine's IANA zone (TZ, else /etc/localtime), or '' when it cannot be named (then times stay as written)."""
+    if os.environ.get("TZ"):
+        return os.environ["TZ"]
+    try:
+        target = os.path.realpath("/etc/localtime")
+    except OSError:
+        return ""
+    return target.split("zoneinfo/", 1)[1] if "zoneinfo/" in target else ""
+
+
+def local_slots(s, local=None, today=None):
+    """[(ISO weekday, hour, minute)] on this machine's clock for each of the schedule's days, converted from its zone
+    at the next occurrence (launchd and Task Scheduler fire in local time). Without a zone, the times as written."""
+    hh, mm = (int(x) for x in s.time.split(":"))
+    if not s.tz:
+        return [(d, hh, mm) for d in sorted(set(s.days))]
+    zone = ZoneInfo(s.tz)
+    local = local or (ZoneInfo(local_zone()) if local_zone() else dt.datetime.now().astimezone().tzinfo)
+    today = today or dt.date.today()
+    out = []
+    for d in sorted(set(s.days)):
+        day = today + dt.timedelta(days=(d - today.isoweekday()) % 7)
+        t = dt.datetime.combine(day, dt.time(hh, mm), tzinfo=zone).astimezone(local)
+        out.append((t.isoweekday(), t.hour, t.minute))
+    return out
 
 
 def _all_words(s):
@@ -138,11 +204,20 @@ def parse(raw):
         names.add(name)
         if s.get("kind") not in KINDS:
             raise ValueError(f"schedule {name}: kind must be one of {KINDS}")
-        days = tuple(s.get("days") or ())
-        if not days or any(d not in range(1, 8) for d in days):
-            raise ValueError(f"schedule {name}: days must be ISO weekdays (1-7)")
-        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(s.get("time") or "")):
-            raise ValueError(f"schedule {name}: time must be HH:MM")
+        if "review" in s:
+            raise ValueError(f"schedule {name}: review is gone — a review is a schedule addressed to you (To = your address); "
+                             "the one to the reader can stay `on = false` until you trust it")
+        if s.get("when") is not None:
+            try:
+                days, time, tz = parse_when(s["when"])
+            except ValueError as e:
+                raise ValueError(f"schedule {name}: {e}") from None
+        else:   # an older block: days/time on this machine's clock
+            days, time, tz = tuple(s.get("days") or ()), str(s.get("time") or ""), ""
+            if not days or any(d not in range(1, 8) for d in days):
+                raise ValueError(f"schedule {name}: days must be ISO weekdays (1-7), or write when = 'Mon 14:00 Europe/Kyiv'")
+            if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", time):
+                raise ValueError(f"schedule {name}: time must be HH:MM")
         for k in ("to", "cc"):
             bad = [a for a in s.get(k) or [] if not ADDRESS.match(str(a))]
             if bad:
@@ -154,10 +229,8 @@ def parse(raw):
         inc.update({k: bool(v) for k, v in (s.get("include") or {}).items()})
         if not isinstance(s.get("command", ""), str):
             raise ValueError(f"schedule {name}: command must be a string (the shell command this job runs)")
-        if s.get("review") and s["kind"] != "send":
-            raise ValueError(f"schedule {name}: review applies to a send schedule (the owner looks first, then sends by command)")
-        out.append(Schedule(name, s["kind"], days, s["time"], list(s.get("to") or []), list(s.get("cc") or []), inc,
-                            bool(s.get("on", True)), bool(s.get("review", False)), s.get("command", "")))
+        out.append(Schedule(name, s["kind"], days, time, list(s.get("to") or []), list(s.get("cc") or []), inc,
+                            bool(s.get("on", True)), s.get("command", ""), tz))
     return out
 
 
@@ -166,6 +239,8 @@ def next_run(s, now):
     if not s.on:
         return None
     hh, mm = (int(x) for x in s.time.split(":"))
+    if s.tz:
+        now = now.astimezone(ZoneInfo(s.tz))
     for d in range(0, 8):
         t = (now + dt.timedelta(days=d)).replace(hour=hh, minute=mm, second=0, microsecond=0)
         if t.isoweekday() in s.days and t > now:
@@ -183,14 +258,14 @@ def to_toml(schedules):
     """[Schedule] -> the [[schedules]] blocks as TOML text (every field written, so a reader sees the defaults)."""
     blocks = []
     for s in schedules:
+        if not s.tz and local_zone():   # the writer always names the zone: an old block gains this machine's
+            s = Schedule(**{**vars(s), "tz": local_zone()})
         lines = ["[[schedules]]", f"name = {_toml_str(s.name)}", f"kind = {_toml_str(s.kind)}",
-                 "days = [" + ", ".join(str(d) for d in s.days) + "]", f"time = {_toml_str(s.time)}",
+                 f"when = {_toml_str(when_text(s))}",
                  "to = [" + ", ".join(_toml_str(a) for a in s.to) + "]",
                  "cc = [" + ", ".join(_toml_str(a) for a in s.cc) + "]",
                  "include = {" + ", ".join(f"{k} = {str(bool(s.include.get(k, v))).lower()}" for k, v in INCLUDE.items()) + "}",
                  f"on = {str(bool(s.on)).lower()}"]
-        if s.kind == "send":
-            lines.append(f"review = {str(bool(s.review)).lower()}")
         if s.command:
             lines.append(f"command = {_toml_str(s.command)}")
         blocks.append("\n".join(lines) + "\n")
@@ -269,9 +344,9 @@ def task_name(project_name, s):
 
 def plist(lbl, command, s, log):
     """A launchd agent: `/bin/zsh -lic <command>` at HH:MM on each of the schedule's days; never at load."""
-    hh, mm = (int(x) for x in s.time.split(":"))
     cal = "".join(f"\t\t<dict>\n\t\t\t<key>Hour</key>\n\t\t\t<integer>{hh}</integer>\n\t\t\t<key>Minute</key>\n\t\t\t<integer>{mm}</integer>\n"
-                  f"\t\t\t<key>Weekday</key>\n\t\t\t<integer>{d % 7}</integer>\n\t\t</dict>\n" for d in s.days)   # ISO 7 -> launchd 0
+                  f"\t\t\t<key>Weekday</key>\n\t\t\t<integer>{d % 7}</integer>\n\t\t</dict>\n"
+                  for d, hh, mm in local_slots(s))   # on this machine's clock; ISO 7 -> launchd 0
     return ('<?xml version="1.0" encoding="UTF-8"?>\n'
             '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
             '<plist version="1.0">\n<dict>\n'
@@ -294,14 +369,19 @@ def task_xml(name, command, s):
     """A Task Scheduler task: weekly on the schedule's days at HH:MM, hidden, as the logged-on user, run once at
     wake when the time was missed (StartWhenAvailable)."""
     prog, args = _split_command(command)
-    days = "".join(f"          <{DAY_NAMES[d]} />\n" for d in sorted(set(s.days)))
+    by_time = {}
+    for d, hh, mm in local_slots(s):   # on this machine's clock: one trigger per local time
+        by_time.setdefault(f"{hh:02d}:{mm:02d}", []).append(d)
+    triggers = "".join(
+        "    <CalendarTrigger>\n"
+        f"      <StartBoundary>2026-01-05T{escape(hm)}:00</StartBoundary>\n      <Enabled>true</Enabled>\n"
+        "      <ScheduleByWeek>\n        <DaysOfWeek>\n" + "".join(f"          <{DAY_NAMES[d]} />\n" for d in sorted(ds))
+        + "        </DaysOfWeek>\n        <WeeksInterval>1</WeeksInterval>\n      </ScheduleByWeek>\n    </CalendarTrigger>\n"
+        for hm, ds in sorted(by_time.items()))
     return ('<?xml version="1.0" encoding="UTF-16"?>\n'
             '<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
             f"  <RegistrationInfo><Description>taska schedule {escape(s.name)} ({escape(name)})</Description></RegistrationInfo>\n"
-            "  <Triggers>\n    <CalendarTrigger>\n"
-            f"      <StartBoundary>2026-01-05T{escape(s.time)}:00</StartBoundary>\n      <Enabled>true</Enabled>\n"
-            f"      <ScheduleByWeek>\n        <DaysOfWeek>\n{days}        </DaysOfWeek>\n        <WeeksInterval>1</WeeksInterval>\n      </ScheduleByWeek>\n"
-            "    </CalendarTrigger>\n  </Triggers>\n"
+            f"  <Triggers>\n{triggers}  </Triggers>\n"
             "  <Principals><Principal id=\"Author\"><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>\n"
             "  <Settings>\n    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\n    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n"
             "    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n    <StartWhenAvailable>true</StartWhenAvailable>\n"
@@ -311,25 +391,26 @@ def task_xml(name, command, s):
             "</Task>\n")
 
 
-SEND_FLAG = "--send"
-
-
-def default_command(cfg, s, send=False):
-    """`taska run-schedule <name>` with this interpreter (pythonw on Windows: no console window); `send` adds --send."""
+def default_command(cfg, s):
+    """`taska run-schedule <name>` with this interpreter (pythonw on Windows: no console window)."""
     py = sys.executable
     if sys.platform == "win32":
         py = re.sub(r"python(\.exe)?$", r"pythonw\1", py, flags=re.I)
     taska = Path(__file__).resolve().parent.parent / "taska.py"
-    return f'"{py}" "{taska}" --project "{cfg.project_dir}" run-schedule "{s.name}"' + (f" {SEND_FLAG}" if send else "")
+    return f'"{py}" "{taska}" --project "{cfg.project_dir}" run-schedule "{s.name}"'
 
 
-def command_for(cfg, s, send=False):
-    """The schedule's own command, else the project's [run].scheduled template ({kind}, {name}, {project}, {flags}),
-    else the default command. {flags} is --send when the owner sends a reviewed report now, else empty."""
+def command_for(cfg, s):
+    """The schedule's own command, else the project's [run].scheduled template ({kind}, {name}, {project}), else the
+    default command. A template naming anything else is refused by name (e.g. {flags}, gone with `review`)."""
     tpl = s.command or (cfg.run or {}).get("scheduled")
     if not tpl:
-        return default_command(cfg, s, send)
-    return tpl.format(kind=s.kind, name=s.name, project=str(cfg.project_dir), flags=SEND_FLAG if send else "").rstrip()
+        return default_command(cfg, s)
+    try:
+        return tpl.format(kind=s.kind, name=s.name, project=str(cfg.project_dir)).rstrip()
+    except (KeyError, IndexError) as e:
+        raise ValueError(f"[run].scheduled uses {{{e.args[0]}}}, which a scheduled command no longer takes; "
+                         "use {kind}, {name} or {project}") from None
 
 
 def _launchctl(verb, path):

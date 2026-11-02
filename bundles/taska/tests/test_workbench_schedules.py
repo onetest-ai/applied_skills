@@ -168,57 +168,44 @@ def _run(base, body):
     return json.loads(urllib.request.urlopen(req).read())
 
 
-REVIEWED = TOML.replace("{kind}", "{kind} {flags}") + '''
+TWO_JOBS = TOML + '''
 [[schedules]]
-name = "Monday send"
+name = "Monday report"
 kind = "send"
-days = [1]
-time = "14:00"
+when = "Mon 14:00 Europe/Kyiv"
 to = ["reader@example.com"]
 cc = ["lead@example.com"]
-review = true
+on = false
 
 [report]
 owner = "owner@example.com"
 '''
 
 
-def test_send_now_adds_the_flag_and_run_now_does_not(tmp_path, monkeypatch):
+def test_run_now_has_no_send_variant(tmp_path, monkeypatch):
     monkeypatch.setattr(SCH.sys, "platform", "darwin")
     spawned = []
-    srv, base = _serve(tmp_path, REVIEWED, spawned)
+    srv, base = _serve(tmp_path, TWO_JOBS, spawned)
     try:
-        _run(base, {"name": "Monday send", "send": True})
-        _run(base, {"name": "Monday send"})
-        assert [a[-1] for a in spawned] == ["python3 bin/weekly.py send --send", "python3 bin/weekly.py send"]
+        _run(base, {"name": "Monday report", "send": True})
+        assert spawned[-1][-1] == "python3 bin/weekly.py send"
     finally:
         srv.shutdown()
 
 
-def test_rows_say_what_each_job_does_and_the_owner(tmp_path, monkeypatch):
+def test_rows_say_what_each_job_does_and_when_in_its_zone(tmp_path, monkeypatch):
     import datetime as dt
     monkeypatch.setattr(SCH.sys, "platform", "darwin")
-    srv, base = _serve(tmp_path, REVIEWED, [])
+    srv, base = _serve(tmp_path, TWO_JOBS, [])
     try:
         d = json.loads(urllib.request.urlopen(base + "/api/schedules").read())
-        prev, send = d["schedules"]
-        assert prev["review"] is False and send["review"] is True
+        prev, rep = d["schedules"]
+        assert "review" not in rep and rep["when"] == "Mon 14:00 Europe/Kyiv" and rep["tz"] == "Europe/Kyiv"
         assert prev["what"] == "A preview of the week to owner@example.com"
-        assert send["what"] == "The weekly report to reader@example.com, cc lead@example.com, after your review"
-        assert d["owner"] == "owner@example.com" and d["timezone"] == dt.datetime.now().astimezone().tzname()
-        assert send["runs"] == "python3 bin/weekly.py send"   # the command as it will run, not the template
-        nxt = dt.datetime.fromisoformat(send["next"])
-        assert nxt.isoweekday() == 1 and nxt.strftime("%H:%M") == "14:00" and nxt.utcoffset() == dt.datetime.now().astimezone().utcoffset()
+        assert rep["what"] == "The weekly report to reader@example.com, cc lead@example.com: the copy you were mailed this week, held if the tree changed since"
+        assert d["owner"] == "owner@example.com" and rep["next"] is None   # off
     finally:
         srv.shutdown()
-
-
-def test_post_saves_the_owner(served):
-    base, proj, agents, calls = served
-    code, d = _post(base, {"schedules": [{"name": "Friday preview", "kind": "preview", "days": [5], "time": "20:00"}], "owner": "opal@example.com"})
-    assert code == 200 and d["owner"] == "opal@example.com" and C.load(proj).report["owner"] == "opal@example.com"
-    code, d = _post(base, {"schedules": [], "owner": "nope"})
-    assert code == 400 and "owner" in d["error"] and C.load(proj).report["owner"] == "opal@example.com"
 
 
 def test_post_delete_and_retire_routes(tmp_path, monkeypatch):

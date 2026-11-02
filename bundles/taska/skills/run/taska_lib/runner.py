@@ -55,18 +55,43 @@ def _owner(cfg, s):
     return WB.owner_address(cfg) or (s.to[0] if s.to else None)
 
 
-def run(cfg, s, week=None, today=None, run=None, reports=None, dry_run=False, send=False):
-    """Run schedule `s`. Returns {week, dir, kind, steps, verdict: done|ready|held|busy, held_why, deliver, commands, shadow}.
-    A send with `review` on is a shadow (the owner gets what the reader would) unless `send` says to send it now."""
+REVIEWED = "reviewed.json"
+
+
+def audience(cfg, s):
+    """'owner' when the schedule's To is only the owner (a review copy), else 'reader'."""
+    owner = (_owner(cfg, s) or "").lower()
+    return "owner" if not s.to or {a.lower() for a in s.to} <= {owner} else "reader"
+
+
+def reviewed_copy(cfg, wd):
+    """(record, None) when the owner was mailed this week's report and the tree has not changed since, else (None, why)."""
+    f = Path(wd) / REVIEWED
+    if not f.exists():
+        return None, "no review copy of this week yet: run the schedule addressed to you first"
+    rec = json.loads(f.read_text())
+    if rec.get("docx") and not (Path(wd) / rec["docx"]).exists():
+        return None, f"the review copy {rec['docx']} is no longer in the week's folder"
+    ev = Path(cfg.store) / "events.jsonl"
+    if ev.exists() and ev.stat().st_mtime_ns > rec.get("ledger_mtime_ns", 0):
+        return None, "the tree changed since your review copy: run the review again, then this one"
+    return rec, None
+
+
+def run(cfg, s, week=None, today=None, run=None, reports=None, dry_run=False):
+    """Run schedule `s`. Returns {week, dir, kind, audience, steps, verdict: done|ready|held|busy, held_why, deliver,
+    commands}. One mechanism: a send mails the week's report to its To. To only the owner: built, gated and recorded as
+    the review copy. To anyone else: no step runs and nothing is rebuilt; the copy the owner was mailed goes, unchanged,
+    or the send is HELD to the owner."""
     today = today or dt.date.today()
     week = week or week_for(s.kind, today)
     reports = Path(reports) if reports else cfg.project_dir / "reports"
     wd = reports / week
-    plan = steps(cfg, s.kind)
+    who = audience(cfg, s) if s.kind == "send" else "owner"
+    plan = [] if who == "reader" else steps(cfg, s.kind)
     commands = [expand(x["command"], cfg, s, week, wd) for x in plan]
-    shadow = s.kind == "send" and bool(s.review) and not send
-    out = {"week": week, "dir": str(wd), "kind": s.kind, "steps": [], "verdict": "done", "held_why": None, "deliver": None,
-           "commands": commands, "shadow": shadow}
+    out = {"week": week, "dir": str(wd), "kind": s.kind, "audience": who, "steps": [], "verdict": "done", "held_why": None,
+           "deliver": None, "commands": commands}
     if dry_run:
         return out
     lock = Path(cfg.store) / "run.lock"
@@ -86,18 +111,48 @@ def run(cfg, s, week=None, today=None, run=None, reports=None, dry_run=False, se
             out["steps"].append({"name": x["name"], "rc": rc, "required": x["required"]})
             if rc and x["required"]:
                 failed.append(x["name"])
-        if s.kind in ("preview", "send"):
-            _report(cfg, s, week, wd, reports, out, failed, shadow)
+        if s.kind == "send" and who == "reader":
+            _send_reviewed(cfg, s, wd, out, failed)
+        elif s.kind in ("preview", "send"):
+            _report(cfg, s, week, wd, reports, out, failed)
         RL.finish(wd)
         if s.kind == "send":
             out["verdict"] = "held" if failed else "ready"
-            out["held_why"] = f"failed: {', '.join(failed)}" if failed else None
+            out["held_why"] = (out["held_why"] or f"failed: {', '.join(failed)}") if failed else None
         return out
     finally:
         shutil.rmtree(lock, ignore_errors=True)
 
 
-def _report(cfg, s, week, wd, reports, out, failed, shadow=False):
+def _write_mail(wd, d, s):
+    (wd / "deliver.json").write_text(json.dumps(d, indent=1, ensure_ascii=False))
+    (wd / "mail.md").write_text(DL.mail_md(d, dict(s.include)))
+
+
+def _send_reviewed(cfg, s, wd, out, failed):
+    """A send to the reader: the review copy the owner was mailed, unchanged since, with the owner in cc; else HELD."""
+    owner = _owner(cfg, s)
+    rec, why = reviewed_copy(cfg, wd)
+    if rec is None:
+        failed.append("review copy")
+        d = DL.deliver(cfg, wd, owner, schedule=s, kind=s.kind)
+        d.update({"to": [owner], "cc": [], "needs_attention": True, "subject": f"HELD: {d['subject']} — {why}"})
+        _write_mail(wd, d, s)
+        RL.step(wd, "deliver", 1, f"held: {why}")
+        out["held_why"] = why
+        out["deliver"] = str(wd / "deliver.json")
+        return
+    d = DL.deliver(cfg, wd, s.to[0], schedule=s, kind=s.kind)
+    if rec.get("docx"):
+        d["attach"] = [str(wd / rec["docx"])] + [a for a in d["attach"] if not a.endswith(".docx")]
+    if owner and owner not in d["cc"]:
+        d["cc"] = list(d["cc"]) + [owner]   # the owner stays in copy of every send
+    _write_mail(wd, d, s)
+    RL.step(wd, "deliver", 0, f"send to {s.to[0]}: the review copy {rec.get('docx') or '(no docx)'}")
+    out["deliver"] = str(wd / "deliver.json")
+
+
+def _report(cfg, s, week, wd, reports, out, failed):
     """The workbench copy, the docx (when there is a template and prose), the gate, the delivery."""
     try:
         WB.export(cfg.store, cfg, wd / f"workbench {dt.date.today().isoformat()}.html")
@@ -127,25 +182,27 @@ def _report(cfg, s, week, wd, reports, out, failed, shadow=False):
             failed.append("gate")
     owner = _owner(cfg, s)
     held = s.kind == "send" and bool(failed)
-    to = owner if (s.kind == "preview" or held or shadow) else (s.to[0] if s.to else owner)
+    to = owner
     if not to:
         RL.step(wd, "deliver", 1, "no address: set the schedule's To or [report].owner")
         failed.append("deliver")
         return
     d = DL.deliver(cfg, wd, to, schedule=s, status=str(wd / "run-status.partial.json") if (wd / "run-status.partial.json").exists() else None,
                    kind=s.kind)
-    if shadow and not held:
-        would = ", ".join(s.to) + (f", cc {', '.join(s.cc)}" if s.cc else "")
-        d["subject"] = f"[Review: would go to {would}] {d['subject']}"
-        d["cc"] = []
-    elif s.kind == "send" and not held and owner and owner not in d["cc"] and owner != to:
-        d["cc"] = list(d["cc"]) + [owner]   # the owner stays in copy of every send
+    if s.kind == "send":
+        d["cc"] = []   # a review copy goes to the owner only
+        if not held:
+            d["subject"] = f"Review copy: {d['subject']}"
     if held:
         d["cc"] = []   # a held notice goes to the owner only
         d["subject"] = f"HELD: {d['subject']} — {', '.join(failed)} failed"
         d["needs_attention"] = True
     if held or (s.kind == "send" and owner):
-        (wd / "deliver.json").write_text(json.dumps(d, indent=1, ensure_ascii=False))
-        (wd / "mail.md").write_text(DL.mail_md(d, dict(s.include)))
-    RL.step(wd, "deliver", 0, f"{s.kind} to {to}" + (" (HELD)" if held else " (review copy)" if shadow else ""))
+        _write_mail(wd, d, s)
+    if s.kind == "send" and not held:   # what a later send to the reader may send, while the tree stays as it is now
+        ev = Path(cfg.store) / "events.jsonl"
+        (wd / REVIEWED).write_text(json.dumps({"docx": docx.name if docx and docx.exists() else None, "to": to,
+                                               "at": dt.datetime.now().isoformat(timespec="seconds"),
+                                               "ledger_mtime_ns": ev.stat().st_mtime_ns if ev.exists() else 0}, indent=1))
+    RL.step(wd, "deliver", 0, f"{s.kind} to {to}" + (" (HELD)" if held else " (review copy)" if s.kind == "send" else ""))
     out["deliver"] = str(wd / "deliver.json")

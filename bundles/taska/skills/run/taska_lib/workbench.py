@@ -3,6 +3,7 @@ import datetime as dt
 import hashlib
 import json
 import sys
+from types import SimpleNamespace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -102,9 +103,11 @@ def what(s, owner):
         return "Updates the tree from the sources; no mail"
     if s.kind == "preview":
         return f"A preview of the week to {s.to[0] if s.to else owner or 'the owner'}"
-    who = ", ".join(s.to) or owner or "nobody yet"
+    from . import runner as RN
+    if RN.audience(SimpleNamespace(report={"owner": owner}, schedules=[]), s) == "owner":
+        return f"The weekly report to {owner or 'you'}: your review copy"
     cc = f", cc {', '.join(s.cc)}" if s.cc else ""
-    return f"The weekly report to {who}{cc}, " + ("after your review" if s.review else "automatically")
+    return f"The weekly report to {', '.join(s.to)}{cc}: the copy you were mailed this week, held if the tree changed since"
 
 
 FRAME_CSP = {"Content-Security-Policy": "frame-ancestors 'self' http://127.0.0.1:* http://localhost:* http://[::1]:*"}
@@ -127,7 +130,8 @@ def schedules_view(cfg, register_opts=None):
     for s in cfg.schedules:
         nxt = SCH.next_run(s, now)
         rows.append(dict(vars(s), days=list(s.days), next=nxt.isoformat() if nxt else None, label=SCH.label(cfg.name, s),
-                         what=what(s, owner), runs=SCH.command_for(cfg, s)))
+                         what=what(s, owner), runs=SCH.command_for(cfg, s), when=SCH.when_text(s),
+                         fires_local=[f"{SCH.DAY_ABBR[d - 1]} {hh:02d}:{mm:02d}" for d, hh, mm in SCH.local_slots(s)]))
     return {"schedules": rows, "registered": SCH.registered(cfg.name, opts.get("agents_dir")), "platform": SCH.sys.platform,
             "can_register": SCH.sys.platform in ("darwin", "win32"), "command": (cfg.run or {}).get("scheduled"),
             "timezone": now.tzname(), "owner": owner, "reports_dir": str(cfg.project_dir / "reports"), "runner": SCH.runner_lock(cfg),
@@ -135,7 +139,7 @@ def schedules_view(cfg, register_opts=None):
             "os_scope": "launchd" if SCH.sys.platform == "darwin" else "managed only"}
 
 
-def run_preview(cfg, name, send=False, today=None):
+def run_preview(cfg, name, today=None):
     """What a run of schedule `name` will do now, from the same rules the runner applies: the week, the command, the
     steps, and for a preview or send who gets the mail and what is in it. A project script's steps come from
     [run].describe[kind]; without it `steps_known` is False rather than a guess."""
@@ -144,24 +148,26 @@ def run_preview(cfg, name, send=False, today=None):
     if not s:
         raise ValueError(f"no schedule named {name!r}")
     owner = RN._owner(cfg, s)
-    shadow = s.kind == "send" and bool(s.review) and not send
-    script = SCH.command_for(cfg, s, send) if (s.command or (cfg.run or {}).get("scheduled")) else None
-    if script:
+    who = RN.audience(cfg, s) if s.kind == "send" else "owner"
+    script = SCH.command_for(cfg, s) if (s.command or (cfg.run or {}).get("scheduled")) else None
+    if who == "reader":
+        steps, known = [], True   # nothing is rebuilt: the review copy goes, unchanged
+    elif script:
         described = ((cfg.run or {}).get("describe") or {}).get(s.kind)
         steps, known = (list(described), True) if described else ([], False)
     else:
         steps, known = [x["name"] for x in RN.steps(cfg, s.kind)] + (REPORT_STEPS if s.kind != "update" else []), True
     mail = None
     if s.kind != "update":
-        to = owner if (s.kind == "preview" or shadow) else (s.to[0] if s.to else owner)
-        cc = [] if shadow else list(s.cc)
-        if s.kind == "send" and not shadow and owner and owner not in cc and owner != to:
-            cc.append(owner)
-        mail = {"to": [to] if to else [], "cc": cc, "review_copy": shadow,
+        to = s.to[0] if who == "reader" else owner
+        cc = list(s.cc) + ([owner] if owner and owner not in s.cc else []) if who == "reader" else ([] if s.kind == "send" else list(s.cc))
+        mail = {"to": [to] if to else [], "cc": cc,
+                "condition": "sends the review copy you were mailed this week, unchanged; held if the tree changed since"
+                             if who == "reader" else "",
                 "held": {"to": [owner] if owner else [], "cc": []} if s.kind == "send" else None,
                 "include": [k for k, v in s.include.items() if v], "not_included": [k for k, v in s.include.items() if not v]}
     return {"schedule": s.name, "kind": s.kind, "week": RN.week_for(s.kind, today or dt.date.today()),
-            "command": SCH.command_for(cfg, s, send), "steps": steps, "steps_known": known, "mail": mail,
+            "command": SCH.command_for(cfg, s), "audience": who, "steps": steps, "steps_known": known, "mail": mail,
             "decided_by": script}
 
 
@@ -192,7 +198,7 @@ def _spawn(argv, log):
         return subprocess.Popen(argv, stdout=f, stderr=subprocess.STDOUT, start_new_session=True, cwd=str(log.parent.parent)).pid
 
 
-def run_now(cfg, name, register_opts=None, send=False):
+def run_now(cfg, name, register_opts=None):
     """Run now from the page: the command the OS job runs (the [run].scheduled template, else `taska run-schedule`),
     in the background; `send` is the Send-now button on a reviewed send. ValueError for an unknown schedule."""
     from . import runner as RN
@@ -202,7 +208,7 @@ def run_now(cfg, name, register_opts=None, send=False):
     week = RN.week_for(s.kind, dt.date.today())
     log = cfg.project_dir / "logs" / f"{SCH._slug(s.name)}.log"
     log.parent.mkdir(parents=True, exist_ok=True)
-    cmd = SCH.command_for(cfg, s, send)
+    cmd = SCH.command_for(cfg, s)
     argv = ["cmd", "/c", cmd] if SCH.sys.platform == "win32" else ["/bin/zsh", "-lic", cmd]
     pid = ((register_opts or {}).get("spawn") or _spawn)(argv, log)
     return {"started": True, "pid": pid, "week": week, "dir": str(cfg.project_dir / "reports" / week), "log": str(log)}
@@ -266,7 +272,7 @@ def server(store, cfg, port, register_opts=None):
                 from urllib.parse import urlparse, parse_qs
                 q = parse_qs(urlparse(self.path).query)
                 try:
-                    return self._send(200, run_preview(cfg, (q.get("name") or [""])[0], (q.get("send") or ["0"])[0] == "1"))
+                    return self._send(200, run_preview(cfg, (q.get("name") or [""])[0]))
                 except ValueError as x:
                     return self._send(400, {"error": str(x)})
             if self.path.startswith("/api/recap"):   # the Recap view: taska pack for the chosen period
@@ -300,7 +306,7 @@ def server(store, cfg, port, register_opts=None):
                 if self.path == "/api/schedules/retire":
                     return self._send(200, retire_job(cfg, body.get("label") or "", register_opts))
                 if self.path == "/api/schedules/run":
-                    return self._send(200, run_now(cfg, body.get("name"), register_opts, bool(body.get("send"))))
+                    return self._send(200, run_now(cfg, body.get("name"), register_opts))
                 if self.path == "/api/schedules":
                     reg = set_schedules(cfg, body.get("schedules") or [], register_opts, body.get("owner"))
                     return self._send(200, dict(schedules_view(cfg, register_opts), registered=reg))

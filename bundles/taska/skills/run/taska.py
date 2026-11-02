@@ -563,13 +563,13 @@ def cmd_render_evidence(a):
 def cmd_schedules(a):
     """The project's [[schedules]] with each one's state, next run and what the OS holds; --set FILE replaces them
     from a JSON list (saved to taska.toml); --register writes one OS job per schedule; --delete NAME removes a schedule
-    and its job; --retire LABEL unloads a job outside taska.toml and moves its file aside; --preview NAME [--send] says
+    and its job; --retire LABEL unloads a job outside taska.toml and moves its file aside; --preview NAME says
     what a run will do. The same functions as the Schedules page: the onboarding skill drives these."""
     cfg = C.load(a.project)
     opts = dict({"agents_dir": a.agents_dir} if a.agents_dir else {}, **({"force": True} if a.force else {}))
     reg = None
     if a.preview:
-        out(dict(W.run_preview(cfg, a.preview, send=a.send), status="ok"))
+        out(dict(W.run_preview(cfg, a.preview), status="ok"))
     if a.delete:
         reg = W.delete_schedule(cfg, a.delete, opts)
     elif a.retire:
@@ -588,7 +588,7 @@ def cmd_run_schedule(a):
     s = next((x for x in cfg.schedules if x.name == a.name), None)
     if not s:
         out({"status": "error", "error": f"no schedule named {a.name!r}; known: {[x.name for x in cfg.schedules]}"}, 2)
-    r = RN.run(cfg, s, week=a.week, dry_run=a.dry_run, send=a.send)
+    r = RN.run(cfg, s, week=a.week, dry_run=a.dry_run)
     out(dict(r, status="ok" if r["verdict"] != "busy" else "busy"), 0 if r["verdict"] in ("done", "ready") else 1)
 
 
@@ -732,10 +732,8 @@ def main():
     p.add_argument("--delete", metavar="NAME", help="remove this schedule from taska.toml and its OS job")
     p.add_argument("--retire", metavar="LABEL", help="unload a job outside taska.toml (or left behind) and move its file to .taska/retired-jobs/")
     p.add_argument("--preview", metavar="NAME", help="what a run of this schedule will do now: week, command, steps, who gets mail")
-    p.add_argument("--send", action="store_true", help="with --preview: the reviewed send, as Send now would do it")
     p = sp.add_parser("run-schedule", help="one scheduled run: the project's steps, then report, gate, delivery")
     p.add_argument("name"); p.add_argument("--week"); p.add_argument("--dry-run", action="store_true")
-    p.add_argument("--send", action="store_true", help="a reviewed send: the reader gets it now (otherwise the owner gets a review copy)")
     p = sp.add_parser("deliver", help="a week's mail content: reports/WEEK/deliver.json and a ready-to-send mail.md")
     p.add_argument("week"); p.add_argument("--to", required=True); p.add_argument("--reports"); p.add_argument("--status")
     p.add_argument("--schedule", help="the [[schedules]] entry whose cc and Include checklist apply"); p.add_argument("--kind", default="preview")
