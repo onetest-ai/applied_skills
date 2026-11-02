@@ -43,7 +43,7 @@ const LIVE = true;
 const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], INC = {body:"mail body", docx:"the docx", link:"link to the folder", pptx:"slides (pptx)", workbench:"workbench copy"};
 const KIND_LABEL = {preview:"Preview", send:"Send", update:"Update"};
 const STATE = {active:["done","active"], not_registered:["warn","not registered"], not_loaded:["warn","not loaded"], off:["off","off"],
-               stale:["risk","left behind"], foreign:["risk","outside taska.toml"]};
+               stale:["risk","left behind"], foreign:["risk","outside taska.toml"], unreadable:["risk","unreadable job file"]};
 let SCH = null, schErr = "", schEdit = new Set(), schDirty = false;
 async function loadSchedules(){ const r = await fetch("/api/schedules",{cache:"no-store"}); SCH = await r.json(); schEdit = new Set(); schDirty = false; }
 function dayWords(days){
@@ -93,11 +93,11 @@ function unownedCard(r, k){
   const two = clashes(r);
   return `<div class="card risk" data-u="${k}">
     <div class="head">${badge(r.state)}<b class="mono">${esc(r.label)}</b></div>
-    <div class="what">${r.state === "stale" ? "A job this plugin registered for a schedule that no longer exists." : "A job that runs this project but is not in taska.toml, so nothing else here knows about it."}</div>
+    <div class="what">${r.state === "stale" ? "A job this plugin registered for a schedule that no longer exists." : r.state === "unreadable" ? `A job file that names this project but cannot be read (not even by macOS's plutil), so what it runs is unknown. Open it: <span class="mono">${esc(r.path)}</span>` : "A job that runs this project but is not in taska.toml, so nothing else here knows about it."}</div>
     <div class="when">${esc(whenWords(r.when))} · ${r.loaded ? "loaded" : "not loaded"}${r.last_exit !== null && r.last_exit !== undefined ? ` · last exit ${r.last_exit}` : ""}</div>
     <div class="when">Runs <span class="mono">${esc(r.command||"")}</span></div>
     ${two.length ? `<div class="when warn-text">Runs at the same time as ${two.map(s => esc(s.name)).join(", ")}: two jobs.</div>` : ""}
-    <div class="foot">${r.state === "foreign" ? `<button class="btn" data-copy="${k}">Copy into a schedule</button>` : ""}<button class="btn" data-retire="${k}">Retire…</button></div>
+    <div class="foot">${r.state === "foreign" ? `<button class="btn" data-copy="${k}">Copy into a schedule</button>` : ""}${r.state !== "unreadable" ? `<button class="btn" data-retire="${k}">Retire…</button>` : ""}</div>
   </div>`;
 }
 function schForm(s, i){

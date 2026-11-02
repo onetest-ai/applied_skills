@@ -231,3 +231,20 @@ def test_report_uses_the_configured_client_label(tmp_path):
     N["T002"]["client_owner"] = None
     tables, _ = H.fixed_tables(N, cfg, "2026-03-02", dt.date(2026, 3, 6), {}, [], tmp_path / "reports")
     assert tables["slide5"][0]["owner"] == "the client"
+
+
+def test_an_empty_decisions_table_says_so_and_names_the_decisions_in_force(tmp_path):
+    # Nov 2: the weekly report showed "Key decisions and alignments" as a header with no rows and no sentence
+    cfg = _project(tmp_path)
+    S.write_evidence(cfg.store, {"id": "2026-02-20_meetings_aaaa0002", "kind": "meeting", "at": "2026-02-20T10:00:00",
+                                 "title": "Quay review", "source": "meetings", "text": "the yard stays on the north quay, we decided"})
+    S.append(cfg.store, [{"type": "create", "mid": "c5", "id": "D001", "kind": "decision", "by": "agent", "evidence": "2026-02-20_meetings_aaaa0002",
+                          "date": "2026-02-20", "quote": "the yard stays on the north quay", "fields": {"title": "Yard stays on the north quay", "parent": "E01"}},
+                         {"type": "processed", "evidence": "2026-02-20_meetings_aaaa0002", "by": "agent", "at": "2026-02-20T11:00:00"}])
+    wk = tmp_path / "reports" / "2026-03-02"
+    prose = {"title": "t", "lead": "", "titles": {"status": "x", "client_asks": "Client asks"},
+             "slide3": {"summary": [], "milestones": [], "decisions": [], "risks": []}, "priorities": [], "slide5": [], "open": []}
+    (wk / "prose.json").write_text(json.dumps(prose))
+    H.build(cfg, "2026-03-02", wk / "prose.json", wk / "out.docx")
+    text = _docx_text(wk / "out.docx")
+    assert "No new decisions recorded this week; 1 decision in force, the latest on Feb 20." in text

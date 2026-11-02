@@ -575,3 +575,15 @@ def test_cli_force_reaches_register(tmp_path, monkeypatch, capsys):
         T.cmd_schedules(types.SimpleNamespace(project=str(tmp_path), set=None, register=True, agents_dir=None, force=True,
                                               delete=None, retire=None, preview=None, send=False))
     assert got.get("force") is True
+
+
+def test_an_unreadable_job_file_of_this_project_is_listed_not_skipped(tmp_path, monkeypatch):
+    monkeypatch.setattr(W.subprocess, "run", lambda *a, **k: type("R", (), {"returncode": 1, "stdout": b""})())   # plutil cannot read it either
+    cfg = _cfg(tmp_path)
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    (agents / "com.example.broken.plist").write_text(f'<plist><dict><key>Program</key><string>{tmp_path}/bin/run.sh & more</string></dict>')
+    (agents / "net.vendor.client.plist").write_text('<plist><dict><string>a & b</string></dict>')
+    rows = W.reconcile(cfg, agents, state=lambda lbl: {"loaded": False, "last_exit": None})
+    bad = [r for r in rows if r["state"] == "unreadable"]
+    assert [r["label"] for r in bad] == ["com.example.broken"] and bad[0]["path"].endswith("com.example.broken.plist")

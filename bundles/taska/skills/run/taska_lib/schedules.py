@@ -477,7 +477,7 @@ def registered(project_name, agents_dir=None, schtasks=None):
 
 # ---------- the OS side: every job that runs this project, reconciled with [[schedules]] ----------
 
-STATES = ("active", "not_registered", "not_loaded", "off", "stale", "foreign")
+STATES = ("active", "not_registered", "not_loaded", "off", "stale", "foreign", "unreadable")
 
 
 def _plist(path):
@@ -533,7 +533,14 @@ def os_jobs(cfg, agents_dir=None):
     out = []
     for path in sorted(agents.glob("*.plist")) if agents.is_dir() else []:
         d = _plist(path)
-        if not d:
+        if not d:   # neither Python nor plutil can read it: list it when it names this project, never skip it silently
+            try:
+                raw = path.read_bytes()
+            except OSError:
+                raw = b""
+            if path.stem.startswith(prefix) or str(Path(cfg.project_dir).resolve()).encode() in raw or str(cfg.project_dir).encode() in raw:
+                out.append({"label": path.stem, "path": str(path), "ours": path.stem.startswith(prefix), "when": [],
+                            "command": "", "log": None, "unreadable": True})
             continue
         lbl = d.get("Label") or path.stem
         if not _points_into(d, cfg.project_dir):   # by folder, never by name: two projects may share a name
@@ -579,7 +586,7 @@ def reconcile(cfg, agents_dir=None, state=None, schtasks=None):
         status = "off" if not s.on else "not_registered" if not j else "active" if st["loaded"] else "not_loaded"
         rows.append({"schedule": s.name, "label": lbl, "state": status, **st, "path": j["path"] if j else None})
     for lbl, j in jobs.items():
-        rows.append({"schedule": None, "label": lbl, "state": "stale" if j["ours"] else "foreign", **state(lbl),
+        rows.append({"schedule": None, "label": lbl, "state": "unreadable" if j.get("unreadable") else "stale" if j["ours"] else "foreign", **state(lbl),
                      "path": j["path"], "when": j["when"], "command": j["command"]})
     return rows
 

@@ -19,6 +19,16 @@ M = MON
 CITE_END = re.compile(r"\[([A-Z]\d{3}(?:,\s*[A-Z]\d{3})*)\]\s*\.?\s*$")
 
 
+def no_new_decisions(N):
+    """The sentence for a week with no new decision: how many decisions stay in force and the latest one's date."""
+    live = sorted(str(n.get("created") or "")[:10] for n in N.values() if n.get("kind") == "decision" and n.get("state") not in CLOSED)
+    if not live:
+        return "No decisions recorded yet."
+    word = "decision" if len(live) == 1 else "decisions"
+    latest = f", the latest on {md(live[-1])}" if live[-1] else ""
+    return f"No new decisions recorded this week; {len(live)} {word} in force{latest}."
+
+
 def md(d):
     d = dt.date.fromisoformat(str(d)[:10])
     return f"{MON[d.month - 1]} {d.day}"
@@ -586,8 +596,11 @@ def build(cfg, week, prose, out, snapshot=None, upto=None):
                [[k, m["status"], m["activity"], m["planned"], m.get("actual", ""), m["ref"]] for k, m in enumerate(s3["milestones"], 1)],
                [400, 1400, 6800, 1200, 1200, 700])
     b += p("Key decisions and alignments", bold=True)
-    b += table(["#", "Decision", "Date", "Ref"],
-               [[k, N[d]["title"], md(N[d]["created"]) if N[d].get("created") else "", d] for k, d in enumerate([x for x in s3["decisions"] if x in N], 1)], [400, 9800, 1200, 700])
+    dec_rows = [[k, N[d]["title"], md(N[d]["created"]) if N[d].get("created") else "", d] for k, d in enumerate([x for x in s3["decisions"] if x in N], 1)]
+    if dec_rows:
+        b += table(["#", "Decision", "Date", "Ref"], dec_rows, [400, 9800, 1200, 700])
+    else:   # an empty table reads as a broken report: say what is true instead
+        b += p(no_new_decisions(N))
     b += p("Risks and issues", bold=True)
     b += table(["ID", "Identified", "Description", "Status", "Impact", "Probability", "Mitigation", "Ref"],
                [[r["id"], r["identified"], r["desc"], r["status"], r.get("impact", ""), r.get("prob", ""),
