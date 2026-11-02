@@ -114,7 +114,7 @@ def schedules_view(cfg, register_opts=None):
     for s in cfg.schedules:
         nxt = SCH.next_run(s, now)
         rows.append(dict(vars(s), days=list(s.days), next=nxt.isoformat() if nxt else None, label=SCH.label(cfg.name, s),
-                         what=what(s, owner)))
+                         what=what(s, owner), runs=SCH.command_for(cfg, s)))
     return {"schedules": rows, "registered": SCH.registered(cfg.name, opts.get("agents_dir")), "platform": SCH.sys.platform,
             "can_register": SCH.sys.platform in ("darwin", "win32"), "command": (cfg.run or {}).get("scheduled"),
             "timezone": now.tzname(), "owner": owner, "reports_dir": str(cfg.project_dir / "reports"), "runner": SCH.runner_lock(cfg),
@@ -201,6 +201,12 @@ def set_schedules(cfg, rows, register_opts=None, owner=None):
             SCH.command_for(cfg, s)   # refuse before writing when the project has no command to schedule
     if owner is not None and not SCH.ADDRESS.match(owner):
         raise ValueError(f"owner must be one address: {owner!r}")
+    has_owner = bool(owner or (cfg.report or {}).get("owner"))
+    for s in scheds:
+        if s.kind == "send" and not s.to:
+            raise ValueError(f"schedule {s.name}: a send needs a To address (the reader)")
+        if s.kind == "preview" and not s.to and not has_owner:
+            raise ValueError(f"schedule {s.name}: a preview needs a To address or the owner address ([report].owner)")
     SCH.save(cfg.project_dir, scheds, owner)
     cfg.schedules = scheds
     if owner is not None:

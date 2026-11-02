@@ -67,7 +67,7 @@ def test_get_lists_schedules_with_next_run_and_registration(served):
 
 def test_post_saves_and_registers(served):
     base, proj, agents, calls = served
-    rows = [{"name": "Friday preview", "kind": "preview", "days": [5], "time": "20:00"},
+    rows = [{"name": "Friday preview", "kind": "preview", "days": [5], "time": "20:00", "to": ["opal@example.com"]},
             {"name": "Monday send", "kind": "send", "days": [1], "time": "14:00", "to": ["reader@example.com"],
              "cc": ["lead@example.com"], "include": {"pptx": True}, "on": True}]
     code, d = _post(base, {"schedules": rows})
@@ -102,6 +102,9 @@ def test_page_has_the_schedules_panel():
     assert 'data-f="owner"' in page   # the owner address is edited here, saved with Save
     assert 'aria-live="polite"' in page and 'role="alert"' in page and "beforeunload" in page and 'inputmode="email"' in page
     assert "Saving…" in page and "Sending…" in page   # the buttons say what they are doing and cannot be pressed twice
+    for s in ("/api/schedules/preview", "/api/schedules/delete", "/api/schedules/retire", "body.framed", "Copy into a schedule",
+              "two jobs", "<dialog", "not described in taska.toml"):
+        assert s in page, s
 
 
 def test_the_page_opens_on_a_view_named_in_the_query(served):
@@ -189,6 +192,7 @@ def test_rows_say_what_each_job_does_and_the_owner(tmp_path, monkeypatch):
         assert prev["what"] == "A preview of the week to owner@example.com"
         assert send["what"] == "The weekly report to reader@example.com, cc lead@example.com, after your review"
         assert d["owner"] == "owner@example.com" and d["timezone"] == dt.datetime.now().astimezone().tzname()
+        assert send["runs"] == "python3 bin/weekly.py send"   # the command as it will run, not the template
         nxt = dt.datetime.fromisoformat(send["next"])
         assert nxt.isoweekday() == 1 and nxt.strftime("%H:%M") == "14:00" and nxt.utcoffset() == dt.datetime.now().astimezone().utcoffset()
     finally:
@@ -224,7 +228,7 @@ def test_post_delete_and_retire_routes(tmp_path, monkeypatch):
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read())
     try:
-        assert post("/api/schedules", {"schedules": [{"name": "Friday preview", "kind": "preview", "days": [5], "time": "20:00"}]})[0] == 200
+        assert post("/api/schedules", {"schedules": [{"name": "Friday preview", "kind": "preview", "days": [5], "time": "20:00", "to": ["opal@example.com"]}]})[0] == 200
         view = json.loads(urllib.request.urlopen(base + "/api/schedules").read())
         states = {r["schedule"] or r["label"]: r["state"] for r in view["os"]}
         assert states == {"Friday preview": "active", "com.example.nightly": "foreign"}
@@ -245,3 +249,13 @@ def test_schedules_page_is_framable_only_locally(served):
     assert urllib.request.urlopen(base + "/").headers.get("Content-Security-Policy") is None
     d = json.loads(urllib.request.urlopen(base + "/api/schedules/preview?name=Friday%20preview").read())
     assert d["schedule"] == "Friday preview" and d["mail"]["include"]
+
+
+def test_post_refuses_a_send_without_a_reader_or_a_preview_without_an_address(served):
+    base, proj, agents, calls = served
+    code, d = _post(base, {"schedules": [{"name": "Monday send", "kind": "send", "days": [1], "time": "14:00"}]})
+    assert code == 400 and "To address" in d["error"] and (proj / "taska.toml").read_text() == TOML
+    code, d = _post(base, {"schedules": [{"name": "Friday preview", "kind": "preview", "days": [5], "time": "20:00"}]})
+    assert code == 400 and "owner" in d["error"]
+    code, d = _post(base, {"schedules": [{"name": "Friday preview", "kind": "preview", "days": [5], "time": "20:00"}], "owner": "opal@example.com"})
+    assert code == 200
