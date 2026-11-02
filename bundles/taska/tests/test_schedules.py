@@ -542,3 +542,36 @@ def test_reconcile_on_windows_reads_the_registered_tasks(tmp_path, monkeypatch):
     q = lambda verb, name, xml=None: '"\\taska\\harbor-logistics\\friday-preview","11/6/2026 8:00:00 PM","Ready"\n' if verb == "query" else ""
     rows = {r["schedule"]: r["state"] for r in W.reconcile(cfg, schtasks=q)}
     assert rows == {"Friday preview": "active", "Monday send": "off"}
+
+
+def test_cli_delete_retire_and_preview_call_the_page_functions(tmp_path, monkeypatch, capsys):
+    import json as _json, types
+    import taska as T
+    _cfg(tmp_path)
+    seen = []
+    monkeypatch.setattr(T.W, "delete_schedule", lambda cfg, name, opts=None: seen.append(("delete", name)) or [{"action": "retired"}])
+    monkeypatch.setattr(T.W, "retire_job", lambda cfg, label, opts=None: seen.append(("retire", label)) or {"action": "retired"})
+    monkeypatch.setattr(T.W, "schedules_view", lambda cfg, opts=None: {"schedules": []})
+    base = dict(project=str(tmp_path), set=None, register=False, agents_dir=None, force=False, delete=None, retire=None, preview=None, send=False)
+    for extra in ({"delete": "Monday send"}, {"retire": "com.example.nightly"}):
+        with pytest.raises(SystemExit) as e:
+            T.cmd_schedules(types.SimpleNamespace(**{**base, **extra}))
+        assert e.value.code == 0
+    with pytest.raises(SystemExit):
+        T.cmd_schedules(types.SimpleNamespace(**{**base, "preview": "Monday send", "send": True}))
+    printed = capsys.readouterr().out
+    assert seen == [("delete", "Monday send"), ("retire", "com.example.nightly")]
+    assert '"decided_by"' in printed and '"command": "python3 ~/proj/bin/weekly.py send --name Monday send"' in printed
+
+
+def test_cli_force_reaches_register(tmp_path, monkeypatch, capsys):
+    import types
+    import taska as T
+    _cfg(tmp_path)
+    got = {}
+    monkeypatch.setattr(T.SCH, "register", lambda cfg, **kw: got.update(kw) or [])
+    monkeypatch.setattr(T.W, "schedules_view", lambda cfg, opts=None: {"schedules": []})
+    with pytest.raises(SystemExit):
+        T.cmd_schedules(types.SimpleNamespace(project=str(tmp_path), set=None, register=True, agents_dir=None, force=True,
+                                              delete=None, retire=None, preview=None, send=False))
+    assert got.get("force") is True

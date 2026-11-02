@@ -554,12 +554,20 @@ def cmd_render_evidence(a):
 
 
 def cmd_schedules(a):
-    """The project's [[schedules]] with each one's next run; --set FILE replaces them from a JSON list (saved to
-    taska.toml); --register writes and (re)loads one launchd agent per schedule (a Mac)."""
+    """The project's [[schedules]] with each one's state, next run and what the OS holds; --set FILE replaces them
+    from a JSON list (saved to taska.toml); --register writes one OS job per schedule; --delete NAME removes a schedule
+    and its job; --retire LABEL unloads a job outside taska.toml and moves its file aside; --preview NAME [--send] says
+    what a run will do. The same functions as the Schedules page: the onboarding skill drives these."""
     cfg = C.load(a.project)
-    opts = {"agents_dir": a.agents_dir} if a.agents_dir else {}
+    opts = dict({"agents_dir": a.agents_dir} if a.agents_dir else {}, **({"force": True} if a.force else {}))
     reg = None
-    if a.set:
+    if a.preview:
+        out(dict(W.run_preview(cfg, a.preview, send=a.send), status="ok"))
+    if a.delete:
+        reg = W.delete_schedule(cfg, a.delete, opts)
+    elif a.retire:
+        reg = [W.retire_job(cfg, a.retire, opts)]
+    elif a.set:
         reg = W.set_schedules(cfg, json.loads(Path(a.set).read_text()), opts)
     elif a.register:
         reg = SCH.register(cfg, **opts)
@@ -712,6 +720,11 @@ def main():
     p.add_argument("--set", help="a JSON list of schedules that replaces [[schedules]] in taska.toml and registers them")
     p.add_argument("--register", action="store_true", help="write and (re)load one launchd agent per schedule")
     p.add_argument("--agents-dir", help="where the agents go (default ~/Library/LaunchAgents)")
+    p.add_argument("--force", action="store_true", help="take the schedules over from a machine that is gone (the one-runner lock)")
+    p.add_argument("--delete", metavar="NAME", help="remove this schedule from taska.toml and its OS job")
+    p.add_argument("--retire", metavar="LABEL", help="unload a job outside taska.toml (or left behind) and move its file to .taska/retired-jobs/")
+    p.add_argument("--preview", metavar="NAME", help="what a run of this schedule will do now: week, command, steps, who gets mail")
+    p.add_argument("--send", action="store_true", help="with --preview: the reviewed send, as Send now would do it")
     p = sp.add_parser("run-schedule", help="one scheduled run: the project's steps, then report, gate, delivery")
     p.add_argument("name"); p.add_argument("--week"); p.add_argument("--dry-run", action="store_true")
     p.add_argument("--send", action="store_true", help="a reviewed send: the reader gets it now (otherwise the owner gets a review copy)")

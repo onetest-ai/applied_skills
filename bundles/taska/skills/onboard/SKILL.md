@@ -61,15 +61,28 @@ command prints JSON.
    If it is not `ok`, tell the user the fix it names: a subscription token (they run `claude setup-token` and save
    the token in `~/.config/taska/claude` with `chmod 600`; it lasts about a year), or `codemie profile login`
    (lasts about a day, so runs after a weekend need a fresh login). Then the schedules, one question each: what
-   (a preview to the owner, a send to the reader, an update of the tree only), which days, what time (the owner's
-   local time), who receives it (To, Cc). Write them as `[[schedules]]` in `taska.toml` (or let the user edit them
-   in the workbench's **Schedules** view, `/taska:workbench` → Schedules); set `[report].owner` to the owner's
-   address. Then `$TASKA schedules --register`: it writes one job per schedule with the OS's own scheduler
-   (launchd on a Mac, Task Scheduler on Windows — hidden, as the signed-in user, run once at wake when the time was
-   missed), each running `taska run-schedule <name>` through `taska ai`. One machine runs a project: if `--register`
-   says another machine holds the schedules, ask the user which machine should run them before `--force`. Show
-   `$TASKA schedules` (each job's next run) and tell the user that **Run now** on the Schedules view runs one
-   immediately.
+   (a preview to the owner, a send to the reader, an update of the tree only), which days, what time (this computer's
+   local time: that is when its scheduler fires), who receives it (To, Cc), and for a send whether the owner reviews
+   it first (`review = true`: the run mails the owner a review copy; the reader gets it only when the owner sends it).
+   Write them as `[[schedules]]` in `taska.toml`; set `[report].owner` to the owner's address. Then
+   `$TASKA schedules --register`: one job per schedule with the OS's own scheduler (launchd on a Mac,
+   Task Scheduler on Windows: hidden, as the signed-in user, run once at wake when the time was missed), each running
+   `taska run-schedule <name>` through `taska ai` unless `[run].scheduled` names the project's own command. One machine runs a project:
+   if `--register` says another machine holds the schedules, ask the user which machine should run them before
+   `--force` (`$TASKA schedules --register --force`).
+   Schedules are operations, not content: the workbench does not show them. The user manages them by asking you, any
+   time, with these commands (each prints JSON; tell the user the result in plain sentences, never as JSON):
+   - "What is scheduled?" → `$TASKA schedules`: say each schedule's state (`os[].state`: active, not registered,
+     not loaded, off), when it runs next and who gets the mail; then every job in `os[]` with no schedule
+     (`foreign`: made outside taska; `stale`: left by a deleted schedule) and that it still runs unless retired.
+   - "Change / add one" → the whole list as JSON to `$TASKA schedules --set rows.json` (it validates before writing,
+     keeps `taska.toml.bak`, and registers).
+   - "Delete one" → `$TASKA schedules --delete "NAME"` (the schedule and its job, in one step).
+   - "Stop that other job" → `$TASKA schedules --retire LABEL` (unloaded; its file moves to `.taska/retired-jobs/`).
+   - "Run it now" → first `$TASKA schedules --preview "NAME"` (add `--send` for a reviewed send) and read the user the
+     week, the steps, To, Cc and what is attached; run `$TASKA run-schedule "NAME"` (`--send` to send a reviewed one)
+     only after they say yes. **Run now** and **Send now** on the schedules page do the same, with the same preview.
+   Someone who keeps a control panel can also open the same schedules as a page: `http://127.0.0.1:<port>/schedules`.
 7. **Windows.** The same steps; `doctor` names the `winget` command for anything missing (Python 3.11+, Node for
    the msgraph skill, ffmpeg and whisper.cpp only for recordings without a transcript). The workbench is at
    `http://127.0.0.1:8766/` in the browser; scheduled runs use `pythonw`, so no console window opens. A synced
