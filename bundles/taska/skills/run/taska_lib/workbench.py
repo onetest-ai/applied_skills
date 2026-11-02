@@ -95,6 +95,15 @@ def what(s, owner):
     return f"The weekly report to {who}{cc}, " + ("after your review" if s.review else "automatically")
 
 
+REGISTER_KEYS = ("agents_dir", "launchctl", "schtasks", "machine", "now", "force")
+REPORT_STEPS = ["workbench copy", "build the docx", "pre-send gate", "deliver"]
+
+
+def _reg(opts):
+    """The options `schedules.register` takes (the server's opts also carry `spawn` and `state` for tests)."""
+    return {k: v for k, v in (opts or {}).items() if k in REGISTER_KEYS}
+
+
 def schedules_view(cfg, register_opts=None):
     """What the Schedules panel shows: each schedule with its next run in this machine's time (when its OS job fires),
     one sentence on what it does, and what is registered with the OS."""
@@ -108,7 +117,56 @@ def schedules_view(cfg, register_opts=None):
                          what=what(s, owner)))
     return {"schedules": rows, "registered": SCH.registered(cfg.name, opts.get("agents_dir")), "platform": SCH.sys.platform,
             "can_register": SCH.sys.platform in ("darwin", "win32"), "command": (cfg.run or {}).get("scheduled"),
-            "timezone": now.tzname(), "owner": owner, "reports_dir": str(cfg.project_dir / "reports"), "runner": SCH.runner_lock(cfg)}
+            "timezone": now.tzname(), "owner": owner, "reports_dir": str(cfg.project_dir / "reports"), "runner": SCH.runner_lock(cfg),
+            "os": SCH.reconcile(cfg, opts.get("agents_dir"), opts.get("state")),
+            "os_scope": "launchd" if SCH.sys.platform == "darwin" else "managed only"}
+
+
+def run_preview(cfg, name, send=False, today=None):
+    """What a run of schedule `name` will do now, from the same rules the runner applies: the week, the command, the
+    steps, and for a preview or send who gets the mail and what is in it. A project script's steps come from
+    [run].describe[kind]; without it `steps_known` is False rather than a guess."""
+    from . import runner as RN
+    s = next((x for x in cfg.schedules if x.name == name), None)
+    if not s:
+        raise ValueError(f"no schedule named {name!r}")
+    owner = RN._owner(cfg, s)
+    shadow = s.kind == "send" and bool(s.review) and not send
+    if s.command or (cfg.run or {}).get("scheduled"):
+        described = ((cfg.run or {}).get("describe") or {}).get(s.kind)
+        steps, known = (list(described), True) if described else ([], False)
+    else:
+        steps, known = [x["name"] for x in RN.steps(cfg, s.kind)] + (REPORT_STEPS if s.kind != "update" else []), True
+    mail = None
+    if s.kind != "update":
+        to = owner if (s.kind == "preview" or shadow) else (s.to[0] if s.to else owner)
+        cc = [] if shadow else list(s.cc)
+        if s.kind == "send" and not shadow and owner and owner not in cc and owner != to:
+            cc.append(owner)
+        mail = {"to": [to] if to else [], "cc": cc, "review_copy": shadow,
+                "include": [k for k, v in s.include.items() if v], "not_included": [k for k, v in s.include.items() if not v]}
+    return {"schedule": s.name, "kind": s.kind, "week": RN.week_for(s.kind, today or dt.date.today()),
+            "command": SCH.command_for(cfg, s, send), "steps": steps, "steps_known": known, "mail": mail}
+
+
+def delete_schedule(cfg, name, register_opts=None):
+    """Remove one schedule from taska.toml and its OS job, in one step."""
+    keep = [x for x in cfg.schedules if x.name != name]
+    if len(keep) == len(cfg.schedules):
+        raise ValueError(f"no schedule named {name!r}")
+    SCH.save(cfg.project_dir, keep)
+    cfg.schedules = keep
+    return SCH.register(cfg, **_reg(register_opts))
+
+
+def retire_job(cfg, label, register_opts=None):
+    """Retire a stale or foreign job the view lists; any other label is refused."""
+    opts = register_opts or {}
+    row = next((r for r in SCH.reconcile(cfg, opts.get("agents_dir"), opts.get("state"))
+                if r["label"] == label and r["state"] in ("stale", "foreign")), None)
+    if not row:
+        raise ValueError(f"{label} is not a stale or foreign job of this project")
+    return SCH.retire(cfg, row["path"], opts.get("launchctl"), why="retired from the page")
 
 
 def _spawn(argv, log):
@@ -147,7 +205,7 @@ def set_schedules(cfg, rows, register_opts=None, owner=None):
     cfg.schedules = scheds
     if owner is not None:
         cfg.report["owner"] = owner
-    return SCH.register(cfg, **(register_opts or {}))
+    return SCH.register(cfg, **_reg(register_opts))
 
 
 def server(store, cfg, port, register_opts=None):
@@ -181,6 +239,16 @@ def server(store, cfg, port, register_opts=None):
                 return self._send(200, version())
             if self.path == "/api/schedules":
                 return self._send(200, schedules_view(cfg, register_opts))
+            if self.path.split("?", 1)[0] == "/schedules":   # the standalone page the dashboard frames
+                return self._send(200, PAGE.read_bytes(), "text/html",
+                                  {"Content-Security-Policy": "frame-ancestors 'self' http://127.0.0.1:* http://localhost:*"})
+            if self.path.startswith("/api/schedules/preview"):
+                from urllib.parse import urlparse, parse_qs
+                q = parse_qs(urlparse(self.path).query)
+                try:
+                    return self._send(200, run_preview(cfg, (q.get("name") or [""])[0], (q.get("send") or ["0"])[0] == "1"))
+                except ValueError as x:
+                    return self._send(400, {"error": str(x)})
             if self.path.startswith("/api/recap"):   # the Recap view: taska pack for the chosen period
                 from urllib.parse import urlparse, parse_qs
                 try:
@@ -196,7 +264,7 @@ def server(store, cfg, port, register_opts=None):
             self._send(404, {"error": "not found"})
 
         def do_POST(self):
-            if self.path not in ("/api/event", "/api/schedules", "/api/schedules/run"):
+            if self.path not in ("/api/event", "/api/schedules", "/api/schedules/run", "/api/schedules/delete", "/api/schedules/retire"):
                 return self._send(404, {"error": "not found"})
             if not _local_origin(self.headers, port):
                 return self._send(403, {"error": "forbidden host"})
@@ -204,6 +272,10 @@ def server(store, cfg, port, register_opts=None):
                 return self._send(415, {"error": "Content-Type must be application/json"})
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+                if self.path == "/api/schedules/delete":
+                    return self._send(200, {"registered": delete_schedule(cfg, body.get("name"), register_opts)})
+                if self.path == "/api/schedules/retire":
+                    return self._send(200, retire_job(cfg, body.get("label") or "", register_opts))
                 if self.path == "/api/schedules/run":
                     return self._send(200, run_now(cfg, body.get("name"), register_opts, bool(body.get("send"))))
                 if self.path == "/api/schedules":

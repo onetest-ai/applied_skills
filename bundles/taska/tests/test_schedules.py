@@ -495,3 +495,12 @@ def test_register_retires_a_managed_job_with_no_schedule(tmp_path, monkeypatch):
     out = W.register(cfg, agents_dir=agents, launchctl=lambda *a: calls.append(a))
     gone = next(o for o in out if o["label"] == "com.taska.harbor-logistics.renamed")
     assert gone["action"] == "retired" and not old.exists() and ("unload", str(old)) in calls
+
+
+def test_os_jobs_skips_a_file_nobody_can_read(tmp_path):
+    cfg = _cfg(tmp_path)
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    (agents / "net.vendor.client.plist").write_text('<?xml version="1.0"?>\n<plist version="1.0"><dict><key>Label</key><string>a & b</string></dict></plist>')
+    _job(agents, "com.example.nightly", "com.example.nightly", [f"{tmp_path}/bin/run.sh"])
+    assert [j["label"] for j in W.os_jobs(cfg, agents)] == ["com.example.nightly"]

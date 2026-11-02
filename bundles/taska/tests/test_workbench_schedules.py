@@ -201,3 +201,47 @@ def test_post_saves_the_owner(served):
     assert code == 200 and d["owner"] == "opal@example.com" and C.load(proj).report["owner"] == "opal@example.com"
     code, d = _post(base, {"schedules": [], "owner": "nope"})
     assert code == 400 and "owner" in d["error"] and C.load(proj).report["owner"] == "opal@example.com"
+
+
+def test_post_delete_and_retire_routes(tmp_path, monkeypatch):
+    import plistlib
+    monkeypatch.setattr(SCH.sys, "platform", "darwin")
+    (tmp_path / "taska.toml").write_text(TOML)
+    cfg = C.load(tmp_path); S.ensure(cfg.store)
+    agents, calls = tmp_path / "agents", []
+    opts = {"agents_dir": agents, "launchctl": lambda *a: calls.append(a), "state": lambda lbl: {"loaded": True, "last_exit": 0}}
+    agents.mkdir()
+    foreign = agents / "com.example.nightly.plist"
+    foreign.write_bytes(plistlib.dumps({"Label": "com.example.nightly", "ProgramArguments": ["/bin/zsh", "-lic", f"{tmp_path}/bin/run.sh"],
+                                         "StartCalendarInterval": {"Hour": 6, "Minute": 40}}))
+    srv = W.server(cfg.store, cfg, _free_port(), register_opts=opts)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    def post(path, body):
+        req = urllib.request.Request(base + path, data=json.dumps(body).encode(), method="POST", headers={"Content-Type": "application/json"})
+        try:
+            r = urllib.request.urlopen(req); return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read())
+    try:
+        assert post("/api/schedules", {"schedules": [{"name": "Friday preview", "kind": "preview", "days": [5], "time": "20:00"}]})[0] == 200
+        view = json.loads(urllib.request.urlopen(base + "/api/schedules").read())
+        states = {r["schedule"] or r["label"]: r["state"] for r in view["os"]}
+        assert states == {"Friday preview": "active", "com.example.nightly": "foreign"}
+        code, d = post("/api/schedules/retire", {"label": "com.example.nightly"})
+        assert code == 200 and d["action"] == "retired" and not foreign.exists()
+        assert post("/api/schedules/retire", {"label": "com.example.nightly"})[0] == 400
+        code, d = post("/api/schedules/delete", {"name": "Friday preview"})
+        assert code == 200 and C.load(tmp_path).schedules == [] and not list(agents.glob("com.taska.*.plist"))
+        assert post("/api/schedules/delete", {"name": "nope"})[0] == 400
+    finally:
+        srv.shutdown()
+
+
+def test_schedules_page_is_framable_only_locally(served):
+    base, *_ = served
+    r = urllib.request.urlopen(base + "/schedules")
+    assert r.status == 200 and "frame-ancestors 'self' http://127.0.0.1:* http://localhost:*" in r.headers["Content-Security-Policy"]
+    assert urllib.request.urlopen(base + "/").headers.get("Content-Security-Policy") is None
+    d = json.loads(urllib.request.urlopen(base + "/api/schedules/preview?name=Friday%20preview").read())
+    assert d["schedule"] == "Friday preview" and d["mail"]["include"]

@@ -476,11 +476,19 @@ STATES = ("active", "not_registered", "not_loaded", "off", "stale", "foreign")
 
 
 def _plist(path):
+    """A job file as a dict; when Python's parser refuses one that launchd accepts (seen: a vendor's plist with a bare
+    '&'), macOS's own plutil converts it; None when neither can read it."""
     import plistlib
+    from xml.parsers.expat import ExpatError
     try:
         with open(path, "rb") as f:
             return plistlib.load(f)
-    except (OSError, ValueError, plistlib.InvalidFileException):
+    except (OSError, ValueError, ExpatError, plistlib.InvalidFileException):
+        pass
+    try:
+        r = subprocess.run(["plutil", "-convert", "xml1", "-o", "-", str(path)], capture_output=True, timeout=5)
+        return plistlib.loads(r.stdout) if r.returncode == 0 else None
+    except (OSError, ValueError, ExpatError, plistlib.InvalidFileException, subprocess.TimeoutExpired):
         return None
 
 

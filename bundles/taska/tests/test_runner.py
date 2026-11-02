@@ -181,3 +181,36 @@ def test_the_cli_takes_send(tmp_path):
     assert r["status"] == "ok" and r["shadow"] is False
     r = run_cli(tmp_path, "run-schedule", "Monday send", "--dry-run")
     assert r["shadow"] is True
+
+
+def _preview_matches_deliver(tmp_path, toml, name, today, send):
+    from taska_lib import workbench as WB
+    tmp_path.mkdir(parents=True)
+    cfg = _proj(tmp_path, toml)
+    p = WB.run_preview(cfg, name, send=send, today=today)
+    run, _ = _runner()
+    r = R.run(cfg, _sched(cfg, name), today=today, run=run, send=send)
+    d = json.loads(Path(r["deliver"]).read_text())
+    assert p["week"] == r["week"] and p["mail"]["to"] == d["to"] and sorted(p["mail"]["cc"]) == sorted(d["cc"])
+    assert p["mail"]["review_copy"] == r["shadow"]
+    assert set(p["mail"]["include"]) == {k for k, v in _sched(cfg, name).include.items() if v}
+    return p
+
+
+def test_run_preview_matches_what_the_runner_delivers(tmp_path):
+    p = _preview_matches_deliver(tmp_path / "a", TOML, "Friday preview", FRI, False)
+    assert p["mail"]["to"] == ["owner@example.com"] and p["steps_known"]
+    p = _preview_matches_deliver(tmp_path / "b", REVIEWED, "Monday send", dt.date(2026, 3, 9), False)
+    assert p["mail"]["review_copy"] and p["mail"]["to"] == ["owner@example.com"] and p["mail"]["cc"] == []
+    p = _preview_matches_deliver(tmp_path / "c", REVIEWED, "Monday send", dt.date(2026, 3, 9), True)
+    assert p["mail"]["to"] == ["reader@example.com"] and "owner@example.com" in p["mail"]["cc"]
+
+
+def test_run_preview_uses_describe_or_says_it_cannot(tmp_path):
+    from taska_lib import workbench as WB
+    script = TOML.replace("[[run.steps]]", '[run]\nscheduled = "bin/weekly.py {kind}"\ndescribe = { update = ["pull", "extract"] }\n\n[[run.steps]]', 1)
+    cfg = _proj(tmp_path, script)
+    up = WB.run_preview(cfg, "Daily update", today=FRI)
+    assert up["steps"] == ["pull", "extract"] and up["steps_known"] and up["mail"] is None and up["command"] == "bin/weekly.py update"
+    pv = WB.run_preview(cfg, "Friday preview", today=FRI)
+    assert pv["steps"] == [] and pv["steps_known"] is False
