@@ -112,7 +112,7 @@ def test_cli_end_to_end(project, tmp_path):
                                   "quote": "warehouse walkthrough session with the client is booked for next Tuesday"}]))
     r = run_cli(project, "apply", "--evidence", items[0]["id"], "--proposals", str(props))
     assert r["by_op"] == {"create_story": 1} and not r["rejected"]
-    assert run_cli(project, "done", "--evidence", items[0]["id"])["pending"] == 1
+    assert run_cli(project, "done", "--evidence", items[0]["id"])["pending"] == 2   # the other item, and this one's decision pass
     st = run_cli(project, "status")
     assert st["nodes"]["story"] == {"open": 1} and st["evidence_processed"] == 1
     assert run_cli(project, "export")["out"].endswith("workbench.html")
@@ -197,7 +197,7 @@ def test_changed_evidence_is_requeued_and_redo_drop_rereads(project):
     run_cli(project, "sync")
     first = run_cli(project, "pending")["items"][0]["id"]
     run_cli(project, "done", "--evidence", first)
-    assert run_cli(project, "pending")["count"] == 1
+    assert [r["need"] for r in run_cli(project, "pending")["items"]] == ["decisions", "extract"]
     f = project / "calls" / "2026-03-02 Daily sync.vtt"
     f.write_text(f.read_text().replace("Morning everyone", "Good morning everyone"))
     r = run_cli(project, "sync")
@@ -206,3 +206,19 @@ def test_changed_evidence_is_requeued_and_redo_drop_rereads(project):
     d = run_cli(project, "redo", "--evidence", first, "--drop")
     assert d["dropped"] == first
     assert run_cli(project, "sync")["sources"][0]["new"] == [first]  # re-read from the folder
+
+
+def test_msgraph_is_found_where_codemie_installs_it(tmp_path, monkeypatch):
+    # CodeMie (codemie-claude) installs the msgraph skill under ~/.codemie/claude-plugin/skills/; a manager who set taska
+    # up through CodeMie must not have to write the path into taska.toml by hand
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("MSGRAPH_CLI", raising=False)
+    codemie = tmp_path / ".codemie/claude-plugin/skills/msgraph/scripts/msgraph.js"
+    codemie.parent.mkdir(parents=True)
+    codemie.write_text("// cli")
+    assert msgraph.cli_path({}) == str(codemie)
+    claude = tmp_path / ".claude/skills/msgraph/scripts/msgraph.js"      # a Claude Code install still wins
+    claude.parent.mkdir(parents=True)
+    claude.write_text("// cli")
+    assert msgraph.cli_path({}) == str(claude)
+    assert msgraph.cli_path({"cli": "/x/msgraph.js"}) == "/x/msgraph.js"   # an explicit path always wins

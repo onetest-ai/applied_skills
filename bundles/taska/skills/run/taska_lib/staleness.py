@@ -124,7 +124,8 @@ def question(r, N):
         if n["blocks"] else ""
     if "confirm_done" in f:
         h = r["unconf"][-1]
-        return f"Can we close “{n['title']}”? The evidence suggests it is done: “{h['quote']}” {cite(h, today)}"
+        said_it = f": “{h['quote']}” {cite(h, today)}" if h.get("quote") else "."
+        return f"Can we close “{n['title']}”? The evidence suggests it is done{said_it}"
     if "presumed_happened" in f:
         return f"“{n['title']}” was set for {fd(n['due'])}. Did it happen, and what came out of it?{holds} ({said})"
     if "slipping" in f:
@@ -132,17 +133,18 @@ def question(r, N):
         return f"“{n['title']}” keeps moving ({hist}). What is the real date, and what moves it?{holds}"
     if "waiting" in f:
         w = n["waiting_for"]
-        return f"Still waiting on {w.get('who') or 'someone'} for {w.get('what')} (since {fd(w['since'])})? “{n['title']}” is held until then.{holds}"
+        return f"Still waiting on {w.get('who') or 'someone'} for {w.get('what') or 'an item'} (since {fd(w['since'])})? “{n['title']}” is held until then.{holds}"
     if "overdue" in f:
         return f"“{n['title']}” was due {fd(n['due'])}. Where is it now?{holds} ({said})"
     if "blocked" in f:
         return f"“{n['title']}” is blocked. Who can unblock it, and by when?{holds} ({said})"
-    if "at_risk" in f:
+    if "at_risk" in f and r["stale_dep"]:
         d = N[r["stale_dep"][0]]
         return f"“{n['title']}” waits on “{d['title']}”, due {fd(d['due'])} and still open. Is it still on track?"
     if "chase_client" in f:
         return f"Waiting on {n.get('client_owner') or 'the client'} for “{n['title']}”: {quiet}. Chased?{holds} ({said})"
     if "unconfirmed" in f:
         h = r["unconf"][-1]
-        return f"Is “{n['title']}” really {h.get('effect') or h.get('op')}? The evidence only says “{h['quote']}” {cite(h, today)}."
+        says = f"only says “{h['quote']}” {cite(h, today)}" if h.get("quote") else "is not enough to say so"
+        return f"Is “{n['title']}” really {h.get('effect') or h.get('op')}? The evidence {says}."
     return f"“{n['title']}”: {quiet}. Still happening, and who has it?{holds} ({said})"

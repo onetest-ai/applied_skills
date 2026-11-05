@@ -1,0 +1,50 @@
+{
+  "meetings": [
+    {
+      "file": "2026-03-03 Harbor daily sync.vtt",
+      "proposals": [
+        {"op": "create", "ref": "s1", "kind": "story", "parent": "E01", "title": "Warehouse onboarding ready for the yard team",
+         "ac": ["The onboarding checklist is reviewed", "The yard team has site access"],
+         "quote": "I will draft the warehouse onboarding checklist and have it ready for review by Thursday."},
+        {"op": "create", "ref": "s2", "kind": "story", "parent": "E02", "title": "Delivery reconciliation reported to the client",
+         "ac": ["The delivery manifest is checked", "The reconciliation report is complete", "The progress report is with the client"],
+         "quote": "The reconciliation report needs to be completed by end of week."},
+        {"op": "create", "ref": "t1", "kind": "task", "parent": "s1", "type": "action", "title": "Draft warehouse onboarding checklist",
+         "internal_owner": "Nora Quill", "due_text": "Thursday",
+         "quote": "I will draft the warehouse onboarding checklist and have it ready for review by Thursday."},
+        {"op": "create", "ref": "t2", "kind": "task", "parent": "s1", "type": "action", "title": "Send inventory templates to Ravi",
+         "internal_owner": "Nora Quill",
+         "quote": "Nora, can you send me the inventory templates so I can update the stock tracking sheet?"},
+        {"op": "create", "ref": "t3", "kind": "task", "parent": "s1", "type": "dependency", "title": "Provide site access credentials to Opal",
+         "client_owner": "Opal Brennick", "client_owed": true,
+         "quote": "Opal still needs the updated site access credentials from us, so we owe those to her by end of day."},
+        {"op": "create", "ref": "t4", "kind": "task", "parent": "s2", "type": "action", "title": "Check delivery manifest for discrepancies",
+         "internal_owner": "Ravi Tamsin",
+         "quote": "Ravi, please check the delivery manifest and flag any discrepancies before the client call."},
+        {"op": "create", "ref": "t5", "kind": "task", "parent": "s2", "type": "action", "title": "Complete reconciliation report",
+         "internal_owner": "Ravi Tamsin", "due_text": "end of week",
+         "quote": "The reconciliation report needs to be completed by end of week."},
+        {"op": "create", "ref": "t6", "kind": "task", "parent": "s2", "type": "action", "title": "Submit progress report to client",
+         "internal_owner": "Nora Quill", "due_text": "next Tuesday",
+         "quote": "We need to submit the progress report to the client by next Tuesday."},
+        {"op": "create", "ref": "r1", "kind": "risk", "parent": "s1", "title": "Pallet racking installation delay",
+         "quote": "There is a risk that the pallet racking installation could be delayed if we do not confirm the site plan this week."},
+        {"op": "propose", "kind": "task", "parent": "s2", "type": "action", "title": "Equipment audit by yard team",
+         "internal_owner": "Yard team", "why": "Nora suggested it to the yard team; nobody took it up",
+         "quote": "I think the yard guys should take on the equipment audit and report back at the next sync."},
+        {"op": "propose", "kind": "task", "parent": "s2", "type": "action", "title": "Automate daily stock alerts",
+         "why": "Floated in the sync with no owner or date",
+         "quote": "Maybe someone should look into automating the daily stock alerts so we do not miss any inventory changes."}
+      ]
+    },
+    {
+      "file": "2026-03-04 Harbor daily sync.vtt",
+      "proposals": [
+        {"op": "status", "node": "T001", "effect": "progress",
+         "quote": "I will draft the warehouse onboarding checklist and have it ready for review by Thursday."},
+        {"op": "status", "node": "T002", "effect": "done",
+         "quote": "Nora, can you send me the inventory templates so I can update the stock tracking sheet?"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,144 @@
+{
+  "slots": [
+    {
+      "form": "commitment",
+      "speaker": "Nora Quill",
+      "utterance": "I will draft the warehouse onboarding checklist and have it ready for review by Thursday.",
+      "title": "Draft warehouse onboarding checklist",
+      "owner": "Nora Quill"
+    },
+    {
+      "form": "request",
+      "speaker": "Ravi Tamsin",
+      "utterance": "Nora, can you send me the inventory templates so I can update the stock tracking sheet?",
+      "title": "Send inventory templates to Ravi",
+      "owner": "Nora Quill"
+    },
+    {
+      "form": "due_phrase",
+      "speaker": "Nora Quill",
+      "utterance": "We need to submit the progress report to the client by next Tuesday.",
+      "title": "Submit progress report to client",
+      "owner": "Nora Quill",
+      "due_phrase": "next Tuesday"
+    },
+    {
+      "form": "client_owed",
+      "speaker": "Nora Quill",
+      "utterance": "Opal still needs the updated site access credentials from us, so we owe those to her by end of day.",
+      "title": "Provide site access credentials to Opal",
+      "owner": "Opal Brennick"
+    },
+    {
+      "form": "commitment",
+      "speaker": "Ravi Tamsin",
+      "utterance": "I will schedule a review session with the yard team and send calendar invites to everyone today.",
+      "title": "Schedule review session with yard team",
+      "owner": "Ravi Tamsin"
+    },
+    {
+      "form": "request",
+      "speaker": "Nora Quill",
+      "utterance": "Ravi, please check the delivery manifest and flag any discrepancies before the client call.",
+      "title": "Check delivery manifest for discrepancies",
+      "owner": "Ravi Tamsin"
+    },
+    {
+      "form": "due_phrase",
+      "speaker": "Ravi Tamsin",
+      "utterance": "The reconciliation report needs to be completed by end of week.",
+      "title": "Complete reconciliation report",
+      "owner": "Ravi Tamsin",
+      "due_phrase": "end of week"
+    },
+    {
+      "form": "proposal_team",
+      "speaker": "Nora Quill",
+      "utterance": "I think the yard guys should take on the equipment audit and report back at the next sync.",
+      "title": "Equipment audit by yard team",
+      "owner": "Yard team"
+    },
+    {
+      "form": "proposal_none",
+      "speaker": "Opal Brennick",
+      "utterance": "Maybe someone should look into automating the daily stock alerts so we do not miss any inventory changes.",
+      "title": "Automate daily stock alerts",
+      "owner": null
+    },
+    {
+      "form": "conditional_decision",
+      "speaker": "Nora Quill",
+      "utterance": "If we do not hear from the supplier by 2026-03-15 we will switch to the backup vendor immediately.",
+      "title": "Switch to backup vendor if supplier unresponsive",
+      "trigger_date": "2026-03-15"
+    },
+    {
+      "form": "risk",
+      "speaker": "Ravi Tamsin",
+      "utterance": "There is a risk that the pallet racking installation could be delayed if we do not confirm the site plan this week.",
+      "title": "Pallet racking installation delay risk"
+    },
+    {
+      "form": "risk",
+      "speaker": "Nora Quill",
+      "utterance": "We should flag that the data migration could fail if the legacy system is offline during the cutover window.",
+      "title": "Data migration failure risk during cutover"
+    },
+    {
+      "form": "declined",
+      "speaker": "Nora Quill",
+      "utterance": "The proposal to add a second reporting cycle per month was reviewed and the team decided not to proceed.",
+      "title": "Second monthly reporting cycle",
+      "owner": null
+    },
+    {
+      "form": "declined",
+      "speaker": "Opal Brennick",
+      "utterance": "Hiring a temporary data entry clerk was discussed but the request was turned down due to budget constraints.",
+      "title": "Temporary data entry clerk",
+      "owner": null
+    }
+  ],
+  "decision_slots": [
+    {"form": "implicit_decision", "speaker": "Nora Quill", "utterance": "We're not touching the mobile app this phase; text alerts and the chat assistant only.", "title": "Mobile app out of scope this phase", "owner": null},
+    {"form": "people_matter", "speaker": "Opal Brennick", "utterance": "Ravi moves to half time from the 20th; keep Nora at 100% until May.", "title": "Ravi to half time", "owner": null},
+    {"form": "implicit_risk", "speaker": "Ravi Tamsin", "utterance": "If the scanner firmware slips, the pilot slips with it.", "title": "Pilot depends on scanner firmware", "owner": null},
+    {"form": "client_decision", "speaker": "Opal Brennick", "utterance": "Drop the flat-fee idea; test the bundle of service fees instead.", "title": "Test the service-fee bundle, not a flat fee", "owner": null},
+    {"form": "open_question", "speaker": "Ravi Tamsin", "utterance": "There's still a choice to make between per-site and company-wide substitutions.", "title": "Per-site or company-wide substitutions", "owner": null},
+    {"form": "implicit_decision", "speaker": "Ravi Tamsin", "utterance": "The yard dashboard stays on the old reporting tool until the summer, and nobody rebuilds it this quarter.", "title": "Yard dashboard stays on the old reporting tool", "owner": null},
+    {"form": "cadence_decision", "speaker": "Nora Quill", "utterance": "From now on every Tuesday we walk Opal's team through drafts before anything is called done.", "title": "Tuesday draft walkthrough with the client", "owner": null},
+    {"form": "hypothetical", "speaker": "Nora Quill", "utterance": "If they choose to build their own assistant, our plan looks completely different.", "title": "Client builds its own assistant", "owner": null},
+    {"form": "people_matter", "speaker": "Ravi Tamsin", "utterance": "We would like to extend Nora on the yard work for two more months.", "title": "Extend Nora on the yard work", "owner": null},
+    {"form": "implicit_decision", "speaker": "Opal Brennick", "utterance": "Pallet labels move to the new barcode format at every site, starting with the March intake.", "title": "New barcode format for pallet labels", "owner": null}
+  ],
+  "workshop_slots": [
+    {"form": "not_work", "bullet": "deck_handling", "speaker": "Nora Quill", "utterance": "Ravi, can you take a look at the workshop deck and tweak the slide titles before it goes out?", "title": "Tweak workshop deck slide titles", "owner": null},
+    {"form": "commitment", "speaker": "Nora Quill", "utterance": "I will build the current-state findings report for the client and have it ready by Thursday.", "title": "Build current-state findings report", "owner": "Nora Quill"},
+    {"form": "not_work", "bullet": "agenda_invite", "speaker": "Ravi Tamsin", "utterance": "I'll send the agenda and the calendar invite to the client attendees this afternoon.", "title": "Send workshop agenda and invite", "owner": null},
+    {"form": "not_work", "bullet": "client_pain", "speaker": "Opal Brennick", "utterance": "Our intro pricing invites fraud, people sign up for the offer and then abuse it.", "title": "Intro pricing invites fraud", "owner": null},
+    {"form": "not_work", "bullet": "deck_handling", "speaker": "Ravi Tamsin", "utterance": "I'll polish slide twelve and tidy the colors tonight.", "title": "Polish slide twelve", "owner": null},
+    {"form": "request", "speaker": "Ravi Tamsin", "utterance": "Nora, can you build the dock-scan error summary for the client before the review?", "title": "Build dock-scan error summary", "owner": "Nora Quill"},
+    {"form": "not_work", "bullet": "poster", "speaker": "Nora Quill", "utterance": "I'll print the journey-map poster and tape it up in the workshop room.", "title": "Print journey-map poster", "owner": null},
+    {"form": "not_work", "bullet": "session_order", "speaker": "Ravi Tamsin", "utterance": "Let's put the pricing topics in session two and the returns topics in session one.", "title": "Session order for workshop topics", "owner": null},
+    {"form": "not_work", "bullet": "how_might_we", "speaker": "Nora Quill", "utterance": "Let's merge the two how-might-we statements into one: how might we shorten dock turnaround.", "title": "Merge how-might-we statements", "owner": null},
+    {"form": "not_work", "bullet": "client_pain", "speaker": "Opal Brennick", "utterance": "Customers keep calling us because the tracking page never matches what the scanner shows.", "title": "Tracking page mismatch calls", "owner": null},
+    {"form": "due_phrase", "speaker": "Nora Quill", "utterance": "We need to deliver the supplier scorecard to the client by next Wednesday.", "title": "Deliver supplier scorecard to client", "owner": "Nora Quill", "due_phrase": "next Wednesday"}
+  ],
+  "filler": [
+    {"speaker": "Nora Quill", "utterance": "Thanks, noted."},
+    {"speaker": "Ravi Tamsin", "utterance": "Sounds good to me."},
+    {"speaker": "Opal Brennick", "utterance": "Understood, thank you."},
+    {"speaker": "Nora Quill", "utterance": "Let us move on to the next item."},
+    {"speaker": "Ravi Tamsin", "utterance": "Quick question on that point."},
+    {"speaker": "Opal Brennick", "utterance": "That works for us on the client side."},
+    {"speaker": "Nora Quill", "utterance": "Happy to follow up offline if needed."},
+    {"speaker": "Ravi Tamsin", "utterance": "Will do, no problem at all."},
+    {"speaker": "Opal Brennick", "utterance": "That makes sense from our side."},
+    {"speaker": "Nora Quill", "utterance": "Anything else before we close out?"},
+    {"speaker": "Ravi Tamsin", "utterance": "Nothing else from my end."},
+    {"speaker": "Opal Brennick", "utterance": "We are all good here."},
+    {"speaker": "Nora Quill", "utterance": "Great, let us keep moving."},
+    {"speaker": "Ravi Tamsin", "utterance": "Acknowledged, I will take a note of that."},
+    {"speaker": "Opal Brennick", "utterance": "Appreciate the update on that."}
+  ]
+}

@@ -21,8 +21,16 @@ class GraphError(RuntimeError):
     pass
 
 
+# where the msgraph skill is installed: Claude Code's skills folder, or the CodeMie plugin (codemie-claude)
+CLI_CANDIDATES = (DEFAULT_CLI, "~/.codemie/claude-plugin/skills/msgraph/scripts/msgraph.js")
+
+
 def cli_path(scfg):
-    return os.path.expanduser(scfg.get("cli") or os.environ.get("MSGRAPH_CLI") or DEFAULT_CLI)
+    """The msgraph CLI: [sources.<key>].cli, then $MSGRAPH_CLI, then the first install found (Claude Code, CodeMie)."""
+    if scfg.get("cli") or os.environ.get("MSGRAPH_CLI"):
+        return os.path.expanduser(scfg.get("cli") or os.environ["MSGRAPH_CLI"])
+    found = [os.path.expanduser(c) for c in CLI_CANDIDATES if os.path.isfile(os.path.expanduser(c))]
+    return found[0] if found else os.path.expanduser(DEFAULT_CLI)
 
 
 def run(scfg, *args, timeout=120):
@@ -58,6 +66,72 @@ def _windows(since, until):
         d = e + dt.timedelta(days=1)
 
 
+# The CLI prints a listed meeting's start as UTC minus the local offset of the machine it runs on (checked Oct 2026 on
+# four meetings, summer and winter time). None = this machine's timezone; tests set it.
+LISTING_TZ = None
+MATCH_MINUTES = 10   # a listed occurrence belongs to a calendar event within this many minutes
+
+
+def listing_to_utc(s, tz=None):
+    """A start time as the CLI lists it ("2026-09-03 07:30") -> UTC "2026-09-03T09:30"."""
+    naive = dt.datetime.fromisoformat(s.strip().replace(" ", "T")[:16])
+    off = naive.replace(tzinfo=_zone(tz)).utcoffset() if tz else naive.astimezone().utcoffset()
+    return (naive + off).strftime("%Y-%m-%dT%H:%M")
+
+
+def parse_occurrences(text):
+    """`transcripts` listing -> [{subject, meeting, start}], one per listed occurrence (a series repeats its block)."""
+    out, cur = [], None
+    for line in text.splitlines():
+        if line.startswith("Meeting:"):
+            cur = {"subject": line.split(":", 1)[1].strip(), "meeting": None, "start": None}
+            out.append(cur)
+        elif cur and line.startswith("Start") and ":" in line:
+            cur["start"] = line.split(":", 1)[1].strip()
+        elif cur and line.startswith("Meeting ID:"):
+            cur["meeting"] = line.split(":", 1)[1].strip()
+    return [o for o in out if o["meeting"] and o["start"]]
+
+
+def select_events(scfg, a, b):
+    """Calendar events of [a, b] chosen by who attends: an attendee from `attendee_domains` and/or an organizer in
+    `organizer`. Titles are not unique (two series can share one), so people decide what a project's meeting is.
+    Returns [{subject, start (UTC "YYYY-MM-DDTHH:MM"), client}] for online, not cancelled meetings."""
+    out = run(scfg, "calendar", "--start", a + "T00:00:00", "--end", b + "T23:59:59", "--limit", "500", "--json")
+    try:
+        events = json.loads(out[out.index("["):])
+    except ValueError:
+        raise GraphError("msgraph `calendar --json` returned no JSON")
+    domains = {d.lower() for d in scfg.get("attendee_domains") or []}
+    organizers = {o.lower() for o in scfg.get("organizer") or []}
+    client = {d.lower() for d in scfg.get("client_domains") or []}
+    keep = []
+    for e in events:
+        subj = (e.get("subject") or "").strip()
+        if e.get("isCancelled") or not e.get("isOnlineMeeting") or subj.lower().startswith(("canceled", "cancelled")):
+            continue
+        doms = {((x.get("emailAddress") or {}).get("address") or "").split("@")[-1].lower() for x in e.get("attendees") or []}
+        org = ((e.get("organizer") or {}).get("emailAddress") or {}).get("name", "").lower()
+        if (domains and not doms & domains) or (organizers and org not in organizers):
+            continue
+        keep.append({"subject": subj, "start": (e.get("start") or {}).get("dateTime", "")[:16], "client": bool(doms & client)})
+    return keep
+
+
+def _matched(events, listing, tz):
+    """Meeting threads of `listing` with an occurrence at a chosen event's time (same title, within MATCH_MINUTES).
+    -> ({meeting id: client?}, [events no listed occurrence matched], [(event, meeting id)])."""
+    meetings, hit, pairs = {}, set(), []
+    for o in parse_occurrences(listing):
+        u = dt.datetime.fromisoformat(listing_to_utc(o["start"], tz))
+        for i, e in enumerate(events):
+            if e["subject"] == o["subject"] and abs((dt.datetime.fromisoformat(e["start"]) - u).total_seconds()) <= MATCH_MINUTES * 60:
+                meetings[o["meeting"]] = meetings.get(o["meeting"], False) or e["client"]
+                hit.add(i)
+                pairs.append((e, o["meeting"]))
+    return meetings, [e for i, e in enumerate(events) if i not in hit], pairs
+
+
 def parse_listing(text):
     """`transcripts --start --end --subject` text -> [{meeting, subject, transcript, created}] (deduplicated)."""
     out, subject, meeting = {}, None, None
@@ -74,6 +148,28 @@ def parse_listing(text):
     return list(out.values())
 
 
+def archive_name(subject, created_utc, tz):
+    """MM.DD.YYYY_<subject>.vtt, dated by the meeting's day in the project timezone (the way people name exports);
+    characters a file name cannot hold become "_" as in Teams' own exports ("Acme: X" -> "Acme_ X")."""
+    when = dt.datetime.fromisoformat(created_utc[:19]).replace(tzinfo=dt.timezone.utc)
+    z = _zone(tz)
+    day = when.astimezone(z).date() if z else when.date()
+    safe = re.sub(r"[:/\\\\]", "_", subject).strip()
+    return f"{day:%m.%d.%Y}_{safe}.vtt"
+
+
+def archive_vtt(folder, t, raw, tz):
+    """Keep one downloaded transcript in `folder` (never overwriting another meeting's file). Returns the name."""
+    os.makedirs(folder, exist_ok=True)
+    name = archive_name(t["subject"], t["created"], tz)
+    base, n = name[:-4], 2
+    while os.path.exists(os.path.join(folder, name)):
+        name, n = f"{base} ({n}).vtt", n + 1
+    with open(os.path.join(folder, name), "w", encoding="utf-8") as f:
+        f.write(raw)
+    return name
+
+
 def sync_transcripts(cfg, key, scfg, store, cursor):
     """New Teams transcripts of meetings whose subject contains `subject`, downloaded as VTT."""
     from . import meeting_kind
@@ -81,9 +177,23 @@ def sync_transcripts(cfg, key, scfg, store, cursor):
     seen = set(cur.get("seen") or [])
     since = scfg.get("since") or (dt.date.today() - dt.timedelta(days=14)).isoformat()
     today = dt.date.today().isoformat()
+    by_people = scfg.get("attendee_domains") or scfg.get("organizer")
+    unmatched, chosen = [], []
     try:
         found = {}
         for a, b in _windows(cur.get("last_window") or since, today):
+            if by_people:   # choose meetings by who attends, then their transcripts (Oct 2026)
+                events = select_events(scfg, a, b)
+                for subj in sorted({e["subject"] for e in events}):
+                    text = run(scfg, "transcripts", "--start", a, "--end", b, "--subject", subj)
+                    mine = [e for e in events if e["subject"] == subj]
+                    meetings, missed, pairs = _matched(mine, text, LISTING_TZ)
+                    unmatched += missed
+                    chosen += pairs
+                    for t in parse_listing(text):
+                        if t["meeting"] in meetings:
+                            found[t["transcript"]] = dict(t, client=meetings[t["meeting"]])
+                continue
             args = ["transcripts", "--start", a, "--end", b]
             if scfg.get("subject"):
                 args += ["--subject", scfg["subject"]]
@@ -91,7 +201,7 @@ def sync_transcripts(cfg, key, scfg, store, cursor):
                 found[t["transcript"]] = t
     except GraphError as e:
         return cur, {"source": key, "status": "unavailable", "reason": str(e)}
-    new, pending, dup = [], [], []
+    new, pending, dup, archived = [], [], [], []
     for t in sorted(found.values(), key=lambda x: x["created"]):
         if t["transcript"] in seen or t["created"][:10] < since:
             continue
@@ -101,6 +211,7 @@ def sync_transcripts(cfg, key, scfg, store, cursor):
                 run(scfg, "transcripts", "--meeting", t["meeting"], "--transcript", t["transcript"], "--vtt",
                     "--output", vtt, timeout=300)
                 turns = TR.stitch(TR.read_cues(vtt))
+                raw = open(vtt, encoding="utf-8", errors="replace").read()
             except (GraphError, ValueError, OSError) as e:
                 pending.append({"transcript": t["transcript"][-12:], "subject": t["subject"], "reason": str(e)[:200]})
                 continue
@@ -110,16 +221,36 @@ def sync_transcripts(cfg, key, scfg, store, cursor):
         for x in turns:
             x["speaker"] = cfg.canonical(x["speaker"]) or x["speaker"]
         eid = S.make_id(t["created"], key, t["transcript"])
-        item = {"id": eid, "source": key, "kind": "meeting", "meeting_kind": meeting_kind(t["subject"], scfg),
+        kind = ("client" if t.get("client") else "internal") if scfg.get("client_domains") else meeting_kind(t["subject"], scfg)
+        item = {"id": eid, "source": key, "kind": "meeting", "meeting_kind": kind,
                 "at": t["created"], "title": t["subject"], "turns": turns,
-                "meta": {"transcript": "teams", "speakers": sorted({x["speaker"] for x in turns})}}
+                "meta": {"transcript": "teams", "speakers": sorted({x["speaker"] for x in turns}),
+                         "transcript_id": t["transcript"], "meeting_id": t["meeting"]}}
         if S.write_evidence(store, item):
             new.append(eid)
+            if scfg.get("archive"):   # C-24: only a meeting the store did not have; a known one is never archived twice
+                archived.append(archive_vtt(os.path.expanduser(scfg["archive"]), t, raw, getattr(cfg, "timezone", "UTC")))
         elif S.duplicate_of(store, item):
             dup.append({"subject": t["subject"], "date": t["created"][:10], "same_as": S.duplicate_of(store, item)})
     # re-list the last window next time: a transcript can appear hours after its meeting
     cur.update(seen=sorted(seen), last_window=(dt.date.today() - dt.timedelta(days=WINDOW_DAYS)).isoformat())
-    return cur, {"source": key, "status": "ok", "new": new, "pending": pending, "duplicates": dup}
+    rep = {"source": key, "status": "ok", "new": new, "pending": pending, "duplicates": dup}
+    if scfg.get("archive"):
+        rep["archived"] = archived
+    if by_people:   # past chosen meetings with no transcript found (not recorded, or listed times no longer readable)
+        now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M")
+        rep["unmatched_events"] = [f"{e['subject']} ({e['start']}Z)" for e in unmatched if e["start"] < now]
+        # a chosen meeting whose series has no transcript from its own day: it was not transcribed (or not yet). Every
+        # transcript of the series is listed under each occurrence, so a matched series alone proves nothing.
+        def has_own(e, m):
+            day = dt.date.fromisoformat(e["start"][:10])
+            return any(x["meeting"] == m and abs((dt.date.fromisoformat(x["created"][:10]) - day).days) <= 1
+                       for x in found.values())
+        rep["no_transcript"] = sorted({f"{e['subject']} ({e['start'][:10]})" for e, m in chosen
+                                       if e["start"] < now and e["start"][:10] >= since and not has_own(e, m)}
+                                      | {f"{e['subject']} ({e['start'][:10]})" for e in unmatched
+                                         if e["start"] < now and e["start"][:10] >= since})
+    return cur, rep
 
 
 def _zone(name):

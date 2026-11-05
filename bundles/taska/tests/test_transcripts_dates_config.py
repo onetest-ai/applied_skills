@@ -109,3 +109,21 @@ def test_repetition_loop_is_detected():
            [{"start": 40, "speaker": "", "text": "Real words here."}]
     real = [{"start": i, "speaker": "", "text": f"sentence number {i}"} for i in range(30)]
     assert TR.repetition_loop(loop) and not TR.repetition_loop(real)
+
+
+@pytest.mark.parametrize("bad", ['"26 Oct"', '"2026-13-40"', "5", '"2026-10-26T00:00"'])
+def test_bad_decisions_since_is_a_config_error(tmp_path, bad):
+    (tmp_path / "taska.toml").write_text(f'[project]\nname = "X"\n[run]\ndecisions_since = {bad}\n')
+    with pytest.raises(C.ConfigError, match=r"decisions_since.*YYYY-MM-DD"):
+        C.load(tmp_path)
+
+
+def test_decisions_since_accepts_a_date(tmp_path):
+    (tmp_path / "taska.toml").write_text('[project]\nname = "X"\n[run]\ndecisions_since = 2026-10-26\n')
+    assert C.load(tmp_path).run["decisions_since"] == "2026-10-26"
+
+
+def test_decisions_since_refuses_a_datetime(tmp_path):
+    (tmp_path / "taska.toml").write_text('[project]\nname = "X"\n[run]\ndecisions_since = 2026-10-26T00:00:00\n')
+    with pytest.raises(C.ConfigError, match=r"decisions_since.*YYYY-MM-DD"):
+        C.load(tmp_path)
