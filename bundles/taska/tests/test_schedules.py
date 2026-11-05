@@ -3,6 +3,7 @@ and the decisions a scheduled run makes: which week it reports on, whether every
 transcript, whether a preview that already went should go again. Moved from a project's scripts with these tests;
 invented data only."""
 import datetime as dt
+import re
 import textwrap
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -511,7 +512,7 @@ def test_cli_delete_retire_and_preview_call_the_page_functions(tmp_path, monkeyp
         T.cmd_schedules(types.SimpleNamespace(**{**base, "preview": "Monday send"}))
     printed = capsys.readouterr().out
     assert seen == [("delete", "Monday send"), ("retire", "com.example.nightly")]
-    assert '"decided_by"' in printed and '"command": "python3 ~/proj/bin/weekly.py send --name Monday send"' in printed
+    assert '"decided_by"' in printed and re.search(r'"command":\s*"python3 ~/proj/bin/weekly.py send --name Monday send"', printed)
 
 
 def test_cli_force_reaches_register(tmp_path, monkeypatch, capsys):

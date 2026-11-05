@@ -3,11 +3,13 @@
 last apply (Oct 31: a 20,000-word readout with 21 key items yielded 12 events and passed the coverage gate)."""
 import textwrap
 
+
 from conftest import run_cli
 from taska_lib import config as C, leftovers as LO, store as S
+from taska_lib.text import norm
 
 EV = "2026-03-02_meetings_lo000001"
-FILLER = "the dock schedule and the yard plan were discussed again in some detail by everyone present today. "
+FILLER = "the dock timetable and the yard layout were discussed again in some detail by everyone present today. "
 WORK = ["Nora will send the forklift certification list to the client by Thursday morning",
         "Ravi needs to book the warehouse site visit and confirm the date with Opal",
         "Opal will share the crane inspection report with the team next week"]
@@ -88,7 +90,7 @@ def test_done_on_a_long_meeting_with_no_leftovers_needs_no_token(tmp_path):
 
 
 def test_short_meetings_are_not_token_gated(tmp_path):
-    cfg = _project(tmp_path, n_filler=40)
+    cfg = _project(tmp_path, n_filler=10)
     for i, line in enumerate(WORK):
         _note(cfg, line, f"n{i}")
     assert run_cli(tmp_path, "leftovers", "--evidence", EV)["count"] == 1
@@ -160,7 +162,8 @@ def _processed(cfg):
 
 def _extracted(tmp_path, eid=EV, *flags):
     """Extraction's `done`: coverage and leftovers only; the meeting is then pending its decision pass."""
-    r = run_cli(tmp_path, "done", "--evidence", eid, *flags)
+    token = run_cli(tmp_path, "leftovers", "--evidence", eid)["token"]
+    r = run_cli(tmp_path, "done", "--evidence", eid, "--leftovers", token, *flags)
     assert r["status"] == "ok"
     return r
 
@@ -347,7 +350,7 @@ def test_cue_sentences_are_hints_only(tmp_path):
     lo = run_cli(tmp_path, "leftovers", "--evidence", eid)
     assert [x["text"] for p in lo["decisions"]["parts"] for x in p["hints"]] == [DECIDE, RISK]
     assert "token" not in lo["decisions"]
-    assert run_cli(tmp_path, "done", "--evidence", eid, *_none_for(1, 2, 3))["status"] == "ok"
+    assert run_cli(tmp_path, "done", "--evidence", eid, "--leftovers", lo["token"], *_none_for(1, 2, 3))["status"] == "ok"
 
 
 def test_a_recorded_decision_removes_its_hint(tmp_path):
@@ -657,3 +660,62 @@ def test_a_card_quoting_only_the_title_or_undone_is_not_listed(tmp_path):
     _card(cfg, WORK[0], "p2", "task", "Send the forklift list")
     S.append(cfg.store, [{"type": "human", "op": "undo", "mid": "u1", "by": "human", "target": "p2", "date": "2026-03-02"}])
     assert _items(cfg) == [[], [], []]
+
+
+def _meeting(tmp_path, line, n_filler):
+    cfg = _project(tmp_path, n_filler=n_filler, extra=False)
+    for i, w in enumerate(WORK):
+        _note(cfg, w, f"n{i}")
+    item = _item(cfg)
+    item["turns"].insert(len(item["turns"]) // 2, {"speaker": "Nora Quill", "ts": "00:15:00", "text": line})
+    S.write_evidence(cfg.store, item)
+    return cfg
+
+
+def test_a_ten_thousand_character_meeting_with_an_uncovered_request_is_gated(tmp_path):
+    cfg = _meeting(tmp_path, "Please check the slow screens before the next release goes out", 32)
+    lo = LO.leftovers(_item(cfg), S.events(cfg.store))
+    assert 9000 <= lo["chars"] <= 12000 and lo["gated"] and lo["count"] == 1
+    r = run_cli(tmp_path, "done", "--evidence", EV, check=False)
+    assert r["status"] == "leftovers" and r["count"] == 1
+
+
+def test_a_five_thousand_character_meeting_is_not_gated(tmp_path):
+    cfg = _meeting(tmp_path, "Please check the slow screens before the next release goes out", 16)
+    lo = LO.leftovers(_item(cfg), S.events(cfg.store))
+    assert 4000 <= lo["chars"] < 6000 and not lo["gated"] and lo["count"] == 1
+
+
+def test_a_sixty_thousand_character_meeting_is_still_gated(tmp_path):
+    cfg = _project(tmp_path, n_filler=260)
+    assert LO.leftovers(_item(cfg), [])["gated"]
+
+
+
+def test_a_curly_apostrophe_matches_like_a_straight_one(tmp_path):
+    cfg = _meeting(tmp_path, "Honestly we\u2019ll rebuild the capacity forecast for the steering meeting soon", 32)
+    texts = [x["text"] for p in LO.leftovers(_item(cfg), S.events(cfg.store))["parts"] for x in p["leftovers"]]
+    assert any("rebuild the capacity forecast" in t for t in texts)
+
+
+def _listed(r):
+    return [x["text"] for p in r["parts"] for x in p["leftovers"]]
+
+
+def test_leftovers_for_one_section_lists_only_its_sentences(tmp_path):
+    from taska_lib import coverage as CV
+    cfg = _project(tmp_path, n_filler=260)
+    item = _item(cfg)
+    n = CV.section_of(item, WORK[1])
+    assert n == CV.section_of(item, EXTRA) and CV.section_of(item, WORK[0]) < n < CV.section_of(item, WORK[2])
+    whole = run_cli(tmp_path, "leftovers", "--evidence", EV)
+    one = run_cli(tmp_path, "leftovers", "--evidence", EV, "--section", str(n))
+    assert _listed(one) == [WORK[1], EXTRA] and _listed(whole) == WORK[:2] + [EXTRA] + WORK[2:]
+    assert one["section"] == n and (one["token"], one["count"], one["chars"]) == (whole["token"], whole["count"], whole["chars"])
+    assert run_cli(tmp_path, "leftovers", "--evidence", EV, "--section", "1")["parts"][0]["leftovers"][0]["text"] == WORK[0]
+
+
+def test_leftovers_for_a_section_out_of_range_is_an_error(tmp_path):
+    _project(tmp_path, n_filler=260)
+    r = run_cli(tmp_path, "leftovers", "--evidence", EV, "--section", "99", check=False)
+    assert r["status"] == "error" and "section" in r["error"]

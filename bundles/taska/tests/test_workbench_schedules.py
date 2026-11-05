@@ -262,3 +262,114 @@ def test_post_refuses_a_send_without_a_reader_or_a_preview_without_an_address(se
     assert code == 400 and "owner" in d["error"]
     code, d = _post(base, {"schedules": [{"name": "Friday preview", "kind": "preview", "days": [5], "time": "20:00"}], "owner": "opal@example.com"})
     assert code == 200
+
+
+# ---------- the page explains itself: will this project send a report, and if not, what is missing ----------
+
+SILENT = '''[project]
+name = "Harbor Logistics"
+
+[[schedules]]
+name = "Harbor nightly"
+kind = "update"
+when = "Mon-Fri 06:40 Europe/Kyiv"
+to = ["opal@example.com"]
+command = "/opt/harbor/bin/full-run.sh"
+'''
+
+READY = TOML + '''
+[report]
+owner = "nora@example.com"
+title = "Harbor weekly"
+client_label = "Harbor"
+greet = "Nora"
+'''
+
+
+def _status(tmp_path, text):
+    (tmp_path / "taska.toml").write_text(text)
+    return W.schedules_view(C.load(tmp_path), {"agents_dir": tmp_path / "agents"})
+
+
+def test_a_project_with_only_an_update_job_says_why_no_report_goes_out(tmp_path, monkeypatch):
+    monkeypatch.setattr(SCH.sys, "platform", "darwin")
+    d = _status(tmp_path, SILENT)
+    rs = d["report_status"]
+    assert rs["set_up"] is False and [c["id"] for c in rs["checks"]] == ["report_schedule", "owner", "details", "sender"]
+    assert [c["state"] for c in rs["checks"]] == ["missing", "missing", "missing", "missing"]
+    assert "Harbor nightly" in rs["checks"][0]["text"] and "never mail" in rs["checks"][0]["text"]
+    assert rs["project_path"] == str(tmp_path) and rs["toml"].endswith("taska.toml") and rs["label_prefix"] == "com.taska.harbor-logistics."
+    row = d["schedules"][0]
+    assert row["never_mails"] is True and row["unused_to"] == ["opal@example.com"] and row["absolute_command"] is True
+
+
+def test_a_project_with_a_report_schedule_owner_details_and_its_own_command_is_set_up(tmp_path, monkeypatch):
+    monkeypatch.setattr(SCH.sys, "platform", "darwin")
+    rs = _status(tmp_path, READY)["report_status"]
+    assert rs["set_up"] is True and all(c["state"] == "ok" for c in rs["checks"])
+    assert "python3 bin/weekly.py" in rs["checks"][3]["text"]
+    assert rs["report"] == {"owner": "nora@example.com", "title": "Harbor weekly", "client_label": "Harbor", "greet": "Nora"}
+
+
+def test_without_its_own_command_the_mail_is_written_but_nothing_sends_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(SCH.sys, "platform", "linux")
+    text = READY.replace('[run]\nscheduled = "python3 bin/weekly.py {kind}"\n', "")
+    rs = _status(tmp_path, text)["report_status"]
+    assert rs["checks"][3]["state"] == "missing" and "mail.md" in rs["checks"][3]["text"] and rs["set_up"] is False
+
+
+def test_the_folder_is_shown_from_home_and_never_typed(tmp_path, monkeypatch):
+    monkeypatch.setattr(SCH.sys, "platform", "darwin")
+    monkeypatch.setattr(W.Path, "home", classmethod(lambda cls: tmp_path.parent))
+    assert _status(tmp_path, SILENT)["report_status"]["folder"] == f"~/{tmp_path.name}"
+
+
+def test_the_last_run_is_the_newest_run_status_with_its_steps(tmp_path, monkeypatch):
+    monkeypatch.setattr(SCH.sys, "platform", "darwin")
+    for week, ok in (("2026-03-02", False), ("2026-03-09", True)):
+        (tmp_path / "reports" / week).mkdir(parents=True)
+        (tmp_path / "reports" / week / "run-status.json").write_text(json.dumps(
+            {"started": f"{week}T06:40:05", "finished": f"{week}T06:41:00", "steps": [{"id": "pull", "ok": ok, "detail": "done: 0 new file(s)"}]}))
+    last = _status(tmp_path, SILENT)["report_status"]["last_run"]
+    assert last["week"] == "2026-03-09" and last["steps"] == [{"id": "pull", "ok": True, "detail": "done: 0 new file(s)"}]
+    assert last["finished"] == "2026-03-09T06:41:00"
+
+
+def test_post_saves_the_report_details_and_only_those_keys(served):
+    base, proj, agents, calls = served
+    rows = [{"name": "Weekly review", "kind": "send", "when": "Mon 14:00 Europe/Kyiv", "to": ["nora@example.com"]}]
+    code, d = _post(base, {"schedules": rows, "report": {"owner": "nora@example.com", "title": "Harbor weekly",
+                                                          "client_label": "Harbor", "greet": "Nora"}})
+    assert code == 200, d
+    cfg = C.load(proj)
+    assert cfg.report == {"owner": "nora@example.com", "title": "Harbor weekly", "client_label": "Harbor", "greet": "Nora"}
+    assert d["report_status"]["set_up"] is True
+    text = (proj / "taska.toml").read_text()
+    assert text.startswith(TOML.split("[[schedules]]")[0])   # every byte before the schedules is kept
+
+
+def test_post_refuses_an_unknown_or_multi_line_report_detail_and_writes_nothing(served):
+    base, proj, agents, calls = served
+    rows = [{"name": "Weekly review", "kind": "send", "when": "Mon 14:00 Europe/Kyiv", "to": ["nora@example.com"]}]
+    for bad in ({"footer": "x"}, {"title": "two\nlines"}, {"greet": ""}):
+        code, d = _post(base, {"schedules": rows, "report": bad})
+        assert code == 400, bad
+    assert (proj / "taska.toml").read_text() == TOML and not agents.exists()
+
+
+def test_report_details_replace_their_lines_in_place_and_add_missing_ones_after_the_header():
+    text = '[project]\nname = "x"\n\n[report]\ntitle = "Old"   # kept comment goes\nfooter = "keep me"\n\n[plan]\na = 1\n'
+    out = SCH.with_report(text, {"title": "New", "greet": "Nora"})
+    assert 'title = "New"\n' in out and 'greet = "Nora"\n' in out and 'footer = "keep me"' in out and out.endswith("[plan]\na = 1\n")
+    assert out.index('greet = "Nora"') < out.index("[plan]")
+    assert SCH.with_report('[project]\nname = "x"\n', {"owner": "a@example.com"}).endswith('[report]\nowner = "a@example.com"\n')
+
+
+def test_the_schedules_page_explains_itself_from_the_report_status():
+    page = W.page("schedules.html").decode()
+    for s in ('id="sch-report"', "report_status", "Set up a weekly report", 'id="sch-setup"', "label_prefix", "rs.folder",
+              "never_mails", "unused_to", "absolute_command", "last_run", "written, not sent", "Save and register",
+              "schedules --set", "schedules --preview", "watchRun"):
+        assert s in page, s
+    for typed in ("/Users/", "/home/", "C:\\Users", "~/taska-", "com.taska."):
+        assert typed not in page, typed   # every path and job name comes from /api/schedules

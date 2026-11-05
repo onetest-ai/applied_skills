@@ -3,7 +3,16 @@
 You did not extract these. For each packet decide whether the quote, read with its context, states the **claimed
 change on this specific node** (its `path` shows epic › story › task). Only `supports` changes the tree.
 
-`$TASKA` is the command the orchestrator gave you; one command per Bash call.
+<!-- TOOL-RULE:START -->
+**Tools.** `$TASKA` is the command you were given, used verbatim. In Bash run one `$TASKA <subcommand>` per call and
+nothing else: no pipes, redirects, `;`, `&&`, heredocs, `cd`, `python`, `grep`, `ls`, `cat` or `wc`. A refused call
+says what to use instead. Read an evidence `.md` with `limit` 120 lines at a time (`offset` for the next part); other
+files whole. Search with Grep and Glob; write files with Write. An output saved to a file: Read it, or re-run with the
+filter its `next` names: `$TASKA context --compact` to find nodes, then `$TASKA context --ids S001,T002` for the ones
+you touch (`--compact` leaves out what is already claimed, waiting or pinned); `$TASKA leftovers --evidence <id> --part 2`.
+Meeting sizes are in `$TASKA pending` (`words`). A quote never includes a line's `[ts] speaker:` prefix. Copy
+`--ack`/`--no-decisions` quotes verbatim from what you read.
+<!-- TOOL-RULE:END -->
 1. `$TASKA verify-prep --out <store>/verify/packets_<batch>.json` (add `--weak` only when told to re-check weak).
 2. For each packet write `{"mid": "...", "verdict": "supports|weak|wrong", "reason": "≤ 15 words"}` into
    `<store>/verify/verdicts_<batch>.json` (a JSON array covering every packet).

@@ -3,7 +3,7 @@
 A deterministic second pass for the extractor: `leftovers` lists, per third of the meeting, every sentence with a
 commitment marker (will, needs to, by Friday, agreed, risk, …) whose span no agent event on this item quotes. The
 token hashes that list and the number of applied quotes, so it changes whenever an event is applied; `done` on a
-long meeting requires the token issued for its current state. Measured on Oct 31: a 20,000-word readout holding
+meeting of MIN_CHARS or more requires the token issued for its current state. Measured on Oct 31: a 20,000-word readout holding
 21 key items produced 12 events and passed the coverage gate, which only counts events per third. `decisions`
 accounts for every third of every meeting: a decision recorded in it, or an 8+ word quote from it."""
 import hashlib
@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 
 from . import store as S
-from .coverage import LONG_CHARS, _part, _text_end, part_counts, part_of, part_starts, parts_for, quoted_spans, too_short
+from .coverage import MIN_CHARS, _part, _text_end, part_counts, part_of, part_starts, parts_for, quoted_spans, too_short
 from .ledger import fold
 from .text import norm
 
@@ -158,6 +158,6 @@ def leftovers(item, events, parts=3) -> dict:
     offsets = [x["offset"] for x in rows]
     token = hashlib.sha256(f"{item['id']}|{len(spans)}|{','.join(map(str, offsets))}".encode()).hexdigest()[:12]
     chars = len(norm(S.full_text(item)))
-    return {"evidence": item["id"], "chars": chars, "long": chars >= LONG_CHARS,
+    return {"evidence": item["id"], "chars": chars, "gated": chars >= MIN_CHARS,
             "parts": [{"part": p, "leftovers": rows} for p, rows in by_part.items()],
             "count": len(offsets), "token": token}

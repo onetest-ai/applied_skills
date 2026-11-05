@@ -43,3 +43,7 @@ def test_a_quote_that_looks_like_a_formula_is_written_as_text(tmp_path):
     with open(out, newline="", encoding="utf-8") as f:
         r = next(csv.DictReader(f))
     assert r["quote"] == "'+1, let's ship it Friday" and r["expected_title"] == "'=SUM(A1)"
+
+
+def test_every_row_says_where_a_miss_was_lost():
+    assert X.COLUMNS.index("stage") == X.COLUMNS.index("why") + 1

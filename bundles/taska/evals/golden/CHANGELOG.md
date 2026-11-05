@@ -1,0 +1,1 @@
+- v1 (2026-11-05): n=33, sha256=9bc8977a3598 — golden generator: seeds [1, 2, 3]

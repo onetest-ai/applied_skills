@@ -19,7 +19,7 @@ _RUN_DIR = Path(__file__).resolve().parent.parent / "skills" / "run"
 if str(_RUN_DIR) not in sys.path:
     sys.path.insert(0, str(_RUN_DIR))
 
-from taska_lib.evalscore import _body_sha  # noqa: E402  (one fingerprint definition for score, load_gold and this)
+from taska_lib.evalscore import _body_sha, check_annotations, load_gold  # noqa: E402  (one fingerprint definition for score, load_gold and this)
 
 WORK = ("committed", "proposed", "declined")
 
@@ -63,16 +63,39 @@ def collapse_near_duplicates(gold):
     return keep
 
 
-def write_version(dirpath, items, version, date, note):
+ANNOTATION_KEYS = ("field_modes", "validation_status", "rule_ids", "provenance")   # load_gold's, kept beside the key
+
+
+def write_version(dirpath, items, version, date, note, stem="items", kind="gold"):
     d = Path(dirpath)
-    p = d / f"items.{version}.jsonl"
+    p = d / f"{stem}.{version}.jsonl"
     if p.exists():
         raise FileExistsError(f"{p} exists: a key version is never overwritten; use a new version name")
-    lines = [json.dumps(i, ensure_ascii=False) for i in items]
-    p.write_text("\n".join([f"# gold {version} {date} n={len(lines)} sha256={_body_sha(lines)}"] + lines) + "\n",
+    lines = [json.dumps({k: v for k, v in i.items() if k not in ANNOTATION_KEYS}, ensure_ascii=False) for i in items]
+    p.write_text("\n".join([f"# {kind} {version} {date} n={len(lines)} sha256={_body_sha(lines)}"] + lines) + "\n",
                  encoding="utf-8")
     with open(d / "CHANGELOG.md", "a", encoding="utf-8") as f:
         f.write(f"- {version} ({date}): n={len(lines)}, sha256={_body_sha(lines)[:12]} — {note}\n")
+    return p
+
+
+def write_annotations(key_path, records, version, date, note):
+    """`<key stem>.<version>.jsonl` beside a frozen key (version ann-N): field modes, validation status and rule ids.
+    Checked against the key first; never overwritten; the key's bytes are never touched."""
+    key_path = Path(key_path)
+    head, items = load_gold(key_path)
+    problems = check_annotations(items, records)
+    if problems:
+        raise ValueError("; ".join(problems))
+    p = key_path.parent / f"{key_path.stem}.{version}.jsonl"
+    if p.exists():
+        raise FileExistsError(f"{p} exists: an annotations version is never overwritten; use a new version name")
+    key_sha = head.get("sha256") or _body_sha([json.dumps({k: v for k, v in g.items()}, ensure_ascii=False) for g in items])
+    lines = [json.dumps(r, ensure_ascii=False) for r in records]
+    p.write_text("\n".join([f"# annotations {version} {date} key_sha256={key_sha} n={len(lines)} sha256={_body_sha(lines)}"]
+                           + lines) + "\n", encoding="utf-8")
+    with open(key_path.parent / "CHANGELOG.md", "a", encoding="utf-8") as f:
+        f.write(f"- {key_path.stem} {version} ({date}): {len(lines)} annotations, sha256={_body_sha(lines)[:12]} — {note}\n")
     return p
 
 
@@ -84,11 +107,14 @@ def label_page(items, stamp):
             or f"<p class='t hit'>[{e(it.get('ts'))}] <b>{e(it.get('speaker'))}:</b> {e(it.get('quote'))}</p>"
         ex = it.get("existing")
         has = f"<p class=has>taska already has: {e(ex['id'])} · {e(ex['title'])}</p>" if ex else "<p class=has>taska has nothing that looks like this.</p>"
+        work = (("committed", "Committed"), ("proposed", "Proposed"), ("not_work", "Not work"), ("unsure", "Can't tell"))
+        prior = it.get("prior") or {}
+        before = (f"<p class=has>You answered: {e(dict(work).get(prior.get('kind'), prior.get('kind')))} ({e(prior.get('by'))})</p>"
+                  if prior else "") + (f"<p class=has>Earlier readers: {e(it['hint'])}</p>" if it.get("hint") else "")
         cards.append(
-            f"<section class=q data-cid='{e(it['cid'])}'><p class=m>{i + 1}. {e(it.get('meeting'))} · {e(it.get('date'))}</p>{turns}"
-            f"<p><b>Is it work?</b> " + "".join(f"<label><input type=radio name='w-{e(it['cid'])}' value={v}> {l}</label> "
-                                              for v, l in (("committed", "Committed"), ("proposed", "Proposed"),
-                                                           ("not_work", "Not work"), ("unsure", "Can't tell"))) + "</p>"
+            f"<section class=q data-cid='{e(it['cid'])}'><p class=m>{i + 1}. {e(it.get('meeting'))} · {e(it.get('date'))}</p>{turns}{before}"
+            f"<p><b>Is it work?</b> " + "".join(f"<label><input type=radio name='w-{e(it['cid'])}' value={v}{' checked' if v == prior.get('kind') else ''}> {l}</label> "
+                                              for v, l in work) + "</p>"
             f"{has}<p><b>Is it new?</b> " + "".join(f"<label><input type=radio name='n-{e(it['cid'])}' value={v}> {l}</label> "
                                                   for v, l in (("new", "New work"), ("tracked", "Already tracked"), ("unsure", "Can't tell"))) +
             "</p><textarea placeholder='Note: why, where you hesitated'></textarea></section>")

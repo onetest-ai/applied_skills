@@ -50,60 +50,36 @@ from pathlib import Path
 # Ensure taska_lib is importable regardless of the calling directory
 _HERE = Path(__file__).resolve().parent
 _RUN_DIR = _HERE.parents[1] / "skills" / "run"
-if str(_RUN_DIR) not in sys.path:
-    sys.path.insert(0, str(_RUN_DIR))
+for _p in (_RUN_DIR, _HERE.parent):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 from taska_lib import store as S, ledger as L
+from meetings import build_vtt, filler, meeting_date, sync_project, ts
 from taska_lib.evalscore import _card_match, _gold_params, _hit_strength, _resolve_node, _decided, match_item
 from taska_lib.text import norm, resolve_due
 
 _TEMPLATES = json.loads((_HERE / "templates.json").read_text())
+FILLER: list[dict] = _TEMPLATES["filler"]   # the filler pool, {speaker, utterance}: reused by the golden generator
 
 # ── date helpers ──────────────────────────────────────────────────────────────
 
-_BASE_DATE = dt.date(2026, 3, 2)  # Monday
-
-
-def _meeting_date(seed: int) -> str:
-    """ISO date derived from seed: advance `seed` weekdays from 2026-03-02."""
-    d = _BASE_DATE
-    n = int(seed)
-    while n > 0:
-        d += dt.timedelta(days=1)
-        while d.isoweekday() > 5:          # skip Sat/Sun
-            d += dt.timedelta(days=1)
-        n -= 1
-    return d.isoformat()
-
-
 def vtt_name(seed: int) -> str:
     """VTT filename for this seed."""
-    return f"{_meeting_date(seed)} Harbor daily sync.vtt"
+    return f"{meeting_date(seed)} Harbor daily sync.vtt"
 
 
 def vtt_name_planning(seed: int) -> str:
     """The planning review's VTT filename for this seed."""
-    return f"{_meeting_date(seed)} Harbor planning review.vtt"
+    return f"{meeting_date(seed)} Harbor planning review.vtt"
 
 
 def vtt_name_workshop(seed: int) -> str:
     """The workshop prep's VTT filename for this seed."""
-    return f"{_meeting_date(seed)} Harbor workshop prep.vtt"
+    return f"{meeting_date(seed)} Harbor workshop prep.vtt"
 
 
 # ── timing ────────────────────────────────────────────────────────────────────
-
-def _ts(seconds: int) -> str:
-    """Integer seconds -> 'HH:MM:SS'."""
-    h = seconds // 3600
-    m = (seconds % 3600) // 60
-    s = seconds % 60
-    return f"{h:02d}:{m:02d}:{s:02d}"
-
-
-def _vtt_cue(start: int, end: int, speaker: str, text: str) -> str:
-    return f"{_ts(start)}.000 --> {_ts(end)}.000\n<v {speaker}>{text}</v>"
-
 
 # ── cue-sequence layout ───────────────────────────────────────────────────────
 #
@@ -228,7 +204,7 @@ def generate_workshop(seed: int, minutes: int = 30) -> tuple[str, list[dict]]:
 
 def _meeting(rng: random.Random, seed: int, minutes: int, slots: list[dict], item_cues: list[int],
              file: str) -> tuple[str, list[dict]]:
-    meeting_date = _meeting_date(seed)
+    when = meeting_date(seed)
     filler_pool = _TEMPLATES["filler"]
 
     D = minutes * 60
@@ -237,13 +213,13 @@ def _meeting(rng: random.Random, seed: int, minutes: int, slots: list[dict], ite
 
     # Draw filler for all non-item positions
     n_filler = _N_CUES - len(slots)
-    filler_draw = [rng.choice(filler_pool) for _ in range(n_filler)]
+    filler_draw = filler(rng, filler_pool, n_filler)
 
     item_set = set(item_cues)
     item_idx = 0
     filler_idx = 0
 
-    cues_text = []
+    cues = []
     gold = []
 
     for cue_num in range(_N_CUES):
@@ -253,13 +229,13 @@ def _meeting(rng: random.Random, seed: int, minutes: int, slots: list[dict], ite
         if cue_num in item_set:
             slot = slots[item_idx]
             speaker, text = slot["speaker"], slot["utterance"]
-            cues_text.append(_vtt_cue(start, end, speaker, text))
+            cues.append((start, end, speaker, text))
 
-            fields = _to_gold_fields(slot, meeting_date)
+            fields = _to_gold_fields(slot, when)
             gold.append({
                 "evidence": None,
                 "quote": text,
-                "ts": _ts(start),
+                "ts": ts(start),
                 "speaker": speaker,
                 "title": slot["title"],
                 **fields,
@@ -273,10 +249,9 @@ def _meeting(rng: random.Random, seed: int, minutes: int, slots: list[dict], ite
         else:
             f = filler_draw[filler_idx % len(filler_draw)]
             filler_idx += 1
-            cues_text.append(_vtt_cue(start, end, f["speaker"], f["utterance"]))
+            cues.append((start, end, f["speaker"], f["utterance"]))
 
-    vtt = "WEBVTT\n\n" + "\n\n".join(cues_text) + "\n"
-    return vtt, gold
+    return build_vtt(cues), gold
 
 
 # ── per-form scorer ───────────────────────────────────────────────────────────
@@ -466,43 +441,19 @@ def prepare(P: Path, seed: int, taska_cmd: list[str]) -> list[dict] | None:
     """Write the seed's three meetings to P/calls, set up the project and sync it, then patch every gold item with the
     evidence of the file it came from (a meeting's title is its file name without .vtt) and write P/gold.json.
     None when a meeting has no pending evidence after sync."""
-    calls = P / "calls"
-    calls.mkdir()
     gold = []
+    vtts = {}
     for vtt, items in (generate(seed), generate_planning(seed), generate_workshop(seed)):
-        (calls / items[0]["file"]).write_text(vtt)
+        vtts[items[0]["file"]] = vtt
         gold += items
-
-    subprocess.run([*taska_cmd, "--project", str(P), "init", "--name", "Harbor Logistics"],
-                   capture_output=True, check=True)
-    toml = P / "taska.toml"
-    toml.write_text(
-        toml.read_text() + f"""
-[[people]]
-name = "Nora Quill"
-side = "internal"
-[[people]]
-name = "Ravi Tamsin"
-side = "internal"
-[[people]]
-name = "Opal Brennick"
-side = "client"
-[[teams]]
-name = "Yard team"
-members = ["Nora Quill", "Ravi Tamsin"]
-aliases = ["yard guys", "the yard people"]
-[sources.meetings]
-adapter = "meetings_folder"
-path = "{calls}"
-"""
-    )
-    subprocess.run([*taska_cmd, "--project", str(P), "sync"], capture_output=True, check=True)
-
-    r = subprocess.run([*taska_cmd, "--project", str(P), "pending"], capture_output=True, text=True, check=True)
-    by_title = {row["title"]: row["id"] for row in json.loads(r.stdout).get("items") or []}
+    people = [{"name": "Nora Quill", "side": "internal"}, {"name": "Ravi Tamsin", "side": "internal"},
+              {"name": "Opal Brennick", "side": "client"}]
+    teams = [{"name": "Yard team", "members": ["Nora Quill", "Ravi Tamsin"],
+              "aliases": ["yard guys", "the yard people"]}]
+    evidence = sync_project(vtts, people, P, taska_cmd, teams)
     for g in gold:
-        evid = by_title.get(Path(g["file"]).stem)
-        if evid is None:
+        evid = evidence.get(g["file"])
+        if not evid:
             sys.stderr.write(f"  seed {seed}: no pending evidence for {g['file']} after sync\n")
             return None
         g["evidence"] = evid

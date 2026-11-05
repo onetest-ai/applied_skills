@@ -58,3 +58,7 @@ def test_no_line_of_the_file_is_too_long_headers_included():
     md = S.render_md(_item(text="short", meta={"context": SENT * 40, "participants": ["Nora Quill"] * 300}))
     assert max(len(l) for l in md.splitlines()) <= S.MAX_LINE
     assert all(l.startswith("context: ") for l in md.splitlines() if "yard plan" in l)
+
+
+def test_view_lines_fit_a_120_line_read():
+    assert S.MAX_LINE == 600   # Read returns at most 25k tokens: 120 lines of 600 characters is about 18k

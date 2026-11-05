@@ -1,0 +1,10 @@
+{"rule": "READER-BLOCK:owner",
+ "cases": [
+  {"case": "we", "evidence": "2026-03-09_meetings_be7a0001", "quote": "we'll draft the berth allocation summary for the port authority and circulate it before the review",
+   "commitment": "committed", "owner": null},
+  {"case": "named_confirmed", "evidence": "2026-03-09_meetings_be7a0001", "quote": "Anna will draft the crane maintenance schedule for the client, she agreed to it with me on Monday",
+   "commitment": "committed", "owner": "Anna Pike"},
+  {"case": "i_reliable", "evidence": "2026-03-09_meetings_be7a0001", "quote": "I'll draft the gate access checklist for the new hauliers and share it with Ravi this week",
+   "commitment": "committed", "owner": "Opal Brennick"},
+  {"case": "i_unreliable_tag", "evidence": "2026-03-10_meetings_be7a0002", "quote": "I'll draft the gate access checklist for the new hauliers and share it with Ravi this week",
+   "commitment": "committed", "owner": null}]}

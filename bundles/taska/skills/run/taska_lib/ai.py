@@ -60,9 +60,19 @@ FIX = {"token": "the token was refused: run 'claude setup-token' again and repla
        "bedrock": "the Bedrock call failed: refresh the AWS credentials"}
 
 
+def _answers(argv, how):
+    """One tiny call: does this route answer at all? (A refused token or a dead session fails here, before any job.)"""
+    try:
+        r = subprocess.run(argv + ["-p", PROBE], capture_output=True, text=True, env=how, timeout=TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return r.returncode == 0 and "ok" in r.stdout.lower()
+
+
 def run(args, probe=False, env=None):
-    """{"ok", "route", "why": {route: reason}}. A probe makes one tiny call per route until one answers "ok";
-    otherwise `args` go to each route in turn, its output to this process's, until one exits 0."""
+    """{"ok", "route", "why": {route: reason}}. Each route is probed with one tiny call until one answers; with
+    probe=True that is all. Otherwise `args` run once on that route, its output to this process's. A job that fails
+    after it started is reported, never run again on another route: that would run (and pay for) the whole job twice."""
     env = dict(os.environ if env is None else env)
     why = {}
     for name in ROUTES:
@@ -70,15 +80,18 @@ def run(args, probe=False, env=None):
         if argv is None:
             why[name] = how
             continue
+        if not _answers(argv, how):
+            why[name] = FIX[name].format(f=token_file(env))
+            continue
+        if probe:
+            return {"ok": True, "route": name, "why": {}}
         try:
-            if probe:
-                r = subprocess.run(argv + ["-p", PROBE], capture_output=True, text=True, env=how, timeout=TIMEOUT)
-                answered = r.returncode == 0 and "ok" in r.stdout.lower()
-            else:
-                answered = subprocess.run(argv + list(args), env=how).returncode == 0
-        except (OSError, subprocess.TimeoutExpired):
-            answered = False
-        if answered:
-            return {"ok": True, "route": name, "why": why if not probe else {}}
-        why[name] = FIX[name].format(f=token_file(env))
+            rc = subprocess.run(argv + list(args), env=how).returncode
+        except OSError as e:
+            rc, why[name] = -1, f"the job could not start on {name}: {e}"
+        if rc == 0:
+            return {"ok": True, "route": name, "why": why}
+        why.setdefault(name, f"the job failed on {name} (exit {rc}); not retried on another route, which would run the "
+                             f"whole job again")
+        return {"ok": False, "route": name, "why": why}
     return {"ok": False, "route": None, "why": why}

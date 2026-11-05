@@ -45,18 +45,18 @@ def _calls(log):
 def test_a_subscription_token_is_used_first_without_aws(tmp_path):
     env, log = _env(tmp_path, token=TOKEN, codemie="in")
     r = ai.run(["-p", "hi"], env=env)
-    assert r["ok"] and r["route"] == "token" and _calls(log) == ["claude oauth=set key= bedrock= aws="]
+    assert r["ok"] and r["route"] == "token" and _calls(log) == ["claude oauth=set key= bedrock= aws="] * 2   # probe, then the job
 
 
 def test_an_api_key_goes_in_as_an_api_key(tmp_path):
     env, log = _env(tmp_path, token=KEY)
-    assert ai.run(["-p", "hi"], env=env)["ok"] and _calls(log) == ["claude oauth= key=set bedrock= aws="]
+    assert ai.run(["-p", "hi"], env=env)["ok"] and _calls(log) == ["claude oauth= key=set bedrock= aws="] * 2
 
 
 def test_without_a_token_codemie_answers_while_signed_in(tmp_path):
     env, log = _env(tmp_path, codemie="in")
     r = ai.run(["-p", "hi"], env=env)
-    assert r["route"] == "codemie" and _calls(log) == ["codemie-claude -p hi"]
+    assert r["route"] == "codemie" and _calls(log) == [f"codemie-claude -p {ai.PROBE}", "codemie-claude -p hi"]
 
 
 def test_a_refused_token_falls_back_to_codemie(tmp_path):
@@ -76,7 +76,7 @@ def test_bedrock_only_when_a_project_turns_it_on(tmp_path):
     assert not ai.run(["-p", "hi"], env=env)["ok"] and _calls(log) == []
     env, log = _env(tmp_path / "on", bedrock=True)
     r = ai.run(["-p", "hi"], env=env)
-    assert r["route"] == "bedrock" and _calls(log) == ["claude oauth= key= bedrock=1 aws=set"]
+    assert r["route"] == "bedrock" and _calls(log) == ["claude oauth= key= bedrock=1 aws=set"] * 2
 
 
 def test_a_token_others_can_read_is_refused(tmp_path):
@@ -103,3 +103,31 @@ def test_the_schedule_runs_through_taska_ai(project):
     from conftest import run_cli
     line = run_cli(project, "schedule")["line"]
     assert " ai -- -p " in line and "/taska:run --due" in line and " claude -p" not in line
+
+
+def test_a_job_that_fails_after_it_started_is_never_run_again_on_another_route(tmp_path):
+    # the token answers its probe, then the paid job itself fails: rerunning it on CodeMie would pay for it twice
+    env, log = _env(tmp_path, token=TOKEN, codemie="in")
+    _stub(tmp_path / "bin" / "claude", f'echo "claude $*" >> {log}\ncase "$*" in *"{ai.PROBE}"*) echo ok; exit 0;; esac\nexit 3\n')
+    r = ai.run(["-p", "the whole nightly pass"], env=env)
+    assert not r["ok"] and r["route"] == "token" and "exit 3" in r["why"]["token"] and "not retried" in r["why"]["token"]
+    assert not any(c.startswith("codemie-claude") for c in _calls(log))
+
+
+def test_a_test_that_reaches_a_real_model_is_trapped(tmp_path):
+    import os
+    import shutil
+    import subprocess
+    from pathlib import Path
+    log = Path(os.environ["TASKA_MODEL_TRAP_LOG"])   # set by conftest for every test, before anything is called
+    r = subprocess.run([shutil.which("claude"), "-p", "hi"], capture_output=True, text=True)
+    assert r.returncode == 99 and "a test reached a real model" in r.stderr
+    home = tmp_path / "home"
+    (home / ".config" / "taska").mkdir(parents=True)
+    (home / ".config" / "taska" / "claude").write_text(TOKEN)
+    (home / ".config" / "taska" / "claude").chmod(0o600)
+    trap = os.environ["PATH"].split(os.pathsep)[0]
+    env = dict(os.environ, HOME=str(home), PATH=f"{trap}{os.pathsep}/usr/bin{os.pathsep}/bin")
+    assert ai.run(["-p", "x"], probe=True, env=env)["ok"] is False
+    assert "claude -p hi" in log.read_text()
+    log.unlink()   # this test reached the trap on purpose

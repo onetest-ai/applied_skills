@@ -191,7 +191,7 @@ def take_teams_time(store, eid, teams):
     return True
 
 
-MAX_LINE = 1500   # Claude Code's Read shows ~2000 characters of a line: a longer one hides the rest from the agent
+MAX_LINE = 600   # Read returns at most 25k tokens: 120 lines of 600 characters (~18k tokens) always fit
 
 
 def _lines(text, prefix=""):

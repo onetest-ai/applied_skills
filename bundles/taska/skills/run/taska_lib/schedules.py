@@ -303,33 +303,52 @@ def strip_blocks(text):
     return "".join(out)
 
 
-def with_owner(text, owner):
-    """`text` with `owner = "…"` as the first key of [report]: the existing line replaced, else inserted after the
-    header, else a [report] table appended. Every other byte stays."""
-    if not ADDRESS.match(owner or ""):
-        raise ValueError(f"owner must be one address: {owner!r}")
-    line = f"owner = {_toml_str(owner)}"
+REPORT_KEYS = ("owner", "title", "client_label", "greet")   # the [report] keys the Schedules page and the CLI write
+
+
+def with_report(text, fields):
+    """`text` with these [report] keys set: an existing line replaced in place, a missing one inserted after the header,
+    a missing [report] table appended. Only REPORT_KEYS; owner one address, the others one line of 1-120 characters.
+    Every other byte stays."""
+    for k, v in fields.items():
+        if k not in REPORT_KEYS:
+            raise ValueError(f"[report] {k}: only {', '.join(REPORT_KEYS)} are written from here")
+        if k == "owner" and not ADDRESS.match(v or ""):
+            raise ValueError(f"owner must be one address: {v!r}")
+        if k != "owner" and (not isinstance(v, str) or not v.strip() or "\n" in v or len(v) > 120):
+            raise ValueError(f"[report] {k} must be one line of 1-120 characters: {v!r}")
+    new = {k: f"{k} = {_toml_str(v)}\n" for k, v in fields.items()}
     lines = text.splitlines(keepends=True)
     start = next((i for i, l in enumerate(lines) if l.strip() == "[report]"), None)
     if start is None:
-        return text.rstrip("\n") + ("\n\n" if text.strip() else "") + f"[report]\n{line}\n"
+        return text.rstrip("\n") + ("\n\n" if text.strip() else "") + "[report]\n" + "".join(new.values())
     end = next((i for i in range(start + 1, len(lines)) if lines[i].strip().startswith("[")), len(lines))
-    for i in range(start + 1, end):
-        if re.match(r"\s*owner\s*=", lines[i]):
-            lines[i] = line + "\n"
-            return "".join(lines)
-    lines.insert(start + 1, line + "\n")
+    missing = []
+    for k, line in new.items():
+        at = next((i for i in range(start + 1, end) if re.match(rf"\s*{k}\s*=", lines[i])), None)
+        if at is None:
+            missing.append(line)
+        else:
+            lines[at] = line
+    lines[start + 1:start + 1] = missing
     return "".join(lines)
 
 
-def save(project_dir, schedules, owner=None):
-    """Rewrite <project>/taska.toml with these schedules (and, when given, [report].owner): every other byte stays,
-    the old file is kept as taska.toml.bak, and the swap is atomic (temp file + os.replace)."""
+def with_owner(text, owner):
+    """`text` with `owner = "…"` in [report] (with_report)."""
+    return with_report(text, {"owner": owner})
+
+
+def save(project_dir, schedules, owner=None, report=None):
+    """Rewrite <project>/taska.toml with these schedules (and, when given, [report].owner and the other REPORT_KEYS in
+    `report`): every other byte stays, the old file is kept as taska.toml.bak, and the swap is atomic (temp file +
+    os.replace)."""
     path = Path(project_dir) / "taska.toml"
     before = path.read_text()
     kept = strip_blocks(before)
-    if owner is not None:
-        kept = with_owner(kept, owner)
+    fields = ({"owner": owner} if owner is not None else {}) | dict(report or {})
+    if fields:
+        kept = with_report(kept, fields)
     kept = kept.rstrip("\n")
     text = kept + ("\n\n" if kept else "") + to_toml(schedules)
     (path.parent / "taska.toml.bak").write_text(before)

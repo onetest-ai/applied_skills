@@ -15,6 +15,7 @@ from collections import defaultdict
 
 from . import store as S
 from .sensitive import people_matter
+from .similar import similar as look_alike
 from .text import closest_span, norm, resolve_due
 
 STATUS = {"held", "done", "progress", "blocked", "cancelled", "reopen", "due", "delayed", "reassign"}
@@ -77,7 +78,7 @@ def _node(e):
     return {"id": e["id"], "kind": e["kind"], "title": f["title"], "parent": f.get("parent"),
             "type": f.get("type"), "plan": f.get("plan"), "window": f.get("window"), "phase": f.get("phase"),
             "internal_owner": f.get("internal_owner"), "client_owner": f.get("client_owner"),
-            "client_owed": bool(f.get("client_owed")), "ac": [], "depends_on": [], "state": "open",
+            "client_owed": bool(f.get("client_owed")), "committed": bool(f.get("committed")), "ac": [], "depends_on": [], "state": "open",
             "due_history": [], "history": [], "pinned": [], "suggestions": [], "merged_into": None,
             "waiting_for": None, "unlinked": [], "created": e.get("date"), "created_in": e.get("evidence"),
             "creator": e.get("speaker"), "by": e.get("by", "agent"), "changed_in": []}
@@ -104,6 +105,7 @@ def fold(store, upto=None, evs=None, ev=None):
         if e["type"] == "human" and e["op"] == "accept" and e["mid"] not in undone:
             accepted_at[e["target"]] = i
     N, notes = {}, defaultdict(list)
+    tasks_from: dict[tuple[str, str], str] = {}
 
     def hist(n, e, applied, **extra):
         n["history"].append({k: e[k] for k in HIST_KEYS if k in e}
@@ -150,6 +152,8 @@ def fold(store, upto=None, evs=None, ev=None):
                                          "evidence": e.get("evidence"), "text": e["fields"].get("due_text", "")})
             if e.get("by") == "human":
                 n["pinned"] = ["title"]
+            elif e["kind"] == "task" and e.get("evidence") and e.get("quote_norm"):
+                tasks_from.setdefault((e["evidence"], e["quote_norm"]), e["id"])
             hist(n, e, True, op="create")
         elif t == "note":
             notes[e["node"]].append(e)
@@ -282,8 +286,21 @@ def fold(store, upto=None, evs=None, ev=None):
         n["ac"] = [x for x in n["ac"] if not x.get("dropped")]
         n["due"] = n["due_history"][-1]["due"] if n["due_history"] else None
         _one_status_decision(n, seq, accepted_at)
+    _promote_cards(N, tasks_from)
     _derive(N)
     return N, notes, order[:lim + 1], ev
+
+
+def _promote_cards(N, tasks_from):
+    """A waiting card whose quote a live agent task from the same evidence also quotes became that task: the card is
+    `promoted` (undoing the task's create makes it wait again)."""
+    for n in N.values():
+        for s in n["suggestions"]:
+            if s["op"] != "propose" or s["status"] != "pending" or s["kind"] != "task":
+                continue
+            t = tasks_from.get((s.get("evidence"), norm(s.get("quote") or "")))
+            if t in N and N[t]["state"] not in ("merged", "deleted"):
+                s["status"], s["promoted_to"] = "promoted", t
 
 
 def _one_status_decision(n, seq, accepted_at):
@@ -388,7 +405,9 @@ def path(N, i):
 
 
 # ---------- context: what the extractor sees ----------
-def context(store, cfg):
+def context(store, cfg, ids=None, compact=False):
+    """What the extractor sees. `ids`: only those nodes, each with its children (unknown ids listed); `compact`: the
+    tree with id, title, state, owners and due only."""
     from .ingest_audit import room_audio   # local: ingest_audit is an audit module, not needed by the fold
     N, notes, order, ev = fold(store)
 
@@ -396,6 +415,8 @@ def context(store, cfg):
         if n["state"] in CLOSED:
             return {"id": n["id"], "title": n["title"], "state": n["state"]}
         d = {"id": n["id"], "title": n["title"], "state": n["state"]}
+        if compact:
+            return d | {k: n[k] for k in ("internal_owner", "client_owner", "due") if n.get(k)} | children(n)
         if n.get("created"):
             d["since"] = n["created"]
         if n["kind"] == "story":
@@ -432,6 +453,10 @@ def context(store, cfg):
         last = next((h for h in reversed(n["history"]) if h.get("evidence")), None)
         if last:
             d["last"] = last["date"]
+        return d | children(n)
+
+    def children(n):
+        d = {}
         for k in ("story", "task"):
             xs = [view(N[c]) for c in n["children"] if N[c]["kind"] == k]
             if xs:
@@ -442,6 +467,9 @@ def context(store, cfg):
                 d[k + "s"] = xs
         return d
 
+    if ids is not None:
+        return {"project": cfg.name, "people": [{"name": p.name, "side": p.side} for p in cfg.people],
+                "nodes": [view(N[i]) for i in ids if i in N], "unknown": [i for i in ids if i not in N]}
     epics = sorted((n for n in N.values() if n["kind"] == "epic" and n["state"] not in ("merged", "deleted")),
                    key=lambda x: x["id"])
     return {"project": cfg.name,
@@ -504,15 +532,15 @@ def _apply(store, cfg, evid, proposals):
     second = item.get("kind") == "meeting" and evid in S.processed(evs)
     undone = {e["target"] for e in evs if e["type"] == "human" and e["op"] == "undo"}
     accepted = {e["target"] for e in evs if e["type"] == "human" and e["op"] == "accept" and e["mid"] not in undone}
+    rejected = {e["target"] for e in evs if e["type"] == "human" and e["op"] == "reject" and e["mid"] not in undone}
 
     def restates(title, kind):
-        from .similar import similar
         pool = {nid: n for nid, n in N.items() if n.get("created_in") == evid and n["state"] not in ("merged", "deleted")}
         for e in evs + out:
             if e["type"] == "agent" and e.get("op") == "propose" and e.get("evidence") == evid \
                     and e["mid"] not in undone and e["mid"] not in accepted:
                 pool[e["mid"]] = {"kind": e["proposal"]["kind"], "title": e["proposal"]["title"], "state": "card"}
-        m = similar(pool, title, kind, k=1)
+        m = look_alike(pool, title, kind, k=1)
         return m[0]["id"] if m else None
 
     def owner(x):
@@ -555,8 +583,9 @@ def _apply(store, cfg, evid, proposals):
                 if p.get("type") not in TASK_TYPES:
                     why = f"task type must be one of {sorted(TASK_TYPES)}"
                 elif not (p.get("internal_owner") or p.get("client_owner") or p.get("due_text")
-                          or p.get("type") in ("session", "dependency")):
-                    why = "admission bar: a task needs an owner, a date, or to be a session/dependency; else op 'note'"
+                          or p.get("committed") is True or p.get("type") in ("session", "dependency")):
+                    why = ("admission bar: a task needs an owner, a date, committed: true (a team commitment with no "
+                           "readable doer), or to be a session/dependency; else op 'note'")
             if not why and about_people(p.get("title"), p.get("quote")):
                 why = "people_matter"
             if why:
@@ -577,6 +606,7 @@ def _apply(store, cfg, evid, proposals):
                 "title": p["title"], "parent": par if k != "epic" else None, "type": p.get("type"),
                 "plan": "Off-plan" if k == "epic" else None, "internal_owner": owner(p.get("internal_owner")),
                 "client_owner": owner(p.get("client_owner")), "client_owed": bool(p.get("client_owed")),
+                "committed": p.get("committed") is True,
                 "ac": p.get("ac") or [], "due": resolve_due(p.get("due_text"), item["date"], wd),
                 "due_text": p.get("due_text")}}
             e["mid"] = cmid
@@ -624,6 +654,21 @@ def _apply(store, cfg, evid, proposals):
             dup = restates(p["title"], k) if second else None
             if dup:
                 rej.append({"i": i, "why": "similar_exists", "node": dup, "title": p.get("title")})
+                continue
+            twins = [x for x in evs + out if x["type"] == "agent" and x.get("op") == "propose"
+                     and x.get("evidence") == evid and x.get("quote_norm") == q and x["mid"] not in undone
+                     and x["mid"] not in accepted and x["mid"] not in rejected]
+            same = next((x for x in twins if look_alike({x["mid"]: {"kind": x["proposal"]["kind"], "state": "card",
+                                                                  "title": x["proposal"]["title"]}}, p["title"], k, k=1)), None)
+            if same:
+                rej.append({"i": i, "why": "duplicate_card", "card": same["mid"], "title": p.get("title")})
+                continue
+            df = p.get("distinct_from")
+            named = set(df) if isinstance(df, list) else {df}
+            other = next((x for x in twins if x["mid"] not in named), None)
+            if other:
+                rej.append({"i": i, "why": "same_quote_card", "card": other["mid"],
+                            "card_title": other["proposal"]["title"], "title": p.get("title")})
                 continue
             out.append(e)
             seen.add(e["mid"])
@@ -715,14 +760,13 @@ def _apply(store, cfg, evid, proposals):
     for e in out:
         by["create_" + e["kind"] if e["type"] == "create" else e.get("op") or e["type"]] += 1
     # look-alikes among open nodes for each new node or card: reported, never a reason to reject (same words != same work)
-    from .similar import similar
     look = []
     for e in out:
         title, kind = ((e.get("fields") or {}).get("title"), e.get("kind")) if e["type"] == "create" else \
             ((e.get("proposal") or {}).get("title"), (e.get("proposal") or {}).get("kind"))
         if e["type"] != "create" and e.get("op") != "propose":
             continue
-        m = [x for x in similar(N, title or "", kind) if x["state"] not in CLOSED and x["id"] != e.get("id")]
+        m = [x for x in look_alike(N, title or "", kind) if x["state"] not in CLOSED and x["id"] != e.get("id")]
         if m:
             look.append({"title": title, "kind": kind, "matches": m})
     return {"events": len(out), "by_op": dict(by), "rejected": rej, "similar": look}
@@ -771,6 +815,23 @@ def _window(text, quote, size=1200):
     return text[start:start + size]
 
 
+def _packet_context(item, quote, quote_norm):
+    """What the verifier reads around a quote: the matching turn as a window around the quote (one turn can hold a
+    whole meeting) and up to two turns either side, cut short; the document's window when no turn holds the quote."""
+    turns = item.get("turns") or []
+    k = next((i for i, t in enumerate(turns) if quote_norm[:40] in norm(t["text"])), None)
+    if k is None:
+        return [_window(S.full_text(item, drop_bc=True), quote)]
+    lo = max(0, k - 2)
+    head = " ".join(quote.split()[:8])   # the quote may run on into the next turn: centre on its start then
+
+    def cut(s):
+        return s if len(s) <= 300 else s[:300] + "…"
+    return [f"[{t['ts']}] {t['speaker']}: " + (_window(t["text"], quote if norm(quote) in norm(t["text"]) else head)
+                                               if i == k else cut(t["text"]))
+            for i, t in enumerate(turns[lo:k + 3], start=lo) if not t.get("bc")]
+
+
 def verify_prep(store, weak=False):
     ev = S.evidence(store)
     evs = S.events(store)
@@ -784,10 +845,7 @@ def verify_prep(store, weak=False):
         if v and not (weak and v == "weak"):
             continue
         item = ev.get(e["evidence"]) or {}
-        turns = item.get("turns") or []
-        k = next((i for i, t in enumerate(turns) if e["quote_norm"][:40] in norm(t["text"])), None)
-        ctx = [f"[{t['ts']}] {t['speaker']}: {t['text']}" for t in turns[max(0, k - 2):k + 3] if not t.get("bc")] \
-            if k is not None else [_window(item.get("text") or "", e["quote"])]
+        ctx = _packet_context(item, e["quote"], e["quote_norm"])
         n = N.get(e["node"], {})
         if e["op"] == "ac_met":
             claim = f"acceptance criterion {e['ac']} met: " + (
