@@ -1,0 +1,74 @@
+# taska.toml: one per project. Paths are relative to this file unless absolute.
+[project]
+name = "Harbor Logistics"
+store = ".taska"                 # the ledger, evidence and workbench export live here
+timezone = "UTC"
+working_days = [1, 2, 3, 4, 5]   # ISO weekdays; "tomorrow" on a Friday means Monday
+
+[plan]
+# Where epics come from. One of:
+#   file = "plan.json"     # {"activities": [{"name", "start", "end", "kind", "phase"}]}
+#   file = "epics.csv"     # name,start,end
+#   epics = ["Discovery", "Build", "Launch"]
+# or nothing: epics are created in the workbench.
+
+# [[people]]
+# name = "Ada Example"
+# side = "client"                # internal | client | external
+# aliases = ["Ada Example1", "ada@example.com", "adaex"]   # Teams labels, emails, GitHub logins
+
+# [sources.daily]
+# adapter = "meetings_folder"    # transcripts (.vtt .srt .docx .txt) and recordings (video or audio)
+# path = "~/Library/CloudStorage/OneDrive-Company/Project/Call Transcripts"
+# include = ["*.vtt", "*.docx", "*.mp4", "*.m4a"]
+# client_patterns = ["weekly status"]   # title patterns that mark a client call
+
+# [sources.teams]
+# adapter = "msgraph_transcripts" # Teams transcripts through the msgraph skill
+# subject = "Project"            # meetings whose subject contains this
+# since = "2026-01-05"
+
+# [sources.deliverables]
+# adapter = "files_folder"       # a synced SharePoint/OneDrive library: new/changed documents are evidence
+# path = "~/Library/CloudStorage/OneDrive-Company/Project/Deliverables"
+# include = ["*.docx", "*.pptx", "*.xlsx", "*.pdf", "*.md"]
+# exclude = ["Call Transcripts/*"]
+# since = "2026-01-05"
+
+# [sources.chat]
+# adapter = "teams_chat"         # a Teams meeting/group chat: each message is judged by a local decision model
+# chat_id = "19:meeting_...@thread.v2"   # from `node msgraph.js teams --chats --json`
+# chat_name = "Project daily sync"
+# model_card = "~/project/teams/model_card.json"  # thresholds measured on your own labelled messages
+# judge_url = "http://127.0.0.1:8009/v1/systemone"  # a local kev.serve; unreachable → the source fails, nothing applies
+# cli = "~/.claude/skills/msgraph/scripts/msgraph.js"
+# (adapter = "teams_channel" takes team_id + channel_id + channel_name instead of chat_id)
+# Teams findings never change the tree by themselves: each waits for Confirm or Reject in the workbench.
+
+# [sources.app]
+# adapter = "code_host"         # pull/merge requests and issues through the CLI you are signed in to
+# provider = "github"            # github (gh) | gitlab (glab) | azure (az + azure-devops extension)
+# repo = "org/app"               # azure: repository name, plus organization = "https://dev.azure.com/org", project = "..."
+# include = ["prs", "issues"]    # azure: ["prs", "workitems"]
+# since = "2026-01-05"
+
+# [media]
+# whisper_model = "~/models/ggml-base.en.bin"   # only for recordings without a transcript
+# language = "en"
+
+[[people]]
+name = "Nora Quill"
+side = "internal"
+[[people]]
+name = "Ravi Tamsin"
+side = "internal"
+[[people]]
+name = "Opal Brennick"
+side = "client"
+[[teams]]
+name = "Yard team"
+members = ["Nora Quill", "Ravi Tamsin"]
+aliases = ["yard guys", "the yard people"]
+[sources.meetings]
+adapter = "meetings_folder"
+path = "calls"

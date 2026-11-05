@@ -15,10 +15,91 @@ def norm(s):
     return re.sub(r"\s+", " ", s).strip()
 
 
+CLOSEST_SHARE = 0.6   # a span sharing fewer of the quote's words is another sentence, not the one it paraphrases
+CLOSEST_SLACK = 2
+_WORD = re.compile(r"[\w'‘’]+")
+
+
+def closest_span(text: str, quote: str) -> str | None:
+    """The contiguous run of `text`, copied as written, whose word count is the quote's (give or take CLOSEST_SLACK)
+    and which shares the most words with it; None when the best shares under CLOSEST_SHARE of the quote's words.
+    Ties go to the length nearest the quote's, then to the earliest."""
+    want = norm(quote).split()
+    words = [(m.start(), m.end(), norm(m.group())) for m in _WORD.finditer(text or "")]
+    words = [w for w in words if w[2]]
+    if not want or not words:
+        return None
+    need: dict[str, int] = {}
+    for w in want:
+        need[w] = need.get(w, 0) + 1
+    best: tuple[int, int, int] | None = None   # (shared, -|size - len(want)|, -start)
+    best_span = (0, 0)
+    for size in range(max(1, len(want) - CLOSEST_SLACK), min(len(words), len(want) + CLOSEST_SLACK) + 1):
+        have: dict[str, int] = {}
+        shared = 0
+        for j, (_, _, w) in enumerate(words):
+            if have.get(w, 0) < need.get(w, 0):
+                shared += 1
+            have[w] = have.get(w, 0) + 1
+            if j >= size:
+                old = words[j - size][2]
+                have[old] -= 1
+                if have[old] < need.get(old, 0):
+                    shared -= 1
+            if j >= size - 1:
+                start = j - size + 1
+                key = (shared, -abs(size - len(want)), -start)
+                if best is None or key > best:
+                    best, best_span = key, (words[start][0], words[j][1])
+    if best is None or best[0] < CLOSEST_SHARE * len(want):
+        return None
+    return text[best_span[0]:best_span[1]]
+
+
 def _next_working(d, working_days):
     while d.isoweekday() not in working_days:
         d += dt.timedelta(days=1)
     return d
+
+
+def dotted_date(s):
+    """A numeric dotted date in a string -> date, else None: "2026.10.19", "10.19.2026" (month first, the Teams
+    export style) or "19.10.2026" (day first, taken only when the first number cannot be a month)."""
+    m = re.search(r"(?<!\d)(20\d\d)\.(\d{1,2})\.(\d{1,2})(?!\d)", s)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    else:
+        m = re.search(r"(?<!\d)(\d{1,2})\.(\d{1,2})\.(20\d\d)(?!\d)", s)
+        if not m:
+            return None
+        a, b, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        mo, d = (b, a) if a > 12 else (a, b)
+    try:
+        return dt.date(y, mo, d)
+    except ValueError:
+        return None
+
+
+def date_in_name(name, ref):
+    """The meeting date a file name carries, else None. `ref` (a date: the file's mtime day) resolves a year-less
+    "25 Aug" to the most recent such day no more than 30 days after it."""
+    d = dotted_date(name)   # first: in "10.19.2026_1101 sync" the compact pattern would read the time as a date
+    if d:
+        return d
+    m = re.search(r"(20\d\d)[-_]?(\d\d)[-_]?(\d\d)", name)
+    if m:
+        try:
+            return dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            pass
+    md = month_day(name)
+    if md:
+        try:
+            d = dt.date(ref.year, md[0], md[1])
+            return d.replace(year=ref.year - 1) if d > ref + dt.timedelta(days=30) else d
+        except ValueError:   # "Feb 29" rolled back into a year without one
+            return None
+    return None
 
 
 # a whole month word: full name or standard abbreviation ("Sept" too), never a word that merely starts like one

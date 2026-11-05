@@ -34,7 +34,10 @@ command prints JSON.
    - **Teams transcripts** (`msgraph_transcripts`) and **calendar** (`msgraph_calendar`) go through the user's
      `msgraph` skill, which owns sign-in. If `doctor` says it is not signed in, tell the user to run the login
      command it prints, prefixed with `!`, and wait. Use `subject` (transcripts) and `subjects` (calendar) to keep
-     to this project's meetings. A calendar source reported `unsupported` needs an msgraph that lists a past date
+     to this project's meetings. When titles are not unique to the project (a generic word such as "Performance",
+     or two series sharing one title), choose meetings by who attends instead: `attendee_domains = ["client.example"]`
+     and/or `organizer = ["<name>"]`, and set `client_domains` so a meeting with a client attendee is labelled a
+     client meeting. Ask the user which client domain and organizer mark this project's meetings. A calendar source reported `unsupported` needs an msgraph that lists a past date
      range; say so plainly.
    - **Files folder** (`files_folder`): a synced SharePoint/OneDrive library of deliverables. New and changed
      documents become evidence with a text excerpt (.docx .pptx .xlsx .md .txt .csv; .pdf when `pdftotext` is
@@ -54,5 +57,35 @@ command prints JSON.
 5. `$TASKA setup` (creates the epics once), then `$TASKA pending`. Ask how far back to backfill (default: the last
    two weeks); for a long history start small: process the oldest ~5 items with `/taska:run`, show the user the
    tree in `/taska:workbench`, and adjust people or plan before the rest.
-6. Offer unattended runs: `$TASKA schedule --time 18:30` (cron) or `--launchd` prints the entry; show it and let
-   the user install it themselves.
+6. Offer unattended runs. They need a sign-in that works with nobody at the keyboard: run `$TASKA ai --probe`.
+   If it is not `ok`, tell the user the fix it names: a subscription token (they run `claude setup-token` and save
+   the token in `~/.config/taska/claude` with `chmod 600`; it lasts about a year), or `codemie profile login`
+   (lasts about a day, so runs after a weekend need a fresh login). Then the schedules, one question each: what
+   (the weekly report, a Friday draft, or an update of the tree only), when (days, time and the time zone, e.g.
+   `when = "Mon 14:00 Europe/Kyiv"`: the zone is always written), and who receives it (To, Cc). A review is just a
+   schedule addressed to the owner; the one to the reader can stay `on = false` until the owner trusts it, and then
+   sends the owner's review copy of that week unchanged (or is held when the tree changed since).
+   Write them as `[[schedules]]` in `taska.toml`; set `[report].owner` to the owner's address. Then
+   `$TASKA schedules --register`: one job per schedule with the OS's own scheduler (launchd on a Mac,
+   Task Scheduler on Windows: hidden, as the signed-in user, run once at wake when the time was missed), each running
+   `taska run-schedule <name>` through `taska ai` unless `[run].scheduled` names the project's own command. One machine runs a project:
+   if `--register` says another machine holds the schedules, ask the user which machine should run them before
+   `--force` (`$TASKA schedules --register --force`).
+   Schedules are operations, not content: the workbench does not show them. The user manages them by asking you, any
+   time, with these commands (each prints JSON; tell the user the result in plain sentences, never as JSON):
+   - "What is scheduled?" → `$TASKA schedules`: say each schedule's state (`os[].state`: active, not registered,
+     not loaded, off, outdated: registered for an old local time, so `--register` again, or unreadable: its job file is corrupt, so say its path and that what it runs is unknown), when it
+     runs next and who gets the mail; then every job in `os[]` with no schedule (`foreign`: made outside taska;
+     `stale`: left by a deleted schedule) and that it still runs unless retired.
+   - "Change / add one" → the whole list as JSON to `$TASKA schedules --set rows.json` (it validates before writing,
+     keeps `taska.toml.bak`, and registers).
+   - "Delete one" → `$TASKA schedules --delete "NAME"` (the schedule and its job, in one step).
+   - "Stop that other job" → `$TASKA schedules --retire LABEL` (unloaded; its file moves to `.taska/retired-jobs/`).
+   - "Run it now" → first `$TASKA schedules --preview "NAME"` and read the user the week, the steps, To, Cc and what
+     is attached; run `$TASKA run-schedule "NAME"` only after they say yes. **Run now** on the schedules page does the
+     same, with the same preview.
+   Someone who keeps a control panel can also open the same schedules as a page: `http://127.0.0.1:<port>/schedules`.
+7. **Windows.** The same steps; `doctor` names the `winget` command for anything missing (Python 3.11+, Node for
+   the msgraph skill, ffmpeg and whisper.cpp only for recordings without a transcript). The workbench is at
+   `http://127.0.0.1:8766/` in the browser; scheduled runs use `pythonw`, so no console window opens. A synced
+   OneDrive folder is read as a plain path (no Finder step). The Word report builds without Office.

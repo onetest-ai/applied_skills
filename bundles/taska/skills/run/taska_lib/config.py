@@ -1,4 +1,5 @@
 """taska.toml: everything project-specific lives in the consuming project, never in the bundle."""
+import datetime as dt
 import os
 import re
 import tomllib
@@ -6,7 +7,23 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 CONFIG_NAME = "taska.toml"
-ADAPTERS = {"meetings_folder", "msgraph_transcripts", "msgraph_calendar", "files_folder", "code_host"}
+def _iso_date(v):
+    """[run].decisions_since as YYYY-MM-DD text (TOML may hand an unquoted date as a date)."""
+    if isinstance(v, dt.date) and not isinstance(v, dt.datetime):
+        return v.isoformat()
+    if isinstance(v, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+        try:
+            dt.date.fromisoformat(v)
+            return v
+        except ValueError:
+            pass
+    raise ConfigError(f"[run].decisions_since must be a date written YYYY-MM-DD, got {v!r}")
+
+
+def adapters():
+    """The adapter names a taska.toml may use: exactly the registered sources (one list, so they cannot drift)."""
+    from .sources import ADAPTERS
+    return set(ADAPTERS)
 
 
 class ConfigError(ValueError):
@@ -22,6 +39,14 @@ class Person:
 
 
 @dataclass
+class Team:
+    """A group named in meetings ("the AI guys"): it can own work; your Confirm can hand that work to one member."""
+    name: str
+    members: list = field(default_factory=list)
+    aliases: list = field(default_factory=list)
+
+
+@dataclass
 class Config:
     project_dir: Path
     name: str
@@ -33,6 +58,9 @@ class Config:
     sources: dict
     media: dict
     run: dict
+    teams: list = field(default_factory=list)
+    schedules: list = field(default_factory=list)
+    report: dict = field(default_factory=dict)
 
     def person(self, label):
         """A speaker label, email or login -> Person, tolerant of Teams suffixes ("Ada Example1")."""
@@ -44,13 +72,30 @@ class Config:
                 return p
         return None
 
+    def team(self, label):
+        """A team name or alias ("AI guys") -> Team, else None."""
+        art = lambda x: re.sub(r"^the\s+", "", x)   # "the AI guys" is said as often as "AI guys"
+        k = art(_key(label))
+        if not k:
+            return None
+        for t in self.teams:
+            if k in {art(_key(t.name))} | {art(_key(a)) for a in t.aliases}:
+                return t
+        return None
+
     def canonical(self, label):
         p = self.person(label)
-        return p.name if p else (label or None)
+        if p:
+            return p.name
+        t = self.team(label)
+        return t.name if t else (label or None)
 
     def side(self, label):
         p = self.person(label)
-        return p.side if p else None
+        if p:
+            return p.side
+        t = self.team(label)
+        return (self.person(t.members[0]).side if t.members and self.person(t.members[0]) else "internal") if t else None
 
 
 def _key(s):
@@ -86,10 +131,18 @@ def load(project_dir="."):
         if p.get("side", "internal") not in ("internal", "client", "external"):
             raise ConfigError(f"{p['name']}: side must be internal, client or external")
         people.append(Person(p["name"], p.get("side", "internal"), list(p.get("aliases") or []), p.get("role", "")))
+    teams = []
+    for t in raw.get("teams") or []:
+        if not t.get("name"):
+            raise ConfigError("every [[teams]] entry needs a name")
+        unknown = [m for m in t.get("members") or [] if m not in {p.name for p in people}]
+        if unknown:
+            raise ConfigError(f"team {t['name']}: members must be [[people]] names; unknown: {unknown}")
+        teams.append(Team(t["name"], list(t.get("members") or []), list(t.get("aliases") or [])))
     sources = {}
     for k, s in (raw.get("sources") or {}).items():
-        if s.get("adapter") not in ADAPTERS:
-            raise ConfigError(f"[sources.{k}].adapter must be one of {sorted(ADAPTERS)}")
+        if s.get("adapter") not in adapters():
+            raise ConfigError(f"[sources.{k}].adapter must be one of {sorted(adapters())}")
         if s.get("path"):
             s = dict(s, path=str(_resolve(pd, s["path"])))
         sources[k] = s
@@ -99,10 +152,22 @@ def load(project_dir="."):
     wd = tuple(pr.get("working_days", (1, 2, 3, 4, 5)))
     if not wd or any(x not in range(1, 8) for x in wd):
         raise ConfigError("[project].working_days must be a non-empty list of ISO weekdays (1-7)")
+    from . import schedules as SCH
+    try:
+        scheds = SCH.parse(raw.get("schedules"))
+    except ValueError as e:
+        raise ConfigError(str(e)) from e
+    run = dict(raw.get("run") or {})
+    if "decisions_since" in run:
+        run["decisions_since"] = _iso_date(run["decisions_since"])
+    for k in ("backfill_days", "backfill_max"):   # the read-backfill window and per-run cap (taska_lib/reads.py)
+        v = run.get(k)
+        if k in run and (isinstance(v, bool) or not isinstance(v, int) or v < 0):
+            raise ConfigError(f"[run].{k} must be a whole number of 0 or more, got {v!r}")
     return Config(project_dir=pd, name=pr["name"], store=_resolve(pd, pr.get("store", ".taska")),
                   timezone=pr.get("timezone", "UTC"), working_days=wd,
                   plan=plan, people=people, sources=sources, media=dict(raw.get("media") or {}),
-                  run=dict(raw.get("run") or {}))
+                  run=run, teams=teams, schedules=scheds, report=dict(raw.get("report") or {}))
 
 
 def _resolve(base, p):
@@ -147,8 +212,18 @@ working_days = [1, 2, 3, 4, 5]   # ISO weekdays; "tomorrow" on a Friday means Mo
 # exclude = ["Call Transcripts/*"]
 # since = "2026-01-05"
 
+# [sources.chat]
+# adapter = "teams_chat"         # a Teams meeting/group chat: each message is judged by a local decision model
+# chat_id = "19:meeting_...@thread.v2"   # from `node msgraph.js teams --chats --json`
+# chat_name = "Project daily sync"
+# model_card = "~/project/teams/model_card.json"  # thresholds measured on your own labelled messages
+# judge_url = "http://127.0.0.1:8009/v1/systemone"  # a local kev.serve; unreachable → the source fails, nothing applies
+# cli = "~/.claude/skills/msgraph/scripts/msgraph.js"
+# (adapter = "teams_channel" takes team_id + channel_id + channel_name instead of chat_id)
+# Teams findings never change the tree by themselves: each waits for Confirm or Reject in the workbench.
+
 # [sources.app]
-# adapter = "code_host"          # pull/merge requests and issues through the CLI you are signed in to
+# adapter = "code_host"         # pull/merge requests and issues through the CLI you are signed in to
 # provider = "github"            # github (gh) | gitlab (glab) | azure (az + azure-devops extension)
 # repo = "org/app"               # azure: repository name, plus organization = "https://dev.azure.com/org", project = "..."
 # include = ["prs", "issues"]    # azure: ["prs", "workitems"]

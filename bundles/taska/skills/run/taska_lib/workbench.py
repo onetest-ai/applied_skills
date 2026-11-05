@@ -1,11 +1,42 @@
 """The workbench page: per-evidence snapshots of the tree for playback, a local server for edits, a static export."""
+import datetime as dt
+import hashlib
 import json
+import sys
+from types import SimpleNamespace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import ledger as L, staleness as ST, store as S
+from . import ledger as L, schedules as SCH, pack as PK, sensitive as SN, staleness as ST, store as S
 
 PAGE = Path(__file__).resolve().parent.parent / "workbench.html"
+RUN_DIR = PAGE.parent
+PAGES = ("workbench.html", "schedules.html")
+SHARED = ("tokens.css", "shared.js")
+
+
+def page(name, run_dir=RUN_DIR):
+    """A page of this skill with the shared design tokens and JS helpers inlined (one copy of each, two pages)."""
+    if name not in PAGES:
+        raise ValueError(f"no page {name!r}")
+    run_dir = Path(run_dir)
+    text = (run_dir / name).read_text(encoding="utf-8")   # never the locale: cp1252 cannot decode these pages
+    text = text.replace("/*__TOKENS__*/", (run_dir / "tokens.css").read_text(encoding="utf-8"))
+    return text.replace("/*__SHARED__*/", (run_dir / "shared.js").read_text(encoding="utf-8")).encode("utf-8")
+
+
+def code_version(run_dir=RUN_DIR):
+    """10 hex chars over the Python code and the page. A server keeps the code it started with, so comparing its
+    start-time version with the version on disk is how a stale server shows itself."""
+    run_dir = Path(run_dir)
+    h = hashlib.sha1()
+    for f in sorted([run_dir / "taska.py", *(run_dir / n for n in PAGES + SHARED), *(run_dir / "taska_lib").rglob("*.py")]):
+        h.update(str(f.relative_to(run_dir)).encode() + b"\0" + f.read_bytes())
+    return h.hexdigest()[:10]
+
+
+def version_info(running, on_disk, started):
+    return {"running": running, "on_disk": on_disk, "started": started, "stale": running != on_disk}
 KEEP = ("id", "kind", "type", "title", "parent", "state", "derived", "internal_owner", "client_owner", "client_owed",
         "due", "due_history", "ac", "depends_on", "waiting_on", "waiting_for", "blocks", "children", "pinned",
         "suggestions", "merged_into", "window", "plan", "phase", "created", "created_in", "by")
@@ -28,10 +59,14 @@ def data(store, cfg):
     History and notes are sent once, from the latest fold, and filtered by evidence position in the page."""
     evs, ev = S.events(store), S.evidence(store)
     done = {e.get("evidence") for e in evs if e.get("by") == "agent"} | S.processed(evs)
-    order = [c for c in S.order(ev) if c in done]
+    touched = {e.get("evidence") for e in evs if e.get("by") == "agent" and e.get("type") != "processed"}
+    # a Teams message is a step only when it produced a proposal; the rest would flood the timeline
+    order = [c for c in S.order(ev) if c in done and (ev[c]["kind"] != "message" or c in touched)]
     snaps, prev, prev_asks, hist, notes = {}, {}, {}, {}, {}
     for c in order:
-        sn = snapshot(store, cfg, evs, ev, c)
+        # the latest step shows the tree as it is now: later steps hidden from the timeline (a Teams message with no
+        # proposal) still carry events, and your edits are stamped with the last processed item, which may be one
+        sn = snapshot(store, cfg, evs, ev, None if c == order[-1] else c)
         hist, notes = sn.pop("history"), sn.pop("notes")
         cur = sn.pop("nodes")
         asks = {a["node"]: dict(a, rank=k) for k, a in enumerate(sn.pop("asks"))}
@@ -40,7 +75,7 @@ def data(store, cfg):
         sn["asks"] = {i: a for i, a in asks.items() if prev_asks.get(i) != a}
         sn["asks_gone"] = [i for i in prev_asks if i not in asks]
         snaps[c], prev, prev_asks = sn, cur, asks
-    return {"project": cfg.name, "history": hist, "notes": notes, "snaps": snaps, "delta": True,
+    return {"project": cfg.name, "recap": PK.build(store, cfg, 7), "history": hist, "notes": notes, "snaps": snaps, "delta": True,
             "calls": [{"id": c, "date": ev[c]["date"], "at": ev[c]["at"], "evidence_kind": ev[c]["kind"],
                        "kind": ev[c].get("meeting_kind") or ev[c]["kind"], "title": ev[c]["title"],
                        "source": ev[c]["source"], "date_source": ev[c].get("date_source")} for c in order]}
@@ -56,52 +91,250 @@ def _local_origin(headers, port):
     return origin is None or origin in {f"http://{h}" for h in hosts}
 
 
-def serve(store, cfg, port):
+def owner_address(cfg):
+    """[report].owner, else where the project's preview goes."""
+    prev = next((x for x in cfg.schedules if x.kind == "preview" and x.to), None)
+    return ((cfg.report or {}).get("owner") or (prev.to[0] if prev else "") or "").strip() or None
+
+
+def what(s, owner):
+    """One sentence a manager reads: what the job does and who gets the mail."""
+    if s.kind == "update":
+        return "Updates the tree from the sources; no mail"
+    if s.kind == "preview":
+        return f"A preview of the week to {s.to[0] if s.to else owner or 'the owner'}"
+    from . import runner as RN
+    if RN.audience(SimpleNamespace(report={"owner": owner}, schedules=[]), s) == "owner":
+        return f"The weekly report to {owner or 'you'}: your review copy"
+    cc = f", cc {', '.join(s.cc)}" if s.cc else ""
+    return f"The weekly report to {', '.join(s.to)}{cc}: the copy you were mailed this week, held if the tree changed since"
+
+
+FRAME_CSP = {"Content-Security-Policy": "frame-ancestors 'self' http://127.0.0.1:* http://localhost:* http://[::1]:*"}
+REGISTER_KEYS = ("agents_dir", "launchctl", "schtasks", "machine", "now", "force")
+REPORT_STEPS = ["workbench copy", "build the docx", "pre-send gate", "deliver"]
+
+
+def _reg(opts):
+    """The options `schedules.register` takes (the server's opts also carry `spawn` and `state` for tests)."""
+    return {k: v for k, v in (opts or {}).items() if k in REGISTER_KEYS}
+
+
+def schedules_view(cfg, register_opts=None):
+    """What the Schedules panel shows: each schedule with its next run in this machine's time (when its OS job fires),
+    one sentence on what it does, and what is registered with the OS."""
+    now = dt.datetime.now().astimezone()
+    opts = register_opts or {}
+    owner = owner_address(cfg)
+    rows = []
+    for s in cfg.schedules:
+        nxt = SCH.next_run(s, now)
+        rows.append(dict(vars(s), days=list(s.days), next=nxt.isoformat() if nxt else None, label=SCH.label(cfg.name, s),
+                         what=what(s, owner), runs=SCH.command_for(cfg, s), when=SCH.when_text(s),
+                         fires_local=[f"{SCH.DAY_ABBR[d - 1]} {hh:02d}:{mm:02d}" for d, hh, mm in SCH.local_slots(s)]))
+    return {"schedules": rows, "registered": SCH.registered(cfg.name, opts.get("agents_dir")), "platform": SCH.sys.platform,
+            "can_register": SCH.sys.platform in ("darwin", "win32"), "command": (cfg.run or {}).get("scheduled"),
+            "timezone": now.tzname(), "local_zone": SCH.local_zone(), "owner": owner, "reports_dir": str(cfg.project_dir / "reports"), "runner": SCH.runner_lock(cfg),
+            "os": SCH.reconcile(cfg, opts.get("agents_dir"), opts.get("state"), opts.get("schtasks")),
+            "os_scope": "launchd" if SCH.sys.platform == "darwin" else "managed only"}
+
+
+def run_preview(cfg, name, today=None):
+    """What a run of schedule `name` will do now, from the same rules the runner applies: the week, the command, the
+    steps, and for a preview or send who gets the mail and what is in it. A project script's steps come from
+    [run].describe[kind]; without it `steps_known` is False rather than a guess."""
+    from . import runner as RN
+    s = next((x for x in cfg.schedules if x.name == name), None)
+    if not s:
+        raise ValueError(f"no schedule named {name!r}")
+    owner = RN._owner(cfg, s)
+    who = RN.audience(cfg, s) if s.kind == "send" else "owner"
+    script = SCH.command_for(cfg, s) if (s.command or (cfg.run or {}).get("scheduled")) else None
+    if who == "reader":
+        steps, known = [], True   # nothing is rebuilt: the review copy goes, unchanged
+    elif script:
+        described = ((cfg.run or {}).get("describe") or {}).get(s.kind)
+        steps, known = (list(described), True) if described else ([], False)
+    else:
+        steps, known = [x["name"] for x in RN.steps(cfg, s.kind)] + (REPORT_STEPS if s.kind != "update" else []), True
+    mail = None
+    if s.kind != "update":
+        to = s.to[0] if who == "reader" else owner
+        cc = list(s.cc) + ([owner] if owner and owner not in s.cc else []) if who == "reader" else ([] if s.kind == "send" else list(s.cc))
+        mail = {"to": [to] if to else [], "cc": cc,
+                "condition": "sends the review copy you were mailed this week, unchanged; held if the tree changed since"
+                             if who == "reader" else "",
+                "held": {"to": [owner] if owner else [], "cc": []} if s.kind == "send" else None,
+                "include": [k for k, v in s.include.items() if v], "not_included": [k for k, v in s.include.items() if not v]}
+    return {"schedule": s.name, "kind": s.kind, "week": RN.week_for(s.kind, today or dt.date.today()),
+            "command": SCH.command_for(cfg, s), "audience": who, "steps": steps, "steps_known": known, "mail": mail,
+            "decided_by": script}
+
+
+def delete_schedule(cfg, name, register_opts=None):
+    """Remove one schedule from taska.toml and its OS job, in one step."""
+    keep = [x for x in cfg.schedules if x.name != name]
+    if len(keep) == len(cfg.schedules):
+        raise ValueError(f"no schedule named {name!r}")
+    SCH.save(cfg.project_dir, keep)
+    cfg.schedules = keep
+    return SCH.register(cfg, **_reg(register_opts))
+
+
+def retire_job(cfg, label, register_opts=None):
+    """Retire a stale or foreign job the view lists; any other label is refused."""
+    opts = register_opts or {}
+    row = next((r for r in SCH.reconcile(cfg, opts.get("agents_dir"), opts.get("state"), opts.get("schtasks"))
+                if r["label"] == label and r["state"] in ("stale", "foreign")), None)
+    if not row:
+        raise ValueError(f"{label} is not a stale or foreign job of this project")
+    return SCH.retire(cfg, row["path"], opts.get("launchctl"), why="retired from the page")
+
+
+def _spawn(argv, log):
+    """Start a run detached from the server (its own session; output to the schedule's log)."""
+    import subprocess
+    with open(log, "ab") as f:
+        return subprocess.Popen(argv, stdout=f, stderr=subprocess.STDOUT, start_new_session=True, cwd=str(log.parent.parent)).pid
+
+
+def run_now(cfg, name, register_opts=None):
+    """Run now from the page: the command the OS job runs (the [run].scheduled template, else `taska run-schedule`),
+    in the background; `send` is the Send-now button on a reviewed send. ValueError for an unknown schedule."""
+    from . import runner as RN
+    s = next((x for x in cfg.schedules if x.name == name), None)
+    if not s:
+        raise ValueError(f"no schedule named {name!r}")
+    week = RN.week_for(s.kind, dt.date.today())
+    log = cfg.project_dir / "logs" / f"{SCH._slug(s.name)}.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    cmd = SCH.command_for(cfg, s)
+    argv = ["cmd", "/c", cmd] if SCH.sys.platform == "win32" else ["/bin/zsh", "-lic", cmd]
+    pid = ((register_opts or {}).get("spawn") or _spawn)(argv, log)
+    return {"started": True, "pid": pid, "week": week, "dir": str(cfg.project_dir / "reports" / week), "log": str(log)}
+
+
+def set_schedules(cfg, rows, register_opts=None, owner=None):
+    """Validate `rows` (and `owner`, when given), save them to taska.toml, register the jobs; ValueError before
+    anything is written."""
+    scheds = SCH.parse(rows)
+    if SCH.sys.platform == "darwin" and scheds:
+        for s in scheds:
+            SCH.command_for(cfg, s)   # refuse before writing when the project has no command to schedule
+    if owner is not None and not SCH.ADDRESS.match(owner):
+        raise ValueError(f"owner must be one address: {owner!r}")
+    has_owner = bool(owner or (cfg.report or {}).get("owner"))
+    for s in scheds:
+        if s.kind == "send" and not s.to:
+            raise ValueError(f"schedule {s.name}: the weekly report needs a To address (yours, for a review copy)")
+        if s.kind == "preview" and not s.to and not has_owner:
+            raise ValueError(f"schedule {s.name}: a preview needs a To address or the owner address ([report].owner)")
+    SCH.save(cfg.project_dir, scheds, owner)
+    cfg.schedules = scheds
+    if owner is not None:
+        cfg.report["owner"] = owner
+    return SCH.register(cfg, **_reg(register_opts))
+
+
+def server(store, cfg, port, register_opts=None):
+    running, started = code_version(), dt.datetime.now().isoformat(timespec="seconds")
+
+    def version():
+        return version_info(running, code_version(), started)
+
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
             pass
 
-        def _send(self, code, body, ctype="application/json"):
+        def _send(self, code, body, ctype="application/json", headers=None):
             b = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode()
             self.send_response(code)
             self.send_header("Content-Type", ctype + "; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
+            for k, v in (headers or {}).items():
+                self.send_header(k, v)
             self.end_headers()
             self.wfile.write(b)
 
         def do_GET(self):
             if not _local_origin(self.headers, port):
                 return self._send(403, {"error": "forbidden host"})
-            if self.path in ("/", "/index.html"):
-                return self._send(200, PAGE.read_bytes(), "text/html")
+            route = self.path.split("?", 1)[0]
+            if route in ("/", "/index.html", "/schedules"):   # the workbench (content) or the schedules page (operations)
+                return self._send(200, page("schedules.html" if route == "/schedules" else "workbench.html"), "text/html", FRAME_CSP)
             if self.path == "/api/data":
-                return self._send(200, data(store, cfg))
+                return self._send(200, dict(data(store, cfg), code=version()))
+            if self.path == "/api/version":
+                return self._send(200, version())
+            if self.path == "/api/schedules":
+                return self._send(200, schedules_view(cfg, register_opts))
+            if self.path.startswith("/api/schedules/preview"):
+                from urllib.parse import urlparse, parse_qs
+                q = parse_qs(urlparse(self.path).query)
+                try:
+                    return self._send(200, run_preview(cfg, (q.get("name") or [""])[0]))
+                except ValueError as x:
+                    return self._send(400, {"error": str(x)})
+            if self.path.startswith("/api/recap"):   # the Recap view: taska pack for the chosen period
+                from urllib.parse import urlparse, parse_qs
+                try:
+                    days = max(1, min(90, int((parse_qs(urlparse(self.path).query).get("days") or ["7"])[0])))
+                except ValueError:
+                    days = 7
+                return self._send(200, {"days": days, "markdown": PK.build(store, cfg, days)})
+            if self.path == "/api/export":   # the Download button: a read-only copy to share, as it is now
+                slug = "".join(c if c.isalnum() else "-" for c in cfg.name.lower()).strip("-")
+                name = f"{slug}-workbench-{dt.date.today().isoformat()}.html"
+                return self._send(200, export_html(store, cfg).encode(), "text/html",
+                                  {"Content-Disposition": f'attachment; filename="{name}"'})
             self._send(404, {"error": "not found"})
 
         def do_POST(self):
-            if self.path != "/api/event":
+            # read the body before any answer: replying first leaves the client's unsent body to hit a closed socket
+            # (seen as a connection reset under load), whatever the answer is
+            raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            if self.path not in ("/api/event", "/api/schedules", "/api/schedules/run", "/api/schedules/delete", "/api/schedules/retire"):
                 return self._send(404, {"error": "not found"})
             if not _local_origin(self.headers, port):
                 return self._send(403, {"error": "forbidden host"})
             if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
                 return self._send(415, {"error": "Content-Type must be application/json"})
             try:
-                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+                body = json.loads(raw or b"{}")
+                if self.path == "/api/schedules/delete":
+                    return self._send(200, {"registered": delete_schedule(cfg, body.get("name"), register_opts)})
+                if self.path == "/api/schedules/retire":
+                    return self._send(200, retire_job(cfg, body.get("label") or "", register_opts))
+                if self.path == "/api/schedules/run":
+                    return self._send(200, run_now(cfg, body.get("name"), register_opts))
+                if self.path == "/api/schedules":
+                    reg = set_schedules(cfg, body.get("schedules") or [], register_opts, body.get("owner"))
+                    return self._send(200, dict(schedules_view(cfg, register_opts), registered=reg))
                 e = L.human_event(store, body)
             except (ValueError, TypeError, AttributeError, KeyError) as x:  # json errors are ValueErrors
                 return self._send(400, {"error": f"{type(x).__name__}: {x}"})
             self._send(200, {"ok": True, "event": e})
 
-    srv = ThreadingHTTPServer(("127.0.0.1", port), H)
-    print(json.dumps({"url": f"http://127.0.0.1:{port}/", "store": str(store)}), flush=True)
+    return ThreadingHTTPServer(("127.0.0.1", port), H)
+
+
+def serve(store, cfg, port, register_opts=None):
+    srv = server(store, cfg, port, register_opts)
+    print(json.dumps({"url": f"http://127.0.0.1:{port}/", "store": str(store), "code": code_version()}), flush=True)
     srv.serve_forever()
 
 
-def export(store, cfg, out):
+def export_html(store, cfg):
+    """The workbench as one self-contained, read-only page: the data embedded, so the page knows it is a copy. A quote
+    that is a people matter is blanked (the copy is shared); the owner's live server shows it."""
     # "<" -> \u003c: "</" alone leaves "<!--<script" able to switch the HTML parser into script-data-double-escaped
     # state, where the page's own closing tag no longer ends the script; U+2028/9 are not valid in older JS strings
-    blob = json.dumps(data(store, cfg), ensure_ascii=False).replace("<", "\\u003c") \
+    blob = json.dumps(SN.scrub_quotes(data(store, cfg), tuple(SN.names(cfg))), ensure_ascii=False).replace("<", "\\u003c") \
         .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+    return page("workbench.html").decode("utf-8").replace("/*__DATA__*/null", blob)
+
+
+def export(store, cfg, out):
     Path(out).parent.mkdir(parents=True, exist_ok=True)
-    Path(out).write_text(PAGE.read_text().replace("/*__DATA__*/null", blob))
+    Path(out).write_text(export_html(store, cfg))
     return str(out)

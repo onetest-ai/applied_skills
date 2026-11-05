@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 
 from .. import media, store as S, transcripts as TR
-from ..text import month_day
+from ..text import date_in_name
 
 DEFAULT_INCLUDE = ["*.vtt", "*.srt", "*.docx", "*.txt"] + [f"*{e}" for e in media.MEDIA_EXT]
 
@@ -56,19 +56,11 @@ def meeting_time_and_source(rel, abspath, docx_header=None, creation_time=None, 
             except ValueError:
                 pass
     name = Path(rel).name
-    m = re.search(r"(20\d\d)[-_]?(\d\d)[-_]?(\d\d)", name)
-    if m:
-        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}T{mtime.strftime('%H:%M:%S')}", "filename"
-    md = month_day(name)
-    if md:
-        y = mtime.year
-        try:
-            d = dt.date(y, md[0], md[1])
-            if d > mtime.date() + dt.timedelta(days=30):
-                d = d.replace(year=y - 1)
-            return f"{d.isoformat()}T{mtime.strftime('%H:%M:%S') if d == mtime.date() else '12:00:00'}", "filename"
-        except ValueError:
-            pass
+    if re.search(r"(20\d\d)[-_]?(\d\d)[-_]?(\d\d)", name) and (d := date_in_name(name, mtime.date())):
+        return f"{d.isoformat()}T{mtime.strftime('%H:%M:%S')}", "filename"   # a compact stamp is the recording's own
+    d = date_in_name(name, mtime.date())
+    if d:
+        return f"{d.isoformat()}T{mtime.strftime('%H:%M:%S') if d == mtime.date() else '12:00:00'}", "filename"
     return mtime.isoformat(timespec="seconds"), "file_mtime"
 
 
