@@ -1,0 +1,12 @@
+{
+ "version": "v1",
+ "seeds": [
+  1,
+  2,
+  3
+ ],
+ "rulings": {},
+ "reviewed": [],
+ "date": "2026-11-05",
+ "note": "golden generator: seeds [1, 2, 3]"
+}
