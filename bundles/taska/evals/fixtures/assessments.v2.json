@@ -1,0 +1,14 @@
+[
+ {"label": "c001", "work": "supported", "representation": "not_assessed", "fields": {"owner": "correct"}, "policy": "resolved", "source": null,
+  "provenance": {"work": [{"role": "adjudicator", "stage": "adjudication", "basis": "included: Nora takes the yard capacity summary"},
+                          {"role": "skeptic", "stage": "review", "basis": "the turn states the deliverable"}],
+                 "owner": [{"role": "adjudicator", "stage": "adjudication", "basis": "argued: owner Nora Quill"}]}},
+ {"label": "c002", "work": "unresolved", "representation": "unresolved", "fields": {}, "policy": "resolved", "source": null,
+  "provenance": {"work": [{"role": "adjudicator", "stage": "adjudication", "basis": "included: crane permit check"},
+                          {"role": "skeptic", "stage": "review", "basis": "S03: the client's guidance, not our work"}],
+                 "representation": [{"role": "skeptic", "stage": "review", "basis": "S03: linked_to names no item"}]}},
+ {"label": "c003", "work": "supported", "representation": "not_assessed", "fields": {"owner": "incorrect"}, "policy": "resolved",
+  "source": "single speaker tag for the whole meeting",
+  "provenance": {"work": [{"role": "adjudicator", "stage": "adjudication", "basis": "included: berth schedule draft"}],
+                 "owner": [{"role": "retrospective", "stage": "retrospective", "basis": "owner from the speaker's 'we'"}]}}
+]

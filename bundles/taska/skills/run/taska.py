@@ -6,6 +6,7 @@ and exit 1. Run from the project directory (the one holding taska.toml) or pass 
 """
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -23,8 +24,21 @@ from taska_lib.sources import ADAPTERS, msgraph  # noqa: E402
 HERE = Path(__file__).resolve().parent
 
 
-def out(x, code=0):
-    print(json.dumps(x, indent=1, ensure_ascii=False, default=str))
+CONTEXT_HINT = "taska context --ids S001,T002 (the nodes you touch), or taska context --compact (to find them)"
+NEXT_AT = 20_000   # over this, the harness saves the output to a file: the answer names the filter that makes it small
+
+
+def _json(x):
+    """One value per line (a saved output can be Read in parts) without indentation (+33 % characters on a real tree,
+    re-read on every later turn); `indent=0` is +4 % over one line."""
+    return json.dumps(x, indent=0, separators=(",", ":"), ensure_ascii=False, default=str)
+
+
+def out(x, code=0, next_hint=""):
+    s = _json(x)
+    if next_hint and len(s) > NEXT_AT:
+        s = _json(x | {"next": f"narrow with: {next_hint}"})
+    print(s)
     sys.exit(code)
 
 
@@ -292,6 +306,8 @@ def _queue(st, cfg):
         row = {"id": c, "at": ev[c]["at"], "kind": ev[c]["kind"], "meeting_kind": ev[c].get("meeting_kind"),
                "title": ev[c]["title"], "md": str(S.P(st, "evidence", c + ".md")),
                "before_processed": need == "extract" and i < last_done, "need": need}
+        text = S.full_text(ev[c])
+        row |= {"words": len(text.split()), "chars": len(text)}   # to plan batches without measuring files
         rows.append(row | ({"why": why} if why else {}))
     return rows, gaps
 
@@ -350,10 +366,12 @@ def cmd_backfill(a):
 
 def cmd_context(a):
     cfg, st = cfg_store(a)
-    print(json.dumps(L.context(st, cfg), ensure_ascii=False, separators=(",", ":")))  # compact: agents re-read it often
+    out(L.context(st, cfg, ids=[i.strip() for i in a.ids.split(",") if i.strip()] if a.ids else None, compact=a.compact),
+        next_hint=CONTEXT_HINT)
 
 
 def cmd_apply(a):
+    from taska_lib import coverage as CV
     cfg, st = cfg_store(a)
     try:
         props = json.load(open(a.proposals))
@@ -361,7 +379,75 @@ def cmd_apply(a):
         out({"status": "error", "error": f"proposals: {e}"}, 1)
     if not isinstance(props, list):
         out({"status": "error", "error": "proposals must be a JSON array"}, 1)
-    out(dict(L.apply(st, cfg, a.evidence, props), status="ok"))
+    if a.section is None:
+        out(dict(L.apply(st, cfg, a.evidence, props), status="ok"))
+    ev = S.evidence(st)
+    if a.evidence not in ev:
+        out({"status": "error", "error": f"unknown evidence {a.evidence}"}, 1)
+    item = ev[a.evidence]
+    secs = CV.sections(item)
+    if not 1 <= a.section <= len(secs):
+        out({"status": "error", "error": f"section must be 1..{len(secs)} for {a.evidence}"}, 1)
+    keep: list[int] = []
+    outside: list[dict] = []
+    gone: set[str] = set()
+    for i, p in enumerate(props):
+        q = p.get("quote") if isinstance(p, dict) else None
+        n = CV.section_of(item, q, secs) if q else 0
+        if n and n != a.section:
+            outside.append({"i": i, "why": "outside_section", "section": n})
+            gone |= {f"#{i}", *([p["ref"]] if p.get("ref") else [])}
+            continue
+        deps = p.get("depends_on") if isinstance(p, dict) else None
+        used = [p.get(k) for k in ("parent", "node", "into")] + ([deps] if isinstance(deps, str) else list(deps or [])) \
+            if isinstance(p, dict) else []
+        hit = next((h for h in used if isinstance(h, str) and h in gone), None)
+        if hit:
+            outside.append({"i": i, "why": "outside_section", "section": n or a.section, "refers_to": hit})
+            gone |= {f"#{i}", *([p["ref"]] if p.get("ref") else [])}
+            continue
+        keep.append(i)
+    sub = [dict(props[i], ref=props[i].get("ref") or f"#{i}") if isinstance(props[i], dict) else props[i] for i in keep]
+    res = L.apply(st, cfg, a.evidence, sub)
+    rej = [dict(r, i=keep[r["i"]]) if isinstance(r.get("i"), int) and r["i"] < len(keep) else r for r in res["rejected"]]
+    out(dict(res, rejected=sorted(outside + rej, key=lambda r: r["i"] if isinstance(r.get("i"), int) else -1), status="ok"))
+
+
+def cmd_sections(a):
+    from taska_lib import coverage as CV
+    cfg, st = cfg_store(a)
+    ev = S.evidence(st)
+    if a.evidence not in ev:
+        out({"status": "error", "error": f"unknown evidence {a.evidence}"}, 1)
+    item = ev[a.evidence]
+    md = S.P(st, "evidence", a.evidence + ".md")
+    lines = md.read_text().split("\n") if md.exists() else []
+    rows = CV.section_lines(lines, item, CV.sections(item))
+    out({"status": "ok", "evidence": a.evidence, "md": str(md),
+         "sections": [{k: r[k] for k in ("n", "first_line", "last_line", "start_ts", "words")} for r in rows]})
+
+
+def reread_token(st, evidence, part, n=None):
+    n = sum(1 for e in S.events(st) if e.get("evidence") == evidence) if n is None else n
+    return hashlib.sha256(f"{evidence}|{part}|{n}".encode()).hexdigest()[:12]
+
+
+def cmd_reread(a):
+    from taska_lib import coverage as CV
+    _, st = cfg_store(a)
+    item = S.evidence(st).get(a.evidence)
+    if not item:
+        out({"status": "error", "error": f"unknown evidence {a.evidence}"}, 1)
+    parts = CV.parts_for(item)
+    if not 1 <= a.part <= parts:
+        out({"status": "error", "error": f"part must be 1..{parts} for {a.evidence}"}, 1)
+    md = S.P(st, "evidence", a.evidence + ".md")
+    first, last = CV.part_lines(md.read_text().split("\n") if md.exists() else [], item, a.part, parts)
+    r = {"status": "ok", "evidence": a.evidence, "part": a.part, "starts": CV.part_starts(item, parts)[a.part - 1],
+         "md": str(md), "first_line": first, "last_line": last, "token": reread_token(st, a.evidence, a.part)}
+    if first is None:
+        r["hint"] = "the .md is stale: run `render-evidence`, then reread again"
+    out(r)
 
 
 def cmd_done(a):
@@ -395,11 +481,18 @@ def cmd_done(a):
                          "starts": c["starts"],
                          "hint": "an --ack needs proof of reading: one --quote of 8+ contiguous words taken from each part in "
                                  "parts_without_quote (each part starts at the ts in `starts`), then run the same done command again"}, 1)
+                count = sum(1 for e in S.events(st) if e.get("evidence") == a.evidence)
+                stale = [p for p in gap if reread_token(st, a.evidence, p, count) not in (a.reread or [])]
+                if stale:
+                    out({"status": "reread", "evidence": a.evidence, "parts_without_reread": stale, "starts": c["starts"],
+                         "hint": "run `reread --evidence <id> --part N` for each, read what it prints, apply what was said, "
+                                 "then run done again with the new tokens; a token changes with every apply on the meeting, so run reread "
+                                 "again after your last apply"}, 1)
                 note = (note + " " if note else "") + f"coverage acknowledged: {a.ack} (parts {gap})"
             lo = LO.leftovers(ev[a.evidence], S.events(st))
-            if lo["long"] and lo["count"] and a.leftovers != lo["token"]:
+            if lo["gated"] and lo["count"] and a.leftovers != lo["token"]:
                 out({"status": "leftovers", "evidence": a.evidence, "count": lo["count"],
-                     "hint": f"a long meeting: run `leftovers --evidence {a.evidence}`, decide each listed sentence (apply an op, "
+                     "hint": f"run `leftovers --evidence {a.evidence}`, decide each listed sentence (apply an op, "
                              "or not work by the tracking rule), then run the same done command again, adding --leftovers <its token>"}, 1)
             L.mark_processed(st, a.evidence, note, decisions_pending=True)
         else:
@@ -427,7 +520,21 @@ def cmd_leftovers(a):
     if a.evidence not in ev:
         out({"status": "error", "error": f"unknown evidence {a.evidence}"}, 1)
     item, events = ev[a.evidence], S.events(st)
-    out(dict(LO.leftovers(item, events), decisions=LO.decisions(item, events), status="ok"))
+    r, d = LO.leftovers(item, events), LO.decisions(item, events)
+    if a.part:   # token and count stay the whole meeting's: done checks them
+        r["parts"] = [p for p in r["parts"] if p["part"] == a.part]
+        d["parts"] = [p for p in d["parts"] if p["part"] == a.part]
+    if a.section:
+        from taska_lib import coverage as CV
+        secs = CV.sections(item)
+        if not 1 <= a.section <= len(secs):
+            out({"status": "error", "error": f"section must be 1..{len(secs)} for {a.evidence}"}, 1)
+        s = secs[a.section - 1]
+        r["parts"] = [dict(p, leftovers=[x for x in p["leftovers"] if s["start"] <= x["offset"] < s["end"]]) for p in r["parts"]]
+        d["parts"] = [dict(p, hints=[x for x in p["hints"] if s["start"] <= x["offset"] < s["end"]]) for p in d["parts"]]
+        r["section"] = a.section
+    out(dict(r, decisions=d, status="ok"),
+        next_hint=f"taska leftovers --evidence {a.evidence} --part 1")
 
 
 def cmd_ingest(a):
@@ -746,12 +853,15 @@ def cmd_schedule(a):
     out({"status": "ok", "kind": "launchd", "path": "~/Library/LaunchAgents/ai.applied.taska.plist", "plist": plist})
 
 
-def main():
+def build_parser():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--project", default=".")
     sp = ap.add_subparsers(dest="cmd", required=True)
     p = sp.add_parser("init"); p.add_argument("--name"); p.add_argument("--timezone", default="UTC")
-    sp.add_parser("setup"); sp.add_parser("doctor"); sp.add_parser("context"); sp.add_parser("status")
+    sp.add_parser("setup"); sp.add_parser("doctor"); sp.add_parser("status")
+    p = sp.add_parser("context", help="the live tree, people and what has been processed")
+    p.add_argument("--ids", help="only these nodes (comma-separated), each with its children")
+    p.add_argument("--compact", action="store_true", help="the tree with id, title, state, owners and due only")
     p = sp.add_parser("sync"); p.add_argument("--source"); p.add_argument("--dry", action="store_true",
                                                                           help="run against a scratch copy of the store")
     p = sp.add_parser("teams-report"); p.add_argument("--date")
@@ -782,15 +892,24 @@ def main():
     g.add_argument("--evidence", nargs="+", help="these evidence ids")
     p.add_argument("--dry-run", action="store_true", help="list what would be requested; write nothing")
     p = sp.add_parser("apply"); p.add_argument("--evidence", required=True); p.add_argument("--proposals", required=True)
+    p.add_argument("--section", type=int, help="apply only entries quoted from this section (see `sections`); others come back rejected")
+    p = sp.add_parser("sections", help="a meeting's reading sections: the lines of its .md and the first ts of each")
+    p.add_argument("--evidence", required=True)
     p = sp.add_parser("done"); p.add_argument("--evidence", required=True); p.add_argument("--note")
     p.add_argument("--ack", help="why a third of a long meeting produced nothing (else done refuses: status coverage)")
     p.add_argument("--quote", action="append", help="with --ack: verbatim words from each acknowledged part (proof it was read)")
-    p.add_argument("--leftovers", help="the token `leftovers` printed for this long meeting's current state")
+    p.add_argument("--reread", action="append", help="with --ack: the token `reread` printed for each acknowledged part; the token changes with every apply on the meeting, so run reread again after your last apply")
+    p.add_argument("--leftovers", help="the token `leftovers` printed for this gated (6,000+ characters) meeting's current state")
     p.add_argument("--no-decisions", action="append", help="decision pass (a meeting already processed): 8+ verbatim words "
                    "from each part of it with no decision recorded in it (proof it was read for decisions; the part is found "
                    "from the quote)")
+    p = sp.add_parser("reread", help="the lines of a meeting's .md that hold one third of its text, with a token for done --reread")
+    p.add_argument("--evidence", required=True)
+    p.add_argument("--part", type=int, required=True)
     p = sp.add_parser("leftovers", help="sentences that sound like work and that no applied event quotes, per third; with a token for done")
     p.add_argument("--evidence", required=True)
+    p.add_argument("--part", type=int, choices=(1, 2, 3), help="only this third of the meeting")
+    p.add_argument("--section", type=int, help="only the sentences of this section (see `sections`); token and count stay the whole meeting's")
     p = sp.add_parser("ingest"); p.add_argument("--file", required=True); p.add_argument("--source", default="ingest")
     p = sp.add_parser("people"); p.add_argument("--limit", type=int, default=0)
     p = sp.add_parser("redo"); p.add_argument("--evidence", required=True); p.add_argument("--why")
@@ -839,7 +958,11 @@ def main():
     p.add_argument("args", nargs=argparse.REMAINDER, help="claude's arguments, after --")
     p = sp.add_parser("handover", help="pack taska.toml + the store into a zip with a note for the next owner (read-only)")
     p.add_argument("--out", required=True, help="folder to write <project>-<date>.zip and its note into")
-    a = ap.parse_args()
+    return ap
+
+
+def main():
+    a = build_parser().parse_args()
     fn = globals()["cmd_" + a.cmd.replace("-", "_")]
     try:
         fn(a)

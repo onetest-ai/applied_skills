@@ -14,7 +14,7 @@ EVALS = Path(__file__).resolve().parent
 sys.path.insert(0, str(EVALS.parent / "skills" / "run"))
 
 COLUMNS = ["key_id", "bucket", "bucket_name", "meeting", "ts", "speaker", "quote", "expected_kind", "expected_title",
-           "expected_owner", "expected_due", "expected_status", "commitment", "verdict", "why", "run_node", "run_kind",
+           "expected_owner", "expected_due", "expected_status", "commitment", "verdict", "why", "stage", "run_node", "run_kind",
            "run_title", "run_owner", "run_due", "run_status", "key_version", "key_sha", "key_built_by", "graded_by",
            "code_version", "record"]
 

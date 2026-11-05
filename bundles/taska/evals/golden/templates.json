@@ -1,0 +1,341 @@
+{
+  "cast": {
+    "internal": ["Nora Quill", "Ravi Tamsin", "Wren Halloway", "Juno Farrant", "Ossian Brack", "Tilda Marrowby"],
+    "client": ["Opal Brennick", "Corwin Ashdale", "Sabine Thorncroft"]
+  },
+  "invented": ["Harbor", "Logistics", "Kestrel", "Yard", "Saltmarsh", "Wharf", "Juniper", "SlipwayKite", "KelpTally", "C"],
+  "teams": [
+    {"name": "Yard team", "members": ["Nora Quill", "Ravi Tamsin"], "aliases": ["yard guys", "the yard people"]}
+  ],
+  "categories": {
+    "WORKSHOP_HANDLING": {"why": "not_work", "question": "Is preparing or running a workshop (deck edits, session order, agendas, invites, posters, how-might-we edits) ever work to track?"},
+    "OTHER": {"why": "not_work", "question": "Are scheduling, interview logistics and system-access setup work to track?"},
+    "RISK_NOT_RISK": {"why": "client_own", "question": "Is the client's own business problem (a pain point raised in a workshop) a risk to track, or a finding?"},
+    "DISCUSSION_NOT_DECISION": {"why": "not_work", "question": "Is an opinion or observation in a discussion a decision to track?"},
+    "BRAINSTORM": {"why": "brainstorm", "question": "Are workshop hypotheses and brainstorming ideas work to track?"},
+    "STATUS_REPORT": {"why": "not_work", "question": "Is a status report (what was done) new work to track?"},
+    "PEOPLE_MATTER": {"why": "people", "question": "Are people matters (staffing, rates) ever tracked?"}
+  },
+  "planted": {
+    "categories": {"people_matter": "PEOPLE_MATTER", "deck_handling": "WORKSHOP_HANDLING", "agenda_invite": "WORKSHOP_HANDLING",
+                   "poster": "WORKSHOP_HANDLING", "session_order": "WORKSHOP_HANDLING", "how_might_we": "WORKSHOP_HANDLING",
+                   "client_pain": "RISK_NOT_RISK"}
+  },
+  "filler_sentences": [
+    "The morning arrivals peaked at about forty trucks between seven and eight, which matches the last three Mondays.",
+    "Most of the queue at the north gate came from carriers arriving in pairs, one booked and one not.",
+    "The weigh bridge readings were steady all week, with only two trucks sent back for a second pass.",
+    "Wharf Juniper handled the bulk of the refrigerated containers, and the plug rows there were full by midday.",
+    "The night shift logged fewer exceptions than the day shift, although the volumes are not comparable.",
+    "On the KelpTally dashboard the dwell time for empty containers is still the longest bar by a wide margin.",
+    "The Saltmarsh depot runs its own paper log next to the system, mostly out of habit.",
+    "Drivers told the gate staff that the signage near lane three is easy to miss in the rain.",
+    "The SlipwayKite scheduler shows a booking for almost every slot, but a fair share of them arrive late.",
+    "Crane two was out for an afternoon, and the backlog cleared by the evening.",
+    "The yard map on the wall in the gate office is two layouts old and nobody reads it any more.",
+    "When the scanners drop the connection, the gate staff fall back to typing container numbers by hand.",
+    "Empty returns tend to bunch up on Fridays, when the carriers clear their own yards before the weekend.",
+    "The last three weeks show the same pattern, a slow start, a peak before lunch and a quiet late afternoon.",
+    "Customs holds were rare this month, three containers in total, all released within a day.",
+    "The pallet labels from the old printer smudge in the cold store, which slows the scanning down.",
+    "Most planners keep a personal spreadsheet beside the scheduler, each with slightly different columns.",
+    "Truck drivers mostly use the phone line to ask about their slot, rather than the carrier portal.",
+    "The reefer alarms at Kestrel Yard fire more often at night, when the outside temperature drops.",
+    "Gate staff spend a noticeable part of each shift answering the same three questions from drivers.",
+    "The berth plan for the spring season looks tighter than last year, with two extra vessel calls a week.",
+    "Inbound paperwork still comes in three formats, a printed form, a scanned copy and an email body.",
+    "The straddle carriers were all in service this week, which has not happened since the winter.",
+    "The planners' handover notes are short, usually just the open bookings and anything unusual.",
+    "Lane four was closed for resurfacing on Tuesday, so lanes two and three took the extra traffic.",
+    "The canteen survey came back with more comments about the parking than about the food.",
+    "Average turnaround for a single container pick-up sits at a little under fifty minutes.",
+    "The busiest carriers account for roughly two thirds of all gate moves, the rest is a long tail.",
+    "Container stacks in block C are four high, which makes the bottom boxes slow to reach.",
+    "The gate office printer ran out of toner twice, which mostly meant a short queue at the window.",
+    "Rain delays were minor this month, an hour here and there on the quay cranes.",
+    "The pilot area near the east fence is marked out with cones, and the drivers have noticed it.",
+    "Shipping lines publish their vessel schedules on different days, so the berth plan changes midweek.",
+    "The radio channel used by the yard is crowded during shift changes, with everyone checking in at once.",
+    "Inspection bays one and two were busy, bay three was mostly empty, as it is most weeks.",
+    "The weekly numbers for empty container stock went up slightly, in line with the season.",
+    "There is a whiteboard in the planners' room with the vessel calls, updated by hand each morning.",
+    "The cold store held steady at the right temperature except for one door that was left ajar.",
+    "Most delays at the gate are short, but the long ones are very long, well over an hour.",
+    "The depot staff mentioned that the new reflective vests are a lot easier to spot at night.",
+    "Damage reports are filed on paper first and typed into the system at the end of the shift.",
+    "The rail siding saw two trains this week, both on schedule, both unloaded within the window.",
+    "Carriers that book online arrive closer to their slot than the ones that phone in.",
+    "The fuel station by the north gate is busiest just before the morning peak.",
+    "The quay lights were replaced on the outer berth, and the night crews say it is much better.",
+    "The yard has more empty space on Sunday evenings than at any other time of the week.",
+    "The truck appointment numbers look healthy on paper, the gaps only show up on the ground.",
+    "Several drivers asked whether the gate opens earlier during the spring peak, as it did last year."
+  ],
+  "filler_frames": {
+    "frames": [
+      "On {day}, {place} handled about {n} {unit}, {cmp}.",
+      "The {source} for {place} lists {n} {unit} for the period, {cmp}.",
+      "At {place}, the {time} hours were the busiest, with {n} {unit} logged.",
+      "{place} saw {n} {unit} during the {time} hours, {cmp}.",
+      "Looking at {place} on {day}, the queue cleared within {mins} minutes.",
+      "Most of the {unit} at {place} came in during the {time} hours.",
+      "Compared with {day}, {place} was quieter, with {n} {unit} in total.",
+      "The {source} shows that {place} needed about {mins} minutes per visit in the {time} hours.",
+      "Between {day} and the weekend, {place} averaged {n} {unit} a day, {cmp}."
+    ],
+    "fields": {
+      "day": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+      "place": ["the north gate", "Kestrel Yard", "the Saltmarsh depot", "Wharf Juniper", "block C", "the cold store",
+                "the rail siding", "the outer berth", "the inspection bays", "the east lanes"],
+      "n": ["twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"],
+      "unit": ["truck visits", "container moves", "reefer checks", "gate transactions", "pallet scans", "empty returns",
+               "customs checks"],
+      "cmp": ["roughly the same as the week before", "a little above the monthly average",
+              "slightly below what the planners expected", "in line with the spring pattern",
+              "higher than at the same point last year", "much as the yard report predicted"],
+      "time": ["early morning", "mid-morning", "late morning", "early afternoon", "late afternoon", "evening"],
+      "mins": ["ten", "fifteen", "twenty", "twenty-five", "thirty", "forty"],
+      "source": ["gate log", "weekly extract", "shift sheet", "yard report", "handover note"]
+    },
+    "share": 0.6
+  },
+  "asr_fillers": [
+    "so yeah", "um okay", "and then", "right", "yeah so", "okay and", "so basically", "and um"
+  ],
+  "archetypes": [
+    {
+      "name": "one_block_readout", "offset": 0, "title": "Harbor findings readout", "layout": "one_block",
+      "presenter": "i1", "target_chars": 61800, "sentences_per_cue": [7, 10],
+      "caps": ["long_meeting", "one_block"], "class": {"size": "XL", "structure": "one block"},
+      "opening": [["i1", "Good morning everyone, this readout covers the eight weeks of the Kestrel Yard review from start to finish, the gate, the berths, the cold store and the depot, and questions come at the end."]],
+      "parts": [
+        [
+          {"cues": [["i1", "I will write up the gate dwell-time analysis as a two-page note and circulate it by next Friday."]],
+           "slot": {"expect": "create", "kind": "task", "commitment": "committed", "owner": "i1", "family": "commitment"}},
+          {"cues": [["i1", "{i2.first} will handle the customs paperwork backlog at the Saltmarsh depot."]],
+           "slot": {"expect": "create", "kind": "task", "commitment": "committed", "owner": "i2", "family": "owner_not_speaker"}},
+          {"cues": [["i1", "One idea worth testing is letting drivers choose their own unloading slot from a phone."]],
+           "slot": {"category": "BRAINSTORM", "work": {"kind": "task", "commitment": "proposed", "owner": null}, "family": "brainstorm"}}
+        ],
+        [
+          {"cues": [["i1", "{c1}'s team still owes us the gate camera footage export for the last two weeks of March."]],
+           "slot": {"expect": "create", "kind": "task", "commitment": "committed", "owner": "c1", "client_owed": true, "family": "client_owed"}},
+          {"cues": [["i1", "We have agreed that the gate redesign recommendations go into the final report and the berth plan waits for phase two."]],
+           "slot": {"expect": "create", "kind": "decision", "commitment": "committed", "owner": null, "family": "decision"}}
+        ],
+        [
+          {"cues": [["i1", "If the crane maintenance window slips into May, the berth pilot slips with it and the summer peak arrives before we are ready."]],
+           "slot": {"expect": "create", "kind": "risk", "commitment": "committed", "owner": null, "family": "risk"}},
+          {"cues": [["i1", "{i3.first} will write the night shift exception guide before the end of the month."]],
+           "slot": {"expect": "create", "kind": "task", "commitment": "committed", "owner": "i3", "family": "owner_not_speaker"}},
+          {"cues": [["i1", "My own impression is that the night shift handles exceptions more calmly than the day shift does."]],
+           "slot": {"category": "DISCUSSION_NOT_DECISION", "work": {"kind": "decision", "commitment": "committed", "owner": null}, "family": "opinion"}}
+        ]
+      ]
+    },
+    {
+      "name": "xl_conversation_readout", "offset": 1, "title": "Harbor client readout", "layout": "conversation",
+      "speakers": ["i1", "i2", "c1", "c2"], "target_chars": 61800, "sentences_per_cue": [4, 7], "short_share": 0.05,
+      "caps": ["long_meeting"], "class": {"size": "XL", "structure": "conversation"}, "quiet_part": 2,
+      "opening": [["i1", "Thanks for making the time, everyone, this is the client readout of the Kestrel Yard review, and we have the whole morning blocked for it, so we can go through the findings section by section."]],
+      "parts": [
+        [
+          {"cues": [["i1", "I will write the appendix on raw dwell times for each lane and send it to everyone by Thursday."]],
+           "slot": {"expect": "create", "kind": "task", "commitment": "committed", "owner": "i1", "family": "commitment"}},
+          {"cues": [["c1", "We'll go with the two-lane gate layout; drop the three-lane option."]],
+           "slot": {"expect": "create", "kind": "decision", "commitment": "committed", "owner": null, "family": "client_decision"}},
+          {"cues": [["c2", "Our biggest headache is that carriers show up without a booking and block the lanes for everyone else."]],
+           "slot": {"category": "RISK_NOT_RISK", "work": {"kind": "risk", "commitment": "committed", "owner": null}, "family": "client_pain"}},
+          {"cues": [["i2", "I'll tidy the colours on the findings deck and fix the slide numbering before we send it."]],
+           "slot": {"category": "WORKSHOP_HANDLING", "work": {"kind": "task", "commitment": "committed", "owner": "i2"}, "family": "deck_handling"}}
+        ],
+        [
+          {"cues": [["i2", "I'll probably try to get the berth timing sheet over to {c1.first} by Friday."]],
+           "slot": {"expect": "create", "kind": "task", "commitment": "committed", "owner": "i2", "family": "hedge"}},
+          {"cues": [["c1", "The quay lights on the outer berth made a real difference for the night crews. Oh, and on our side {c2.first} will pull the carrier contract list for you next week, it is sitting in the old shared drive. The rail siding was quiet, as usual for this time of year."]],
+           "slot": {"quote": "{c2.first} will pull the carrier contract list for you next week", "speaker": "c1",
+                    "expect": "create", "kind": "task", "commitment": "committed", "owner": "c2", "client_owed": true, "family": "buried"}}
+        ],
+        [
+          {"cues": [["c2", "We owe you the updated site map with the new truck lanes, I'll get it to you by Wednesday."]],
+           "slot": {"expect": "create", "kind": "task", "commitment": "committed", "owner": "c2", "client_owed": true, "family": "client_owed"}},
+          {"cues": [["i1", "I will build the berth occupancy forecast for your planners by next Tuesday."]],
+           "slot": {"expect": "create", "kind": "task", "commitment": "committed", "owner": "i1", "family": "commitment"}},
+          {"cues": [["i2", "Maybe someone on our side could build a weigh bridge summary page for the final report."]],
+           "slot": {"expect": "create", "kind": "task", "commitment": "proposed", "owner": null, "family": "proposal_none"}},
+          {"cues": [["i2", "I'll book the four planners for the interview slots next week."]],
+           "slot": {"category": "OTHER", "work": {"kind": "task", "commitment": "committed", "owner": "i2"}, "family": "interview_logistics"}},
+          {"cues": [["i1", "There is a risk that the scanner vendor misses the June date, which would push the whole pilot back."]],
+           "slot": {"expect": "create", "kind": "risk", "commitment": "committed", "owner": null, "family": "risk"}}
+        ]
+      ]
+    },
+    {
+      "name": "l_working_session", "offset": 2, "title": "Harbor working session", "layout": "conversation",
+      "speakers": ["i1", "i2", "i3", "i4", "i5", "i6"], "target_chars": 30900, "sentences_per_cue": [3, 6], "short_share": 0.1,
+      "caps": [], "class": {"size": "L", "owners": "4+", "audience": "internal"},
+      "opening": [["i1", "Right, this is the internal working session for the Kestrel Yard work, we have a long list today, so let us go around the table and take every open item in turn before we break."]],
+      "parts": [
+        [
+          {"cues": [["i1", "{i2.first}, one for you: Deliver the readout deck to the client, ideally before the steering call."]],
+           "slot": {"quote": "Deliver the readout deck to the client", "expect": "create", "kind": "task", "commitment": "committed", "owner": "i2", "family": "not_work_guard"}},
+          {"cues": [["i1", "And {i3.first}, please take this one: Present the roadmap at the board meeting."]],
+           "slot": {"quote": "Present the roadmap at the board meeting", "expect": "create", "kind": "task", "commitment": "committed", "owner": "i3", "family": "not_work_guard"}},
+          {"cues": [["i4", "I can take the next one myself: Build the executive readout."]],
+           "slot": {"quote": "Build the executive readout", "expect": "create", "kind": "task", "commitment": "committed", "owner": "i4", "family": "not_work_guard"}},
+          {"cues": [["i2", "Small things on my list. Soften the language of finding #2 in the deck."]],
+           "slot": {"quote": "Soften the language of finding #2 in the deck", "category": "WORKSHOP_HANDLING", "work": {"kind": "task", "commitment": "committed", "owner": "i2"}, "family": "not_work_guard"}},
+          {"cues": [["i5", "Next small one. Add screenshots to the deck appendix."]],
+           "slot": {"quote": "Add screenshots to the deck appendix", "category": "WORKSHOP_HANDLING", "work": {"kind": "task", "commitment": "committed", "owner": "i5"}, "family": "not_work_guard"}},
+          {"cues": [["i3", "{i4.first}, could you write up the gate-check procedure for the night shift?"],
+                    ["i2", "On the night shift, the new lighting went in on Monday and the crews like it."],
+                    ["i4", "Yes, that write-up is mine, I'll have it done by Thursday."]],
+           "slot": {"quote": "@cues", "speaker": "i3",
+                    "expect": "create", "kind": "task", "commitment": "committed", "owner": "i4", "family": "split_turns"}},
+          {"cues": [["i1", "{i6.first}, can you arrange remote-desktop access to the yard system for the two new analysts?"]],
+           "slot": {"category": "OTHER", "work": {"kind": "task", "commitment": "committed", "owner": "i6"}, "family": "system_access"}}
+        ],
+        [
+          {"cues": [["i1", "{i5.first}, yours: Prepare the workshop materials for the client session."]],
+           "slot": {"quote": "Prepare the workshop materials for the client session", "expect": "create", "kind": "task", "commitment": "committed", "owner": "i5", "family": "not_work_guard"}},
+          {"cues": [["i4", "Housekeeping. Send the agenda and invites."]],
+           "slot": {"quote": "Send the agenda and invites", "category": "WORKSHOP_HANDLING", "work": {"kind": "task", "commitment": "committed", "owner": "i4"}, "family": "not_work_guard"}},
+          {"cues": [["i6", "And for the room on the day. Print the posters."]],
+           "slot": {"quote": "Print the posters", "category": "WORKSHOP_HANDLING", "work": {"kind": "task", "commitment": "committed", "owner": "i6"}, "family": "not_work_guard"}},
+          {"cues": [["i5", "I'll take — sorry, go on — I'll take the cold-store audit."]],
+           "slot": {"expect": "create", "kind": "task", "commitment": "committed", "owner": "i5", "family": "interruption"}},
+          {"cues": [["i2", "I'll swap the order of the two afternoon workshop sessions so the returns topic goes first."]],
+           "slot": {"category": "WORKSHOP_HANDLING", "work": {"kind": "task", "commitment": "committed", "owner": "i2"}, "family": "session_order"}},
+          {"cues": [["i3", "Hypothesis to test in the workshop: most of the gate delay comes from paperwork, not from the cranes."]],
+           "slot": {"category": "BRAINSTORM", "work": {"kind": "task", "commitment": "proposed", "owner": null}, "family": "hypothesis"}}
+        ],
+        [
+          {"cues": [["i3", "Then for me: Draft the inventory scope rationale document."]],
+           "slot": {"quote": "Draft the inventory scope rationale document", "expect": "create", "kind": "task", "commitment": "committed", "owner": "i3", "family": "not_work_guard"}},
+          {"cues": [["i2", "One more for the day itself. Reorder the sessions."]],
+           "slot": {"quote": "Reorder the sessions", "category": "WORKSHOP_HANDLING", "work": {"kind": "task", "commitment": "committed", "owner": "i2"}, "family": "not_work_guard"}},
+          {"cues": [["i5", "From the last workshop. Merge the how-might-we statements."]],
+           "slot": {"quote": "Merge the how-might-we statements", "category": "WORKSHOP_HANDLING", "work": {"kind": "task", "commitment": "committed", "owner": "i5"}, "family": "not_work_guard"}},
+          {"cues": [["i4", "Last one from me. Review the slides before Friday."]],
+           "slot": {"quote": "Review the slides before Friday", "category": "WORKSHOP_HANDLING", "work": {"kind": "task", "commitment": "committed", "owner": "i4"}, "family": "not_work_guard"}},
+          {"cues": [["i4", "I think the KelpTally dashboard is more trusted by the planners than the paper board."]],
+           "slot": {"category": "DISCUSSION_NOT_DECISION", "work": {"kind": "decision", "commitment": "committed", "owner": null}, "family": "opinion"}},
+          {"cues": [["i1", "We should keep {i6.first} another six weeks on the yard work."]],
+           "slot": {"category": "PEOPLE_MATTER", "work": {"kind": "task", "commitment": "committed", "owner": null}, "family": "people_matter"}},
+          {"cues": [["i1", "We're dropping the Saturday shift report from our deliverables; the weekly summary we send covers it from now on."]],
+           "slot": {"expect": "create", "kind": "decision", "commitment": "committed", "owner": null, "family": "implicit_decision"}},
+          {"cues": [["i6", "I will clean up the carrier master data before the cutover."]],
+           "slot": {"expect": "create", "kind": "task", "commitment": "committed", "owner": "i6", "family": "commitment"}}
+        ]
+      ]
+    },
+    {
+      "name": "status_standup", "offset": 3, "title": "Harbor team stand-up", "layout": "conversation",
+      "speakers": ["i1", "i2", "i3", "i4", "i5"], "target_chars": 10300, "sentences_per_cue": [2, 3], "short_share": 0.25,
+      "caps": [], "class": {"size": "M", "structure": "conversation", "audience": "internal"},
+      "opening": [["i1", "Morning all, quick round of updates for the yard team stand-up, one or two lines each on what moved since last week and anything that changed in the plan."]],
+      "parts": [
+        [
+          {"cues": [["i2", "I finished reprinting the pallet labels for Wharf Juniper yesterday."]],
+           "slot": {"category": "STATUS_REPORT", "work": {"kind": "task", "commitment": "committed", "owner": "i2"}, "family": "status_done"}},
+          {"cues": [["i3", "The weigh bridge calibration is done and signed off."]],
+           "slot": {"category": "STATUS_REPORT", "work": {"kind": "task", "commitment": "committed", "owner": "i3"}, "family": "status_done"}}
+        ],
+        [
+          {"cues": [["i4", "The cold-store pilot is pushed out one week because the sensors arrived late."]],
+           "slot": {"category": "STATUS_REPORT", "work": {"kind": "task", "commitment": "committed", "owner": null, "effect": "delayed"}, "family": "plan_shift"}},
+          {"cues": [["i1", "The dock schedule export broke again last night, the late-arrival column came out empty."],
+                    ["i5", "I'll sort out the export."]],
+           "slot": {"quote": "@cues", "speaker": "i5", "title": "Rebuild the dock schedule export",
+                    "expect": "create", "kind": "task", "commitment": "committed", "owner": "i5", "family": "paraphrase"}}
+        ],
+        [
+          {"cues": [["i3", "Gate signage for lane three went up on Wednesday, so that one is closed."]],
+           "slot": {"category": "STATUS_REPORT", "work": {"kind": "task", "commitment": "committed", "owner": "i3"}, "family": "status_done"}}
+        ]
+      ]
+    },
+    {
+      "name": "s_client_call", "offset": 4, "title": "Harbor client call", "layout": "conversation",
+      "speakers": ["i1", "i2", "c1", "c3"], "target_chars": 3600, "sentences_per_cue": [1, 2], "short_share": 0.4,
+      "caps": [], "class": {"size": "S", "audience": "client"},
+      "opening": [["c1", "Hello both, thanks for joining at short notice, we wanted half an hour on the gate situation and on what we still owe you from our side before the next steering call."]],
+      "parts": [
+        [
+          {"cues": [["c3", "We still owe you the dock door inventory; you'll have it from us on Thursday."]],
+           "slot": {"expect": "create", "kind": "task", "commitment": "committed", "owner": "c3", "client_owed": true, "family": "client_owed"}},
+          {"cues": [["c1", "Our drivers wait forty minutes at the gate every single morning and it costs us two loads a day."]],
+           "slot": {"category": "RISK_NOT_RISK", "work": {"kind": "risk", "commitment": "committed", "owner": null}, "family": "client_pain"}}
+        ],
+        [
+          {"cues": [["i2", "I'll rebuild the carrier price table for the client portal"], ["c1", "Mm-hm, yes."], ["i2", "by next Monday."]],
+           "slot": {"quote": "I'll rebuild the carrier price table for the client portal by next Monday.", "speaker": "i2",
+                    "expect": "create", "kind": "task", "commitment": "committed", "owner": "i2", "family": "backchannel"}},
+          {"cues": [["c1", "We'll take the gate redesign out of your scope for this phase; focus the work on the berth plan."]],
+           "slot": {"expect": "create", "kind": "decision", "commitment": "committed", "owner": null, "family": "client_decision"}}
+        ],
+        [
+          {"cues": [["c3", "Could your team lower its day rates for the second phase?"]],
+           "slot": {"category": "PEOPLE_MATTER", "work": {"kind": "task", "commitment": "committed", "owner": null}, "family": "people_matter"}},
+          {"cues": [["i1", "I will send {c1.first} the revised gate timing plan tomorrow."]],
+           "slot": {"expect": "create", "kind": "task", "commitment": "committed", "owner": "i1", "family": "commitment"}}
+        ]
+      ]
+    },
+    {
+      "name": "asr_call", "offset": 5, "title": "Harbor yard walk recording", "layout": "asr",
+      "speakers": ["?"], "target_chars": 4000, "cue_seconds": 12,
+      "caps": ["asr"], "class": {"size": "S", "structure": "conversation", "audience": "internal"},
+      "opening": [["?", "okay we are recording now this is the yard walk around block c and the reefer rows with the morning crew so we can look at the layout on the ground"]],
+      "parts": [
+        [
+          {"cues": [["?", "okay so I'll send the revised gate schedule to the yard crew tomorrow morning"]],
+           "slot": {"expect": "create", "kind": "task", "commitment": "committed", "owner": null, "family": "asr_speakerless"}}
+        ],
+        [
+          {"cues": [["?", "this is {i2.first} speaking, I'll send a written list of the faulty reefer plugs on row c by thursday"]],
+           "slot": {"quote": "I'll send a written list of the faulty reefer plugs on row c by thursday", "expect": "create", "kind": "task", "commitment": "committed", "owner": "i2", "family": "asr_named"}},
+          {"cues": [["?", "what if we painted the lane numbers on the ground so drivers stop asking"]],
+           "slot": {"category": "BRAINSTORM", "work": {"kind": "task", "commitment": "proposed", "owner": null}, "family": "brainstorm"}}
+        ],
+        [
+          {"cues": [["?", "right so we agreed the night gate study drops out of our scope and our final report covers the day gate only"]],
+           "slot": {"expect": "create", "kind": "decision", "commitment": "committed", "owner": null, "family": "asr_decision"}}
+        ]
+      ]
+    },
+    {
+      "name": "continuity_1", "offset": 6, "title": "Harbor dock sync", "layout": "conversation",
+      "speakers": ["i1", "i2", "i3"], "target_chars": 2600, "sentences_per_cue": [1, 2], "short_share": 0.4,
+      "caps": ["continuity"], "class": {"size": "S"},
+      "opening": [["i1", "Okay, dock sync for this week, three of us today, mostly about the cold store and the carriers, and what each of us owes the others before we meet again."]],
+      "parts": [
+        [
+          {"cues": [["i2", "I will set up the reefer alarm report for the cold store and share it on Thursday."]],
+           "slot": {"expect": "create", "kind": "task", "commitment": "committed", "owner": "i2", "family": "commitment", "tag": "alarm_report"}},
+          {"cues": [["i1", "We're scoping the reefer alarm report to the cold store only; the depot stays out of it."]],
+           "slot": {"expect": "create", "kind": "decision", "commitment": "committed", "owner": null, "family": "implicit_decision"}},
+          {"cues": [["i3", "I'll draft the carrier onboarding letter by Thursday."]],
+           "slot": {"expect": "create", "kind": "task", "commitment": "committed", "owner": "i3", "family": "commitment", "tag": "carrier_letter"}}
+        ]
+      ]
+    },
+    {
+      "name": "continuity_2", "offset": 7, "title": "Harbor dock follow-up", "layout": "conversation", "after": "continuity_1",
+      "speakers": ["i1", "i2", "i3"], "target_chars": 2600, "sentences_per_cue": [1, 2], "short_share": 0.4,
+      "caps": ["continuity"], "class": {"size": "S"},
+      "opening": [["i1", "Good morning, this is the dock follow-up, let us run through what is still open from last week and what came in since then, starting with the cold store."]],
+      "parts": [
+        [
+          {"cues": [["i1", "{i2.first}, you are still on the cold store alarm reporting, right?"],
+                    ["i2", "Yes, the alarm report for the reefers is still mine to deliver."]],
+           "slot": {"quote": "@cues", "speaker": "i2", "expect": "duplicate", "of": "alarm_report", "family": "restated"}},
+          {"cues": [["i3", "The carrier onboarding letter went out yesterday, that one is done."]],
+           "slot": {"expect": "duplicate", "of": "carrier_letter", "expect_status": "done", "pending": true, "family": "done_report"}},
+          {"cues": [["i1", "I will write up the scanner fault log analysis for the depot this week."]],
+           "slot": {"expect": "create", "kind": "task", "commitment": "committed", "owner": "i1", "family": "commitment"}}
+        ]
+      ]
+    }
+  ]
+}

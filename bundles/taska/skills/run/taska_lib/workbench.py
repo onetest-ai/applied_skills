@@ -2,6 +2,7 @@
 import datetime as dt
 import hashlib
 import json
+import re
 import sys
 from types import SimpleNamespace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -120,6 +121,53 @@ def _reg(opts):
     return {k: v for k, v in (opts or {}).items() if k in REGISTER_KEYS}
 
 
+REPORT_KINDS = ("preview", "send")
+
+
+def shown_path(p):
+    """A path as a person reads it: from ~ when it is under the home folder, else in full."""
+    try:
+        return "~/" + str(Path(p).resolve().relative_to(Path.home().resolve()))
+    except ValueError:
+        return str(p)
+
+
+def last_run(cfg):
+    """The newest reports/<week>/run-status.json: its week, times and steps, or None."""
+    runs = sorted((cfg.project_dir / "reports").glob("*/run-status.json"))
+    if not runs:
+        return None
+    d = json.loads(runs[-1].read_text(encoding="utf-8"))
+    return {"week": runs[-1].parent.name, "started": d.get("started"), "finished": d.get("finished"),
+            "steps": [{"id": x.get("id"), "ok": bool(x.get("ok")), "detail": x.get("detail") or ""} for x in d.get("steps") or []]}
+
+
+def report_status(cfg, owner):
+    """Will this project send a weekly report, and if not, what is missing: a report schedule, the owner, the report's
+    title and greeting, and something that sends the mail (taska itself only writes it)."""
+    from . import runner as RN
+    rep, reports = cfg.report or {}, [s for s in cfg.schedules if s.kind in REPORT_KINDS and s.on]
+    jobs = ", ".join(f"{s.name} ({s.kind})" for s in cfg.schedules)
+    commands = [SCH.command_for(cfg, s) for s in reports if s.command or (cfg.run or {}).get("scheduled")]
+    steps = [x["name"] for x in RN.steps(cfg, "send")] if not commands else []
+
+    def check(cid, ok, text_ok, text_missing, state=None):
+        return {"id": cid, "state": state or ("ok" if ok else "missing"), "text": text_ok if ok else text_missing}
+    checks = [
+        check("report_schedule", reports, "; ".join(f"{s.name} ({SCH.when_text(s)}, to {', '.join(s.to) or owner or 'you'})" for s in reports),
+              f"Only {jobs}: update jobs never mail." if cfg.schedules and all(s.kind == "update" for s in cfg.schedules)
+              else f"Only {jobs}: none of them builds a report." if cfg.schedules else "No schedules yet."),
+        check("owner", owner, owner or "", "Empty: review copies and held notices have nowhere to go."),
+        check("details", rep.get("title") and rep.get("greet"), f"{rep.get('title')}, greeting {rep.get('greet')}",
+              "No title or greeting in [report] yet."),
+        check("sender", commands or steps, f"Your command sends it: {commands[0].replace(str(Path.home()), '~')}" if commands else f"Your steps decide: {', '.join(steps)}",
+              "taska writes the mail (reports/<week>/mail.md); nothing in this project sends it.", None if commands or not steps else "check"),
+    ]
+    return {"set_up": all(c["state"] == "ok" for c in checks), "checks": checks, "project": cfg.name, "report": {k: rep.get(k) for k in SCH.REPORT_KEYS},
+            "project_path": str(cfg.project_dir), "folder": shown_path(cfg.project_dir), "toml": shown_path(cfg.project_dir / "taska.toml"),
+            "label_prefix": f"com.taska.{SCH._slug(cfg.name)}.", "last_run": last_run(cfg)}
+
+
 def schedules_view(cfg, register_opts=None):
     """What the Schedules panel shows: each schedule with its next run in this machine's time (when its OS job fires),
     one sentence on what it does, and what is registered with the OS."""
@@ -131,12 +179,14 @@ def schedules_view(cfg, register_opts=None):
         nxt = SCH.next_run(s, now)
         rows.append(dict(vars(s), days=list(s.days), next=nxt.isoformat() if nxt else None, label=SCH.label(cfg.name, s),
                          what=what(s, owner), runs=SCH.command_for(cfg, s), when=SCH.when_text(s),
-                         fires_local=[f"{SCH.DAY_ABBR[d - 1]} {hh:02d}:{mm:02d}" for d, hh, mm in SCH.local_slots(s)]))
+                         fires_local=[f"{SCH.DAY_ABBR[d - 1]} {hh:02d}:{mm:02d}" for d, hh, mm in SCH.local_slots(s)],
+                         never_mails=s.kind == "update", unused_to=list(s.to) if s.kind == "update" else [],
+                         absolute_command=bool(s.command and re.match(r"^(/|[A-Za-z]:\\)", s.command))))
     return {"schedules": rows, "registered": SCH.registered(cfg.name, opts.get("agents_dir")), "platform": SCH.sys.platform,
             "can_register": SCH.sys.platform in ("darwin", "win32"), "command": (cfg.run or {}).get("scheduled"),
             "timezone": now.tzname(), "local_zone": SCH.local_zone(), "owner": owner, "reports_dir": str(cfg.project_dir / "reports"), "runner": SCH.runner_lock(cfg),
             "os": SCH.reconcile(cfg, opts.get("agents_dir"), opts.get("state"), opts.get("schtasks")),
-            "os_scope": "launchd" if SCH.sys.platform == "darwin" else "managed only"}
+            "os_scope": "launchd" if SCH.sys.platform == "darwin" else "managed only", "report_status": report_status(cfg, owner)}
 
 
 def run_preview(cfg, name, today=None):
@@ -214,9 +264,12 @@ def run_now(cfg, name, register_opts=None):
     return {"started": True, "pid": pid, "week": week, "dir": str(cfg.project_dir / "reports" / week), "log": str(log)}
 
 
-def set_schedules(cfg, rows, register_opts=None, owner=None):
-    """Validate `rows` (and `owner`, when given), save them to taska.toml, register the jobs; ValueError before
-    anything is written."""
+def set_schedules(cfg, rows, register_opts=None, owner=None, report=None):
+    """Validate `rows` (and `owner` and the [report] details in `report`, when given), save them to taska.toml, register
+    the jobs; ValueError before anything is written."""
+    report = dict(report or {})
+    SCH.with_report("", report)   # refuses an unknown key or a bad value before anything is written
+    owner = report.pop("owner", owner)
     scheds = SCH.parse(rows)
     if SCH.sys.platform == "darwin" and scheds:
         for s in scheds:
@@ -229,10 +282,9 @@ def set_schedules(cfg, rows, register_opts=None, owner=None):
             raise ValueError(f"schedule {s.name}: the weekly report needs a To address (yours, for a review copy)")
         if s.kind == "preview" and not s.to and not has_owner:
             raise ValueError(f"schedule {s.name}: a preview needs a To address or the owner address ([report].owner)")
-    SCH.save(cfg.project_dir, scheds, owner)
+    SCH.save(cfg.project_dir, scheds, owner, report)
     cfg.schedules = scheds
-    if owner is not None:
-        cfg.report["owner"] = owner
+    cfg.report = dict(cfg.report or {}) | ({"owner": owner} if owner is not None else {}) | report
     return SCH.register(cfg, **_reg(register_opts))
 
 
@@ -308,7 +360,7 @@ def server(store, cfg, port, register_opts=None):
                 if self.path == "/api/schedules/run":
                     return self._send(200, run_now(cfg, body.get("name"), register_opts))
                 if self.path == "/api/schedules":
-                    reg = set_schedules(cfg, body.get("schedules") or [], register_opts, body.get("owner"))
+                    reg = set_schedules(cfg, body.get("schedules") or [], register_opts, body.get("owner"), body.get("report"))
                     return self._send(200, dict(schedules_view(cfg, register_opts), registered=reg))
                 e = L.human_event(store, body)
             except (ValueError, TypeError, AttributeError, KeyError) as x:  # json errors are ValueErrors

@@ -17,7 +17,16 @@ A dependency is explicit ("once we have…", "until…", "waiting for…", "befo
 dependency: a plain to-do, a wish with no work waiting on it, two unrelated things in sequence. Do not link a story
 to its own tasks (the tree already says that). Skip anything already in `waits_for` or `waiting_for`.
 
-`$TASKA` is the command the orchestrator gave you; one command per Bash call.
+<!-- TOOL-RULE:START -->
+**Tools.** `$TASKA` is the command you were given, used verbatim. In Bash run one `$TASKA <subcommand>` per call and
+nothing else: no pipes, redirects, `;`, `&&`, heredocs, `cd`, `python`, `grep`, `ls`, `cat` or `wc`. A refused call
+says what to use instead. Read an evidence `.md` with `limit` 120 lines at a time (`offset` for the next part); other
+files whole. Search with Grep and Glob; write files with Write. An output saved to a file: Read it, or re-run with the
+filter its `next` names: `$TASKA context --compact` to find nodes, then `$TASKA context --ids S001,T002` for the ones
+you touch (`--compact` leaves out what is already claimed, waiting or pinned); `$TASKA leftovers --evidence <id> --part 2`.
+Meeting sizes are in `$TASKA pending` (`words`). A quote never includes a line's `[ts] speaker:` prefix. Copy
+`--ack`/`--no-decisions` quotes verbatim from what you read.
+<!-- TOOL-RULE:END -->
 1. `$TASKA context` once.
 2. For each evidence id you were given: read its `.md`, write `<store>/proposals/<id>_deps.json`, run
    `$TASKA apply --evidence <id> --proposals <that file>`, fix rejections in `<id>_deps_fix.json`.

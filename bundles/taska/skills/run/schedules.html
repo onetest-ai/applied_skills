@@ -28,7 +28,17 @@ main#left{max-width:980px;margin:0 auto;padding:16px}
 #sch-dialog{border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);color:var(--ink);max-width:640px;width:calc(100% - 32px);padding:16px 18px}
 #sch-dialog::backdrop{background:rgba(0,0,0,.35)}#sch-dialog h3{margin:0 0 10px;font-size:16px}
 #sch-dialog .pv{width:100%;border-collapse:collapse;font-size:13px}#sch-dialog .pv th{text-align:left;color:var(--ink-3);font-weight:500;padding:5px 12px 5px 0;vertical-align:top;white-space:nowrap}#sch-dialog .pv td{padding:5px 0}
-@media (max-width:700px){#schedules .row{grid-template-columns:1fr}}
+#schedules .rs{border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);padding:12px 16px;margin:0 0 12px}
+#schedules .rs h2{font-size:15px;margin:0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#schedules .chk{display:grid;grid-template-columns:20px 170px 1fr auto;gap:4px 10px;align-items:start;padding:7px 0;border-top:1px solid var(--line);font-size:13px}
+#schedules .chk:first-of-type{border-top:0}#schedules .chk .ic{font-weight:700;text-align:center}#schedules .chk .ok{color:var(--done)}#schedules .chk .missing{color:var(--risk)}#schedules .chk .check{color:var(--warn)}
+#schedules .note{background:var(--surface-2);border-left:3px solid var(--line-strong);border-radius:var(--r-sm);padding:6px 10px;font-size:13px;color:var(--ink-2)}#schedules .note.warn{border-left-color:var(--warn)}
+#schedules .last{background:var(--done-soft);border-radius:var(--r-sm);padding:8px 12px;margin:0 0 12px;font-size:13px}#schedules .last.bad{background:var(--risk-soft)}
+#schedules .steps{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}#schedules .steps span{font-size:12px;border-radius:4px;padding:1px 7px;background:var(--surface)}
+#schedules .setup input[type=text]{height:30px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--bg);padding:0 8px;min-width:200px}
+#schedules .setup pre{background:var(--bg);border:1px solid var(--line);border-radius:var(--r-sm);padding:8px 10px;font-family:var(--mono);font-size:12px;overflow-x:auto;margin:6px 0}
+#schedules .setup ol{margin:4px 0 8px 18px;padding:0;font-size:13px}#schedules .setup li{margin:5px 0}
+@media (max-width:700px){#schedules .row{grid-template-columns:1fr}#schedules .chk{grid-template-columns:20px 1fr}#schedules .chk>*:nth-child(n+3){grid-column:2}}
 </style>
 </head>
 <body>
@@ -43,7 +53,7 @@ const LIVE = true;
 const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], INC = {body:"mail body", docx:"the docx", link:"link to the folder", pptx:"slides (pptx)", workbench:"workbench copy"};
 const STATE = {active:["done","active"], not_registered:["warn","not registered"], not_loaded:["warn","not loaded"], off:["off","off"],
                stale:["risk","left behind"], foreign:["risk","outside taska.toml"], unreadable:["risk","unreadable job file"], outdated:["warn","old local time"]};
-let SCH = null, schErr = "", schEdit = new Set(), schDirty = false;
+let SCH = null, schErr = "", schEdit = new Set(), schDirty = false, schSetup = false, runWatch = null;
 async function loadSchedules(){ const r = await fetch("/api/schedules",{cache:"no-store"}); SCH = await r.json(); schEdit = new Set(); schDirty = false; }
 function dayWords(days){
   const d = [...new Set(days||[])].sort();
@@ -81,6 +91,8 @@ function schCard(s, i){
   return `<div class="card" data-i="${i}">
     <div class="head">${badge(state)}<b>${esc(s.name || "(unnamed)")}</b><span class="mono">${esc(s.when || "")}</span></div>
     <div class="what">${esc(s.what || "")}</div>
+    ${s.never_mails ? `<div class="note">Never mails: update jobs don’t send${(s.unused_to||[]).length ? ` (its To, ${esc(s.unused_to.join(", "))}, is kept but unused)` : ""}.${s.command ? ` Runs its own command <span class="mono">${esc(s.command)}</span>.` : ""}</div>` : ""}
+    ${s.absolute_command ? `<div class="note warn">This command names a full path, so it breaks on another computer: write it from <span class="mono">~</span> before a handover.</div>` : ""}
     <div class="when">${s.next ? `next <b class="mono">${esc(nextWords(s.next))}</b>` : (s.on === false ? "runs only when you press Run now" : "")}${elsewhere}${exit}${why ? ` · <span class="warn-text">${why}</span>` : ""}</div>
     <div class="foot"><button class="btn" data-run="${i}" ${s.name ? "" : "disabled"}>Run now…</button><span style="margin-left:auto;display:inline-flex;gap:6px"><button class="btn" data-edit="${i}">Edit</button><button class="btn" data-del="${i}">Delete…</button></span></div>
   </div>`;
@@ -179,6 +191,73 @@ async function confirmRun(s){
   dlg.showModal();
   return new Promise(res => { dlg.onclose = () => res(dlg.returnValue === "ok"); });
 }
+const ICON = {ok: "✓", missing: "✗", check: "?"};
+const ACTION = {report_schedule: ["Set up a weekly report…", "setup"], owner: ["Set owner", "owner"], details: ["Fill in", "setup"]};
+function reportPanel(){
+  const rs = SCH.report_status; if (!rs) return "";
+  const todo = rs.checks.filter(c => c.state !== "ok").length;
+  return `<div class="rs" id="sch-report"><h2>Weekly report: ${rs.set_up ? "set up" : "not set up"} <span class="tag ${rs.set_up ? "done" : "risk"}">${rs.set_up ? "ready" : todo + " to do"}</span></h2>
+    ${rs.set_up ? "" : `<div class="muted" style="font-size:13px;margin:4px 0 6px">Nothing is mailed for this project until every line is ticked.</div>`}
+    ${rs.checks.map(c => `<div class="chk"><span class="ic ${c.state}">${ICON[c.state]}</span><b>${{report_schedule:"A report schedule", owner:"You as owner", details:"Report details", sender:"A step that sends mail"}[c.id]}</b><span class="muted">${esc(c.text)}</span>${c.state !== "ok" && ACTION[c.id] ? `<button class="btn ${c.id === "report_schedule" ? "primary" : ""}" data-act="${ACTION[c.id][1]}">${ACTION[c.id][0]}</button>` : "<span></span>"}</div>`).join("")}</div>`;
+}
+function lastRunBox(){
+  const l = (SCH.report_status || {}).last_run; if (!l) return "";
+  const ok = l.steps.every(x => x.ok), mail = (SCH.report_status.checks.find(c => c.id === "report_schedule") || {}).state === "ok";
+  return `<div class="last ${ok ? "" : "bad"}"><b>Last run</b> <span class="muted">week of ${esc(l.week)} · ${esc((l.started||"").replace("T"," "))} → ${esc((l.finished||"still running").replace("T"," "))}</span>
+    <div class="steps">${l.steps.map(x => `<span title="${esc(x.detail)}">${x.ok ? "✓" : "✗"} ${esc(x.id)}: ${esc(x.detail.slice(0, 50))}</span>`).join("")}</div>
+    ${mail ? "" : `<div class="muted" style="margin-top:4px">Mail: none (no report schedule).</div>`}</div>`;
+}
+const uniqueName = base => { let n = base, k = 2; while (SCH.schedules.some(s => s.name === n)) n = `${base} ${k++}`; return n; };
+function setupPanel(){
+  const rs = SCH.report_status, rep = rs.report || {}, owner = rep.owner || SCH.owner || "", zone = SCH.local_zone || "UTC";
+  const name = uniqueName("Weekly review");
+  return `<div class="rs setup" id="sch-setup"><h2>Set up a weekly report <span class="tag warn">nothing is written until you press Save and register</span></h2>
+    <div class="chk"><span class="ic">1</span><b>Your address</b><span><input type="text" id="su-owner" inputmode="email" value="${esc(owner)}" placeholder="needed before any report"><br><span class="muted">Review copies, held notices and cc of every send ([report].owner).</span></span><span></span></div>
+    <div class="chk"><span class="ic">2</span><b>When</b><span><label><input type="radio" name="su-when" value="mon" checked> Monday 14:00, last week’s report</label><br><label><input type="radio" name="su-when" value="fri"> Friday 20:00, this week so far</label><br><span class="muted">Time zone ${esc(zone)}, read from this computer.</span></span><span></span></div>
+    <div class="chk"><span class="ic">3</span><b>What’s in it</b><span>The week’s summary in the mail and the read-only workbench file. <span class="muted">A Word report needs a template first ([report].docx_glob).</span></span><span></span></div>
+    <div class="chk"><span class="ic">4</span><b>Report details</b><span>Title <input type="text" id="su-title" value="${esc(rep.title || rs.project || "")}"> Client label <input type="text" id="su-client" value="${esc(rep.client_label || rs.project || "")}"> Greeting <input type="text" id="su-greet" value="${esc(rep.greet || firstName(owner))}" ${rep.greet ? 'data-typed="1"' : ""}></span><span></span></div>
+    <div class="chk"><span class="ic">·</span><b>A reader</b><span class="muted">Not now. After you have received your review copies, add a schedule to the reader: it sends your review copy unchanged, or holds it if the tree changed since.</span><span></span></div>
+    <h3 style="font-size:14px;margin:12px 0 4px">What Save and register will do</h3>
+    <ol><li>Write to <span class="mono" title="${esc(rs.project_path)}">${esc(rs.toml)}</span> (the previous file is kept as taska.toml.bak; nothing else in it changes):<pre id="su-toml"></pre></li>
+      <li>Register the job <span class="mono" id="su-label"></span> with this computer’s scheduler (${esc(rs.label_prefix)}&lt;schedule&gt;).${SCH.schedules.length ? ` ${SCH.schedules.map(s => `“${esc(s.name)}”`).join(", ")} stay as they are.` : ""}</li>
+      ${(rs.checks.find(c => c.id === "sender") || {}).state === "ok" ? "" : `<li class="warn-text"><b>Still missing afterwards: a step that sends mail.</b> Until one exists, each run writes the mail to reports/&lt;week&gt;/mail.md and this page says it was written, not sent.</li>`}</ol>
+    <details><summary class="muted">Prefer the terminal?</summary><pre>taska --project ${esc(rs.folder)} schedules --set schedules.json   # a JSON list of every schedule
+taska --project ${esc(rs.folder)} schedules --preview "${esc(name)}"   # what the next run does and who gets it</pre><span class="muted">The report details are saved from this page.</span></details>
+    <div class="bar"><button class="btn" id="su-cancel">Cancel</button><button class="btn primary" id="su-save" data-name="${esc(name)}">Save and register</button></div></div>`;
+}
+function setupValues(){
+  const owner = $("#su-owner").value.trim(), fri = document.querySelector('input[name="su-when"]:checked').value === "fri", zone = SCH.local_zone || "UTC";
+  const name = $("#su-save").dataset.name;
+  const row = {name, kind: fri ? "preview" : "send", when: `${fri ? "Fri 20:00" : "Mon 14:00"} ${zone}`, to: [owner], cc: [],
+               include: {body: true, docx: false, link: true, pptx: false, workbench: true}, on: true, command: ""};
+  const report = {owner, title: $("#su-title").value.trim(), client_label: $("#su-client").value.trim(), greet: $("#su-greet").value.trim()};
+  Object.keys(report).forEach(k => { if (!report[k]) delete report[k]; });
+  return {row, report};
+}
+const firstName = addr => (addr.split("@")[0].split(/[._]/)[0] || "").replace(/^./, c => c.toUpperCase());
+function setupPreview(e){
+  const g = $("#su-greet");
+  if (e && e.target === g) g.dataset.typed = "1";
+  if (!g.dataset.typed) g.value = firstName($("#su-owner").value.trim());   // the greeting follows the address until you type one
+  const {row, report} = setupValues(), q = v => JSON.stringify(v);
+  $("#su-toml").textContent = `[report]\n${Object.entries(report).map(([k, v]) => `${k} = ${q(v)}`).join("\n")}\n\n[[schedules]]\nname = ${q(row.name)}\nkind = ${q(row.kind)}\nwhen = ${q(row.when)}\nto = [${row.to.map(q).join(", ")}]\ninclude = {body = true, docx = false, link = true, workbench = true}\non = true`;
+  $("#su-label").textContent = SCH.report_status.label_prefix + row.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+function watchRun(name, since){
+  clearInterval(runWatch);
+  const t0 = Date.now();
+  runWatch = setInterval(async () => {
+    if (Date.now() - t0 > 30 * 60 * 1000) return clearInterval(runWatch);
+    await loadSchedules();
+    const l = SCH.report_status && SCH.report_status.last_run;
+    if (l && l.finished && new Date(l.finished) >= since){
+      clearInterval(runWatch);
+      const bad = l.steps.filter(x => !x.ok).map(x => x.id);
+      toast(`${name} finished: ${bad.length ? "failed at " + bad.join(", ") : "every step ok"}${(SCH.report_status.checks.find(c => c.id === "sender") || {}).state === "ok" ? "" : "; mail written, not sent"}`);
+      renderSchedules();
+    }
+  }, 5000);
+}
 async function renderSchedules(){
   if (!LIVE){ $("#left").innerHTML = `<div class="blank"><b>Schedules</b>Edited on the live workbench only.</div>`; return; }
   if (!SCH) await loadSchedules();
@@ -188,6 +267,7 @@ async function renderSchedules(){
   $("#left").innerHTML = `<div id="schedules"><div class="muted" style="font-size:13px;margin:2px 0 8px">${note}</div>
     <div class="owner"><label for="sch-owner">You (previews, review copies, held notices, and cc of every report)</label><input id="sch-owner" type="email" data-f="owner" inputmode="email" autocomplete="off" placeholder="owner@example.com" value="${esc(SCH.owner||"")}"><span class="muted">saved with Save (<span class="mono">[report].owner</span>)</span></div>
     ${schErr?`<div class="err" role="alert">${schErr}</div>`:""}
+    ${reportPanel()}${schSetup ? setupPanel() : ""}${lastRunBox()}
     ${extra.length ? `<div class="err" role="status">${extra.length} job${extra.length>1?"s":""} on this Mac run${extra.length>1?"":"s"} this project outside the list below.</div>${extra.map(unownedCard).join("")}` : ""}
     ${SCH.schedules.map((s,i) => schEdit.has(i) ? schForm(s,i) : schCard(s,i)).join("") || `<div class="blank"><b>No schedules yet</b>Add one, or copy a job listed above into a schedule.</div>`}
     <div class="bar"><button class="btn" id="sch-add">Add schedule</button><button class="btn primary" id="sch-save">Save</button>${schDirty?`<span class="muted">Unsaved changes</span>`:""}</div></div>
@@ -195,6 +275,27 @@ async function renderSchedules(){
       <div class="bar"><button class="btn" value="cancel">Cancel</button><button class="btn primary" value="ok" data-ok>Run now</button></div></form></dialog>`;
   const mark = () => { schDirty = true; };
   $("#sch-owner").oninput = mark;
+  document.querySelectorAll("#schedules [data-act]").forEach(b => b.onclick = () => {
+    if (b.dataset.act === "owner"){ $("#sch-owner").focus(); return; }
+    schSetup = true; renderSchedules(); $("#sch-setup").scrollIntoView({block: "start"});
+  });
+  if (schSetup){
+    setupPreview();
+    document.querySelectorAll("#sch-setup input").forEach(x => x.oninput = x.onchange = setupPreview);
+    $("#su-cancel").onclick = () => { schSetup = false; renderSchedules(); };
+    $("#su-save").onclick = async () => {
+      if (schDirty){ schErr = "Save the schedules below first: the set-up adds to what is saved."; return renderSchedules(); }
+      const {row, report} = setupValues();
+      const rows = schRead().concat([row]), problems = schProblems(rows, report.owner);
+      if (!report.owner) problems.unshift("your address is needed");
+      if (problems.length){ schErr = "Not saved: " + problems.map(esc).join("; "); return renderSchedules(); }
+      const [ok, j] = await schPost("/api/schedules", {schedules: rows, report}, $("#su-save"), "Saving…");
+      if (!ok){ schErr = esc(j.error || "Could not save"); return renderSchedules(); }
+      schErr = ""; schSetup = false; await loadSchedules();
+      toast(`Saved ${row.name} and registered ${(j.registered || []).filter(x => x.action === "loaded").length} job(s)`);
+      renderSchedules();
+    };
+  }
   $("#sch-add").onclick = () => { schRead(); SCH.schedules.push({name:"", kind:"send", days:[1], time:"09:00", tz:SCH.local_zone||"UTC", to:[], cc:[], include:{}, on:true, command:""}); schEdit.add(SCH.schedules.length-1); schErr = ""; mark(); renderSchedules(); };
   document.querySelectorAll("#schedules [data-edit]").forEach(b => b.onclick = () => { schRead(); schEdit.add(+b.dataset.edit); renderSchedules(); });
   document.querySelectorAll("#schedules [data-done]").forEach(b => b.onclick = () => { schRead(); schEdit.delete(+b.dataset.done); mark(); renderSchedules(); });
@@ -228,6 +329,7 @@ async function renderSchedules(){
     const [ok, j] = await schPost("/api/schedules/run", {name: s.name}, btn, "Starting…");
     if (!ok){ schErr = esc(j.error || "Could not start"); return renderSchedules(); }
     toast(`Started: ${s.name} for the week of ${j.week}; its files land in ${j.dir}`);
+    watchRun(s.name, new Date(Date.now() - 5000));
   };
   document.querySelectorAll("#schedules [data-run]").forEach(b => b.onclick = () => start(+b.dataset.run, b));
   $("#sch-save").onclick = async () => {

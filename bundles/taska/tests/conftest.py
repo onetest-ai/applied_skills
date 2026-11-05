@@ -1,9 +1,11 @@
 """Fixtures for the taska bundle. Tests live at the bundle root (Agent Skills: a skill ships only SKILL.md and its
 runtime resources). Every name below is invented."""
 import json
+import os
 import subprocess
 import sys
 import textwrap
+import uuid
 from pathlib import Path
 
 import pytest
@@ -13,6 +15,38 @@ TASKA_ROOT = Path(__file__).resolve().parents[1]
 RUN_DIR = TASKA_ROOT / "skills" / "run"
 if str(RUN_DIR) not in sys.path:
     sys.path.insert(0, str(RUN_DIR))
+
+MODEL_TRAP = "TASKA_MODEL_TRAP_LOG"
+MODEL_EXECUTABLES = ("claude", "codemie-claude")
+
+
+@pytest.fixture(scope="session")
+def _model_trap_bin(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Stand-ins for every program `taska ai` reaches a model through: each says so, logs the call and exits 99."""
+    bin_ = tmp_path_factory.mktemp("model-trap")
+    for name in MODEL_EXECUTABLES:
+        exe = bin_ / name
+        exe.write_text(f'#!/bin/sh\necho "{name} $*" >> "${{{MODEL_TRAP}:-/dev/null}}"\n'
+                       'echo "a test reached a real model" >&2\nexit 99\n')
+        exe.chmod(0o755)
+    return bin_
+
+
+@pytest.fixture(autouse=True)
+def _no_real_model(_model_trap_bin: Path, monkeypatch: pytest.MonkeyPatch):
+    """No test reaches Claude: the trap's programs come first on PATH (subprocesses inherit it), Bedrock and a
+    TASKA_AI launcher are off, and a test whose code reached the trap fails at teardown, naming the call."""
+    log = _model_trap_bin / f"reached-{uuid.uuid4().hex}.log"
+    monkeypatch.setenv("PATH", f"{_model_trap_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv(MODEL_TRAP, str(log))
+    monkeypatch.delenv("TASKA_ALLOW_BEDROCK", raising=False)
+    monkeypatch.delenv("TASKA_AI", raising=False)
+    yield
+    if log.exists():
+        calls = log.read_text(encoding="utf-8").strip()
+        log.unlink()
+        pytest.fail(f"a test reached a real model (stub the ai command): {calls}")
+
 
 VTT_DAY1 = """WEBVTT
 

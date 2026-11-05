@@ -130,11 +130,14 @@ def resolve_due(text, ref_date, working_days=(1, 2, 3, 4, 5)):
 
     Handles ISO dates, "Oct 14"/"14th of October", today/eod, tomorrow (next working day), "the 12th"
     (this month if still ahead, else next), "middle of next week" (that week's Wednesday), end of week,
-    "next week" (its Friday) and weekday names with or without "next".
+    "next week" (its Friday) and weekday names with or without "next". "before <day>" is None: no approved convention
+    says which day that is.
     """
     if not text:
         return None
     t = text.lower().strip()
+    if re.search(r"\bbefore\b", t):   # "before Monday": which day is not approved (DUE-RELATIVE); the words stay in due_text
+        return None
     d = dt.date.fromisoformat(ref_date)
     m = re.search(r"(\d{4}-\d{2}-\d{2})", t)
     if m:

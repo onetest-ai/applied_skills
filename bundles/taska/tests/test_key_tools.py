@@ -59,3 +59,14 @@ def test_label_page_asks_work_then_new_and_carries_a_stamp():
 def test_stale_page_refuses_to_save():
     page = K.label_page([], stamp="abc123")
     assert "items.json" in page and "STAMP" in page and "older page" in page
+
+
+def test_an_earlier_answer_is_shown_and_pre_selected_and_a_hint_is_shown():
+    page = K.label_page([{"cid": "a", "meeting": "Daily sync", "date": "2026-03-02", "quote": "q", "speaker": "Nora",
+                          "ts": "00:01:00", "prior": {"kind": "not_work", "by": "you, 2026-10-25 (adjudication page)"},
+                          "hint": "judge: committed; recheck: not work (scheduling)"},
+                         {"cid": "b", "meeting": "Daily sync", "date": "2026-03-02", "quote": "q2"}], stamp="s")
+    assert "You answered: Not work (you, 2026-10-25 (adjudication page))" in page
+    assert "<input type=radio name='w-a' value=not_work checked>" in page
+    assert page.count(" checked>") == 1
+    assert "Earlier readers: judge: committed; recheck: not work (scheduling)" in page

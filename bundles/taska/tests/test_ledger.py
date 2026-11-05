@@ -399,7 +399,158 @@ def test_re_applying_a_second_read_batch_adds_nothing_and_refuses_nothing(ledger
     L.mark_processed(st, d1, decisions_pending=True)
     batch = [{"op": "create", "kind": "risk", "parent": "E01", "title": "Passwords are shared", "quote": Q_RESET},
              {"op": "propose", "kind": "decision", "parent": "E01", "title": "Credentials go out by email",
-              "quote": Q_RESET}]
+              "quote": Q_WAIT}]
     assert _apply(st, cfg, d1, batch)["rejected"] == []
     again = _apply(st, cfg, d1, batch)
     assert again["rejected"] == [] and again["events"] == 0
+
+
+@pytest.mark.parametrize("at", [0, 0.5, 1])
+def test_a_packet_shows_a_window_of_one_long_turn(at):
+    filler = "we talked about the schedule and the slides for a while. " * 360          # ~20,000 characters
+    quote = "Dana will send the revised budget by Friday."
+    cut = int(len(filler) * at)
+    text = filler[:cut] + quote + " " + filler[cut:]
+    ctx = L._packet_context({"turns": [{"ts": "00:01", "speaker": "Dana", "text": text}], "text": text},
+                            quote, L.norm(quote))
+    assert sum(map(len, ctx)) < 2000 and quote in "".join(ctx) and ctx[0].startswith("[00:01] Dana: ")
+
+
+def test_a_packet_keeps_short_neighbouring_turns_whole():
+    turns = [{"ts": f"00:0{i}", "speaker": "Ravi", "text": f"short turn {i}."} for i in range(5)]
+    turns[2]["text"] = "We will ship the readout on Monday."
+    ctx = L._packet_context({"turns": turns}, turns[2]["text"], L.norm(turns[2]["text"]))
+    assert ctx == [f"[{t['ts']}] Ravi: {t['text']}" for t in turns]
+
+
+def test_a_packet_finds_a_quote_that_runs_on_into_the_next_turn():
+    long = "we went through the numbers once more. " * 150 + "Dana will send the revised budget to the board"
+    turns = [{"ts": "00:01", "speaker": "Dana", "text": long}, {"ts": "00:02", "speaker": "Dana", "text": "by Friday."}]
+    quote = "Dana will send the revised budget to the board by Friday"
+    ctx = L._packet_context({"turns": turns}, quote, L.norm(quote))
+    assert "Dana will send the revised budget to the board" in ctx[0]
+
+
+def test_a_packet_falls_back_to_the_transcript_when_no_turn_holds_the_quote():
+    turns = [{"ts": "00:01", "speaker": "Dana", "text": "We will ship the"}, {"ts": "00:02", "speaker": "Ravi", "text": "Mm.", "bc": True},
+             {"ts": "00:03", "speaker": "Dana", "text": "readout on Monday."}]
+    quote = "We will ship the readout on Monday"
+    ctx = L._packet_context({"turns": turns}, quote, L.norm(quote))
+    assert len(ctx) == 1 and "We will ship the" in ctx[0]
+
+
+def test_a_cut_neighbour_turn_says_it_was_cut():
+    turns = [{"ts": "00:01", "speaker": "Ravi", "text": "x " * 400}, {"ts": "00:02", "speaker": "Dana", "text": "We ship Monday."}]
+    ctx = L._packet_context({"turns": turns}, "We ship Monday.", L.norm("We ship Monday."))
+    assert ctx[0].endswith("…") and len(ctx[0]) < 330
+
+
+# ---------- one quote, one waiting card (a commitment recorded as two cards with different titles) ----------
+
+def _mk_story(st, cfg, d1):
+    _apply(st, cfg, d1, [{"op": "create", "kind": "story", "parent": "E01", "title": "Stock reporting live",
+                          "ac": ["First stock report pulled"], "quote": Q_WAIT}])
+
+
+def _card(title, quote=Q_RESET):
+    return {"op": "propose", "kind": "task", "type": "action", "parent": "S001", "title": title, "quote": quote}
+
+
+def _cards(st):
+    return [e for e in S.events(st) if e.get("op") == "propose"]
+
+
+def test_two_proposes_with_one_quote_and_one_meaning_make_one_card(ledger):
+    _, cfg, st, (d1, _d2) = ledger
+    _mk_story(st, cfg, d1)
+    r = _apply(st, cfg, d1, [_card("Send new credentials by email"), _card("Send the new credentials to everyone")])
+    first = _cards(st)[0]["mid"]
+    assert len(_cards(st)) == 1 and r["events"] == 1
+    assert r["rejected"] == [{"i": 1, "why": "duplicate_card", "card": first, "title": "Send the new credentials to everyone"}]
+
+
+def test_a_second_apply_with_the_same_quote_and_meaning_is_a_duplicate_card(ledger):
+    _, cfg, st, (d1, _d2) = ledger
+    _mk_story(st, cfg, d1)
+    _apply(st, cfg, d1, [_card("Send new credentials by email")])
+    r = _apply(st, cfg, d1, [_card("Email the new credentials")])
+    assert r["events"] == 0 and r["rejected"][0]["why"] == "duplicate_card"
+    assert r["rejected"][0]["card"] == _cards(st)[0]["mid"]
+
+
+def test_one_quote_with_another_title_is_a_conflict_naming_the_card_not_a_silent_drop(ledger):
+    _, cfg, st, (d1, _d2) = ledger
+    _mk_story(st, cfg, d1)
+    r = _apply(st, cfg, d1, [_card("Send new credentials by email"), _card("Reset the stock system passwords")])
+    first = _cards(st)[0]
+    assert len(_cards(st)) == 1
+    assert r["rejected"] == [{"i": 1, "why": "same_quote_card", "card": first["mid"],
+                              "card_title": "Send new credentials by email", "title": "Reset the stock system passwords"}]
+
+
+def test_a_different_action_in_the_same_sentence_is_kept_when_it_names_the_card_it_differs_from(ledger):
+    _, cfg, st, (d1, _d2) = ledger
+    _mk_story(st, cfg, d1)
+    _apply(st, cfg, d1, [_card("Send new credentials by email")])
+    first = _cards(st)[0]["mid"]
+    r = _apply(st, cfg, d1, [_card("Reset the stock system passwords") | {"distinct_from": first}])
+    assert r["rejected"] == [] and len(_cards(st)) == 2
+    r = _apply(st, cfg, d1, [_card("Tell Opal the reset is done") | {"distinct_from": first}])
+    assert r["rejected"][0]["why"] == "same_quote_card" and len(_cards(st)) == 2
+
+
+def test_an_undone_card_does_not_block_its_quote(ledger):
+    _, cfg, st, (d1, _d2) = ledger
+    _mk_story(st, cfg, d1)
+    _apply(st, cfg, d1, [_card("Send new credentials by email")])
+    L.human_event(st, {"op": "undo", "target": _cards(st)[0]["mid"]})
+    r = _apply(st, cfg, d1, [_card("Reset the stock system passwords")])
+    assert r["rejected"] == [] and r["events"] == 1
+
+
+def test_a_task_made_from_a_waiting_cards_quote_promotes_the_card_and_undo_restores_it(ledger):
+    _, cfg, st, (d1, _d2) = ledger
+    _mk_story(st, cfg, d1)
+    _apply(st, cfg, d1, [_card("Send new credentials by email")])
+    r = _apply(st, cfg, d1, [{"op": "create", "kind": "task", "type": "action", "parent": "S001",
+                              "title": "Send new credentials by email", "internal_owner": "Opal", "quote": Q_RESET}])
+    assert r["events"] == 1, r
+    N, *_ = L.fold(st)
+    task = next(n for n in N.values() if n["kind"] == "task")
+    card = next(s for s in N["S001"]["suggestions"] if s["op"] == "propose")
+    assert card["status"] == "promoted" and card["promoted_to"] == task["id"]
+    create = next(e for e in S.events(st) if e["type"] == "create" and e["id"] == task["id"])
+    L.human_event(st, {"op": "undo", "target": create["mid"]})
+    N, *_ = L.fold(st)
+    card = next(s for s in N["S001"]["suggestions"] if s["op"] == "propose")
+    assert card["status"] == "pending" and "promoted_to" not in card
+
+
+def test_a_team_commitment_with_no_readable_doer_is_a_task_without_an_owner(ledger):
+    _, cfg, st, (d1, _d2) = ledger
+    _mk_story(st, cfg, d1)
+    task = {"op": "create", "kind": "task", "type": "action", "parent": "S001", "title": "Reset the passwords",
+            "quote": Q_RESET}
+    assert "admission bar" in _apply(st, cfg, d1, [task])["rejected"][0]["why"]
+    r = _apply(st, cfg, d1, [task | {"committed": True}])
+    assert r["events"] == 1, r
+    N, *_ = L.fold(st)
+    n = next(n for n in N.values() if n["kind"] == "task")
+    assert n["internal_owner"] is None and n["committed"] is True
+
+
+def test_a_different_quote_still_makes_a_second_card(ledger):
+    _, cfg, st, (d1, _d2) = ledger
+    _mk_story(st, cfg, d1)
+    r = _apply(st, cfg, d1, [_card("Send new credentials by email"), _card("Wait for Opal's reset", Q_WAIT)])
+    assert r["rejected"] == [] and len(_cards(st)) == 2
+
+
+@pytest.mark.parametrize("verdict", ["reject", "accept"])
+def test_the_same_quote_may_be_proposed_again_once_the_card_is_decided(ledger, verdict):
+    _, cfg, st, (d1, _d2) = ledger
+    _mk_story(st, cfg, d1)
+    _apply(st, cfg, d1, [_card("Send new credentials by email")])
+    L.human_event(st, {"op": verdict, "target": _cards(st)[0]["mid"]})
+    r = _apply(st, cfg, d1, [_card("Mail the logins to the team")])
+    assert r["rejected"] == [] and r["events"] == 1
