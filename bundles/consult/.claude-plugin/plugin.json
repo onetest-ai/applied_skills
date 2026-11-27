@@ -1,0 +1,8 @@
+{
+  "name": "consult",
+  "description": "Guided consulting research from onboarding to a reviewed deck: hypotheses, coached comparison research, customer-test synthesis, contact-data findings, rule-gated decks.",
+  "version": "0.1.0",
+  "author": { "name": "onetest-ai" },
+  "homepage": "https://github.com/onetest-ai/applied_skills",
+  "keywords": ["consulting", "research", "hypotheses", "decks", "lessons"]
+}

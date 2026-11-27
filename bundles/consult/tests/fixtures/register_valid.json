@@ -1,0 +1,34 @@
+[
+ {
+  "id": "PLAIN-WORDS",
+  "version": 1,
+  "status": "approved",
+  "approved_on": "2026-11-20",
+  "area": "language",
+  "scope": "personal-style",
+  "rule": "Write plain sentences with digits and no labelled lists.",
+  "why": "The reader skims and a label list hides the claim.",
+  "sources": [
+   {"session": "s-1", "uuid": "u-1", "timestamp": "2026-11-01T10:00:00Z"}
+  ],
+  "enforced_by": [],
+  "see_also": null
+ },
+ {
+  "id": "ONE-BASE",
+  "version": 2,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "evidence",
+  "scope": "epam-practice",
+  "rule": "State the base next to every percentage.",
+  "why": "A percentage without a base cannot be checked.",
+  "sources": [
+   {"session": "s-2", "uuid": null, "timestamp": "2026-11-02T09:00:00Z"}
+  ],
+  "enforced_by": [
+   {"kind": "check", "ref": "skills/missing/check.py", "test": "tests/test_missing.py"}
+  ],
+  "see_also": null
+ }
+]

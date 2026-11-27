@@ -1,0 +1,9 @@
+{
+  "id": "consult",
+  "title": "Consult — guided consulting research to a reviewed deck",
+  "description": "Guided consulting research from onboarding to a reviewed deck: hypotheses, coached comparison research, customer-test synthesis, contact-data findings, rule-gated decks.",
+  "kind": "skills-bundle",
+  "targets": ["claude"],
+  "entrypoint": "lessons",
+  "skills": ["lessons"]
+}

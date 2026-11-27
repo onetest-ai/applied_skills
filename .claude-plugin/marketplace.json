@@ -5,8 +5,8 @@
     "url": "https://github.com/onetest-ai"
   },
   "metadata": {
-    "description": "Applied AI marketplace: the Brain knowledge engine, the kb knowledge-worker plugin, Scribe living documents, and Taska work tracking from meetings.",
-    "version": "0.14.0"
+    "description": "Applied AI marketplace: the Brain knowledge engine, the kb knowledge-worker plugin, Scribe living documents, Taska work tracking from meetings, and the consult research and deck factory.",
+    "version": "0.15.0"
   },
   "plugins": [
     {
@@ -32,6 +32,12 @@
       "source": "./bundles/taska",
       "description": "A manager's Epic > Story > Task tree kept current from meetings, calendar and files: cited evidence, dependencies, staleness and asks.",
       "version": "0.6.0"
+    },
+    {
+      "name": "consult",
+      "source": "./bundles/consult",
+      "description": "Guided consulting research from onboarding to a reviewed deck: hypotheses, coached research, customer-test synthesis, rule-gated decks.",
+      "version": "0.1.0"
     }
   ]
 }

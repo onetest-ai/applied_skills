@@ -4,15 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is
 
-A **marketplace of four Claude Code plugins**, not an application. The product is the skills themselves — `SKILL.md` files plus the deterministic scripts they drive — and they ship to other people's projects.
+A **marketplace of five Claude Code plugins**, not an application. The product is the skills themselves — `SKILL.md` files plus the deterministic scripts they drive — and they ship to other people's projects.
 
 - **`bundles/brain`** — builds, maintains and deploys a *Brain*: one portable `knowledge.sqlite` over a mixed corpus. Heavy, interactive, Claude Code only (needs local scripts, a venv, source credentials).
 - **`bundles/kb`** — the librarian that queries an existing Brain over MCP. Works in Claude Code **and** Claude Cowork.
 - **`bundles/scribe`** — the author: scheduled, versioned, claim-level-cited living documents (docx/pdf) drafted from a Brain plus a synced raw-evidence folder. Claude Code only, unattended-capable (cron/launchd hand-off into `/scribe:run --due`). Imports `parse_corpus`/`chunking`/`semantic_core` straight from `bundles/brain`/`mcp/brain`, so its own `requirements.txt` is a self-contained superset of brain's (never a relative import across bundles).
 - **`bundles/taska`** — a manager's Epic → Story → Task tree kept current from meetings (transcripts, video and audio recordings), calendar and files. Stdlib-only Python (no venv); evidence-cited, verifier-gated, human edits pinned. Talks to Microsoft 365 only through the user's `msgraph` skill CLI, never with its own credentials. Independent of the Brain.
+- **`bundles/consult`** — guided consulting research from onboarding to a reviewed deck, starting with the `lessons` skill that keeps a client-free register of the rules the consultant taught. Stdlib-only Python (no venv); independent of the Brain.
 - **`mcp/brain`** — the FastMCP server that exposes a built `knowledge.sqlite` as governed read-only tools. This is what `kb` and `scribe` talk to.
 
-`.claude-plugin/marketplace.json` lists all four plugins; each bundle has its own `.claude-plugin/plugin.json`.
+`.claude-plugin/marketplace.json` lists all five plugins; each bundle has its own `.claude-plugin/plugin.json`.
 
 **The rule everything obeys:** *meaning is agentic, numbers are computed.* RAG and the taxonomy graph explain what things mean; deterministic marts compute every figure. Every answer is cited or an honest "not modeled". Gaps beat fabrication — this is why so much of the code below refuses rather than guesses.
 
@@ -27,6 +28,7 @@ uv run --with pytest --with python-docx --with python-pptx --with pymupdf python
 uv run --with-requirements bundles/scribe/requirements.txt --with pytest python -m pytest bundles/scribe/tests
 uv run --with-requirements bundles/brain/requirements.txt --with pytest python -m pytest mcp/brain/test_semantic_mcp.py
 uv run --with pytest --with pyyaml python -m pytest bundles/taska/tests
+uv run --with pytest python -m pytest bundles/consult/tests
 
 # One file, one test
 uv run --with-requirements bundles/brain/requirements.txt --with pytest python -m pytest bundles/brain/tests/test_parse_corpus_markdown.py -v

@@ -1,0 +1,1892 @@
+[
+ {
+  "id": "ADVANCES-AND-ADDS",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "story",
+  "scope": "epam-practice",
+  "rule": "Check every recommendation against what the client already runs, plans or has discussed, and say which client initiative it advances and what it adds.",
+  "why": "Proposed ideas risked repeating initiatives the client already had, and a 'builds on' framing made the team's assessment look like borrowed client work, so the consultant asked for each concept to name the initiative it advances and its own contribution.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "96b31243-9c84-430a-b495-a926e978c2c4",
+    "timestamp": "2026-11-18T11:40:11.543Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "f7b53ef1-1b25-454c-bf37-1db486b90d07",
+    "timestamp": "2026-11-18T11:46:35.346Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "c57efae6-0ab2-483c-b4bb-aeaf9d2863c1",
+    "timestamp": "2026-11-23T15:04:20.021Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": null,
+    "timestamp": "2026-11-24T12:12:44.084Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "fdede431-6112-4997-826d-a705760a9f6e",
+    "timestamp": "2026-11-26T09:59:17.836Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "agent",
+    "ref": "agents/comparison-critic.md",
+    "test": null
+   },
+   {
+    "kind": "skill",
+    "ref": "skills/synthesis/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "ALL-STAKEHOLDER-VIEWS",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "story",
+  "scope": "epam-practice",
+  "rule": "Build hypotheses from every stakeholder viewpoint gathered, including each interviewed function, not only the main sponsor's.",
+  "why": "Hypotheses for a comparison were drafted without the views of a sales lead the team had interviewed, and the consultant asked for all viewpoints to be included.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "434f88a6-78dd-4d1e-8f81-47f97453352e",
+    "timestamp": "2026-11-24T08:39:49.367Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "4508fd4b-a6d7-4c82-9de0-7d501913245b",
+    "timestamp": "2026-11-19T11:07:32.407Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "skill",
+    "ref": "skills/onboard/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "ANCHORED-PLAIN-COMMENTS",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "evidence",
+  "scope": "epam-practice",
+  "rule": "Pin every review comment to the exact statement it is about and give the finding, the source with its date and the suggested fix in plain words.",
+  "why": "Reviewers could not tell which statement a comment referred to, and a findings page showed tool traces instead of the finding, its evidence and the fix.",
+  "sources": [
+   {
+    "session": "a5d4fd8a-57a8-4617-ab54-5d77c9b00b4b",
+    "uuid": "9ca1a503-8892-4973-bf96-c4f2ea9d1ec2",
+    "timestamp": "2026-10-12T16:32:50.806Z"
+   },
+   {
+    "session": "a5d4fd8a-57a8-4617-ab54-5d77c9b00b4b",
+    "uuid": "c1bac71d-cfc5-4184-a2f8-c6f3b8d3cdef",
+    "timestamp": "2026-10-16T06:48:18.022Z"
+   },
+   {
+    "session": "16d0d1fd-6c25-401f-b729-e7d0041537d0",
+    "uuid": null,
+    "timestamp": "2026-10-03T21:06:20.156Z"
+   },
+   {
+    "session": "a5d4fd8a-57a8-4617-ab54-5d77c9b00b4b",
+    "uuid": null,
+    "timestamp": "2026-10-19T08:40:28.750Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "skill",
+    "ref": "skills/deck/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": "kb deck-fact-check and doc-fact-check step 8: comments pinned at the statement with a plain Why line and a Suggested sentence"
+ },
+ {
+  "id": "ANSWER-FIRST-SUMMARY",
+  "version": 3,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "story",
+  "scope": "epam-practice",
+  "rule": "Open with the problem statement, then an executive summary that previews the concepts in the order and under the names the deck uses.",
+  "why": "A first slide mixed the opening with findings and a storyline lacked an executive summary, and an independent storyline review the consultant had applied found concept headers that did not match the labels the summary introduced.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "3e82bfd1-2e98-4487-a34d-1fdff6ec9c36",
+    "timestamp": "2026-11-23T14:05:21.244Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "5aa5e82e-40ed-4825-80c3-e8d038851bd0",
+    "timestamp": "2026-11-24T12:57:45.226Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": null,
+    "timestamp": "2026-11-26T15:07:43.154Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "1737fe86-deee-4ef8-a909-2597aef8dad0",
+    "timestamp": "2026-11-26T11:54:45.057Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "fb234e87-ac13-4979-8d2f-50e2d75d9dca",
+    "timestamp": "2026-11-26T12:15:56.336Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "agent",
+    "ref": "agents/storyline-reviewer.md",
+    "test": null
+   },
+   {
+    "kind": "skill",
+    "ref": "skills/deck/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "ANSWER-THE-ASK",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "story",
+  "scope": "epam-practice",
+  "rule": "Deliver what the requester asked for under the name they used, and check the deliverable against the request before review.",
+  "why": "A deck labelled with the team's own term turned out not to be the comparison the requester had asked for, which the consultant called the main gap.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "c8e2c012-e6df-4bf0-aa41-ebcfa640370f",
+    "timestamp": "2026-11-23T14:11:29.505Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "e3846570-b2e1-4583-a95a-301f879a6b4b",
+    "timestamp": "2026-11-23T14:14:25.083Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "ec88a5f8-3f67-4417-ba65-4518c038e084",
+    "timestamp": "2026-11-23T13:46:28.274Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "977bc4f6-f4e7-48b7-a064-47204beaf510",
+    "timestamp": "2026-11-23T16:43:35.487Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "skill",
+    "ref": "skills/onboard/SKILL.md",
+    "test": null
+   },
+   {
+    "kind": "agent",
+    "ref": "agents/storyline-reviewer.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "APPROVE-BEFORE-SEND",
+  "version": 2,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "process",
+  "scope": "epam-practice",
+  "rule": "Never send a message, mail or post to the client or the team until the consultant has approved its exact text.",
+  "why": "An agent prepared to message a colleague the consultant had already contacted, and the consultant asked for a standing rule that nothing is posted without the consultant's approval.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "b5adc0f9-84ca-4819-b7d9-4d7cc12103f1",
+    "timestamp": "2026-11-18T18:22:00.677Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": null,
+    "timestamp": "2026-11-18T20:34:09.151Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "skill",
+    "ref": "skills/deck/SKILL.md",
+    "test": null
+   },
+   {
+    "kind": "skill",
+    "ref": "skills/synthesis/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "CAPABILITY-AS-EVIDENCED",
+  "version": 2,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "evidence",
+  "scope": "epam-practice",
+  "rule": "Describe what the client runs today only as strongly as its own evidence supports, and keep live, pilot and planned capabilities apart.",
+  "why": "A slide claimed a client capability beyond what its evidence showed, and two planned programmes were listed as running.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "6653ddec-728d-435d-b83d-a40fbd36e47f",
+    "timestamp": "2026-11-24T13:32:39.755Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "bb2e2ebf-e9a8-4e00-b937-3048508200af",
+    "timestamp": "2026-11-24T14:16:41.414Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "189167d1-77d5-4500-8b92-b91aaa010d1f",
+    "timestamp": "2026-11-25T11:24:35.492Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "603cd03d-1da7-4409-ba4c-df8ba9289361",
+    "timestamp": "2026-11-25T12:52:09.580Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "agent",
+    "ref": "agents/evidence-verifier.md",
+    "test": null
+   },
+   {
+    "kind": "agent",
+    "ref": "agents/storyline-reviewer.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "CLEAN-CAPTURES",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "visual",
+  "scope": "epam-practice",
+  "rule": "Crop each screenshot to the content that proves the point, without application chrome, participant tiles, desktop icons or capture notes.",
+  "why": "Meeting captures showed participant tiles and desktop icons, slide evidence carried capture-date noise, and a cropped screenshot cut off the exchange it was meant to show.",
+  "sources": [
+   {
+    "session": "b56acbd0-8f29-4424-a91c-a0c199dd0c06",
+    "uuid": "155bb59b-a283-45b4-b43f-66414a031d9a",
+    "timestamp": "2026-10-30T09:23:25.096Z"
+   },
+   {
+    "session": "6666e80a-2de2-42b6-b19c-fa002caaa9d8",
+    "uuid": "2bda00f6-4578-4dd9-bf2e-e4cb5c16b153",
+    "timestamp": "2026-11-16T17:04:00.740Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "ebc8a6e8-a9f2-429e-84f9-38e983f5125d",
+    "timestamp": "2026-11-24T16:12:51.383Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "7331fda5-71ba-4c4b-acbc-aa4a3367d201",
+    "timestamp": "2026-11-24T13:38:33.996Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "skill",
+    "ref": "skills/compare/SKILL.md",
+    "test": null
+   },
+   {
+    "kind": "agent",
+    "ref": "agents/visual-reviewer.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "CLIENT-DEFINITIONS",
+  "version": 2,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "evidence",
+  "scope": "epam-practice",
+  "rule": "Measure with the client's own categories and metric definitions, and check that every grouping the team makes maps correctly onto the client's own codes.",
+  "why": "The analysis was framed on an outside firm's drivers instead of the client's own contact reasons, showed only part of the client's work items, and grouped several client codes into one category without checking the mapping.",
+  "sources": [
+   {
+    "session": "575a392b-8ec9-4392-8598-8ba8655ba8a7",
+    "uuid": "74fb6532-6caf-4ce7-9987-17e9bc815a50",
+    "timestamp": "2026-11-16T15:47:45.359Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": null,
+    "timestamp": "2026-11-18T14:01:57.383Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "b6d957d1-6bdd-4af6-be73-537d60f1a7fc",
+    "timestamp": "2026-11-24T10:22:59.430Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "skill",
+    "ref": "skills/onboard/SKILL.md",
+    "test": null
+   },
+   {
+    "kind": "skill",
+    "ref": "skills/contact-data/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "CLIENT-TERMS",
+  "version": 2,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "language",
+  "scope": "epam-practice",
+  "rule": "Use the client's and the team's own terms for things and define any other term at its first use.",
+  "why": "A deck coined its own label for a set of ideas and used a term from another industry where the client uses its own, which confused the client reader.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "5f32a60c-6303-4d02-8d04-c31d54713c2c",
+    "timestamp": "2026-11-24T12:03:33.223Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "71c45dce-5180-4e25-bd88-02716ebb7dd6",
+    "timestamp": "2026-11-24T12:19:18.470Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "e607c173-01ee-4db1-82db-5e368be86669",
+    "timestamp": "2026-11-24T12:20:30.844Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "a691d93a-7f36-4b71-9d59-d2c3ab6de029",
+    "timestamp": "2026-11-18T08:12:13.225Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "293ef9fa-8f72-40c4-ab95-a1c1ff07df97",
+    "timestamp": "2026-11-25T13:24:04.941Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "skill",
+    "ref": "skills/onboard/SKILL.md",
+    "test": null
+   },
+   {
+    "kind": "agent",
+    "ref": "agents/storyline-reviewer.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "CUT-WHAT-ADDS-NOTHING",
+  "version": 2,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "story",
+  "scope": "epam-practice",
+  "rule": "Cut from the slide every line and gap note that adds no meaning for the reader, and move any base or method detail that must stay to the source line, the notes or the appendix, never deleting it.",
+  "why": "Slides kept agreement statistics, unexplained-gap notes and connective prose that told the reader nothing, and one cut line was a share's base written out as prose, which had to stay available elsewhere.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "7dc94a07-b34e-4cfd-96a1-adc99957be19",
+    "timestamp": "2026-11-18T20:14:59.480Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": null,
+    "timestamp": "2026-11-23T14:49:13.417Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": null,
+    "timestamp": "2026-11-23T15:01:20.460Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "2a639888-9e5e-4810-a832-9f63876377e8",
+    "timestamp": "2026-11-23T16:25:53.328Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": null,
+    "timestamp": "2026-11-24T16:37:46.720Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "agent",
+    "ref": "agents/storyline-reviewer.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "DECK-ON-SCREEN-ONLY",
+  "version": 2,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "evidence",
+  "scope": "epam-practice",
+  "rule": "When fact-checking a deck's visible claims, check only what renders on visible slides, and check the speaker notes and talk track separately for consistency with them.",
+  "why": "A deck under review held debug text and notes that are not on screen and the consultant asked for them to be left out of the claim check, while a later review found speaker notes that were not client-ready and the consultant had them fixed.",
+  "sources": [
+   {
+    "session": "a5d4fd8a-57a8-4617-ab54-5d77c9b00b4b",
+    "uuid": null,
+    "timestamp": "2026-10-15T16:06:59.083Z"
+   },
+   {
+    "session": "a5d4fd8a-57a8-4617-ab54-5d77c9b00b4b",
+    "uuid": null,
+    "timestamp": "2026-10-15T16:20:36.736Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "a2c07d6b-1e69-4350-8349-a63c785afcc2",
+    "timestamp": "2026-11-17T16:41:49.972Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "skill",
+    "ref": "skills/deck/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": "kb deck-fact-check SKILL.md: speaker notes and hidden slides are not checked, and only visible slides are walked"
+ },
+ {
+  "id": "EDITABLE-CHARTS",
+  "version": 2,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "visual",
+  "scope": "epam-practice",
+  "rule": "Build charts as native, editable charts that carry their data.",
+  "why": "A chart in a delivered deck could not be edited because its data was not in the presentation, and the consultant asked for charts that keep their data source.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": null,
+    "timestamp": "2026-11-25T12:38:46.573Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": null,
+    "timestamp": "2026-11-25T12:34:14.751Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "agent",
+    "ref": "agents/visual-reviewer.md",
+    "test": null
+   },
+   {
+    "kind": "skill",
+    "ref": "skills/deck/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "FIX-AT-SOURCE",
+  "version": 2,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "process",
+  "scope": "epam-practice",
+  "rule": "Fix a defect at its cause and regenerate the output, never raise a limit to hide the defect.",
+  "why": "A time limit was about to be raised for a step that stalled instead of fixing why it stalled, and a rebuilt deck had to be regenerated so the change actually reached the output.",
+  "sources": [
+   {
+    "session": "6cf1dd94-5955-49bf-93aa-bb5cf451fe6a",
+    "uuid": null,
+    "timestamp": "2026-10-20T12:22:02.659Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "773a9510-1872-4732-b7e1-726c6d1ae7f1",
+    "timestamp": "2026-11-26T15:12:19.502Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "check",
+    "ref": "scripts/build_identity.py",
+    "test": "tests/test_build_identity.py"
+   },
+   {
+    "kind": "skill",
+    "ref": "skills/deck/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "FIXED-YARDSTICK",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "process",
+  "scope": "epam-practice",
+  "rule": "Fix the expected answers and the acceptance bar before a run, and never change them after seeing the results.",
+  "why": "Re-scoring old outputs on a changed key was about to be reported as an improvement, and the consultant required the original key and outputs kept and any re-analysis versioned separately.",
+  "sources": [
+   {
+    "session": "a5d4fd8a-57a8-4617-ab54-5d77c9b00b4b",
+    "uuid": null,
+    "timestamp": "2026-10-16T07:02:46.699Z"
+   },
+   {
+    "session": "b97a3d34-9dbd-464f-8aaa-506b15bc0546",
+    "uuid": "bc014521-dea6-439c-a3d9-a83b7691ef44",
+    "timestamp": "2026-11-04T07:27:17.468Z"
+   },
+   {
+    "session": "b97a3d34-9dbd-464f-8aaa-506b15bc0546",
+    "uuid": "bcb934c6-0381-4d35-bc29-f415f78b09d3",
+    "timestamp": "2026-11-04T14:45:23.578Z"
+   },
+   {
+    "session": "b97a3d34-9dbd-464f-8aaa-506b15bc0546",
+    "uuid": "29b3ba6d-3b58-4a45-b7f3-2f7393a61c14",
+    "timestamp": "2026-11-04T21:00:30.824Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "skill",
+    "ref": "skills/synthesis/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "GATES-MUST-BITE",
+  "version": 2,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "process",
+  "scope": "epam-practice",
+  "rule": "Make every check test the facts it is meant to verify, never filler that any output would contain, and fix each defect it missed test-first so it cannot return.",
+  "why": "Checks passed on filler words that any answer would contain instead of the facts they were meant to test, which gave false passes, and the consultant asked for the checks to be fixed test-first so the same defect could not return.",
+  "sources": [
+   {
+    "session": "e8bc22f6-c7d5-4aa6-bb6d-beb6cdc7ccad",
+    "uuid": null,
+    "timestamp": "2026-09-25T13:09:39.967Z"
+   },
+   {
+    "session": "ff2d48e3-17a3-43d0-bebc-446400ac2ea6",
+    "uuid": null,
+    "timestamp": "2026-09-28T12:13:32.271Z"
+   },
+   {
+    "session": "ff2d48e3-17a3-43d0-bebc-446400ac2ea6",
+    "uuid": "031fcde5-8872-40c8-a63f-bd72f64eaf33",
+    "timestamp": "2026-09-29T08:12:28.226Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "check",
+    "ref": "scripts/content_gate.py",
+    "test": "tests/test_content_gate.py"
+   },
+   {
+    "kind": "check",
+    "ref": "scripts/number_gate.py",
+    "test": "tests/test_number_gate.py"
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "INDEPENDENT-REVIEW",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "process",
+  "scope": "epam-practice",
+  "rule": "Have reviewers who did not write the work review the plan before building and the output before sharing, from the reader's and each stakeholder's viewpoint.",
+  "why": "A reviewer that was not independent was found in an early workflow, and later stories and decks improved only once separate reviewers read them as the client stakeholders would.",
+  "sources": [
+   {
+    "session": "1ff1340a-b2e1-4231-8a64-7931b4440b11",
+    "uuid": null,
+    "timestamp": "2026-09-24T11:54:46.706Z"
+   },
+   {
+    "session": "282228b7-b1a1-43f6-b1d3-f529072ecb55",
+    "uuid": null,
+    "timestamp": "2026-11-17T16:07:47.922Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": null,
+    "timestamp": "2026-11-23T15:13:02.617Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "c3f9bcf3-b105-4db7-8630-80b3ae41f42a",
+    "timestamp": "2026-11-23T16:39:28.268Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "agent",
+    "ref": "agents/storyline-reviewer.md",
+    "test": null
+   },
+   {
+    "kind": "agent",
+    "ref": "agents/visual-reviewer.md",
+    "test": null
+   },
+   {
+    "kind": "skill",
+    "ref": "skills/deck/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "INPUTS-FIRST",
+  "version": 2,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "story",
+  "scope": "epam-practice",
+  "rule": "In a research readout, state the inputs the findings rest on, such as the discussion guide, the stimuli and the data used, before the first finding.",
+  "why": "A research readout referred to a stimulus number the reader had never seen, and the consultant asked for the inputs to be shown before any finding.",
+  "sources": [
+   {
+    "session": "575a392b-8ec9-4392-8598-8ba8655ba8a7",
+    "uuid": "aced25d8-a071-40a9-bd89-23b99b733b66",
+    "timestamp": "2026-11-16T16:52:41.907Z"
+   },
+   {
+    "session": "6666e80a-2de2-42b6-b19c-fa002caaa9d8",
+    "uuid": "2bda00f6-4578-4dd9-bf2e-e4cb5c16b153",
+    "timestamp": "2026-11-16T17:04:00.740Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "skill",
+    "ref": "skills/synthesis/SKILL.md",
+    "test": null
+   },
+   {
+    "kind": "agent",
+    "ref": "agents/storyline-reviewer.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "KEEP-ORIGINALS",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "process",
+  "scope": "personal-style",
+  "rule": "Keep every earlier version and source, filtering, hiding or archiving instead of deleting.",
+  "why": "Old documents were about to be removed from a store and working frames from a board, and the consultant asked to filter and archive them instead.",
+  "sources": [
+   {
+    "session": "ff2d48e3-17a3-43d0-bebc-446400ac2ea6",
+    "uuid": null,
+    "timestamp": "2026-09-28T15:19:54.114Z"
+   },
+   {
+    "session": "b97a3d34-9dbd-464f-8aaa-506b15bc0546",
+    "uuid": "bcb934c6-0381-4d35-bc29-f415f78b09d3",
+    "timestamp": "2026-11-04T14:45:23.578Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": null,
+    "timestamp": "2026-11-23T14:59:55.392Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "skill",
+    "ref": "skills/synthesis/SKILL.md",
+    "test": null
+   },
+   {
+    "kind": "skill",
+    "ref": "skills/deck/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "LIKE-FOR-LIKE",
+  "version": 2,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "evidence",
+  "scope": "epam-practice",
+  "rule": "Compare prices, offers and results only on a stated like-for-like basis and label anything else not comparable.",
+  "why": "A price came from a single customer's invoice, totals depended on unstated usage assumptions, and a before-and-after comparison changed two things at once.",
+  "sources": [
+   {
+    "session": "282228b7-b1a1-43f6-b1d3-f529072ecb55",
+    "uuid": "16ab5e34-3d2f-4d22-9a77-2ca15eb918e8",
+    "timestamp": "2026-11-02T13:54:35.957Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": null,
+    "timestamp": "2026-11-24T13:47:12.161Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "88cf8b15-6c7c-44dd-b0a8-03ccf911a43a",
+    "timestamp": "2026-11-26T09:00:01.297Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "agent",
+    "ref": "agents/comparison-critic.md",
+    "test": null
+   },
+   {
+    "kind": "skill",
+    "ref": "skills/compare/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "NAME-THE-BASE",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "evidence",
+  "scope": "epam-practice",
+  "rule": "Name the base of every share and, when two counts of the same thing differ, name each basis and reconcile them.",
+  "why": "A share was computed on all cases when only cases with a summary could carry it, cleanup records sat inside every share, and the deck's call count differed from the client's own daily figure without saying why.",
+  "sources": [
+   {
+    "session": "6666e80a-2de2-42b6-b19c-fa002caaa9d8",
+    "uuid": null,
+    "timestamp": "2026-11-17T14:12:30.178Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "a2c07d6b-1e69-4350-8349-a63c785afcc2",
+    "timestamp": "2026-11-17T16:41:49.972Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "665091ff-98fc-4e09-a72e-e76c95ca7815",
+    "timestamp": "2026-11-24T12:33:45.967Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "check",
+    "ref": "scripts/number_gate.py",
+    "test": "tests/test_number_gate.py"
+   },
+   {
+    "kind": "agent",
+    "ref": "agents/comparison-critic.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "NO-CLIENT-DATA-SHARED",
+  "version": 2,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "process",
+  "scope": "epam-practice",
+  "rule": "Keep client names, data and examples out of any shared or public repository, branch name, test, template or rule.",
+  "why": "Client data can reach a shared repository through tests, examples or branch names, so the consultant required every change scanned for client data before it is shared.",
+  "sources": [
+   {
+    "session": "ff2d48e3-17a3-43d0-bebc-446400ac2ea6",
+    "uuid": null,
+    "timestamp": "2026-09-28T11:31:36.524Z"
+   },
+   {
+    "session": "ff2d48e3-17a3-43d0-bebc-446400ac2ea6",
+    "uuid": null,
+    "timestamp": "2026-09-28T15:28:32.953Z"
+   },
+   {
+    "session": "85c3912e-80a8-449e-801e-80a823f2851f",
+    "uuid": null,
+    "timestamp": "2026-09-29T14:36:17.071Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "check",
+    "ref": "skills/lessons/register.py",
+    "test": "tests/test_register.py"
+   },
+   {
+    "kind": "skill",
+    "ref": "skills/onboard/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "NO-GUESSED-FIGURES",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "evidence",
+  "scope": "epam-practice",
+  "rule": "Put in client material only figures that trace to the checked findings or to a dated source, never guessed, estimated or illustrative ones.",
+  "why": "A cost projection, a call-reduction number and an illustrative sample count were offered without measured data, and the consultant refused each one and asked for numbers from the checked findings only.",
+  "sources": [
+   {
+    "session": "e8bc22f6-c7d5-4aa6-bb6d-beb6cdc7ccad",
+    "uuid": "09a97094-947e-4b0d-bc17-5036639fadf4",
+    "timestamp": "2026-09-25T07:18:52.098Z"
+   },
+   {
+    "session": "ff2d48e3-17a3-43d0-bebc-446400ac2ea6",
+    "uuid": null,
+    "timestamp": "2026-09-25T14:59:04.804Z"
+   },
+   {
+    "session": "6666e80a-2de2-42b6-b19c-fa002caaa9d8",
+    "uuid": null,
+    "timestamp": "2026-11-17T14:28:52.218Z"
+   },
+   {
+    "session": "282228b7-b1a1-43f6-b1d3-f529072ecb55",
+    "uuid": null,
+    "timestamp": "2026-11-17T16:00:35.675Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "589c3985-9e75-4bbc-81f2-c3d9e4e56636",
+    "timestamp": "2026-11-23T13:41:56.019Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "3aa5419a-abbe-49e3-b1f3-8f29c6ca49b5",
+    "timestamp": "2026-11-25T20:00:56.521Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "check",
+    "ref": "scripts/number_gate.py",
+    "test": "tests/test_number_gate.py"
+   }
+  ],
+  "see_also": "kb BRAIN-CONTRACT in bundles/kb/skills/_shared/doctrine.md (numbers only from governed facts, a gap beats a guess) covers answers drawn from a Brain"
+ },
+ {
+  "id": "NO-LABEL-LISTS",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "language",
+  "scope": "personal-style",
+  "rule": "Write slide text as plain sentences, never as 'label: a, b and c' lines or clauses chained with semicolons.",
+  "why": "Slide messages written as a label, a colon and a list, or as clauses chained with semicolons, read as machine-written and the consultant asked for structured plain sentences.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "e8595519-c4b9-4f6e-a3e7-2bb72380cc4b",
+    "timestamp": "2026-11-26T11:52:26.822Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "298e830f-10eb-4ac6-8f05-89678d508ff6",
+    "timestamp": "2026-11-26T10:07:02.930Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "check",
+    "ref": "scripts/content_gate.py",
+    "test": "tests/test_content_gate.py"
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "NUMBERS-IN-DIGITS",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "language",
+  "scope": "personal-style",
+  "rule": "Write figures in digits and lead each slide subtitle with its key figure in one concise sentence.",
+  "why": "Long subtitles spelled the point out in words such as 'one case in five' and the consultant asked for a clear, concise line that leads with the number.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "b75a0e95-c1a7-47f2-a9ef-84ef052f8733",
+    "timestamp": "2026-11-26T11:48:18.295Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "42fd646a-873a-4f63-8fec-d238c3cec3a7",
+    "timestamp": "2026-11-26T11:51:18.142Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "check",
+    "ref": "scripts/number_gate.py",
+    "test": "tests/test_number_gate.py"
+   },
+   {
+    "kind": "check",
+    "ref": "scripts/content_gate.py",
+    "test": "tests/test_content_gate.py"
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "ONE-FIGURE-PER-FACT",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "evidence",
+  "scope": "epam-practice",
+  "rule": "Use one figure for each fact across the deck, its notes, the written story and the talk track, at the same precision everywhere.",
+  "why": "Two adjacent slides showed different percentages for the same group of call reasons and the written story could not be matched to the slides.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "5b0c4e00-c9a7-4984-abfe-98ced3bbc687",
+    "timestamp": "2026-11-25T12:38:07.205Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "162affb3-fb16-4d41-bc43-2a5b36100708",
+    "timestamp": "2026-11-25T12:47:59.283Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "8447f055-6adf-405d-b9d4-dff12bb276e4",
+    "timestamp": "2026-11-25T13:05:00.545Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "20a8b898-3e9a-49f0-a2e5-0705d77fd09f",
+    "timestamp": "2026-11-18T14:04:28.848Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "check",
+    "ref": "scripts/number_gate.py",
+    "test": "tests/test_number_gate.py"
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "ONE-READING-PATH",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "story",
+  "scope": "epam-practice",
+  "rule": "Give the story one numbered reading path that the written story, the deck and any board follow in the same order.",
+  "why": "A board offered several ways in with no single path, and the written story could not be matched to the slides.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "858896ec-6648-436c-acea-057e4190f265",
+    "timestamp": "2026-11-20T13:45:29.435Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "20a8b898-3e9a-49f0-a2e5-0705d77fd09f",
+    "timestamp": "2026-11-18T14:04:28.848Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "3dd81908-5323-4d5a-8dda-afa60ab32562",
+    "timestamp": "2026-11-23T14:35:59.236Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "agent",
+    "ref": "agents/storyline-reviewer.md",
+    "test": null
+   },
+   {
+    "kind": "skill",
+    "ref": "skills/deck/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "ONE-TEMPLATE",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "visual",
+  "scope": "epam-practice",
+  "rule": "Build every slide of a deck on the one template agreed at onboarding.",
+  "why": "Slides of a shared deck drifted from the agreed master layout and had to be rebuilt one by one on it.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "7b4a9e39-aa0a-4830-8162-4ae14069f99f",
+    "timestamp": "2026-11-23T13:53:55.740Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "c8e2c012-e6df-4bf0-aa41-ebcfa640370f",
+    "timestamp": "2026-11-23T14:11:29.505Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "3dd81908-5323-4d5a-8dda-afa60ab32562",
+    "timestamp": "2026-11-23T14:35:59.236Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "skill",
+    "ref": "skills/deck/SKILL.md",
+    "test": null
+   },
+   {
+    "kind": "agent",
+    "ref": "agents/visual-reviewer.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "PLAIN-FULL-NAMES",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "language",
+  "scope": "epam-practice",
+  "rule": "Write full names in reader-facing text and never internal codes, ids, round labels or abbreviations the reader was not given.",
+  "why": "Pages, prompts and board cards carried coded category labels, participant codes and round ids that readers could not decode, and each time the consultant asked for the full name instead.",
+  "sources": [
+   {
+    "session": "a5d4fd8a-57a8-4617-ab54-5d77c9b00b4b",
+    "uuid": null,
+    "timestamp": "2026-10-19T07:35:46.506Z"
+   },
+   {
+    "session": "575a392b-8ec9-4392-8598-8ba8655ba8a7",
+    "uuid": "f94d15f1-2bd6-4e93-a2a3-3afc9a84a30b",
+    "timestamp": "2026-11-16T15:51:23.485Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "30091deb-9f98-4784-bf87-362e2a4ad314",
+    "timestamp": "2026-11-17T13:40:30.741Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "bd2386ac-7946-433f-ad5d-c3cb8f142d56",
+    "timestamp": "2026-11-18T13:28:12.044Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "check",
+    "ref": "scripts/content_gate.py",
+    "test": "tests/test_content_gate.py"
+   },
+   {
+    "kind": "agent",
+    "ref": "agents/storyline-reviewer.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "POLITE-WORDING",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "language",
+  "scope": "epam-practice",
+  "rule": "Keep client-facing wording polite, neutral and professional, without emotive, combative or slangy phrases.",
+  "why": "A pricing title sounded aggressive, a heading used a casual catch phrase and competitors were called rivals, and each was rewritten in neutral professional language.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": null,
+    "timestamp": "2026-11-24T13:47:12.161Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "4e7d6294-f8e8-4ee8-931f-ed788c98d32a",
+    "timestamp": "2026-11-24T14:52:47.745Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "71c45dce-5180-4e25-bd88-02716ebb7dd6",
+    "timestamp": "2026-11-24T12:19:18.470Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "agent",
+    "ref": "agents/storyline-reviewer.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "PROVEN-IMPROVEMENT",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "process",
+  "scope": "epam-practice",
+  "rule": "Claim an improvement or readiness only from an independent comparison with the previous version on the same inputs.",
+  "why": "Readiness was claimed from completed steps and unrepeated runs, and the consultant asked for independently assessed quality and a comparison with the backup before release.",
+  "sources": [
+   {
+    "session": "a5d4fd8a-57a8-4617-ab54-5d77c9b00b4b",
+    "uuid": null,
+    "timestamp": "2026-10-15T17:41:18.491Z"
+   },
+   {
+    "session": "282228b7-b1a1-43f6-b1d3-f529072ecb55",
+    "uuid": "a55dbae9-5d01-47d8-b515-35daa3bb20df",
+    "timestamp": "2026-11-03T08:23:52.060Z"
+   },
+   {
+    "session": "b97a3d34-9dbd-464f-8aaa-506b15bc0546",
+    "uuid": "78c5b776-f7fe-460e-876a-a20dc480b6ce",
+    "timestamp": "2026-11-04T15:27:56.053Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "6c5d5bb5-cb71-4a82-b104-b985c2ab45be",
+    "timestamp": "2026-11-25T15:45:32.685Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "skill",
+    "ref": "skills/synthesis/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "QUOTE-WITH-CAPTURE",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "evidence",
+  "scope": "epam-practice",
+  "rule": "Quote outside evidence word for word and keep its URL, capture date and a highlighted screenshot in the appendix.",
+  "why": "Competitor claims in a comparison deck had empty cells and no images, and the consultant asked for screenshots in the appendix as evidence for each claim.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "5aa5e82e-40ed-4825-80c3-e8d038851bd0",
+    "timestamp": "2026-11-24T12:57:45.226Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "6f8288a2-29a3-44a3-9c8c-45727455fed6",
+    "timestamp": "2026-11-24T13:29:12.063Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "7331fda5-71ba-4c4b-acbc-aa4a3367d201",
+    "timestamp": "2026-11-24T13:38:33.996Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "check",
+    "ref": "scripts/evidence_check.py",
+    "test": "tests/test_evidence_check.py"
+   },
+   {
+    "kind": "agent",
+    "ref": "agents/evidence-verifier.md",
+    "test": null
+   },
+   {
+    "kind": "skill",
+    "ref": "skills/compare/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "READABLE-CHARTS",
+  "version": 2,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "visual",
+  "scope": "epam-practice",
+  "rule": "Label chart bars with their counts and keep every axis readable.",
+  "why": "An axis was unreadable and the bars of a share chart showed percentages without the case counts behind them.",
+  "sources": [
+   {
+    "session": "6666e80a-2de2-42b6-b19c-fa002caaa9d8",
+    "uuid": "c6e483b2-a3e0-41c6-b267-7bfe2b60c5cb",
+    "timestamp": "2026-11-17T17:30:39.404Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "8447f055-6adf-405d-b9d4-dff12bb276e4",
+    "timestamp": "2026-11-25T13:05:00.545Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "agent",
+    "ref": "agents/visual-reviewer.md",
+    "test": null
+   },
+   {
+    "kind": "skill",
+    "ref": "skills/deck/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "RENDERED-SLIDE-REVIEW",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "visual",
+  "scope": "epam-practice",
+  "rule": "Have an independent visual reviewer read every slide as a rendered image before the deck is shared.",
+  "why": "A slide looked broken once rendered although its text was correct, and the consultant asked for an independent review of each slide's screenshot.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "ada91449-9eb8-40cb-9bb0-c8ddfca2bd2f",
+    "timestamp": "2026-11-23T16:29:03.249Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "2c06d63c-2523-4edc-a216-dd524ce959ab",
+    "timestamp": "2026-11-27T08:09:56.038Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "bcbf8e4b-f2b4-46e0-b6a0-564254086baf",
+    "timestamp": "2026-11-26T15:46:22.541Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "agent",
+    "ref": "agents/visual-reviewer.md",
+    "test": null
+   },
+   {
+    "kind": "skill",
+    "ref": "skills/deck/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "REPRODUCIBLE-FIGURES",
+  "version": 2,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "evidence",
+  "scope": "epam-practice",
+  "rule": "Make every figure reproducible by a reader from the source file, with each counting and cleaning rule written out in the appendix.",
+  "why": "The consultant could not see how a slide's call counts were built from the extract and asked for the filters and category rules spelled out so the consultant could repeat them in a spreadsheet.",
+  "sources": [
+   {
+    "session": "6666e80a-2de2-42b6-b19c-fa002caaa9d8",
+    "uuid": null,
+    "timestamp": "2026-11-17T13:09:35.176Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "8bda1f53-9bba-417c-bd20-dd0295465aa7",
+    "timestamp": "2026-11-24T09:41:31.807Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "0421f23c-efe7-44fc-9ac5-5ee043752b55",
+    "timestamp": "2026-11-24T10:26:06.306Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "check",
+    "ref": "scripts/number_gate.py",
+    "test": "tests/test_number_gate.py"
+   },
+   {
+    "kind": "skill",
+    "ref": "skills/contact-data/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "ROOT-CAUSE-EVIDENCED",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "evidence",
+  "scope": "epam-practice",
+  "rule": "State a root cause only with direct evidence for it, and recheck any cause or finding a client stakeholder disputes before repeating it.",
+  "why": "A current-state finding named a technical root cause that a client stakeholder had rejected, and other slides implied causes the call data could not show.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "319aff48-92d3-42bd-adf9-414352db39a1",
+    "timestamp": "2026-11-23T15:32:37.464Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "7be21b80-7f89-4768-a222-0bd666e1ac77",
+    "timestamp": "2026-11-23T15:33:44.945Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "36859e43-9a2d-4c7c-b90d-fa374626ca6d",
+    "timestamp": "2026-11-23T15:34:41.853Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": null,
+    "timestamp": "2026-11-24T16:41:01.600Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "agent",
+    "ref": "agents/evidence-verifier.md",
+    "test": null
+   },
+   {
+    "kind": "skill",
+    "ref": "skills/contact-data/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "SHORT-CLIENT-MESSAGES",
+  "version": 2,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "language",
+  "scope": "personal-style",
+  "rule": "Keep messages to clients and colleagues short, without extra questions, hedges, tool names or the consultant's own name.",
+  "why": "Draft messages added an optional question, hedged a certainty, named internal feeds and the consultant's own name, and each addition was cut as needless complexity.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "71f7f7d8-c99f-48c4-bc3d-775740e11d95",
+    "timestamp": "2026-11-18T10:34:15.383Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "92f8adfa-fac7-4a8f-ac9b-eecc72a55abc",
+    "timestamp": "2026-11-18T10:35:06.905Z"
+   },
+   {
+    "session": "6666e80a-2de2-42b6-b19c-fa002caaa9d8",
+    "uuid": null,
+    "timestamp": "2026-11-18T15:14:18.281Z"
+   },
+   {
+    "session": "6666e80a-2de2-42b6-b19c-fa002caaa9d8",
+    "uuid": "6511a725-938d-4966-84fc-a147e3cb797b",
+    "timestamp": "2026-11-16T17:38:08.013Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "agent",
+    "ref": "agents/storyline-reviewer.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "SLIDE-HOLDS-FINDING",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "story",
+  "scope": "epam-practice",
+  "rule": "Keep each slide to its actionable finding and move method detail, long source lines, internal provenance and open to-dos to the speaker notes or appendix.",
+  "why": "Slides carried long source and method blocks, workshop priority tags with dates and an internal to-do for a client function, and the consultant moved each to the notes or appendix.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "afca1f14-fc7e-46a8-995c-cabfaf3c8a60",
+    "timestamp": "2026-11-24T14:30:52.653Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "3df4bc6e-8b52-4f26-9adb-b0942a1be1e3",
+    "timestamp": "2026-11-24T16:14:28.638Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "16a2023c-0aef-4e5c-9356-d730b998f2c2",
+    "timestamp": "2026-11-25T13:07:57.993Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "e43183ef-f1e4-422c-8896-6a3a1ed57166",
+    "timestamp": "2026-11-25T13:14:15.645Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "298e830f-10eb-4ac6-8f05-89678d508ff6",
+    "timestamp": "2026-11-26T10:07:02.930Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "check",
+    "ref": "scripts/content_gate.py",
+    "test": "tests/test_content_gate.py"
+   },
+   {
+    "kind": "agent",
+    "ref": "agents/visual-reviewer.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "SMOKE-FIRST",
+  "version": 2,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "process",
+  "scope": "epam-practice",
+  "rule": "Run a small, cheap check on one real input before any full or paid run, and stop a run whose first results already fail.",
+  "why": "Full runs were started before a five-case smoke run, costing time and money, and the consultant asked to check one small real input first and to stop once most early cases failed.",
+  "sources": [
+   {
+    "session": "9dd0f490-0136-443b-a47c-e15e88242a06",
+    "uuid": null,
+    "timestamp": "2026-10-02T13:05:16.878Z"
+   },
+   {
+    "session": "16d0d1fd-6c25-401f-b729-e7d0041537d0",
+    "uuid": null,
+    "timestamp": "2026-10-03T18:53:05.866Z"
+   },
+   {
+    "session": "16d0d1fd-6c25-401f-b729-e7d0041537d0",
+    "uuid": null,
+    "timestamp": "2026-10-04T09:33:39.895Z"
+   },
+   {
+    "session": "5b0b7171-2e0d-4a7a-99b2-afc4d129db00",
+    "uuid": null,
+    "timestamp": "2026-10-06T12:04:31.732Z"
+   },
+   {
+    "session": "a5d4fd8a-57a8-4617-ab54-5d77c9b00b4b",
+    "uuid": null,
+    "timestamp": "2026-10-19T07:35:46.506Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "skill",
+    "ref": "skills/compare/SKILL.md",
+    "test": null
+   },
+   {
+    "kind": "skill",
+    "ref": "skills/synthesis/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "SO-WHAT-FOR-CLIENT",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "story",
+  "scope": "epam-practice",
+  "rule": "State on each slide what the finding means for the client, not only what was found.",
+  "why": "A comparison line described what the team found without saying what it meant for the client, and the consultant asked for the data to be turned into an insight.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "5f32a60c-6303-4d02-8d04-c31d54713c2c",
+    "timestamp": "2026-11-24T12:03:33.223Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "359e4b11-8d77-4439-ae31-58b1f3ad7fbf",
+    "timestamp": "2026-11-24T14:47:03.291Z"
+   },
+   {
+    "session": "575a392b-8ec9-4392-8598-8ba8655ba8a7",
+    "uuid": "f60d74e0-146e-4f8b-ab4a-43c1e707470f",
+    "timestamp": "2026-11-16T17:00:47.616Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "agent",
+    "ref": "agents/storyline-reviewer.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "SUGGESTED-FITS-BOX",
+  "version": 2,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "visual",
+  "scope": "personal-style",
+  "rule": "Keep a suggested replacement for slide text within about 120% of the original's length so it fits its box.",
+  "why": "A suggested fix for a 60-character slide line ran to 183 characters, which a slide layout cannot absorb, while longer suggestions stay fine for documents.",
+  "sources": [
+   {
+    "session": "a5d4fd8a-57a8-4617-ab54-5d77c9b00b4b",
+    "uuid": null,
+    "timestamp": "2026-10-20T07:21:40.714Z"
+   },
+   {
+    "session": "a5d4fd8a-57a8-4617-ab54-5d77c9b00b4b",
+    "uuid": null,
+    "timestamp": "2026-10-20T07:23:06.448Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "skill",
+    "ref": "skills/deck/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": "kb deck-fact-check verify.md and fact_check_invariants.suggested_limit: a deck Suggested sentence stays within 120% of the quote"
+ },
+ {
+  "id": "TITLE-CASE-TITLES",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "language",
+  "scope": "personal-style",
+  "rule": "Write slide titles as short, concise technical phrases in Title Case.",
+  "why": "Conversational slide titles phrased as questions were replaced with concise technical titles, and the consultant asked for Title Case as a standing rule.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "505d183f-6b59-43ef-a347-18cc097fd38e",
+    "timestamp": "2026-11-23T14:58:36.026Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": null,
+    "timestamp": "2026-11-24T12:11:27.990Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "1ce627f7-2900-4db2-a12a-7b33105a7af9",
+    "timestamp": "2026-11-26T14:45:03.525Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "check",
+    "ref": "scripts/content_gate.py",
+    "test": "tests/test_content_gate.py"
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "TRUE-ATTRIBUTION",
+  "version": 2,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "evidence",
+  "scope": "epam-practice",
+  "rule": "Attribute each idea, analysis and source to whoever actually produced it, and never present the consultancy's own proposal as the client's.",
+  "why": "A proposed fix read as if the client had asked for it, and a 'builds on' line made the team's assessment look like borrowed client work.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": null,
+    "timestamp": "2026-11-25T10:14:42.579Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "fdede431-6112-4997-826d-a705760a9f6e",
+    "timestamp": "2026-11-26T09:59:17.836Z"
+   },
+   {
+    "session": "575a392b-8ec9-4392-8598-8ba8655ba8a7",
+    "uuid": "0f8e71a5-bd25-4085-a879-dd6661e02e9f",
+    "timestamp": "2026-11-16T15:15:58.493Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "agent",
+    "ref": "agents/comparison-critic.md",
+    "test": null
+   },
+   {
+    "kind": "agent",
+    "ref": "agents/storyline-reviewer.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "VALIDATE-INHERITED-DATA",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "evidence",
+  "scope": "epam-practice",
+  "rule": "Check on a sample that an inherited figure or a coded field means what its label says before building on it.",
+  "why": "A colleague's earlier figure turned out to divide by the wrong base, and the consultant stressed that agents' reason codes had to be tested against the call notes before they were trusted.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": null,
+    "timestamp": "2026-11-24T11:03:42.967Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "ef23516e-e6ac-4c5b-8e2b-74643475a286",
+    "timestamp": "2026-11-25T09:53:33.053Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "skill",
+    "ref": "skills/contact-data/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "VERIFY-BEFORE-ASKING",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "process",
+  "scope": "epam-practice",
+  "rule": "Check the facts yourself from the record before asking a colleague or the client for them.",
+  "why": "The team was about to ask a colleague for transcripts and the client for answers that the knowledge store and the shared folder already held.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "5c27c66a-97c2-4531-b9be-066543304052",
+    "timestamp": "2026-11-17T08:13:16.237Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "75171b2f-617c-4787-988f-e1107739b775",
+    "timestamp": "2026-11-17T09:21:36.751Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "f6f206d7-59bc-4f77-a1ed-fd292a873912",
+    "timestamp": "2026-11-19T14:44:31.837Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "0977aaad-fa8f-48f2-ad1b-df3a2b45f242",
+    "timestamp": "2026-11-24T08:01:28.312Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "skill",
+    "ref": "skills/onboard/SKILL.md",
+    "test": null
+   },
+   {
+    "kind": "skill",
+    "ref": "skills/contact-data/SKILL.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "VERIFY-DELIVERED-FILE",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "process",
+  "scope": "epam-practice",
+  "rule": "Open the rendered file the reader will receive and confirm it carries the latest change and build stamp before calling it done.",
+  "why": "A rebuilt deck showed none of the requested changes, its file properties dated it three days earlier, and the local copy differed from the one shared with the team.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": null,
+    "timestamp": "2026-11-23T12:26:45.033Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "a84ef84b-3e58-4ad7-a7ae-656abbec493b",
+    "timestamp": "2026-11-26T15:24:51.948Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "3db48135-2a30-4819-9564-10f27af4623a",
+    "timestamp": "2026-11-26T15:39:22.871Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "check",
+    "ref": "scripts/build_identity.py",
+    "test": "tests/test_build_identity.py"
+   }
+  ],
+  "see_also": null
+ },
+ {
+  "id": "WORDS-NOT-SYMBOLS",
+  "version": 1,
+  "status": "proposed",
+  "approved_on": null,
+  "area": "visual",
+  "scope": "epam-practice",
+  "rule": "Say in plain words what a comparison table shows, never with symbols that need a legend to decode.",
+  "why": "A comparison matrix used filled and half-filled symbols, and after a legend was added the consultant still rejected the slide and asked for it to be human readable.",
+  "sources": [
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "70df6942-d5b0-4373-8603-e5048d333620",
+    "timestamp": "2026-11-24T14:10:30.524Z"
+   },
+   {
+    "session": "9e2709f1-ba65-45a1-bd60-db0ca00870e3",
+    "uuid": "a43e434d-159f-4fbf-82f6-ba491f0d049f",
+    "timestamp": "2026-11-24T14:45:20.746Z"
+   }
+  ],
+  "enforced_by": [
+   {
+    "kind": "agent",
+    "ref": "agents/visual-reviewer.md",
+    "test": null
+   },
+   {
+    "kind": "agent",
+    "ref": "agents/comparison-critic.md",
+    "test": null
+   }
+  ],
+  "see_also": null
+ }
+]
